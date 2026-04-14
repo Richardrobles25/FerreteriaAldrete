@@ -1,0 +1,290 @@
+    -- ============================================
+    -- BASE DE DATOS: FERRETERIA
+    -- Motor: MySQL (Railway)
+    -- ============================================
+
+    -- 1. SUCURSALES
+    CREATE TABLE sucursales (
+        sucursal_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(100) NOT NULL,
+        rfc VARCHAR(20),
+        direccion VARCHAR(255),
+        telefono VARCHAR(20),
+        datos_ticket TEXT,
+        activo boolean DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+
+    -- 2. USUARIOS
+    CREATE TABLE usuarios (
+        usuario_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        sucursal_id INT UNSIGNED NOT NULL,
+        nombre_completo VARCHAR(100) NOT NULL,
+        telefono varchar(20),
+        domicilio varchar(150),
+        nombre_usuario varchar(25) not null unique,
+        contrasena VARCHAR(255) NOT NULL,
+        rol ENUM('Administrador', 'Inventario', 'Cajero', 'Inventario/Cajero') NOT NULL,
+        activo boolean DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id)
+    );
+
+    -- 3. CATEGORIAS Productos
+    CREATE TABLE categorias (
+        categoria_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+
+    -- 4. PROVEEDORES
+    CREATE TABLE proveedores (
+        proveedor_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(100) NOT NULL,
+        telefono VARCHAR(20),
+        correo VARCHAR(100),
+        direccion VARCHAR(255),
+        activo BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+
+    -- Tabla intermedia proveedor - categorias
+    CREATE TABLE proveedor_categorias (
+        proveedor_categoria_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        proveedor_id INT UNSIGNED NOT NULL,
+        categoria_id INT UNSIGNED NOT NULL,
+        FOREIGN KEY (proveedor_id) REFERENCES proveedores(proveedor_id),
+        FOREIGN KEY (categoria_id) REFERENCES categorias(categoria_id)
+    );
+
+    -- 5. PRODUCTOS
+    CREATE TABLE productos (
+        producto_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        sucursal_id INT UNSIGNED NOT NULL,
+        categoria_id INT UNSIGNED,
+        codigo VARCHAR(50) NOT NULL, UNIQUE (sucursal_id, codigo)
+        nombre_producto VARCHAR(150) NOT NULL,
+        descripcion TEXT,
+        precio_compra DECIMAL(10,2) NOT NULL DEFAULT 0,
+        precio_venta DECIMAL(10,2) NOT NULL DEFAULT 0,
+        precio_mayoreo DECIMAL(10,2) DEFAULT 0,
+        stock_actual DECIMAL(10,3) DEFAULT 0,
+        stock_minimo DECIMAL(10,3) DEFAULT 0,
+        stock_maximo DECIMAL(10,3) DEFAULT 0,
+        tipo_venta ENUM('Unidad', 'Suelto') DEFAULT 'Unidad',
+        activo boolean DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id),
+        FOREIGN KEY (categoria_id) REFERENCES categorias(categoria_id)
+    );
+
+    -- 6. PRODUCTO_PROVEEDOR
+    CREATE TABLE producto_proveedor (
+        producto_proveedor_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        producto_id INT UNSIGNED NOT NULL,
+        proveedor_id INT UNSIGNED NOT NULL,
+        codigo_proveedor VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
+        FOREIGN KEY (proveedor_id) REFERENCES proveedores(proveedor_id)
+    );
+
+    -- 7. PAQUETES
+    CREATE TABLE paquetes (
+        paquete_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        sucursal_id INT UNSIGNED NOT NULL,
+        nombre VARCHAR(150) NOT NULL,
+        descripcion TEXT,
+        precio_paquete DECIMAL(10,2) NOT NULL DEFAULT 0,
+        activo boolean DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        codigo VARCHAR(50) NOT NULL DEFAULT '' AFTER paquete_id,
+        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id)
+    );
+
+    -- Quitar sucursal_id de paquetes (ahora son globales)
+    ALTER TABLE paquetes DROP FOREIGN KEY paquetes_ibfk_1;
+    ALTER TABLE paquetes DROP COLUMN sucursal_id;
+
+    -- Agregar código único al paquete
+    ALTER TABLE paquetes ADD COLUMN codigo VARCHAR(50) NOT NULL DEFAULT '' AFTER paquete_id;
+    ALTER TABLE paquetes ADD UNIQUE KEY uk_paquete_codigo (codigo);
+
+    -- 8. PAQUETE_PRODUCTOS
+    CREATE TABLE paquete_productos (
+        paquete_productos_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        paquete_id INT UNSIGNED NOT NULL,
+        producto_id INT UNSIGNED NOT NULL,
+        cantidad DECIMAL(10,3) NOT NULL DEFAULT 1,
+        FOREIGN KEY (paquete_id) REFERENCES paquetes(paquete_id),
+        FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
+    );
+
+    -- 9. CLIENTES
+    CREATE TABLE clientes (
+        cliente_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre_completo VARCHAR(100) NOT NULL,
+        telefono VARCHAR(20),
+        direccion VARCHAR(255),
+        correo VARCHAR(100),
+        descuento_fijo DECIMAL(5,2) DEFAULT 0,
+        notas varchar(255),
+        activo boolean DEFAULT true,
+        credito_autorizado boolean default false,
+        limite_credito DECIMAL(10,2) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+
+    -- 10. CAJAS
+    CREATE TABLE cajas (
+        caja_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        sucursal_id INT UNSIGNED NOT NULL,
+        usuario_id INT UNSIGNED NOT NULL,
+        monto_apertura DECIMAL(10,2) NOT NULL DEFAULT 0,
+        monto_cierre DECIMAL(10,2) DEFAULT NULL,
+        monto_esperado DECIMAL(10,2) DEFAULT NULL,
+        diferencia DECIMAL(10,2) DEFAULT NULL,
+        observaciones TEXT,
+        estado ENUM('Abierta', 'Cerrada') DEFAULT 'Abierta',
+        abierta_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        cerrada_en TIMESTAMP NULL,
+        numero_turno INT UNSIGNED DEFAULT 1,
+        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+    );
+
+    -- 11. VENTAS
+    CREATE TABLE ventas (
+        venta_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        caja_id INT UNSIGNED NOT NULL,
+        cliente_id INT UNSIGNED,
+        usuario_id INT UNSIGNED NOT NULL,
+        subtotal DECIMAL(10,2) NOT NULL DEFAULT 0,
+        descuento DECIMAL(10,2) DEFAULT 0,
+        comision_terminal DECIMAL(10,2) DEFAULT 0,
+        total DECIMAL(10,2) NOT NULL DEFAULT 0,
+        metodo_pago ENUM('Efectivo', 'Terminal', 'Credito', 'Mixto') NOT NULL,
+        monto_efectivo DECIMAL(10,2) DEFAULT 0,
+        monto_terminal DECIMAL(10,2) DEFAULT 0,
+        cambio DECIMAL(10,2) DEFAULT 0,
+        estado ENUM('Completada', 'Cancelada', 'Pendiente') DEFAULT 'Completada',
+        notas TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (caja_id) REFERENCES cajas(caja_id),
+        FOREIGN KEY (cliente_id) REFERENCES clientes(cliente_id),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+    );
+
+    -- 12. VENTA_PRODUCTOS
+    CREATE TABLE venta_productos (
+        venta_productos_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        venta_id INT UNSIGNED NOT NULL,
+        producto_id INT UNSIGNED NOT NULL,
+        cantidad DECIMAL(10,3) NOT NULL,
+        precio_unitario DECIMAL(10,2) NOT NULL,
+        descuento DECIMAL(10,2) DEFAULT 0,
+        subtotal DECIMAL(10,2) NOT NULL,
+        FOREIGN KEY (venta_id) REFERENCES ventas(venta_id),
+        FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
+    );
+
+    -- 13. CREDITOS
+    CREATE TABLE creditos (
+        credito_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        cliente_id INT UNSIGNED NOT NULL,
+        venta_id INT UNSIGNED NOT NULL,
+        monto_total DECIMAL(10,2) NOT NULL,
+        saldo_pendiente DECIMAL(10,2) NOT NULL,
+        estado ENUM('Activo', 'Liquidado', 'Vencido') DEFAULT 'Activo',
+        fecha_limite DATE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (cliente_id) REFERENCES clientes(cliente_id),
+        FOREIGN KEY (venta_id) REFERENCES ventas(venta_id)
+    );
+
+    -- 14. ABONOS
+    CREATE TABLE abonos (
+        abono_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        credito_id INT UNSIGNED NOT NULL,
+        usuario_id INT UNSIGNED NOT NULL,
+        monto DECIMAL(10,2) NOT NULL,
+        metodo_pago ENUM('Efectivo', 'Terminal', 'Mixto') NOT NULL,
+        notas TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+    );
+
+    -- 15. MOVIMIENTOS_INVENTARIO
+    CREATE TABLE movimientos_inventario (
+        movimientos_inventario_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        producto_id INT UNSIGNED NOT NULL,
+        usuario_id INT UNSIGNED NOT NULL,
+        tipo ENUM('Entrada', 'Salida', 'Ajuste', 'Transferencia') NOT NULL,
+        cantidad DECIMAL(10,3) NOT NULL,
+        stock_anterior DECIMAL(10,3) NOT NULL,
+        stock_nuevo DECIMAL(10,3) NOT NULL,
+        motivo VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+    );
+
+    -- 16. TRANSFERENCIAS
+    CREATE TABLE transferencias (
+        transferencias_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        producto_id INT UNSIGNED NOT NULL,
+        sucursal_origen_id INT UNSIGNED NOT NULL,
+        sucursal_destino_id INT UNSIGNED NOT NULL,
+        usuario_solicita_id INT UNSIGNED NOT NULL,
+        usuario_aprueba_id INT UNSIGNED,
+        cantidad DECIMAL(10,3) NOT NULL,
+        estado ENUM('Pendiente', 'Aprobada', 'Rechazada', 'Entregada') DEFAULT 'Pendiente',
+        notas TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
+        FOREIGN KEY (sucursal_origen_id) REFERENCES sucursales(sucursal_id),
+        FOREIGN KEY (sucursal_destino_id) REFERENCES sucursales(sucursal_id),
+        FOREIGN KEY (usuario_solicita_id) REFERENCES usuarios(usuario_id),
+        FOREIGN KEY (usuario_aprueba_id) REFERENCES usuarios(usuario_id)
+    );
+
+    -- 17. COMPRAS_PROVEEDOR
+    CREATE TABLE compras_proveedor (
+        compras_proveedor_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        proveedor_id INT UNSIGNED NOT NULL,
+        usuario_id INT UNSIGNED NOT NULL,
+        sucursal_id INT UNSIGNED NOT NULL,
+        total DECIMAL(10,2) NOT NULL DEFAULT 0,
+        notas TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (proveedor_id) REFERENCES proveedores(proveedor_id),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id),
+        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id)
+    );
+
+    -- 19. COMPRA_PRODUCTOS
+    CREATE TABLE compra_productos (
+        compra_producto_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        compra_id INT UNSIGNED NOT NULL,
+        producto_id INT UNSIGNED NOT NULL,
+        cantidad DECIMAL(10,3) NOT NULL,
+        precio_unitario DECIMAL(10,2) NOT NULL,
+        subtotal DECIMAL(10,2) NOT NULL,
+        FOREIGN KEY (compra_id) REFERENCES compras_proveedor(compras_proveedor_id),
+        FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
+    );
+
+    -- ============================================
+    -- DATOS INICIALES
+    -- ============================================
+

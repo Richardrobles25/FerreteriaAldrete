@@ -96,63 +96,86 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
 </head>
 <body>
 <style>
+    :root {
+        --azul-principal: #14ace7;
+        --azul-profundo: #0899d3;
+        --aqua-suave: #b8f3f7;
+        --aqua-panel: #ecfdff;
+        --rojo-alerta: #ff1616;
+        --rojo-suave: #fff0f0;
+        --negro: #101010;
+        --gris-texto: #4b5563;
+        --gris-suave: #6b7280;
+        --borde: rgba(8, 153, 211, 0.14);
+        --blanco: #ffffff;
+        --sombra: 0 18px 40px rgba(9, 20, 37, 0.08);
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; display: flex; height: 100vh; overflow: hidden; }
-    .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
+    body {
+        font-family: Arial, sans-serif;
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+        color: var(--negro);
+        background:
+            radial-gradient(circle at top left, rgba(184, 243, 247, 0.95), transparent 28%),
+            linear-gradient(135deg, #f8feff 0%, #eafaff 40%, #fdfefe 100%);
+    }
+    .sidebar { width: 220px; background: linear-gradient(180deg, #ffffff 0%, #f1fcff 100%); border-right: 1px solid rgba(20, 172, 231, 0.18); box-shadow: 8px 0 24px rgba(20, 172, 231, 0.08); display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
-    .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
-    .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
+    .sidebar-header { padding: 18px 16px; border-bottom: 1px solid rgba(20, 172, 231, 0.15); background: linear-gradient(135deg, rgba(184, 243, 247, 0.75), rgba(20, 172, 231, 0.1)); }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: var(--azul-profundo); margin: 0; letter-spacing: 0.3px; }
+    .sidebar-header p { font-size: 11px; color: var(--gris-suave); margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
-    .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
-    .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
-    .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
-    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: var(--gris-texto); cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
+    .menu-item:hover { background: rgba(184, 243, 247, 0.4); color: var(--azul-profundo); }
+    .menu-item.active { background: linear-gradient(90deg, rgba(20, 172, 231, 0.16), rgba(184, 243, 247, 0.5)); border-left-color: var(--azul-principal); color: var(--azul-profundo); font-weight: 700; }
+    .divider { height: 1px; background: rgba(20, 172, 231, 0.12); margin: 6px 8px; }
+    .sidebar-footer { padding: 12px 16px; border-top: 1px solid rgba(20, 172, 231, 0.12); font-size: 11px; color: #94a3b8; white-space: nowrap; }
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: transparent; }
+    .topbar { background: linear-gradient(135deg, var(--azul-principal), var(--azul-profundo)); color: white; padding: 0 20px; height: 56px; box-shadow: 0 10px 24px rgba(20, 172, 231, 0.18); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
-    .toggle-btn:hover { background: rgba(255,255,255,0.2); }
+    .toggle-btn:hover { background: rgba(255,255,255,0.18); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
-    .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
-    .logout-btn:hover { background: rgba(255,255,255,0.3); }
+    .logout-btn { background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 999px; cursor: pointer; font-size: 12px; }
+    .logout-btn:hover { background: rgba(255,255,255,0.24); }
     .content { flex: 1; padding: 24px; overflow-y: auto; }
     .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: 14px; margin-bottom: 20px; }
-    .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #ff8c00; }
-    .stat p { font-size: 11px; color: #999; margin: 0 0 6px; text-transform: uppercase; }
-    .stat h3 { font-size: 22px; font-weight: 700; color: #222; margin: 0; }
-    .stat small { font-size: 11px; color: #ff8c00; }
+    .stat { background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(236,253,255,0.95)); border-radius: 16px; padding: 16px; border: 1px solid var(--borde); border-top: 4px solid var(--azul-principal); box-shadow: var(--sombra); }
+    .stat p { font-size: 11px; color: var(--gris-suave); margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat h3 { font-size: 22px; font-weight: 700; color: var(--negro); margin: 0; }
+    .stat small { font-size: 11px; color: var(--azul-profundo); }
     .alertas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-    .alerta { border-radius: 8px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
-    .alerta-roja { background: #fdecea; border: 1px solid #ffcdd2; color: #c0392b; }
-    .alerta-azul { background: #e3f2fd; border: 1px solid #bbdefb; color: #1565c0; }
-    .alerta-amarilla { background: #fff8e1; border: 1px solid #ffe082; color: #f57f17; }
+    .alerta { border-radius: 14px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; box-shadow: var(--sombra); }
+    .alerta-roja { background: linear-gradient(135deg, var(--rojo-suave), #ffffff); border: 1px solid rgba(255, 22, 22, 0.22); color: #b30f0f; }
+    .alerta-azul { background: linear-gradient(135deg, rgba(184, 243, 247, 0.9), rgba(20, 172, 231, 0.08)); border: 1px solid rgba(20, 172, 231, 0.22); color: var(--azul-profundo); }
+    .alerta-amarilla { background: linear-gradient(135deg, #fff8e8, #ffffff); border: 1px solid rgba(255, 185, 46, 0.35); color: #ad6b00; }
     .alerta a { font-weight: 700; text-decoration: none; color: inherit; }
     .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
-    .tabla { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
-    .tabla-header { padding: 14px 18px; border-bottom: 0.5px solid #eee; font-size: 14px; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center; }
-    .tabla-header a { font-size: 12px; color: #ff8c00; text-decoration: none; font-weight: 400; }
-    .tabla-row { padding: 10px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #555; display: flex; justify-content: space-between; align-items: center; }
+    .tabla { background: rgba(255,255,255,0.96); border-radius: 18px; border: 1px solid var(--borde); overflow: hidden; box-shadow: var(--sombra); backdrop-filter: blur(3px); }
+    .tabla-header { padding: 14px 18px; border-bottom: 1px solid rgba(20, 172, 231, 0.12); font-size: 14px; font-weight: 700; color: var(--negro); display: flex; justify-content: space-between; align-items: center; background: linear-gradient(135deg, rgba(184, 243, 247, 0.55), rgba(255,255,255,0.95)); }
+    .tabla-header a { font-size: 12px; color: var(--azul-profundo); text-decoration: none; font-weight: 600; }
+    .tabla-row { padding: 10px 18px; border-bottom: 1px solid rgba(20, 172, 231, 0.08); font-size: 13px; color: var(--gris-texto); display: flex; justify-content: space-between; align-items: center; }
     .tabla-row:last-child { border-bottom: none; }
-    .caja-activa { padding: 10px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; }
+    .caja-activa { padding: 10px 18px; border-bottom: 1px solid rgba(20, 172, 231, 0.08); font-size: 13px; }
     .caja-activa:last-child { border-bottom: none; }
-    .caja-nombre { font-weight: 600; color: #333; }
-    .caja-sub { font-size: 11px; color: #888; margin-top: 1px; }
+    .caja-nombre { font-weight: 600; color: var(--negro); }
+    .caja-sub { font-size: 11px; color: var(--gris-suave); margin-top: 1px; }
     .caja-monto { text-align: right; }
-    .caja-monto strong { font-size: 14px; font-weight: 700; color: #2e7d32; }
-    .caja-monto span { font-size: 11px; color: #aaa; display: block; }
-    .badge { display: inline-block; padding: 2px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; }
-    .badge-ef { background: #e8f5e9; color: #2e7d32; }
-    .badge-term { background: #e3f2fd; color: #1565c0; }
-    .badge-mix { background: #f3e5f5; color: #6a1b9a; }
-    .badge-cred { background: #fff3e0; color: #e65c00; }
-    .stock-bajo-item { padding: 9px 18px; border-bottom: 0.5px solid #f5f5f5; display: flex; justify-content: space-between; font-size: 12px; }
+    .caja-monto strong { font-size: 14px; font-weight: 700; color: var(--azul-profundo); }
+    .caja-monto span { font-size: 11px; color: #94a3b8; display: block; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+    .badge-ef { background: rgba(184, 243, 247, 0.65); color: #0b7ea8; }
+    .badge-term { background: rgba(20, 172, 231, 0.15); color: var(--azul-profundo); }
+    .badge-mix { background: rgba(16, 16, 16, 0.08); color: var(--negro); }
+    .badge-cred { background: rgba(255, 22, 22, 0.1); color: #b30f0f; }
+    .stock-bajo-item { padding: 9px 18px; border-bottom: 1px solid rgba(20, 172, 231, 0.08); display: flex; justify-content: space-between; font-size: 12px; }
     .stock-bajo-item:last-child { border-bottom: none; }
-    .sin-datos { padding: 20px; text-align: center; color: #aaa; font-size: 13px; }
-    .sucursal-row { padding: 10px 18px; border-bottom: 0.5px solid #f5f5f5; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .sin-datos { padding: 20px; text-align: center; color: #94a3b8; font-size: 13px; }
+    .sucursal-row { padding: 10px 18px; border-bottom: 1px solid rgba(20, 172, 231, 0.08); display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
     .sucursal-row:last-child { border-bottom: none; }
 </style>
 
@@ -215,7 +238,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             </div>
             <div class="stat">
                 <p>Cajas abiertas</p>
-                <h3 style="color:<?= count($cajasAbiertas)>0?'#2e7d32':'#aaa' ?>;"><?= count($cajasAbiertas) ?></h3>
+                <h3 style="color:<?= count($cajasAbiertas)>0?'#0899d3':'#94a3b8' ?>;"><?= count($cajasAbiertas) ?></h3>
                 <small>En este momento</small>
             </div>
             <div class="stat">
@@ -263,7 +286,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                             <div style="font-weight:600;"><?= htmlspecialchars($vs['nombre']) ?></div>
                             <div style="font-size:11px;color:#aaa;"><?= $vs['num_ventas'] ?> ventas</div>
                         </div>
-                        <strong style="color:#2e7d32;">$<?= number_format($vs['total'],2) ?></strong>
+                        <strong style="color:#0899d3;">$<?= number_format($vs['total'],2) ?></strong>
                     </div>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -345,7 +368,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                     </div>
                     <?php endforeach; ?>
                 <?php else: ?>
-                    <div class="sin-datos" style="color:#2e7d32;">Todo el inventario en buen estado</div>
+                    <div class="sin-datos" style="color:#0899d3;">Todo el inventario en buen estado</div>
                 <?php endif; ?>
             </div>
         </div>

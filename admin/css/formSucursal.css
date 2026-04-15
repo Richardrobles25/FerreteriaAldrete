@@ -22,7 +22,7 @@ body {
 .sidebar.collapsed { width: 0; }
 
 .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-.sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; }
+.sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; }
 .sidebar-header p { font-size: 11px; color: #999; margin-top: 4px; }
 
 .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
@@ -38,11 +38,11 @@ body {
     transition: all 0.15s;
     white-space: nowrap;
 }
-.menu-item:hover { background: #fff5e6; color: #ff8c00; }
+.menu-item:hover { background: #eef8ff; color: #14ace7; }
 .menu-item.active {
-    background: #fff5e6;
-    border-left-color: #ff8c00;
-    color: #ff8c00;
+    background: #eef8ff;
+    border-left-color: #14ace7;
+    color: #14ace7;
     font-weight: 600;
 }
 
@@ -65,7 +65,7 @@ body {
 
 /* 🔹 TOPBAR */
 .topbar {
-    background: #ff8c00;
+    background: #14ace7;
     color: white;
     padding: 0 20px;
     height: 52px;
@@ -121,7 +121,7 @@ body {
     color: #aaa;
     margin-bottom: 20px;
 }
-.breadcrumb a { color: #ff8c00; text-decoration: none; }
+.breadcrumb a { color: #14ace7; text-decoration: none; }
 .breadcrumb a:hover { text-decoration: underline; }
 
 /* 🔹 FORM */
@@ -178,7 +178,7 @@ body {
 .form-group input:focus,
 .form-group textarea:focus {
     outline: none;
-    border-color: #ff8c00;
+    border-color: #14ace7;
 }
 
 .form-group textarea {
@@ -210,7 +210,7 @@ body {
 }
 
 .btn-guardar {
-    background: #ff8c00;
+    background: #14ace7;
     color: white;
     border: none;
     padding: 10px 24px;
@@ -219,7 +219,7 @@ body {
     font-size: 14px;
     font-weight: 600;
 }
-.btn-guardar:hover { background: #e07800; }
+.btn-guardar:hover { background: #1196cb; }
 
 .btn-cancelar {
     background: white;

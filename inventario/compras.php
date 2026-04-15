@@ -114,16 +114,16 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -142,8 +142,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .filtro-group { display: flex; flex-direction: column; gap: 5px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
     .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #ff8c00; }
-    .btn-filtrar { background: #ff8c00; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
+    .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     table { width: 100%; border-collapse: collapse; }
     thead { background: #f9f9f9; }
@@ -152,26 +152,26 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #fafafa; }
     .btn-accion { padding: 5px 11px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-block; }
-    .btn-ver { background: #fff3e0; color: #e65c00; }
-    .btn-ver:hover { background: #ffe0b2; }
+    .btn-ver { background: #e3f2fd; color: #1565c0; }
+    .btn-ver:hover { background: #bbdefb; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; }
     .form-group { margin-bottom: 13px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 5px; font-weight: 600; }
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: Arial, sans-serif; }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #ff8c00; }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .agregar-row { display: flex; gap: 8px; margin-bottom: 13px; }
     .agregar-row select { flex: 2; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
     .agregar-row input { flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
-    .agregar-row input:focus, .agregar-row select:focus { outline: none; border-color: #ff8c00; }
-    .btn-agregar-prod { background: #ff8c00; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .agregar-row input:focus, .agregar-row select:focus { outline: none; border-color: #14ace7; }
+    .btn-agregar-prod { background: #14ace7; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
     .lista-compra { border: 0.5px solid #eee; border-radius: 6px; min-height: 60px; margin-bottom: 13px; overflow: hidden; }
     .compra-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; }
     .compra-item:last-child { border-bottom: none; }
     .compra-vacio { text-align: center; color: #aaa; font-size: 12px; padding: 20px; }
     .btn-quitar { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 16px; }
     .total-compra { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; color: #222; padding: 10px 0; border-top: 1px solid #eee; }
-    .btn-guardar { width: 100%; background: #ff8c00; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
-    .btn-guardar:hover { background: #e07800; }
+    .btn-guardar { width: 100%; background: #14ace7; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .btn-guardar:hover { background: #1196cb; }
     .detalle-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; }
     .detalle-modal { background: white; border-radius: 10px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; padding: 24px; }
     .detalle-modal h3 { font-size: 16px; font-weight: 600; margin: 0 0 16px; }

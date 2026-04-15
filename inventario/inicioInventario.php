@@ -76,16 +76,16 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -106,14 +106,14 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .notif-transf { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 12px 18px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #1565c0; }
     .notif-transf a { color: #1565c0; font-weight: 700; text-decoration: none; }
     .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: 14px; margin-bottom: 20px; }
-    .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #ff8c00; }
+    .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
     .stat h3 { font-size: 22px; font-weight: 700; color: #222; margin: 0; }
-    .stat small { font-size: 11px; color: #ff8c00; }
+    .stat small { font-size: 11px; color: #14ace7; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .tabla { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
     .tabla-header { padding: 14px 18px; border-bottom: 0.5px solid #eee; font-size: 14px; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center; }
-    .tabla-header a { font-size: 12px; color: #ff8c00; text-decoration: none; font-weight: 400; }
+    .tabla-header a { font-size: 12px; color: #14ace7; text-decoration: none; font-weight: 400; }
     .tabla-row { padding: 10px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #555; display: flex; justify-content: space-between; align-items: center; }
     .tabla-row:last-child { border-bottom: none; }
     .badge-tipo { display: inline-block; padding: 2px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; }
@@ -123,7 +123,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .tipo-transferencia { background: #f3e5f5; color: #6a1b9a; }
     .accesos { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 20px; }
     .acceso { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; text-decoration: none; display: flex; align-items: center; gap: 10px; transition: border-color 0.15s; }
-    .acceso:hover { border-color: #ff8c00; }
+    .acceso:hover { border-color: #14ace7; }
     .acceso-icon { font-size: 20px; }
     .acceso-label { font-size: 13px; font-weight: 600; color: #333; }
     .acceso-sub { font-size: 11px; color: #aaa; }
@@ -183,7 +183,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                     <span class="alerta-stock-val"><?= number_format($p['stock_actual'],2) ?></span>
                     <span class="alerta-minimo">mín: <?= number_format($p['stock_minimo'],2) ?></span>
                     <a href="entradas.php?producto_id=<?= $p['producto_id'] ?>"
-                       style="background:#ff8c00;color:white;font-size:11px;padding:2px 8px;border-radius:4px;text-decoration:none;margin-left:8px;">
+                       style="background:#14ace7;color:white;font-size:11px;padding:2px 8px;border-radius:4px;text-decoration:none;margin-left:8px;">
                        Entrada
                     </a>
                 </div>

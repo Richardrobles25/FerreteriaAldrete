@@ -69,16 +69,16 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -96,12 +96,12 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: Arial, sans-serif; }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #ff8c00; }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .stock-info { background: #fdecea; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #c0392b; margin-bottom: 14px; display: none; }
     .stock-info strong { color: #c0392b; }
     .motivos-rapidos { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
     .motivo-btn { background: #f0f0f0; border: none; padding: 5px 12px; border-radius: 99px; font-size: 12px; cursor: pointer; color: #555; }
-    .motivo-btn:hover { background: #ffe0b2; color: #e65c00; }
+    .motivo-btn:hover { background: #bbdefb; color: #1565c0; }
     .btn-guardar { background: #c0392b; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #a93226; }
     table { width: 100%; border-collapse: collapse; }

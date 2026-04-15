@@ -257,16 +257,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -280,15 +280,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .card h3 { font-size: 14px; font-weight: 600; color: #333; margin: 0 0 10px; }
     .busqueda-wrap { position: relative; }
     .busqueda-wrap input { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
-    .busqueda-wrap input:focus { outline: none; border-color: #ff8c00; }
+    .busqueda-wrap input:focus { outline: none; border-color: #14ace7; }
     .dropdown-resultados { display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e8e8e8; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100; max-height: 280px; overflow-y: auto; margin-top: 2px; }
     .dropdown-resultados.visible { display: block; }
     .resultado-item { padding: 10px 14px; cursor: pointer; border-bottom: 0.5px solid #f5f5f5; display: flex; justify-content: space-between; align-items: center; }
-    .resultado-item:hover { background: #fff5e6; }
+    .resultado-item:hover { background: #eef8ff; }
     .resultado-item:last-child { border-bottom: none; }
     .resultado-nombre { font-size: 13px; color: #333; font-weight: 600; }
     .resultado-codigo { font-size: 11px; color: #999; }
-    .resultado-precio { font-size: 13px; color: #ff8c00; font-weight: 700; }
+    .resultado-precio { font-size: 13px; color: #14ace7; font-weight: 700; }
     .stock-badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; font-weight: 600; }
     .stock-ok { background: #e8f5e9; color: #2e7d32; }
     .stock-bajo { background: #fdecea; color: #c0392b; }
@@ -305,22 +305,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .carrito-tabla td { padding: 8px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #444; vertical-align: middle; }
     .carrito-tabla tr:last-child td { border-bottom: none; }
     .qty-input { width: 65px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px; text-align: center; }
-    .qty-input:focus { outline: none; border-color: #ff8c00; }
+    .qty-input:focus { outline: none; border-color: #14ace7; }
     .btn-eliminar-item { background: #fdecea; color: #c0392b; border: none; padding: 4px 9px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; }
     .carrito-vacio { text-align: center; color: #aaa; padding: 24px; font-size: 13px; }
     .paq-row td { background: #fffde7 !important; }
-    .rec-paquetes { display: none; background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 12px 14px; }
-    .rec-titulo { font-size: 12px; font-weight: 700; color: #f57f17; margin-bottom: 8px; }
-    .rec-item { background: white; border-radius: 6px; padding: 10px; margin-bottom: 8px; border: 0.5px solid #ffe082; }
+    .rec-paquetes { display: none; background: #fff8e1; border: 1px solid #90caf9; border-radius: 8px; padding: 12px 14px; }
+    .rec-titulo { font-size: 12px; font-weight: 700; color: #1565c0; margin-bottom: 8px; }
+    .rec-item { background: white; border-radius: 6px; padding: 10px; margin-bottom: 8px; border: 0.5px solid #90caf9; }
     .rec-item:last-child { margin-bottom: 0; }
     .rec-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
     .rec-nombre { font-size: 13px; font-weight: 600; color: #333; }
-    .rec-precio { color: #ff8c00; font-weight: 700; font-size: 13px; }
+    .rec-precio { color: #14ace7; font-weight: 700; font-size: 13px; }
     .rec-barra-bg { height: 4px; background: #f0f0f0; border-radius: 99px; margin-bottom: 4px; }
     .rec-barra { height: 4px; border-radius: 99px; }
     .rec-desc { font-size: 11px; color: #888; margin-bottom: 7px; }
     .rec-btn { width: 100%; border: none; padding: 7px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; color: white; }
-    .cliente-seleccionado { display: none; background: #fff5e6; border: 1px solid #ffe0b2; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 8px; justify-content: space-between; align-items: center; }
+    .cliente-seleccionado { display: none; background: #eef8ff; border: 1px solid #bbdefb; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 8px; justify-content: space-between; align-items: center; }
     .btn-quitar-cliente { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 12px; font-weight: 600; }
     .panel-der { display: flex; flex-direction: column; gap: 10px; }
     .resumen { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 16px; }
@@ -331,15 +331,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .form-group-sm { margin-bottom: 10px; }
     .form-group-sm label { display: block; font-size: 11px; color: #888; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; }
     .form-group-sm input { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .form-group-sm input:focus { outline: none; border-color: #ff8c00; }
+    .form-group-sm input:focus { outline: none; border-color: #14ace7; }
     .metodos { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px; }
     .metodo-btn { padding: 8px; border: 2px solid #e8e8e8; border-radius: 6px; text-align: center; cursor: pointer; font-size: 13px; color: #555; background: white; transition: all 0.15s; }
-    .metodo-btn:hover { border-color: #ff8c00; color: #ff8c00; }
-    .metodo-btn.selected { border-color: #ff8c00; background: #fff5e6; color: #ff8c00; font-weight: 600; }
+    .metodo-btn:hover { border-color: #14ace7; color: #14ace7; }
+    .metodo-btn.selected { border-color: #14ace7; background: #eef8ff; color: #14ace7; font-weight: 600; }
     .campos-pago { display: none; }
     .campos-pago.visible { display: block; }
-    .btn-cobrar { width: 100%; background: #ff8c00; color: white; border: none; padding: 13px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 8px; }
-    .btn-cobrar:hover { background: #e07800; }
+    .btn-cobrar { width: 100%; background: #14ace7; color: white; border: none; padding: 13px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 8px; }
+    .btn-cobrar:hover { background: #1196cb; }
     .btn-cobrar:disabled { background: #ddd; cursor: not-allowed; }
     .btn-cancelar-venta { width: 100%; background: white; color: #888; border: 1px solid #ddd; padding: 9px; border-radius: 8px; font-size: 13px; cursor: pointer; margin-top: 6px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; padding: 12px 16px; border-radius: 6px; font-size: 13px; border-left: 3px solid #2e7d32; grid-column: span 2; display: flex; justify-content: space-between; align-items: center; }
@@ -353,13 +353,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .modal-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
     .modal-filtros { display: flex; gap: 10px; margin-bottom: 14px; }
     .modal-filtros input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .modal-filtros input:focus { outline: none; border-color: #ff8c00; }
+    .modal-filtros input:focus { outline: none; border-color: #14ace7; }
     .modal-filtros select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .inv-tabla { width: 100%; border-collapse: collapse; }
     .inv-tabla th { font-size: 11px; color: #888; text-transform: uppercase; padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
     .inv-tabla td { padding: 9px 10px; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
     .inv-tabla tr:last-child td { border-bottom: none; }
-    .btn-agregar-inv { background: #fff3e0; color: #e65c00; border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .btn-agregar-inv { background: #e3f2fd; color: #1565c0; border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .btn-agregar-inv:disabled { background: #f5f5f5; color: #aaa; cursor: not-allowed; }
     .sucursal-diferente { font-size: 11px; color: #1565c0; background: #e3f2fd; padding: 2px 7px; border-radius: 99px; margin-left: 5px; }
 
@@ -518,7 +518,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <div>
                         <strong id="clienteNombre"></strong>
                         <span id="clienteTelefono" style="font-size:12px;color:#999;margin-left:8px;"></span>
-                        <span id="clienteDescuento" style="font-size:12px;color:#ff8c00;margin-left:8px;"></span>
+                        <span id="clienteDescuento" style="font-size:12px;color:#14ace7;margin-left:8px;"></span>
                     </div>
                     <button class="btn-quitar-cliente" onclick="quitarCliente()">Quitar</button>
                 </div>
@@ -938,7 +938,7 @@ function verificarRecomendaciones() {
 
     divList.innerHTML = recs.map(rec => {
         const completo = rec.cubiertos === rec.total;
-        const color    = completo ? '#2e7d32' : '#ff8c00';
+        const color    = completo ? '#2e7d32' : '#14ace7';
         const paqData  = JSON.stringify(rec.paq).replace(/"/g, '&quot;');
         return `<div class="rec-item">
             <div class="rec-header">

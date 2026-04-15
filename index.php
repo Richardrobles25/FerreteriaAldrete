@@ -55,80 +55,147 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ferretería Aldrete</title>
     <style>
+        :root {
+            --azul-principal: #17b6f1;
+            --azul-profundo: #099ddb;
+            --rojo-marca: #ff1721;
+            --negro-marca: #2b2d33;
+            --gris-texto: #5b6670;
+            --gris-borde: #e5ebf1;
+            --gris-fondo: #f5f7fa;
+            --blanco: #ffffff;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: Arial, sans-serif;
-            background-color: #f0f0f0;
+            background-color: var(--gris-fondo);
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
+            padding: 24px;
         }
 
         .login-box {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            background: var(--blanco);
+            padding: 34px 34px 30px;
+            border-radius: 20px;
+            border: 1px solid var(--gris-borde);
+            box-shadow: 0 16px 40px rgba(43,45,51,0.08);
             width: 100%;
-            max-width: 380px;
+            max-width: 420px;
         }
 
-        h1 {
+        .brand {
             text-align: center;
-            margin-bottom: 30px;
-            color: #333;
-            font-size: 22px;
+            margin-bottom: 26px;
         }
+
+        .brand img {
+            width: 100%;
+            max-width: 250px;
+            height: auto;
+            display: block;
+            margin: 0 auto 14px;
+        }
+
+        .brand p {
+            color: var(--gris-texto);
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        h1 { display: none; }
+
+        .login-title {
+            text-align: center;
+            margin-bottom: 24px;
+            color: transparent;
+            font-size: 0;
+            font-weight: 800;
+        }
+
+        .login-title::before {
+            content: "Iniciar Sesión Ferremateriales ";
+            color: var(--negro-marca);
+            font-size: 24px;
+        }
+
+        .login-title::after {
+    content: "Aldrete";
+    color: var(--azul-principal);
+    font-size: 24px;
+    font-weight: 900;
+}
 
         label {
             display: block;
             margin-bottom: 6px;
-            color: #555;
-            font-size: 14px;
+            color: var(--negro-marca);
+            font-size: 13px;
+            font-weight: 700;
         }
 
         input {
             width: 100%;
-            padding: 10px 14px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
+            padding: 12px 14px;
+            border: 1px solid var(--gris-borde);
+            border-radius: 10px;
             font-size: 14px;
             margin-bottom: 20px;
+            color: var(--negro-marca);
+            background: #fbfdff;
         }
 
         input:focus {
             outline: none;
-            border-color: #e65c00;
+            border-color: var(--azul-principal);
+            box-shadow: 0 0 0 3px rgba(23,182,241,0.12);
+            background: var(--blanco);
         }
 
         button {
             width: 100%;
             padding: 12px;
-            background-color: #e65c00;
+            background-color: var(--azul-principal);
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: 10px;
             font-size: 15px;
             cursor: pointer;
+            font-weight: 700;
         }
 
-        button:hover { background-color: #cc5200; }
+        button:hover { background-color: var(--azul-profundo); }
 
         .error {
-            background: #fdecea;
-            color: #c0392b;
-            padding: 10px;
-            border-radius: 6px;
+            background: #fff4f4;
+            color: #c53030;
+            border: 1px solid rgba(255,23,33,0.15);
+            padding: 10px 12px;
+            border-radius: 10px;
             font-size: 13px;
             margin-bottom: 16px;
             text-align: center;
+        }
+
+        .hint {
+            margin-top: 16px;
+            text-align: center;
+            color: var(--gris-texto);
+            font-size: 12px;
         }
     </style>
 </head>
 <body>
     <div class="login-box">
+        <div class="brand">
+            <div class="login-title">Iniciar sesión /Ferremateriales Aldrete</div>
+            <img src="/logo.jpeg" alt="Logo Ferremateriales Aldrete">
+        </div>
+        
         <h1>Ferretería Aldrete</h1>
 
         <?php if ($error): ?>
@@ -154,6 +221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <button type="submit">Iniciar sesión</button>
         </form>
+        <div class="hint">Ferremateriales Aldrete</div>
     </div>
 </body>
 </html>

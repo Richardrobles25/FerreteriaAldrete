@@ -126,16 +126,16 @@ if ($editando && $editando['categoria_id']) {
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -155,7 +155,7 @@ if ($editando && $editando['categoria_id']) {
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; color: #333; font-family: Arial, sans-serif; }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #ff8c00; }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .form-group textarea { min-height: 70px; resize: vertical; }
     .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -168,11 +168,11 @@ if ($editando && $editando['categoria_id']) {
     .autocomplete-dropdown.visible { display: block; }
     .ac-item { padding: 10px 14px; cursor: pointer; font-size: 13px; color: #333; border-bottom: 0.5px solid #f5f5f5; transition: background 0.1s; }
     .ac-item:last-child { border-bottom: none; }
-    .ac-item:hover, .ac-item.highlighted { background: #fff5e6; color: #ff8c00; }
-    .ac-item strong { color: #ff8c00; }
+    .ac-item:hover, .ac-item.highlighted { background: #eef8ff; color: #14ace7; }
+    .ac-item strong { color: #14ace7; }
     .ac-empty { padding: 12px 14px; font-size: 13px; color: #aaa; text-align: center; }
-    .ac-tag { display: inline-flex; align-items: center; gap: 6px; background: #fff3e0; color: #e65c00; font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 99px; margin-top: 6px; }
-    .ac-tag button { background: none; border: none; color: #e65c00; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; }
+    .ac-tag { display: inline-flex; align-items: center; gap: 6px; background: #e3f2fd; color: #1565c0; font-size: 13px; font-weight: 600; padding: 5px 12px; border-radius: 99px; margin-top: 6px; }
+    .ac-tag button { background: none; border: none; color: #1565c0; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; }
     .ac-tag.cat-tag { background: #e3f2fd; color: #1565c0; }
     .ac-tag.cat-tag button { color: #1565c0; }
 
@@ -185,7 +185,7 @@ if ($editando && $editando['categoria_id']) {
     .tipo-venta-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .tipo-btn { border: 2px solid #eee; border-radius: 8px; padding: 12px; cursor: pointer; text-align: center; transition: all 0.15s; }
     .tipo-btn:hover { border-color: #ffcc80; }
-    .tipo-btn.selected { border-color: #ff8c00; background: #fff5e6; }
+    .tipo-btn.selected { border-color: #14ace7; background: #eef8ff; }
     .tipo-btn input { display: none; }
     .tipo-btn-titulo { font-size: 13px; font-weight: 700; color: #333; }
     .tipo-btn-desc { font-size: 11px; color: #888; margin-top: 2px; }
@@ -197,15 +197,15 @@ if ($editando && $editando['categoria_id']) {
     .btn-quitar-prov { background: #fdecea; color: #c0392b; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; }
     .prov-row-campos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .prov-row-campos input { padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; width: 100%; }
-    .prov-row-campos input:focus { outline: none; border-color: #ff8c00; }
+    .prov-row-campos input:focus { outline: none; border-color: #14ace7; }
     .prov-tag-nombre { font-size: 13px; font-weight: 600; color: #333; }
     .btn-agregar-prov { background: #f0f0f0; color: #555; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-agregar-prov:hover { background: #e0e0e0; }
 
     /* ── Acciones ── */
     .acciones-form { display: flex; gap: 10px; }
-    .btn-guardar { flex: 1; background: #ff8c00; color: white; border: none; padding: 13px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
-    .btn-guardar:hover { background: #e07800; }
+    .btn-guardar { flex: 1; background: #14ace7; color: white; border: none; padding: 13px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar { background: white; color: #666; border: 1px solid #ddd; padding: 13px 22px; border-radius: 6px; font-size: 14px; cursor: pointer; text-decoration: none; display: flex; align-items: center; }
     .btn-cancelar:hover { background: #f5f5f5; }
 </style>

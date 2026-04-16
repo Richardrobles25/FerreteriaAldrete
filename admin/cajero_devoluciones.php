@@ -32,7 +32,7 @@ if (isset($_GET['buscar_venta'])) {
     exit();
 }
 
-// Procesar devoluciÃ³n
+// Procesar devolución
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $venta_id      = intval($_POST['venta_id'] ?? 0);
     $productos_dev = json_decode($_POST['productos_devolver'] ?? '[]', true);
@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$motivo)                $errores[] = 'El motivo es obligatorio.';
 
     if (empty($errores)) {
-        // Verificar si la venta era a crÃ©dito
+        // Verificar si la venta era a crédito
         $stmtV = $pdo->prepare("SELECT metodo_pago, cliente_id FROM ventas WHERE venta_id = ?");
         $stmtV->execute([$venta_id]);
         $ventaInfo = $stmtV->fetch(PDO::FETCH_ASSOC);
@@ -62,10 +62,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $producto_id]);
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,?,?,?)")
-                ->execute([$producto_id, $_SESSION['usuario_id'], $cantidad, $stockAnterior, $stockNuevo, 'DevoluciÃ³n: '.$motivo]);
+                ->execute([$producto_id, $_SESSION['usuario_id'], $cantidad, $stockAnterior, $stockNuevo, 'Devolución: '.$motivo]);
         }
 
-        // Si era crÃ©dito, actualizar el crÃ©dito
+        // Si era crédito, actualizar el crédito
         if ($ventaInfo['metodo_pago'] === 'Credito' && $ventaInfo['cliente_id']) {
             $totalDevuelto = array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_unitario'], $productos_dev));
             $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente FROM creditos WHERE venta_id = ? AND estado = 'Activo'");
@@ -90,7 +90,7 @@ $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    WHERE m.motivo LIKE 'DevoluciÃ³n:%' AND p.sucursal_id = ?
+    WHERE m.motivo LIKE 'Devolución:%' AND p.sucursal_id = ?
     ORDER BY m.created_at DESC LIMIT 20
 ");
 $stmt->execute([$_SESSION['sucursal_id']]);
@@ -101,7 +101,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Devoluciones â€” FerreterÃ­a Aldrete</title>
+    <title>Devoluciones — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -168,8 +168,8 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2>Devoluciones</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -177,17 +177,17 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <!-- Formulario -->
         <div>
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito'): ?>
-                <div class="msg msg-exito">DevoluciÃ³n registrada y stock actualizado.</div>
+                <div class="msg msg-exito">Devolución registrada y stock actualizado.</div>
             <?php endif; ?>
             <?php if (!empty($errores)): ?>
                 <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
             <?php endif; ?>
 
             <div class="card">
-                <h3>Registrar devoluciÃ³n</h3>
+                <h3>Registrar devolución</h3>
 
                 <div class="form-group">
-                    <label>Buscar venta por nÃºmero</label>
+                    <label>Buscar venta por número</label>
                     <div class="buscar-row">
                         <input type="number" id="inputVentaId" placeholder="Ej. 1042" min="1">
                         <button class="btn-buscar" onclick="buscarVenta()">Buscar</button>
@@ -209,12 +209,12 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <input type="hidden" name="productos_devolver" id="inputProdsDev">
 
                     <div class="form-group" id="motivoGroup" style="display:none;">
-                        <label>Motivo de devoluciÃ³n *</label>
+                        <label>Motivo de devolución *</label>
                         <input type="text" name="motivo" placeholder="Ej. Producto defectuoso, talla incorrecta...">
                     </div>
 
                     <button type="submit" class="btn-devolver" id="btnDevolver" style="display:none;" onclick="return prepararDevolucion()">
-                        Registrar devoluciÃ³n
+                        Registrar devolución
                     </button>
                 </form>
             </div>
@@ -239,7 +239,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($h['codigo']) ?></div>
                             </td>
                             <td style="color:#2e7d32;font-weight:700;">+<?= number_format($h['cantidad'],2) ?></td>
-                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars(str_replace('DevoluciÃ³n: ','',$h['motivo'])) ?></td>
+                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars(str_replace('Devolución: ','',$h['motivo'])) ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($h['created_at'])) ?></td>
                         </tr>
                         <?php endforeach; ?>
@@ -264,11 +264,11 @@ function buscarVenta() {
     fetch(`cajero_devoluciones.php?buscar_venta=${id}`)
         .then(r => r.json())
         .then(data => {
-            if (!data) { alert('Venta no encontrada o no estÃ¡ completada.'); return; }
+            if (!data) { alert('Venta no encontrada o no está completada.'); return; }
             ventaActual = data;
-            document.getElementById('ventaCliente').textContent = data.cliente || 'PÃºblico general';
+            document.getElementById('ventaCliente').textContent = data.cliente || 'Público general';
             document.getElementById('ventaFecha').textContent = 'Venta #'+data.venta_id;
-            document.getElementById('ventaTotal').textContent = 'Total: $'+parseFloat(data.total).toFixed(2)+' Â· '+data.metodo_pago;
+            document.getElementById('ventaTotal').textContent = 'Total: $'+parseFloat(data.total).toFixed(2)+' · '+data.metodo_pago;
             document.getElementById('ventaInfo').classList.add('visible');
             document.getElementById('inputVentaIdHidden').value = data.venta_id;
 

@@ -53,7 +53,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cortes de Caja â€” FerreterÃ­a Aldrete</title>
+    <title>Cortes de Caja — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -117,8 +117,8 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
             <h2>Cortes de Caja</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -198,7 +198,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
                                     <?= $dif==0?'Cuadrado':($dif<0?'-$'.number_format(abs($dif),2):'+$'.number_format($dif,2)) ?>
                                 </span>
                             <?php else: ?>
-                                <span style="color:#aaa;">â€”</span>
+                                <span style="color:#aaa;">—</span>
                             <?php endif; ?>
                         </td>
                         <td>

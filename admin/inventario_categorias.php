@@ -6,7 +6,7 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
-// Eliminar categorÃ­a
+// Eliminar categoría
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
     // Verificar que no tenga productos asociados
@@ -22,7 +22,7 @@ if (isset($_GET['eliminar'])) {
     exit();
 }
 
-// Guardar categorÃ­a (crear o editar)
+// Guardar categoría (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nombre = trim($_POST['nombre'] ?? '');
     $id     = intval($_POST['categoria_id'] ?? 0);
@@ -50,7 +50,7 @@ if ($busqueda) {
 }
 $categorias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// CategorÃ­a a editar
+// Categoría a editar
 $editando = null;
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM categorias WHERE categoria_id = ?");
@@ -63,7 +63,7 @@ if (isset($_GET['editar'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CategorÃ­as â€” FerreterÃ­a Aldrete</title>
+    <title>Categorías — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -132,12 +132,12 @@ if (isset($_GET['editar'])) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>CategorÃ­as</h2>
+            <h2>Categorías</h2>
         </div>
         <div class="topbar-right">
             <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -147,19 +147,19 @@ if (isset($_GET['editar'])) {
         <div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php if ($_GET['msg'] === 'creado'): ?>
-                    <div class="msg msg-exito">CategorÃ­a creada correctamente.</div>
+                    <div class="msg msg-exito">Categoría creada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'editado'): ?>
-                    <div class="msg msg-exito">CategorÃ­a actualizada correctamente.</div>
+                    <div class="msg msg-exito">Categoría actualizada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'eliminado'): ?>
-                    <div class="msg msg-exito">CategorÃ­a eliminada correctamente.</div>
+                    <div class="msg msg-exito">Categoría eliminada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
-                    <div class="msg msg-error">No puedes eliminar esta categorÃ­a porque tiene productos asociados.</div>
+                    <div class="msg msg-error">No puedes eliminar esta categoría porque tiene productos asociados.</div>
                 <?php endif; ?>
             <?php endif; ?>
 
             <form method="GET" action="inventario_categorias.php">
                 <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar categorÃ­a..." value="<?= htmlspecialchars($busqueda) ?>">
+                    <input type="text" name="buscar" placeholder="Buscar categoría..." value="<?= htmlspecialchars($busqueda) ?>">
                     <button class="btn-buscar" type="submit">Buscar</button>
                     <?php if ($busqueda): ?>
                         <a class="btn-limpiar" href="inventario_categorias.php">Limpiar</a>
@@ -187,7 +187,7 @@ if (isset($_GET['editar'])) {
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="inventario_categorias.php?editar=<?= $c['categoria_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="inventario_categorias.php?eliminar=<?= $c['categoria_id'] ?>" onclick="return confirm('Â¿Eliminar esta categorÃ­a?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="inventario_categorias.php?eliminar=<?= $c['categoria_id'] ?>" onclick="return confirm('¿Eliminar esta categoría?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -195,7 +195,7 @@ if (isset($_GET['editar'])) {
                     </tbody>
                 </table>
                 <?php else: ?>
-                    <div class="sin-resultados">No hay categorÃ­as registradas.</div>
+                    <div class="sin-resultados">No hay categorías registradas.</div>
                 <?php endif; ?>
             </div>
         </div>
@@ -203,15 +203,15 @@ if (isset($_GET['editar'])) {
         <!-- Formulario lateral -->
         <div>
             <div class="card">
-                <h3><?= $editando ? 'Editar categorÃ­a' : 'Nueva categorÃ­a' ?></h3>
+                <h3><?= $editando ? 'Editar categoría' : 'Nueva categoría' ?></h3>
                 <form method="POST">
                     <input type="hidden" name="categoria_id" value="<?= $editando['categoria_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>
-                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Ej. PlomerÃ­a" autofocus>
+                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Ej. Plomería" autofocus>
                     </div>
                     <button class="btn-guardar" type="submit">
-                        <?= $editando ? 'Guardar cambios' : 'Agregar categorÃ­a' ?>
+                        <?= $editando ? 'Guardar cambios' : 'Agregar categoría' ?>
                     </button>
                     <?php if ($editando): ?>
                         <a class="btn-cancelar-edit" href="inventario_categorias.php">Cancelar</a>

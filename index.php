@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FerreterÃ­a Aldrete</title>
+    <title>Ferremateriales Aldrete</title>
     <style>
         :root {
             --azul-principal: #17b6f1;
@@ -118,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .login-title::before {
-            content: "Iniciar SesiÃ³n Ferremateriales ";
+            content: "Iniciar Sesión Ferremateriales ";
             color: var(--negro-marca);
             font-size: 24px;
         }
@@ -192,11 +192,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="login-box">
         <div class="brand">
-            <div class="login-title">Iniciar sesiÃ³n /Ferremateriales Aldrete</div>
+            <div class="login-title">Iniciar sesión /Ferremateriales Aldrete</div>
             <img src="/logo.jpeg" alt="Logo Ferremateriales Aldrete">
         </div>
         
-        <h1>FerreterÃ­a Aldrete</h1>
+        <h1>Ferremateriales Aldrete</h1>
 
         <?php if ($error): ?>
             <div class="error"><?= htmlspecialchars($error) ?></div>
@@ -212,14 +212,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 autofocus
             >
 
-            <label>ContraseÃ±a</label>
+            <label>Contraseña</label>
             <input 
                 type="password" 
                 name="contrasena"
-                placeholder="Ingresa tu contraseÃ±a"
+                placeholder="Ingresa tu contraseña"
             >
 
-            <button type="submit">Iniciar sesiÃ³n</button>
+            <button type="submit">Iniciar sesión</button>
         </form>
         <div class="hint">Ferremateriales Aldrete</div>
     </div>

@@ -61,7 +61,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Salidas y Mermas â€” FerreterÃ­a Aldrete</title>
+    <title>Salidas y Mermas — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -122,8 +122,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2>Salidas y mermas</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -146,7 +146,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <option value="">-- Selecciona un producto --</option>
                             <?php foreach ($productos as $p): ?>
                                 <option value="<?= $p['producto_id'] ?>" data-stock="<?= $p['stock_actual'] ?>">
-                                    <?= htmlspecialchars($p['codigo'].' â€” '.$p['nombre_producto']) ?> (Stock: <?= number_format($p['stock_actual'],2) ?>)
+                                    <?= htmlspecialchars($p['codigo'].' — '.$p['nombre_producto']) ?> (Stock: <?= number_format($p['stock_actual'],2) ?>)
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -164,10 +164,10 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-group">
                         <label>Motivo *</label>
                         <div class="motivos-rapidos">
-                            <button type="button" class="motivo-btn" onclick="setMotivo('Merma por daÃ±o')">DaÃ±o</button>
+                            <button type="button" class="motivo-btn" onclick="setMotivo('Merma por daño')">Daño</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Producto vencido')">Vencido</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Error de inventario')">Error inventario</button>
-                            <button type="button" class="motivo-btn" onclick="setMotivo('Robo o extravÃ­o')">Robo/ExtravÃ­o</button>
+                            <button type="button" class="motivo-btn" onclick="setMotivo('Robo o extravío')">Robo/Extravío</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Muestra o regalo')">Muestra</button>
                         </div>
                         <input type="text" name="motivo" id="inputMotivo" placeholder="Describe el motivo de la salida...">
@@ -198,7 +198,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td style="color:#c0392b;font-weight:700;">-<?= number_format($h['cantidad'],2) ?></td>
                             <td><?= number_format($h['stock_anterior'],2) ?></td>
                             <td><?= number_format($h['stock_nuevo'],2) ?></td>
-                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'â€”') ?></td>
+                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'—') ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($h['created_at'])) ?></td>
                         </tr>
                         <?php endforeach; ?>

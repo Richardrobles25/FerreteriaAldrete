@@ -45,7 +45,7 @@ if (isset($_GET['editar'])) {
     }
 }
 
-// CÃ³digo sugerido
+// Código sugerido
 $stmtUltimo     = $pdo->query("SELECT COALESCE(MAX(paquete_id),0)+1 FROM paquetes");
 $siguienteId    = intval($stmtUltimo->fetchColumn());
 $codigoSugerido = 'PAQ'.str_pad($siguienteId, 4, '0', STR_PAD_LEFT);
@@ -59,14 +59,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $paquete_id     = intval($_POST['paquete_id'] ?? 0);
 
     if (!$nombre)             $errores[] = 'El nombre es obligatorio.';
-    if (!$codigo)             $errores[] = 'El cÃ³digo es obligatorio.';
+    if (!$codigo)             $errores[] = 'El código es obligatorio.';
     if ($precio_paquete <= 0) $errores[] = 'El precio debe ser mayor a 0.';
     if (empty($items))        $errores[] = 'Agrega al menos un producto.';
 
     if ($codigo) {
         $stmtCheck = $pdo->prepare("SELECT paquete_id FROM paquetes WHERE codigo = ? AND paquete_id != ?");
         $stmtCheck->execute([$codigo, $paquete_id]);
-        if ($stmtCheck->fetch()) $errores[] = 'El cÃ³digo ya existe en otro paquete.';
+        if ($stmtCheck->fetch()) $errores[] = 'El código ya existe en otro paquete.';
     }
 
     if (empty($errores)) {
@@ -107,7 +107,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paquetes â€” FerreterÃ­a Aldrete</title>
+    <title>Paquetes — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -201,8 +201,8 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
             <h2>Paquetes de productos</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -251,7 +251,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                                 <div class="paquete-precios">
                                     Sin paquete: $<?= number_format($precioSeparado,2) ?>
                                     <?php if ($ahorro > 0): ?>
-                                        Â· <span class="ahorro-label">Ahorro: $<?= number_format($ahorro,2) ?></span>
+                                        · <span class="ahorro-label">Ahorro: $<?= number_format($ahorro,2) ?></span>
                                     <?php endif; ?>
                                 </div>
                             <?php endif; ?>
@@ -260,7 +260,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                     </div>
                     <div class="paquete-prods">
                         <?php foreach ($prods as $pr): ?>
-                            <span class="prod-tag"><?= htmlspecialchars($pr['nombre_producto']) ?> Ã— <?= number_format($pr['cantidad'],2) ?></span>
+                            <span class="prod-tag"><?= htmlspecialchars($pr['nombre_producto']) ?> × <?= number_format($pr['cantidad'],2) ?></span>
                         <?php endforeach; ?>
                         <?php if (empty($prods)): ?>
                             <span style="font-size:11px;color:#aaa;">Sin productos asignados</span>
@@ -270,12 +270,12 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                         <a class="btn-accion btn-editar" href="inventario_paquetes.php?editar=<?= $paq['paquete_id'] ?>">Editar</a>
                         <a class="btn-accion <?= $paq['activo']?'btn-desactivar':'btn-activar' ?>"
                            href="inventario_paquetes.php?toggle=<?= $paq['paquete_id'] ?>"
-                           onclick="return confirm('Â¿Confirmar cambio?')">
+                           onclick="return confirm('¿Confirmar cambio?')">
                             <?= $paq['activo']?'Desactivar':'Activar' ?>
                         </a>
                         <a class="btn-accion btn-eliminar"
                            href="inventario_paquetes.php?eliminar=<?= $paq['paquete_id'] ?>"
-                           onclick="return confirm('Â¿Eliminar este paquete?')">Eliminar</a>
+                           onclick="return confirm('¿Eliminar este paquete?')">Eliminar</a>
                     </div>
                 </div>
                 <?php endforeach; ?>
@@ -297,7 +297,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                     <input type="hidden" name="items_paquete" id="inputItemsPaquete">
 
                     <div class="form-group">
-                        <label>CÃ³digo Ãºnico *</label>
+                        <label>Código único *</label>
                         <div class="codigo-row">
                             <input type="text" name="codigo" id="inputCodigo"
                                 value="<?= htmlspecialchars($editando['codigo'] ?? $codigoSugerido) ?>"
@@ -312,15 +312,15 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                         <label>Nombre del paquete *</label>
                         <input type="text" name="nombre" id="inputNombre"
                             value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>"
-                            placeholder="Ej. Kit instalaciÃ³n elÃ©ctrica"
+                            placeholder="Ej. Kit instalación eléctrica"
                             oninput="sugerirCodigo(this.value)">
                     </div>
 
                     <div class="form-group">
-                        <label>DescripciÃ³n</label>
+                        <label>Descripción</label>
                         <input type="text" name="descripcion"
                             value="<?= htmlspecialchars($editando['descripcion'] ?? '') ?>"
-                            placeholder="DescripciÃ³n breve (opcional)">
+                            placeholder="Descripción breve (opcional)">
                     </div>
 
                     <div class="form-group">
@@ -358,7 +358,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                         <?= $editando ? 'Guardar cambios' : 'Crear paquete global' ?>
                     </button>
                     <?php if ($editando): ?>
-                        <a class="btn-cancelar-edit" href="inventario_paquetes.php">Cancelar ediciÃ³n</a>
+                        <a class="btn-cancelar-edit" href="inventario_paquetes.php">Cancelar edición</a>
                     <?php endif; ?>
                 </form>
             </div>
@@ -428,9 +428,9 @@ function renderListaPaq() {
         <div class="paq-item">
             <div class="paq-item-info">
                 <div class="paq-item-nombre">${esc(item.nombre)}</div>
-                <div class="paq-item-sub">Ã— ${item.cantidad} Â· $${(item.cantidad * item.precio).toFixed(2)} precio normal</div>
+                <div class="paq-item-sub">× ${item.cantidad} · $${(item.cantidad * item.precio).toFixed(2)} precio normal</div>
             </div>
-            <button class="btn-quitar-paq" type="button" onclick="quitarProdPaq(${idx})">Ã—</button>
+            <button class="btn-quitar-paq" type="button" onclick="quitarProdPaq(${idx})">×</button>
         </div>`).join('');
 }
 
@@ -449,10 +449,10 @@ function actualizarHintAhorro() {
     const ahorro = totalSeparado - precioPaq;
     if (ahorro > 0.01) {
         hint.className = 'precio-hint con-ahorro';
-        hint.textContent = `âœ… Precio individual: $${totalSeparado.toFixed(2)} Â· Ahorro: $${ahorro.toFixed(2)}`;
+        hint.textContent = `✅ Precio individual: $${totalSeparado.toFixed(2)} · Ahorro: $${ahorro.toFixed(2)}`;
     } else {
         hint.className = 'precio-hint sin-ahorro';
-        hint.textContent = `âš  Precio individual: $${totalSeparado.toFixed(2)} â€” revisa el precio del paquete`;
+        hint.textContent = `⚠ Precio individual: $${totalSeparado.toFixed(2)} — revisa el precio del paquete`;
     }
 }
 

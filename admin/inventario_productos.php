@@ -32,7 +32,7 @@ if (isset($_GET['exportar'])) {
     $sheet->setTitle('Productos');
 
     // Encabezados
-    $headers = ['CÃ³digo','Nombre','CategorÃ­a','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mÃ­nimo','Stock mÃ¡ximo','Tipo venta','DescripciÃ³n'];
+    $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción'];
     foreach ($headers as $i => $h) {
         $sheet->setCellValueByColumnAndRow($i+1, 1, $h);
         $sheet->getStyleByColumnAndRow($i+1, 1)->getFont()->setBold(true);
@@ -100,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $tipo_venta     = trim($row[9] ?? 'Unidad');
                 $descripcion    = trim($row[10] ?? '');
 
-                // Buscar categorÃ­a por nombre
+                // Buscar categoría por nombre
                 $categoria_id = null;
                 if (!empty($row[2])) {
                     $stmtCat = $pdo->prepare("SELECT categoria_id FROM categorias WHERE nombre = ? LIMIT 1");
@@ -109,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     if ($cat) $categoria_id = $cat;
                 }
 
-                // Verificar si el cÃ³digo ya existe
+                // Verificar si el código ya existe
                 $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ?");
                 $check->execute([$codigo, $_SESSION['sucursal_id']]);
 
@@ -140,13 +140,13 @@ if (isset($_GET['plantilla'])) {
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Plantilla');
-    $headers = ['CÃ³digo*','Nombre*','CategorÃ­a','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mÃ­nimo','Stock mÃ¡ximo','Tipo venta (Unidad/Suelto)','DescripciÃ³n'];
+    $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción'];
     foreach ($headers as $i => $h) {
         $sheet->setCellValueByColumnAndRow($i+1, 1, $h);
         $sheet->getStyleByColumnAndRow($i+1, 1)->getFont()->setBold(true);
     }
     // Fila de ejemplo
-    $ejemplo = ['PROD001','Ejemplo producto','HerrerÃ­a','50','100','80','10','5','100','Unidad','DescripciÃ³n opcional'];
+    $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional'];
     foreach ($ejemplo as $i => $v) {
         $sheet->setCellValueByColumnAndRow($i+1, 2, $v);
     }
@@ -195,7 +195,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Productos â€” FerreterÃ­a Aldrete</title>
+    <title>Productos — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -288,10 +288,10 @@ $totalStockBajo = $stmtBajo->fetchColumn();
         <div class="topbar-right">
             <span>
                 <?= htmlspecialchars($_SESSION['nombre_completo']) ?>
-                <span style="opacity:0.75;font-size:12px;margin-left:6px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span>
+                <span style="opacity:0.75;font-size:12px;margin-left:6px;">— <?= htmlspecialchars($nombreSucursal) ?></span>
             </span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -307,7 +307,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
             </div>
         </div>
 
-        <!-- Panel de importaciÃ³n -->
+        <!-- Panel de importación -->
         <div class="import-card" id="importCard">
             <h3>Importar productos desde Excel</h3>
             <?php if (!empty($erroresImport)): ?>
@@ -322,7 +322,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                     <button class="btn-subir" type="submit">Importar</button>
                 </div>
                 <p style="font-size:12px;color:#aaa;margin-top:8px;">
-                    Usa la plantilla para asegurarte del formato correcto. Los productos existentes (mismo cÃ³digo) se actualizarÃ¡n.
+                    Usa la plantilla para asegurarte del formato correcto. Los productos existentes (mismo código) se actualizarán.
                 </p>
             </form>
         </div>
@@ -342,10 +342,10 @@ $totalStockBajo = $stmtBajo->fetchColumn();
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" placeholder="Nombre o cÃ³digo..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;">
+                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;">
                 </div>
                 <div class="filtro-group">
-                    <label>CategorÃ­a</label>
+                    <label>Categoría</label>
                     <select name="categoria">
                         <option value="">Todas</option>
                         <?php foreach ($categorias as $cat): ?>
@@ -371,9 +371,9 @@ $totalStockBajo = $stmtBajo->fetchColumn();
             <table>
                 <thead>
                     <tr>
-                        <th>CÃ³digo</th>
+                        <th>Código</th>
                         <th>Nombre</th>
-                        <th>CategorÃ­a</th>
+                        <th>Categoría</th>
                         <th>Tipo</th>
                         <th>Stock</th>
                         <th>P. Venta</th>
@@ -390,10 +390,10 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                         <td>
                             <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
                             <?php if ($esStockBajo): ?>
-                                <span style="font-size:11px;color:#c0392b;margin-left:5px;">âš  Stock bajo</span>
+                                <span style="font-size:11px;color:#c0392b;margin-left:5px;">⚠ Stock bajo</span>
                             <?php endif; ?>
                         </td>
-                        <td><?= htmlspecialchars($p['nombre_categoria']??'â€”') ?></td>
+                        <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
                         <td>
                             <span class="badge-tipo <?= $p['tipo_venta']==='Unidad'?'tipo-unidad':'tipo-suelto' ?>">
                                 <?= $p['tipo_venta'] ?>
@@ -401,7 +401,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                         </td>
                         <td class="<?= $esStockBajo?'stock-alerta':'stock-ok' ?>">
                             <?= number_format($p['stock_actual'],2) ?>
-                            <span style="font-size:11px;color:#aaa;">/ mÃ­n <?= number_format($p['stock_minimo'],2) ?></span>
+                            <span style="font-size:11px;color:#aaa;">/ mín <?= number_format($p['stock_minimo'],2) ?></span>
                         </td>
                         <td>$<?= number_format($p['precio_venta'],2) ?></td>
                         <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
@@ -409,7 +409,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                             <div class="acciones">
                                 <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?>">Editar</a>
                                 <a class="btn-accion btn-entrada" href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
-                                <a class="btn-accion btn-eliminar" href="inventario_productos.php?eliminar=<?= $p['producto_id'] ?>" onclick="return confirm('Â¿Eliminar este producto?')">Eliminar</a>
+                                <a class="btn-accion btn-eliminar" href="inventario_productos.php?eliminar=<?= $p['producto_id'] ?>" onclick="return confirm('¿Eliminar este producto?')">Eliminar</a>
                             </div>
                         </td>
                     </tr>

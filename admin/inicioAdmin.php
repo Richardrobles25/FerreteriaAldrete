@@ -7,7 +7,7 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-// Ventas de hoy Ã¢â‚¬â€ todas las sucursales
+// Ventas de hoy - todas las sucursales
 $stmtHoy = $pdo->query("
     SELECT
         COUNT(*) AS ventas_hoy,
@@ -57,7 +57,7 @@ $stmtStock = $pdo->query("
 ");
 $stockBajo = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
 
-// CrÃƒÂ©ditos vencidos
+// Créditos vencidos
 $stmtCred = $pdo->query("
     SELECT COUNT(*) AS vencidos,
            COALESCE(SUM(saldo_pendiente),0) AS monto_vencido
@@ -65,7 +65,7 @@ $stmtCred = $pdo->query("
 ");
 $creditosVencidos = $stmtCred->fetch(PDO::FETCH_ASSOC);
 
-// CrÃƒÂ©ditos activos totales
+// Créditos activos totales
 $stmtCredAct = $pdo->query("SELECT COUNT(*), COALESCE(SUM(saldo_pendiente),0) FROM creditos WHERE estado='Activo'");
 [$credActivos, $montoActivo] = $stmtCredAct->fetch(PDO::FETCH_NUM);
 
@@ -73,7 +73,7 @@ $stmtCredAct = $pdo->query("SELECT COUNT(*), COALESCE(SUM(saldo_pendiente),0) FR
 $stmtTransf = $pdo->query("SELECT COUNT(*) FROM transferencias WHERE estado = 'Pendiente'");
 $transfPend = $stmtTransf->fetchColumn();
 
-// ÃƒÂºltimas ventas globales
+// Ultimas ventas globales
 $stmtUltVentas = $pdo->query("
     SELECT v.venta_id, v.total, v.metodo_pago, v.created_at,
            cl.nombre_completo AS cliente, s.nombre AS sucursal, u.nombre_completo AS cajero
@@ -93,7 +93,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Ã¢â‚¬â€ FerreterÃƒÂ­a Aldrete</title>
+    <title>Admin — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -166,8 +166,8 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <h2>Panel Administrador</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">Ã¢â‚¬â€ <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃƒÂ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">- <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -198,7 +198,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                 <small>En este momento</small>
             </div>
             <div class="stat">
-                <p>CrÃƒÂ©ditos activos</p>
+                <p>Créditos activos</p>
                 <h3><?= $credActivos ?></h3>
                 <small>$<?= number_format($montoActivo,0) ?> pendiente</small>
             </div>
@@ -209,19 +209,19 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
         <div class="alertas">
             <?php if (count($stockBajo) > 0): ?>
             <div class="alerta alerta-roja">
-                <span>Ã¢Å¡Â  <strong><?= count($stockBajo) ?></strong> producto(s) con stock bajo</span>
+                <span>⚠ <strong><?= count($stockBajo) ?></strong> producto(s) con stock bajo</span>
                 <a href="../inventario/productos.php?stock_bajo=1">Ver</a>
             </div>
             <?php endif; ?>
             <?php if ($creditosVencidos['vencidos'] > 0): ?>
             <div class="alerta alerta-amarilla">
-                <span>Ã°Å¸â€™Â³ <strong><?= $creditosVencidos['vencidos'] ?></strong> crÃƒÂ©dito(s) vencido(s) Ã‚Â· $<?= number_format($creditosVencidos['monto_vencido'],0) ?></span>
+                <span>💳 <strong><?= $creditosVencidos['vencidos'] ?></strong> crédito(s) vencido(s) - $<?= number_format($creditosVencidos['monto_vencido'],0) ?></span>
                 <a href="creditos.php?estado=Vencido">Ver</a>
             </div>
             <?php endif; ?>
             <?php if ($transfPend > 0): ?>
             <div class="alerta alerta-azul">
-                <span>Ã°Å¸â€œÂ¦ <strong><?= $transfPend ?></strong> transferencia(s) pendiente(s) de aprobar</span>
+                <span>📦 <strong><?= $transfPend ?></strong> transferencia(s) pendiente(s) de aprobar</span>
                 <a href="../inventario/transferencias.php">Ver</a>
             </div>
             <?php endif; ?>
@@ -232,7 +232,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <!-- Ventas por sucursal hoy -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Ventas por sucursal Ã¢â‚¬â€ hoy</span>
+                    <span>Ventas por sucursal - hoy</span>
                     <a href="reporteVentas.php">Ver reporte</a>
                 </div>
                 <?php if (count($ventasSucursal) > 0): ?>
@@ -263,7 +263,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                             <div>
                                 <div class="caja-nombre"><?= htmlspecialchars($ca['nombre_completo']) ?></div>
                                 <div class="caja-sub">
-                                    <?= htmlspecialchars($ca['sucursal']) ?> Ã‚Â· Turno #<?= $ca['numero_turno'] ?> Ã‚Â· desde <?= date('H:i', strtotime($ca['abierta_en'])) ?>
+                                    <?= htmlspecialchars($ca['sucursal']) ?> - Turno #<?= $ca['numero_turno'] ?> - desde <?= date('H:i', strtotime($ca['abierta_en'])) ?>
                                 </div>
                             </div>
                             <div class="caja-monto">
@@ -280,18 +280,18 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <div class="grid-2">
-            <!-- ÃƒÂºltimas ventas globales -->
+            <!-- Ultimas ventas globales -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>ÃƒÂºltimas ventas</span>
+                    <span>Ultimas ventas</span>
                     <a href="reporteVentas.php">Ver todas</a>
                 </div>
                 <?php if (count($ultimasVentas) > 0): ?>
                     <?php foreach ($ultimasVentas as $v): ?>
                     <div class="tabla-row">
                         <div>
-                            <div style="font-size:13px;"><?= htmlspecialchars($v['cliente']??'PÃƒÂºblico general') ?></div>
-                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($v['sucursal']) ?> Ã‚Â· <?= date('H:i', strtotime($v['created_at'])) ?></div>
+                            <div style="font-size:13px;"><?= htmlspecialchars($v['cliente']??'Público general') ?></div>
+                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($v['sucursal']) ?> - <?= date('H:i', strtotime($v['created_at'])) ?></div>
                         </div>
                         <div style="text-align:right;">
                             <span class="badge badge-<?= strtolower(substr($v['metodo_pago'],0,2))==='ef'?'ef':(strtolower(substr($v['metodo_pago'],0,2))==='te'?'term':(strtolower(substr($v['metodo_pago'],0,2))==='mi'?'mix':'cred')) ?>"><?= $v['metodo_pago'] ?></span>
@@ -307,7 +307,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <!-- Stock bajo global -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Stock bajo Ã¢â‚¬â€ todas las sucursales</span>
+                    <span>Stock bajo - todas las sucursales</span>
                     <a href="../inventario/productos.php?stock_bajo=1">Ver todo</a>
                 </div>
                 <?php if (count($stockBajo) > 0): ?>
@@ -319,7 +319,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                         <div style="text-align:right;">
                             <span style="color:#c0392b;font-weight:700;"><?= number_format($p['stock_actual'],2) ?></span>
-                            <span style="color:#aaa;font-size:11px;"> / mÃƒÂ­n <?= number_format($p['stock_minimo'],2) ?></span>
+                            <span style="color:#aaa;font-size:11px;"> / min <?= number_format($p['stock_minimo'],2) ?></span>
                         </div>
                     </div>
                     <?php endforeach; ?>

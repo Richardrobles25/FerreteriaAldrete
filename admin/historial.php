@@ -54,7 +54,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historial de Movimientos â€” FerreterÃ­a Aldrete</title>
+    <title>Historial de Movimientos — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -118,8 +118,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <h2>Historial de Movimientos</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -185,7 +185,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         </td>
                         <td><?= number_format($m['stock_anterior'],3) ?></td>
                         <td><?= number_format($m['stock_nuevo'],3) ?></td>
-                        <td style="font-size:12px;color:#888;"><?= htmlspecialchars($m['motivo']??'â€”') ?></td>
+                        <td style="font-size:12px;color:#888;"><?= htmlspecialchars($m['motivo']??'—') ?></td>
                         <td style="font-size:12px;"><?= htmlspecialchars($m['usuario']) ?></td>
                         <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($m['created_at'])) ?></td>
                     </tr>

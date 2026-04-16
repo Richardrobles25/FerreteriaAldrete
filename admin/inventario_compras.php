@@ -106,7 +106,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Compras a Proveedor â€” FerreterÃ­a Aldrete</title>
+    <title>Compras a Proveedor — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -189,8 +189,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2>Compras a proveedor</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -230,7 +230,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td style="font-weight:700;color:#2e7d32;">$<?= number_format($c['total'],2) ?></td>
                             <td style="font-size:12px;"><?= htmlspecialchars($c['usuario']) ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($c['created_at'])) ?></td>
-                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($c['notas']??'â€”') ?></td>
+                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($c['notas']??'—') ?></td>
                             <td><a class="btn-accion btn-ver" href="inventario_compras.php?ver=<?= $c['compras_proveedor_id'] ?>">Ver</a></td>
                         </tr>
                         <?php endforeach; ?>
@@ -375,11 +375,11 @@ function renderListaCompra() {
         return `<div class="compra-item">
             <div>
                 <div style="font-size:13px;">${i.nombre}</div>
-                <div style="font-size:11px;color:#aaa;">${i.cantidad} Ã— $${i.precio_unitario.toFixed(2)}</div>
+                <div style="font-size:11px;color:#aaa;">${i.cantidad} × $${i.precio_unitario.toFixed(2)}</div>
             </div>
             <div style="display:flex;align-items:center;gap:10px;">
                 <span style="font-weight:700;">$${sub.toFixed(2)}</span>
-                <button class="btn-quitar" onclick="quitarProdCompra(${idx})">Ã—</button>
+                <button class="btn-quitar" onclick="quitarProdCompra(${idx})">×</button>
             </div>
         </div>`;
     }).join('');

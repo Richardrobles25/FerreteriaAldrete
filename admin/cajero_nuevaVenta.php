@@ -23,7 +23,7 @@ $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
 $stmtSuc->execute([$_SESSION['sucursal_id']]);
 $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
-// â”€â”€ AJAX: paquetes activos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AJAX: paquetes activos ───────────────────────────────────────────────────
 if (isset($_GET['get_paquetes'])) {
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
@@ -59,7 +59,7 @@ if (isset($_GET['get_paquetes'])) {
     exit();
 }
 
-// â”€â”€ AJAX: buscar paquete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AJAX: buscar paquete ─────────────────────────────────────────────────────
 if (isset($_GET['buscar_paquete'])) {
     $termino = trim($_GET['buscar_paquete']);
     $stmt = $pdo->prepare("
@@ -102,7 +102,7 @@ if (isset($_GET['buscar_paquete'])) {
     exit();
 }
 
-// â”€â”€ AJAX: buscar producto â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AJAX: buscar producto ────────────────────────────────────────────────────
 if (isset($_GET['buscar_producto'])) {
     $termino     = trim($_GET['buscar_producto']);
     $sucursal_id = intval($_GET['sucursal_id'] ?? $_SESSION['sucursal_id']);
@@ -120,7 +120,7 @@ if (isset($_GET['buscar_producto'])) {
     exit();
 }
 
-// â”€â”€ AJAX: buscar producto por cÃ³digo exacto (scanner) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AJAX: buscar producto por código exacto (scanner) ───────────────────────
 if (isset($_GET['scan_codigo'])) {
     $codigo      = trim($_GET['scan_codigo']);
     $sucursal_id = $_SESSION['sucursal_id'];
@@ -138,7 +138,7 @@ if (isset($_GET['scan_codigo'])) {
     exit();
 }
 
-// â”€â”€ AJAX: inventario por sucursal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AJAX: inventario por sucursal ────────────────────────────────────────────
 if (isset($_GET['inventario_sucursal'])) {
     $sucursal_id = intval($_GET['inventario_sucursal']);
     $buscar      = trim($_GET['buscar_inv'] ?? '');
@@ -152,7 +152,7 @@ if (isset($_GET['inventario_sucursal'])) {
     exit();
 }
 
-// â”€â”€ AJAX: buscar cliente â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AJAX: buscar cliente ─────────────────────────────────────────────────────
 if (isset($_GET['buscar_cliente'])) {
     $termino = trim($_GET['buscar_cliente']);
     $stmt = $pdo->prepare("
@@ -168,7 +168,7 @@ if (isset($_GET['buscar_cliente'])) {
     exit();
 }
 
-// â”€â”€ AJAX: obtener detalle de venta para ticket â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── AJAX: obtener detalle de venta para ticket ───────────────────────────────
 if (isset($_GET['ticket_venta'])) {
     $venta_id = intval($_GET['ticket_venta']);
     $stmtV = $pdo->prepare("
@@ -194,7 +194,7 @@ if (isset($_GET['ticket_venta'])) {
     exit();
 }
 
-// â”€â”€ Procesar venta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Procesar venta ───────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $items             = json_decode($_POST['items'], true);
     $cliente_id        = intval($_POST['cliente_id'] ?? 0) ?: null;
@@ -249,7 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nueva Venta â€” FerreterÃ­a Aldrete</title>
+    <title>Nueva Venta — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -364,7 +364,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .btn-agregar-inv:disabled { background: #f5f5f5; color: #aaa; cursor: not-allowed; }
     .sucursal-diferente { font-size: 11px; color: #1565c0; background: #e3f2fd; padding: 2px 7px; border-radius: 99px; margin-left: 5px; }
 
-    /* â”€â”€ Ticket de impresiÃ³n â”€â”€ */
+    /* ── Ticket de impresión ── */
     @media print {
         body > * { display: none !important; }
         #ticketImprimir { display: block !important; }
@@ -384,7 +384,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     #ticketImprimir .t-grande { font-size: 15px; font-weight: bold; }
 </style>
 
-<!-- Ticket oculto para impresiÃ³n -->
+<!-- Ticket oculto para impresión -->
 <div id="ticketImprimir"></div>
 
 <?php renderAdminSidebar('cajero_nueva_venta'); ?>
@@ -393,15 +393,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Nueva Venta â€” Turno #<?= $caja['numero_turno'] ?></h2>
+            <h2>Nueva Venta — Turno #<?= $caja['numero_turno'] ?></h2>
         </div>
         <div class="topbar-right">
             <span>
                 <?= htmlspecialchars($_SESSION['nombre_completo']) ?>
-                <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span>
+                <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span>
             </span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -411,7 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             <div class="msg-exito">
                 <span>Venta registrada correctamente. <a href="cajero_nuevaVenta.php" style="color:#2e7d32;font-weight:600;">Nueva venta</a></span>
                 <button class="btn-print-ticket" onclick="imprimirTicket(<?= intval($_GET['venta_id'] ?? 0) ?>)">
-                    ðŸ–¨ Imprimir ticket
+                    🖨 Imprimir ticket
                 </button>
             </div>
         <?php endif; ?>
@@ -425,7 +425,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                         <button type="button" id="btnModoScanner"
                             class="btn-scan-mode"
                             onclick="toggleModoScanner()">
-                            ðŸ“· Scanner
+                            📷 Scanner
                         </button>
                         <button type="button" onclick="abrirInventario()"
                             style="background:#e3f2fd;color:#1565c0;border:none;padding:5px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;">
@@ -434,11 +434,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     </div>
                 </div>
 
-                <!-- BÃºsqueda normal -->
+                <!-- Búsqueda normal -->
                 <div id="modoNormal">
                     <div class="busqueda-wrap">
                         <input type="text" id="inputProducto"
-                            placeholder="Escribe cÃ³digo o nombre del producto..."
+                            placeholder="Escribe código o nombre del producto..."
                             autocomplete="off">
                         <div class="dropdown-resultados" id="dropdownProductos"></div>
                     </div>
@@ -448,13 +448,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 <div id="modoScanner" style="display:none;">
                     <div class="scanner-row">
                         <input type="text" id="inputScanner"
-                            placeholder="Escanea el cÃ³digo de barras..."
+                            placeholder="Escanea el código de barras..."
                             autocomplete="off"
                             autofocus>
                         <span class="scan-feedback" id="scanFeedback"></span>
                     </div>
                     <div style="font-size:11px;color:#aaa;">
-                        El campo se limpia automÃ¡ticamente despuÃ©s de cada scan. Presiona Enter o escanea para agregar.
+                        El campo se limpia automáticamente después de cada scan. Presiona Enter o escanea para agregar.
                     </div>
                 </div>
             </div>
@@ -462,7 +462,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             <!-- Carrito -->
             <div class="card" style="flex:1;">
                 <h3>Carrito</h3>
-                <div class="carrito-vacio" id="carritoVacio">El carrito estÃ¡ vacÃ­o</div>
+                <div class="carrito-vacio" id="carritoVacio">El carrito está vacío</div>
                 <table class="carrito-tabla" id="carritoTabla" style="display:none;">
                     <thead>
                         <tr>
@@ -477,9 +477,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <tbody id="carritoBody"></tbody>
                 </table>
 
-                <!-- RecomendaciÃ³n paquetes -->
+                <!-- Recomendación paquetes -->
                 <div class="rec-paquetes" id="recPaquetes" style="margin-top:10px;">
-                    <div class="rec-titulo">ðŸ“¦ Paquetes disponibles con estos productos</div>
+                    <div class="rec-titulo">📦 Paquetes disponibles con estos productos</div>
                     <div id="recLista"></div>
                 </div>
             </div>
@@ -510,17 +510,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 <h3>Resumen</h3>
                 <div class="resumen-fila"><span>Subtotal</span><span id="resSubtotal">$0.00</span></div>
                 <div class="resumen-fila"><span>Descuento</span><span id="resDescuento" style="color:#2e7d32;">-$0.00</span></div>
-                <div class="resumen-fila"><span>ComisiÃ³n terminal</span><span id="resComision">$0.00</span></div>
+                <div class="resumen-fila"><span>Comisión terminal</span><span id="resComision">$0.00</span></div>
                 <div class="resumen-fila total"><span>Total</span><span id="resTotal">$0.00</span></div>
 
                 <div style="margin-top:14px;">
                     <div class="form-group-sm">
-                        <label>MÃ©todo de pago</label>
+                        <label>Método de pago</label>
                         <div class="metodos">
                             <button type="button" class="metodo-btn" onclick="seleccionarMetodo('Efectivo',this)">Efectivo</button>
                             <button type="button" class="metodo-btn" onclick="seleccionarMetodo('Terminal',this)">Terminal</button>
                             <button type="button" class="metodo-btn" onclick="seleccionarMetodo('Mixto',this)">Mixto</button>
-                            <button type="button" class="metodo-btn" id="btnCredito" onclick="seleccionarMetodo('Credito',this)" style="display:none;">CrÃ©dito</button>
+                            <button type="button" class="metodo-btn" id="btnCredito" onclick="seleccionarMetodo('Credito',this)" style="display:none;">Crédito</button>
                         </div>
                     </div>
 
@@ -534,7 +534,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
                     <div class="campos-pago" id="camposTerminal">
                         <div class="form-group-sm">
-                            <label>ComisiÃ³n terminal (%)</label>
+                            <label>Comisión terminal (%)</label>
                             <input type="number" id="porcComision" placeholder="0" step="0.1" value="0" oninput="recalcularTodo()">
                         </div>
                     </div>
@@ -549,7 +549,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                             <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" oninput="calcularMixto()">
                         </div>
                         <div class="form-group-sm">
-                            <label>ComisiÃ³n terminal (%)</label>
+                            <label>Comisión terminal (%)</label>
                             <input type="number" id="mixtoComision" placeholder="0" step="0.1" value="0" oninput="calcularMixto()">
                         </div>
                     </div>
@@ -603,7 +603,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 </div>
 
 <script>
-// â”€â”€ Estado global â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Estado global ────────────────────────────────────────────────────────────
 let carrito          = [];
 let clienteActual    = null;
 let metodoPago       = null;
@@ -613,7 +613,7 @@ let scannerTimer      = null;
 
 const miSucursalId = <?= intval($_SESSION['sucursal_id']) ?>;
 const datosTicket  = <?= json_encode([
-    'nombre'       => $sucursalTicket['nombre'] ?? 'FerreterÃ­a Aldrete',
+    'nombre'       => $sucursalTicket['nombre'] ?? 'Ferretería Aldrete',
     'rfc'          => $sucursalTicket['rfc'] ?? '',
     'direccion'    => $sucursalTicket['direccion'] ?? '',
     'telefono'     => $sucursalTicket['telefono'] ?? '',
@@ -623,7 +623,7 @@ const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
-// â”€â”€ Cargar paquetes al iniciar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Cargar paquetes al iniciar ───────────────────────────────────────────────
 fetch('cajero_nuevaVenta.php?get_paquetes=1')
     .then(r => r.json())
     .then(data => {
@@ -640,7 +640,7 @@ fetch('cajero_nuevaVenta.php?get_paquetes=1')
     })
     .catch(() => {});
 
-// â”€â”€ Modo scanner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Modo scanner ─────────────────────────────────────────────────────────────
 function toggleModoScanner() {
     modoScannerActivo = !modoScannerActivo;
     document.getElementById('modoNormal').style.display  = modoScannerActivo ? 'none' : 'block';
@@ -651,7 +651,7 @@ function toggleModoScanner() {
     }
 }
 
-// Scanner: detecta Enter (mayorÃ­a de lectores envÃ­an Enter al final)
+// Scanner: detecta Enter (mayoría de lectores envían Enter al final)
 document.getElementById('inputScanner').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {
         e.preventDefault();
@@ -662,12 +662,12 @@ document.getElementById('inputScanner').addEventListener('keydown', function(e) 
     }
 });
 
-// Scanner: tambiÃ©n detecta cuando deja de recibir input (lectura rÃ¡pida del scanner)
+// Scanner: también detecta cuando deja de recibir input (lectura rápida del scanner)
 document.getElementById('inputScanner').addEventListener('input', function() {
     clearTimeout(scannerTimer);
     const val = this.value.trim();
     if (!val) return;
-    // Si el input recibe muchos caracteres muy rÃ¡pido (scanner fÃ­sico), procesar automÃ¡ticamente
+    // Si el input recibe muchos caracteres muy rápido (scanner físico), procesar automáticamente
     scannerTimer = setTimeout(() => {
         if (document.getElementById('inputScanner').value.trim().length > 3) {
             procesarScan(document.getElementById('inputScanner').value.trim());
@@ -680,36 +680,36 @@ function procesarScan(codigo) {
     const feedback = document.getElementById('scanFeedback');
     feedback.style.display = 'inline';
     feedback.className     = 'scan-feedback';
-    feedback.textContent   = 'â³ Buscando...';
+    feedback.textContent   = '⏳ Buscando...';
 
     fetch(`cajero_nuevaVenta.php?scan_codigo=${encodeURIComponent(codigo)}`)
         .then(r => r.json())
         .then(prod => {
             if (!prod) {
                 feedback.className   = 'scan-feedback scan-err';
-                feedback.textContent = `âŒ No encontrado: ${codigo}`;
+                feedback.textContent = `❌ No encontrado: ${codigo}`;
                 setTimeout(() => { feedback.style.display = 'none'; }, 2000);
                 return;
             }
             if (prod.stock_actual <= 0) {
                 feedback.className   = 'scan-feedback scan-err';
-                feedback.textContent = `âŒ Sin stock: ${prod.nombre_producto}`;
+                feedback.textContent = `❌ Sin stock: ${prod.nombre_producto}`;
                 setTimeout(() => { feedback.style.display = 'none'; }, 2000);
                 return;
             }
             agregarProducto(prod.producto_id, prod.nombre_producto, prod.precio_venta, prod.stock_actual, prod.tipo_venta);
             feedback.className   = 'scan-feedback scan-ok';
-            feedback.textContent = `âœ… ${prod.nombre_producto}`;
+            feedback.textContent = `✅ ${prod.nombre_producto}`;
             setTimeout(() => { feedback.style.display = 'none'; }, 1500);
         })
         .catch(() => {
             feedback.className   = 'scan-feedback scan-err';
-            feedback.textContent = 'âŒ Error de conexiÃ³n';
+            feedback.textContent = '❌ Error de conexión';
             setTimeout(() => { feedback.style.display = 'none'; }, 2000);
         });
 }
 
-// â”€â”€ BÃºsqueda manual de productos + paquetes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Búsqueda manual de productos + paquetes ──────────────────────────────────
 let toProd;
 document.getElementById('inputProducto').addEventListener('input', function() {
     clearTimeout(toProd);
@@ -735,8 +735,8 @@ function mostrarResultadosCombinados(productos, paquetes) {
                 ? `agregarPaquete(${JSON.stringify(paq).replace(/"/g,"'")})`
                 : 'alert(\"Stock insuficiente\")'}" >
             <div>
-                <div class="resultado-nombre">ðŸ“¦ ${esc(paq.nombre)}</div>
-                <div class="resultado-codigo">${esc(paq.codigo)} Â· ${paq.productos.length} productos</div>
+                <div class="resultado-nombre">📦 ${esc(paq.nombre)}</div>
+                <div class="resultado-codigo">${esc(paq.codigo)} · ${paq.productos.length} productos</div>
             </div>
             <div style="text-align:right;">
                 <div class="resultado-precio">$${parseFloat(paq.precio_paquete).toFixed(2)}</div>
@@ -766,7 +766,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
     drop.classList.add('visible');
 }
 
-// â”€â”€ Agregar producto â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Agregar producto ─────────────────────────────────────────────────────────
 function agregarProducto(id, nombre, precio, stock, tipo) {
     id    = parseInt(id);
     stock = parseFloat(stock);
@@ -774,7 +774,7 @@ function agregarProducto(id, nombre, precio, stock, tipo) {
     const existe = carrito.find(i => i.producto_id === id);
     if (existe) {
         if (existe.cantidad < stock) existe.cantidad++;
-        else { alert(`Stock mÃ¡ximo: ${stock}`); return; }
+        else { alert(`Stock máximo: ${stock}`); return; }
     } else {
         carrito.push({ producto_id: id, nombre, precio: parseFloat(precio), cantidad: 1, stock, tipo });
     }
@@ -785,7 +785,7 @@ function agregarProducto(id, nombre, precio, stock, tipo) {
     verificarRecomendaciones();
 }
 
-// â”€â”€ Agregar paquete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Agregar paquete ──────────────────────────────────────────────────────────
 function agregarPaquete(paq) {
     if (typeof paq === 'string') {
         try { paq = JSON.parse(paq.replace(/'/g, '"')); } catch(e) { return; }
@@ -795,7 +795,7 @@ function agregarPaquete(paq) {
     carrito.push({
         producto_id:       null,
         paquete_id:        parseInt(paq.paquete_id),
-        nombre:            'ðŸ“¦ ' + paq.nombre,
+        nombre:            '📦 ' + paq.nombre,
         precio:            parseFloat(paq.precio_paquete),
         cantidad:          1,
         stock:             99,
@@ -813,7 +813,7 @@ function agregarPaquete(paq) {
     verificarRecomendaciones();
 }
 
-// â”€â”€ Render carrito â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Render carrito ───────────────────────────────────────────────────────────
 function renderCarrito() {
     const body  = document.getElementById('carritoBody');
     const tabla = document.getElementById('carritoTabla');
@@ -825,7 +825,7 @@ function renderCarrito() {
 
     body.innerHTML = carrito.map((item, i) => {
         if (item.tipo === 'paquete') {
-            const subNames = item.productos_paquete.map(p => `${p.nombre_producto}Ã—${p.cantidad_requerida}`).join(', ');
+            const subNames = item.productos_paquete.map(p => `${p.nombre_producto}×${p.cantidad_requerida}`).join(', ');
             return `<tr class="paq-row">
                 <td>
                     <strong>${esc(item.nombre)}</strong>
@@ -833,7 +833,7 @@ function renderCarrito() {
                 </td>
                 <td>$${item.precio.toFixed(2)}</td>
                 <td><input class="qty-input" type="number" value="1" min="1" max="1" disabled style="width:55px;"></td>
-                <td>â€”</td>
+                <td>—</td>
                 <td>$${item.precio.toFixed(2)}</td>
                 <td><button class="btn-eliminar-item" onclick="eliminarItem(${i})">Quitar</button></td>
             </tr>`;
@@ -856,7 +856,7 @@ function renderCarrito() {
 function cambiarCantidad(i, val) {
     const qty = parseInt(val);
     if (qty < 1) carrito[i].cantidad = 1;
-    else if (qty > carrito[i].stock) { alert(`Stock mÃ¡ximo: ${carrito[i].stock}`); carrito[i].cantidad = carrito[i].stock; }
+    else if (qty > carrito[i].stock) { alert(`Stock máximo: ${carrito[i].stock}`); carrito[i].cantidad = carrito[i].stock; }
     else carrito[i].cantidad = qty;
     renderCarrito(); recalcularTodo();
 }
@@ -868,7 +868,7 @@ function eliminarItem(i) {
 }
 
 function limpiarVenta() {
-    if (carrito.length > 0 && !confirm('Â¿Cancelar la venta?')) return;
+    if (carrito.length > 0 && !confirm('¿Cancelar la venta?')) return;
     carrito = []; clienteActual = null; metodoPago = null;
     renderCarrito(); recalcularTodo(); quitarCliente();
     document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
@@ -876,7 +876,7 @@ function limpiarVenta() {
     document.getElementById('recPaquetes').style.display = 'none';
 }
 
-// â”€â”€ Motor de recomendaciÃ³n de paquetes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Motor de recomendación de paquetes ───────────────────────────────────────
 function verificarRecomendaciones() {
     const divRec  = document.getElementById('recPaquetes');
     const divList = document.getElementById('recLista');
@@ -929,11 +929,11 @@ function verificarRecomendaciones() {
             </div>
             <div class="rec-desc">
                 ${completo
-                    ? `âœ… Tienes todos los productos (${rec.total}/${rec.total})`
-                    : `${rec.cubiertos}/${rec.total} productos Â· Falta: ${rec.faltantes.map(f=>f.nombre+' (Ã—'+f.falta+')').join(', ')}`}
+                    ? `✅ Tienes todos los productos (${rec.total}/${rec.total})`
+                    : `${rec.cubiertos}/${rec.total} productos · Falta: ${rec.faltantes.map(f=>f.nombre+' (×'+f.falta+')').join(', ')}`}
             </div>
             <button class="rec-btn" style="background:${color};" onclick='agregarPaquete(${paqData})'>
-                ${completo ? 'âœ… Aplicar paquete al carrito' : `âž• Completar paquete (${rec.porcentaje}%)`}
+                ${completo ? '✅ Aplicar paquete al carrito' : `➕ Completar paquete (${rec.porcentaje}%)`}
             </button>
         </div>`;
     }).join('');
@@ -941,7 +941,7 @@ function verificarRecomendaciones() {
     divRec.style.display = 'block';
 }
 
-// â”€â”€ Clientes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Clientes ─────────────────────────────────────────────────────────────────
 let toCli;
 document.getElementById('inputCliente').addEventListener('input', function() {
     clearTimeout(toCli);
@@ -963,7 +963,7 @@ function mostrarClientes(lista) {
                 onclick="seleccionarCliente(${c.cliente_id},'${esc(c.nombre_completo)}','${esc(c.telefono??'')}',${c.descuento_fijo},${c.credito_autorizado})">
                 <div>
                     <div class="resultado-nombre">${esc(c.nombre_completo)}</div>
-                    <div class="resultado-codigo">${esc(c.telefono??'')} ${c.descuento_fijo>0?'Â· Desc: '+c.descuento_fijo+'%':''}</div>
+                    <div class="resultado-codigo">${esc(c.telefono??'')} ${c.descuento_fijo>0?'· Desc: '+c.descuento_fijo+'%':''}</div>
                 </div>
             </div>`).join('');
     }
@@ -996,9 +996,9 @@ function quitarCliente() {
     recalcularTodo();
 }
 
-// â”€â”€ MÃ©todos de pago â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Métodos de pago ──────────────────────────────────────────────────────────
 function seleccionarMetodo(metodo, btn) {
-    if (metodo === 'Credito' && !clienteActual) { alert('Selecciona un cliente para pago a crÃ©dito.'); return; }
+    if (metodo === 'Credito' && !clienteActual) { alert('Selecciona un cliente para pago a crédito.'); return; }
     metodoPago = metodo;
     document.getElementById('inputMetodoPago').value = metodo;
     document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
@@ -1010,7 +1010,7 @@ function seleccionarMetodo(metodo, btn) {
     recalcularTodo(); verificarCobrar();
 }
 
-// â”€â”€ CÃ¡lculos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Cálculos ─────────────────────────────────────────────────────────────────
 function recalcularTodo() {
     let subtotal  = carrito.reduce((a,i) => a + (i.cantidad * i.precio), 0);
     let descuento = (clienteActual && clienteActual.descuento > 0) ? subtotal*(clienteActual.descuento/100) : 0;
@@ -1061,7 +1061,7 @@ function verificarCobrar() {
     document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago);
 }
 
-// â”€â”€ Preparar y enviar venta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Preparar y enviar venta ──────────────────────────────────────────────────
 function prepararVenta() {
     const itemsExpandidos = [];
     carrito.forEach(item => {
@@ -1087,7 +1087,7 @@ function prepararVenta() {
     return true;
 }
 
-// â”€â”€ Ticket de impresiÃ³n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Ticket de impresión ──────────────────────────────────────────────────────
 function imprimirTicket(ventaId) {
     if (!ventaId) return;
     fetch(`cajero_nuevaVenta.php?ticket_venta=${ventaId}`)
@@ -1144,7 +1144,7 @@ function generarTicketHTML(venta) {
                  <div class="t-fila"><span>Descuento</span><span>-$${parseFloat(venta.descuento).toFixed(2)}</span></div>`;
     }
     if (parseFloat(venta.comision_terminal) > 0) {
-        html += `<div class="t-fila"><span>ComisiÃ³n terminal</span><span>$${parseFloat(venta.comision_terminal).toFixed(2)}</span></div>`;
+        html += `<div class="t-fila"><span>Comisión terminal</span><span>$${parseFloat(venta.comision_terminal).toFixed(2)}</span></div>`;
     }
 
     html += `
@@ -1152,7 +1152,7 @@ function generarTicketHTML(venta) {
             <span>TOTAL</span><span>$${parseFloat(venta.total).toFixed(2)}</span>
         </div>
         <div class="t-linea"></div>
-        <div class="t-fila"><span>MÃ©todo de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
+        <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
 
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
         html += `
@@ -1161,18 +1161,18 @@ function generarTicketHTML(venta) {
     }
 
     if (venta.metodo_pago === 'Credito') {
-        html += `<div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÃ‰DITO ***</div>`;
+        html += `<div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>`;
     }
 
     html += `
         <div class="t-linea"></div>
-        <div class="t-centro">Â¡Gracias por su compra!</div>
+        <div class="t-centro">¡Gracias por su compra!</div>
         <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
 
     document.getElementById('ticketImprimir').innerHTML = html;
 }
 
-// â”€â”€ Modal inventario â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Modal inventario ─────────────────────────────────────────────────────────
 function abrirInventario() {
     document.getElementById('modalInventario').classList.add('visible');
     buscarInventario();
@@ -1202,7 +1202,7 @@ function renderInventario(productos) {
     const esDif       = sucursalSel !== miSucursalId;
 
     div.innerHTML = `<table class="inv-tabla">
-        <thead><tr><th>CÃ³digo</th><th>Producto</th><th>Stock</th><th>Precio</th><th></th></tr></thead>
+        <thead><tr><th>Código</th><th>Producto</th><th>Stock</th><th>Precio</th><th></th></tr></thead>
         <tbody>${productos.map(p => {
             const sinStock = p.stock_actual <= 0;
             return `<tr>
@@ -1219,7 +1219,7 @@ function renderInventario(productos) {
     </table>`;
 }
 
-// â”€â”€ Cerrar dropdowns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Cerrar dropdowns ─────────────────────────────────────────────────────────
 document.getElementById('modalInventario').addEventListener('click', function(e) {
     if (e.target === this) cerrarInventario();
 });
@@ -1229,14 +1229,14 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// â”€â”€ Auto-imprimir si viene de venta exitosa â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Auto-imprimir si viene de venta exitosa ──────────────────────────────────
 <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito' && isset($_GET['venta_id'])): ?>
     window.addEventListener('load', () => {
         imprimirTicket(<?= intval($_GET['venta_id']) ?>);
     });
 <?php endif; ?>
 
-// â”€â”€ Utilidad â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Utilidad ─────────────────────────────────────────────────────────────────
 function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }

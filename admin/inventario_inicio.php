@@ -18,7 +18,7 @@ $stmtBajo = $pdo->prepare("
 $stmtBajo->execute([$_SESSION['sucursal_id']]);
 $stockBajo = $stmtBajo->fetchAll(PDO::FETCH_ASSOC);
 
-// EstadÃ­sticas generales
+// Estadísticas generales
 $stmtStats = $pdo->prepare("
     SELECT
         COUNT(*) AS total_productos,
@@ -31,7 +31,7 @@ $stmtStats = $pdo->prepare("
 $stmtStats->execute([$_SESSION['sucursal_id']]);
 $stats = $stmtStats->fetch(PDO::FETCH_ASSOC);
 
-// Ãšltimos movimientos
+// Últimos movimientos
 $stmtMov = $pdo->prepare("
     SELECT m.tipo, m.cantidad, m.created_at, p.nombre_producto, m.motivo
     FROM movimientos_inventario m
@@ -51,7 +51,7 @@ $stmtTransf = $pdo->prepare("
 $stmtTransf->execute([$_SESSION['sucursal_id']]);
 $transfPendientes = $stmtTransf->fetchColumn();
 
-// Ãšltimas compras a proveedor
+// Últimas compras a proveedor
 $stmtCompras = $pdo->prepare("
     SELECT cp.compras_proveedor_id, cp.total, cp.created_at, p.nombre AS proveedor
     FROM compras_proveedor cp
@@ -68,7 +68,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Inventario â€” FerreterÃ­a Aldrete</title>
+    <title>Inventario — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -139,8 +139,8 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             <h2>Panel de Inventario</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -149,7 +149,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <?php if (count($stockBajo) > 0): ?>
         <div class="alerta-stock">
             <div class="alerta-stock-header">
-                <h3>âš  <?= count($stockBajo) ?> producto(s) con stock bajo</h3>
+                <h3>⚠ <?= count($stockBajo) ?> producto(s) con stock bajo</h3>
                 <a href="inventario_productos.php?stock_bajo=1">Ver todos</a>
             </div>
             <?php foreach ($stockBajo as $p): ?>
@@ -160,7 +160,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <div>
                     <span class="alerta-stock-val"><?= number_format($p['stock_actual'],2) ?></span>
-                    <span class="alerta-minimo">mÃ­n: <?= number_format($p['stock_minimo'],2) ?></span>
+                    <span class="alerta-minimo">mín: <?= number_format($p['stock_minimo'],2) ?></span>
                     <a href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>"
                        style="background:#14ace7;color:white;font-size:11px;padding:2px 8px;border-radius:4px;text-decoration:none;margin-left:8px;">
                        Entrada
@@ -171,10 +171,10 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         </div>
         <?php endif; ?>
 
-        <!-- NotificaciÃ³n de transferencias -->
+        <!-- Notificación de transferencias -->
         <?php if ($transfPendientes > 0): ?>
         <div class="notif-transf">
-            <span>ðŸ“¦ Tienes <strong><?= $transfPendientes ?></strong> solicitud(es) de transferencia pendiente(s) de aprobar.</span>
+            <span>📦 Tienes <strong><?= $transfPendientes ?></strong> solicitud(es) de transferencia pendiente(s) de aprobar.</span>
             <a href="inventario_transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
@@ -189,7 +189,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             <div class="stat">
                 <p>Stock bajo</p>
                 <h3 style="color:<?= $stats['con_stock_bajo']>0?'#c0392b':'#2e7d32' ?>;"><?= $stats['con_stock_bajo'] ?></h3>
-                <small>Bajo mÃ­nimo</small>
+                <small>Bajo mínimo</small>
             </div>
             <div class="stat">
                 <p>Sin stock</p>
@@ -203,39 +203,39 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </div>
 
-        <!-- Accesos rÃ¡pidos -->
+        <!-- Accesos rápidos -->
         <div class="accesos">
             <a class="acceso" href="inventario_entradas.php">
-                <span class="acceso-icon">ðŸ“¥</span>
-                <div><div class="acceso-label">Entradas</div><div class="acceso-sub">Registrar mercancÃ­a</div></div>
+                <span class="acceso-icon">📥</span>
+                <div><div class="acceso-label">Entradas</div><div class="acceso-sub">Registrar mercancía</div></div>
             </a>
             <a class="acceso" href="inventario_salidas.php">
-                <span class="acceso-icon">ðŸ“¤</span>
+                <span class="acceso-icon">📤</span>
                 <div><div class="acceso-label">Salidas</div><div class="acceso-sub">Mermas y ajustes</div></div>
             </a>
             <a class="acceso" href="inventario_compras.php">
-                <span class="acceso-icon">ðŸ›’</span>
+                <span class="acceso-icon">🛒</span>
                 <div><div class="acceso-label">Compras</div><div class="acceso-sub">Pedidos a proveedor</div></div>
             </a>
             <a class="acceso" href="inventario_transferencias.php">
-                <span class="acceso-icon">ðŸ”„</span>
+                <span class="acceso-icon">🔄</span>
                 <div><div class="acceso-label">Transferencias</div><div class="acceso-sub"><?= $transfPendientes>0?$transfPendientes.' pendiente(s)':'Entre sucursales' ?></div></div>
             </a>
             <a class="acceso" href="inventario_productos.php">
-                <span class="acceso-icon">ðŸ”§</span>
+                <span class="acceso-icon">🔧</span>
                 <div><div class="acceso-label">Productos</div><div class="acceso-sub">Ver inventario completo</div></div>
             </a>
             <a class="acceso" href="inventario_masVendidos.php">
-                <span class="acceso-icon">ðŸ“Š</span>
-                <div><div class="acceso-label">MÃ¡s vendidos</div><div class="acceso-sub">EstadÃ­sticas</div></div>
+                <span class="acceso-icon">📊</span>
+                <div><div class="acceso-label">Más vendidos</div><div class="acceso-sub">Estadísticas</div></div>
             </a>
         </div>
 
         <div class="grid-2">
-            <!-- Ãšltimos movimientos -->
+            <!-- Últimos movimientos -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Ãšltimos movimientos</span>
+                    <span>Últimos movimientos</span>
                     <a href="inventario_inventario_historial.php">Ver todos</a>
                 </div>
                 <?php if (count($movimientos) > 0): ?>
@@ -243,7 +243,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                     <div class="tabla-row">
                         <div>
                             <div style="font-size:13px;color:#333;"><?= htmlspecialchars($m['nombre_producto']) ?></div>
-                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($m['motivo']??'â€”') ?></div>
+                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($m['motivo']??'—') ?></div>
                         </div>
                         <div style="text-align:right;">
                             <span class="badge-tipo tipo-<?= strtolower($m['tipo']) ?>"><?= $m['tipo'] ?></span>
@@ -256,10 +256,10 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
             </div>
 
-            <!-- Ãšltimas compras -->
+            <!-- Últimas compras -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Ãšltimas compras a proveedor</span>
+                    <span>Últimas compras a proveedor</span>
                     <a href="inventario_compras.php">Ver todas</a>
                 </div>
                 <?php if (count($ultimasCompras) > 0): ?>

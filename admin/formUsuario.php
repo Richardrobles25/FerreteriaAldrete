@@ -38,14 +38,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$nombre_usuario)  $errores[] = 'El nombre de usuario es obligatorio.';
     if (!$rol)             $errores[] = 'El rol es obligatorio.';
     if (!$sucursal_id)     $errores[] = 'La sucursal es obligatoria.';
-    if (!$esEdicion && !$contrasena) $errores[] = 'La contraseÃ±a es obligatoria.';
-    if ($contrasena && $contrasena !== $confirmar) $errores[] = 'Las contraseÃ±as no coinciden.';
-    if ($contrasena && strlen($contrasena) < 6) $errores[] = 'La contraseÃ±a debe tener al menos 6 caracteres.';
+    if (!$esEdicion && !$contrasena) $errores[] = 'La contraseña es obligatoria.';
+    if ($contrasena && $contrasena !== $confirmar) $errores[] = 'Las contraseñas no coinciden.';
+    if ($contrasena && strlen($contrasena) < 6) $errores[] = 'La contraseña debe tener al menos 6 caracteres.';
 
     if ($nombre_usuario) {
         $check = $pdo->prepare("SELECT usuario_id FROM usuarios WHERE nombre_usuario = ? AND usuario_id != ?");
         $check->execute([$nombre_usuario, $esEdicion ? intval($_GET['id']) : 0]);
-        if ($check->fetch()) $errores[] = 'Ese nombre de usuario ya estÃ¡ en uso.';
+        if ($check->fetch()) $errores[] = 'Ese nombre de usuario ya está en uso.';
     }
 
     if (empty($errores)) {
@@ -89,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $esEdicion ? 'Editar' : 'Nuevo' ?> Usuario â€” FerreterÃ­a Aldrete</title>
+    <title><?= $esEdicion ? 'Editar' : 'Nuevo' ?> Usuario — Ferretería Aldrete</title>
     <link rel="stylesheet" href="css/formUsuario.css">
 
 </head>
@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="topbar-right">
             <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -136,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <label>Nombre completo *</label>
                         <input type="text" name="nombre_completo"
                             value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $usuario['nombre_completo'] ?? '') ?>"
-                            placeholder="Ej. Juan PÃ©rez">
+                            placeholder="Ej. Juan Pérez">
                     </div>
                     <div class="form-group">
                         <label>Nombre de usuario *</label>
@@ -148,16 +148,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label>TelÃ©fono</label>
+                        <label>Teléfono</label>
                         <input type="text" name="telefono"
                             value="<?= htmlspecialchars($_POST['telefono'] ?? $usuario['telefono'] ?? '') ?>"
-                            placeholder="10 dÃ­gitos">
+                            placeholder="10 dígitos">
                     </div>
                     <div class="form-group">
                         <label>Domicilio</label>
                         <input type="text" name="domicilio"
                             value="<?= htmlspecialchars($_POST['domicilio'] ?? $usuario['domicilio'] ?? '') ?>"
-                            placeholder="DirecciÃ³n del usuario">
+                            placeholder="Dirección del usuario">
                     </div>
                 </div>
 
@@ -195,15 +195,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label><?= $esEdicion ? 'Nueva contraseÃ±a' : 'ContraseÃ±a *' ?></label>
-                        <input type="password" name="contrasena" placeholder="MÃ­nimo 6 caracteres">
+                        <label><?= $esEdicion ? 'Nueva contraseña' : 'Contraseña *' ?></label>
+                        <input type="password" name="contrasena" placeholder="Mínimo 6 caracteres">
                         <?php if ($esEdicion): ?>
-                            <span class="hint">DÃ©jala en blanco si no quieres cambiarla.</span>
+                            <span class="hint">Déjala en blanco si no quieres cambiarla.</span>
                         <?php endif; ?>
                     </div>
                     <div class="form-group">
-                        <label>Confirmar contraseÃ±a</label>
-                        <input type="password" name="confirmar" placeholder="Repite la contraseÃ±a">
+                        <label>Confirmar contraseña</label>
+                        <input type="password" name="confirmar" placeholder="Repite la contraseña">
                     </div>
                 </div>
 

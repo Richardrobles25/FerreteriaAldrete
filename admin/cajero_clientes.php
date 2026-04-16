@@ -74,7 +74,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clientes â€” FerreterÃ­a Aldrete</title>
+    <title>Clientes — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -151,7 +151,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="topbar-right">
             <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -178,9 +178,9 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <thead>
                         <tr>
                             <th>Nombre</th>
-                            <th>TelÃ©fono</th>
+                            <th>Teléfono</th>
                             <th>Descuento</th>
-                            <th>CrÃ©dito</th>
+                            <th>Crédito</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
@@ -193,12 +193,12 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($c['correo']) ?></div>
                                 <?php endif; ?>
                             </td>
-                            <td><?= htmlspecialchars($c['telefono'] ?? 'â€”') ?></td>
-                            <td><?= $c['descuento_fijo'] > 0 ? $c['descuento_fijo'].'%' : 'â€”' ?></td>
+                            <td><?= htmlspecialchars($c['telefono'] ?? '—') ?></td>
+                            <td><?= $c['descuento_fijo'] > 0 ? $c['descuento_fijo'].'%' : '—' ?></td>
                             <td>
                                 <?php if ($c['credito_autorizado']): ?>
                                     <span class="badge-credito">Autorizado</span>
-                                    <div style="font-size:11px;color:#aaa;">LÃ­mite: $<?= number_format($c['limite_credito'],2) ?></div>
+                                    <div style="font-size:11px;color:#aaa;">Límite: $<?= number_format($c['limite_credito'],2) ?></div>
                                 <?php else: ?>
                                     <span style="color:#aaa;font-size:12px;">No</span>
                                 <?php endif; ?>
@@ -206,7 +206,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="cajero_clientes.php?editar=<?= $c['cliente_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="cajero_clientes.php?eliminar=<?= $c['cliente_id'] ?>" onclick="return confirm('Â¿Eliminar este cliente?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="cajero_clientes.php?eliminar=<?= $c['cliente_id'] ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -233,13 +233,13 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                     <div class="form-group">
                         <label>Nombre completo *</label>
-                        <input type="text" name="nombre_completo" value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan GarcÃ­a">
+                        <input type="text" name="nombre_completo" value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan García">
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label>TelÃ©fono</label>
-                            <input type="text" name="telefono" value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>" placeholder="10 dÃ­gitos">
+                            <label>Teléfono</label>
+                            <input type="text" name="telefono" value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>" placeholder="10 dígitos">
                         </div>
                         <div class="form-group">
                             <label>Descuento fijo (%)</label>
@@ -248,8 +248,8 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </div>
 
                     <div class="form-group">
-                        <label>DirecciÃ³n</label>
-                        <input type="text" name="direccion" value="<?= htmlspecialchars($_POST['direccion'] ?? $editando['direccion'] ?? '') ?>" placeholder="Calle, nÃºmero, colonia">
+                        <label>Dirección</label>
+                        <input type="text" name="direccion" value="<?= htmlspecialchars($_POST['direccion'] ?? $editando['direccion'] ?? '') ?>" placeholder="Calle, número, colonia">
                     </div>
 
                     <div class="form-group">
@@ -266,12 +266,12 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <input type="checkbox" name="credito_autorizado" id="chkCredito"
                             <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'checked' : '' ?>
                             onchange="toggleCredito(this.checked)">
-                        <label for="chkCredito">Autorizar crÃ©dito a este cliente</label>
+                        <label for="chkCredito">Autorizar crédito a este cliente</label>
                     </div>
 
                     <div class="credito-campos <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '' ?>" id="creditoCampos">
                         <div class="form-group">
-                            <label>LÃ­mite de crÃ©dito</label>
+                            <label>Límite de crédito</label>
                             <input type="number" name="limite_credito" value="<?= $_POST['limite_credito'] ?? $editando['limite_credito'] ?? 0 ?>" step="0.01" min="0" placeholder="0.00">
                         </div>
                     </div>

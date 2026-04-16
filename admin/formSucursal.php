@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $editando?'Editar':'Nueva' ?> Sucursal â€” FerreterÃ­a Aldrete</title>
+    <title><?= $editando?'Editar':'Nueva' ?> Sucursal — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -103,15 +103,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <h2><?= $editando?'Editar sucursal':'Nueva sucursal' ?></h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
     <div class="content">
         <div class="form-card">
             <h1><?= $editando?'Editar sucursal':'Nueva sucursal' ?></h1>
-            <p><?= $editando?'Actualiza los datos de la sucursal.':'Registra una nueva sucursal de la ferreterÃ­a.' ?></p>
+            <p><?= $editando?'Actualiza los datos de la sucursal.':'Registra una nueva sucursal de la ferretería.' ?></p>
 
             <?php if (!empty($errores)): ?>
                 <div class="errores">
@@ -126,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <label>Nombre de la sucursal *</label>
                     <input type="text" name="nombre"
                         value="<?= htmlspecialchars($_POST['nombre'] ?? $editando['nombre'] ?? '') ?>"
-                        placeholder="Ej. FerreterÃ­a Aldrete Centro">
+                        placeholder="Ej. Ferretería Aldrete Centro">
                 </div>
 
                 <div class="form-row">
@@ -138,25 +138,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             oninput="this.value=this.value.toUpperCase()">
                     </div>
                     <div class="form-group">
-                        <label>TelÃ©fono</label>
+                        <label>Teléfono</label>
                         <input type="text" name="telefono"
                             value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>"
-                            placeholder="10 dÃ­gitos">
+                            placeholder="10 dígitos">
                     </div>
                 </div>
 
                 <div class="form-group">
-                    <label>DirecciÃ³n</label>
+                    <label>Dirección</label>
                     <input type="text" name="direccion"
                         value="<?= htmlspecialchars($_POST['direccion'] ?? $editando['direccion'] ?? '') ?>"
-                        placeholder="Calle, nÃºmero, colonia, ciudad">
+                        placeholder="Calle, número, colonia, ciudad">
                 </div>
 
                 <div class="form-group">
                     <label>Datos del ticket</label>
                     <textarea name="datos_ticket"
                         id="datosTicket"
-                        placeholder="Texto que aparecerÃ¡ en los tickets de venta&#10;Ej:&#10;FerreterÃ­a Aldrete S.A. de C.V.&#10;RFC: AAAA000000AAA&#10;Calle Morelos #45, Col. Centro&#10;Tel: 8711234567"
+                        placeholder="Texto que aparecerá en los tickets de venta&#10;Ej:&#10;Ferretería Aldrete S.A. de C.V.&#10;RFC: AAAA000000AAA&#10;Calle Morelos #45, Col. Centro&#10;Tel: 8711234567"
                         oninput="actualizarPreview(this.value)"><?= htmlspecialchars($_POST['datos_ticket'] ?? $editando['datos_ticket'] ?? '') ?></textarea>
                     <div class="hint">Este texto aparece en todos los tickets de venta de esta sucursal.</div>
                     <div class="ticket-preview-box" id="ticketPreview"><?= htmlspecialchars($_POST['datos_ticket'] ?? $editando['datos_ticket'] ?? 'Vista previa del ticket...') ?></div>

@@ -48,7 +48,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historial de Movimientos â€” FerreterÃ­a Aldrete</title>
+    <title>Historial de Movimientos — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -116,7 +116,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
         <div class="topbar-right">
             <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -190,7 +190,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
                         </td>
                         <td><?= number_format($m['stock_anterior'],3) ?></td>
                         <td><?= number_format($m['stock_nuevo'],3) ?></td>
-                        <td style="color:#888;font-size:12px;"><?= htmlspecialchars($m['motivo'] ?? 'â€”') ?></td>
+                        <td style="color:#888;font-size:12px;"><?= htmlspecialchars($m['motivo'] ?? '—') ?></td>
                         <td style="font-size:12px;"><?= htmlspecialchars($m['usuario']) ?></td>
                         <td style="color:#aaa;font-size:12px;"><?= date('d/m/Y H:i', strtotime($m['created_at'])) ?></td>
                     </tr>

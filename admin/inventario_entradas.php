@@ -72,7 +72,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Entradas de Productos â€” FerreterÃ­a Aldrete</title>
+    <title>Entradas de Productos — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -134,8 +134,8 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
             <h2>Entradas de productos</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -165,7 +165,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                                     data-minimo="<?= $p['stock_minimo'] ?>"
                                     data-maximo="<?= $p['stock_maximo'] ?>"
                                     <?= ($productoPreseleccionado && $productoPreseleccionado['producto_id']==$p['producto_id']) ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($p['codigo'].' â€” '.$p['nombre_producto']) ?>
+                                    <?= htmlspecialchars($p['codigo'].' — '.$p['nombre_producto']) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -173,8 +173,8 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 
                     <div class="stock-info" id="stockInfo">
                         Stock actual: <strong id="stockActualVal"></strong>
-                        Â· MÃ­nimo: <span id="stockMinimoVal"></span>
-                        Â· MÃ¡ximo: <span id="stockMaximoVal"></span>
+                        · Mínimo: <span id="stockMinimoVal"></span>
+                        · Máximo: <span id="stockMaximoVal"></span>
                     </div>
 
                     <div class="form-group">
@@ -185,11 +185,11 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                     </div>
 
                     <div class="form-group">
-                        <label>Motivo / DescripciÃ³n</label>
+                        <label>Motivo / Descripción</label>
                         <div class="motivos-rapidos">
                             <button type="button" class="motivo-chip" onclick="setMotivo('Compra a proveedor')">Compra a proveedor</button>
                             <button type="button" class="motivo-chip" onclick="setMotivo('Ajuste de inventario')">Ajuste</button>
-                            <button type="button" class="motivo-chip" onclick="setMotivo('DevoluciÃ³n de cliente')">DevoluciÃ³n</button>
+                            <button type="button" class="motivo-chip" onclick="setMotivo('Devolución de cliente')">Devolución</button>
                             <button type="button" class="motivo-chip" onclick="setMotivo('Inventario inicial')">Inventario inicial</button>
                         </div>
                         <input type="text" name="motivo" id="inputMotivo"
@@ -223,7 +223,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                             <td style="color:#2e7d32;font-weight:700;">+<?= number_format($h['cantidad'],0) ?></td>
                             <td style="color:#888;"><?= number_format($h['stock_anterior'],2) ?></td>
                             <td style="font-weight:600;"><?= number_format($h['stock_nuevo'],2) ?></td>
-                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'â€”') ?></td>
+                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'—') ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($h['created_at'])) ?></td>
                         </tr>
                         <?php endforeach; ?>

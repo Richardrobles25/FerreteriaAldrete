@@ -46,7 +46,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Usuarios â€” FerreterÃ­a Aldrete</title>
+    <title>Usuarios — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -121,14 +121,14 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
             <h2>Usuarios</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
     <div class="content">
         <div class="content-header">
-            <h1>GestiÃ³n de usuarios</h1>
+            <h1>Gestión de usuarios</h1>
             <a class="btn-nuevo" href="formUsuario.php">+ Nuevo usuario</a>
         </div>
 
@@ -209,7 +209,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                                 <?php if ($u['rol'] !== 'Administrador'): ?>
                                 <a class="btn-accion <?= $u['activo']?'btn-desactivar':'btn-activar' ?>"
                                    href="usuarios.php?toggle=<?= $u['usuario_id'] ?>"
-                                   onclick="return confirm('Â¿Cambiar estado del usuario?')">
+                                   onclick="return confirm('¿Cambiar estado del usuario?')">
                                     <?= $u['activo']?'Desactivar':'Activar' ?>
                                 </a>
                                 <?php endif; ?>

@@ -29,7 +29,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sucursales â€” FerreterÃ­a Aldrete</title>
+    <title>Sucursales — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -94,8 +94,8 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2>Sucursales</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -125,8 +125,8 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
 
                 <div class="suc-info">
-                    <div class="suc-dato"><span>DirecciÃ³n</span><?= htmlspecialchars($s['direccion']??'â€”') ?></div>
-                    <div class="suc-dato"><span>TelÃ©fono</span><?= htmlspecialchars($s['telefono']??'â€”') ?></div>
+                    <div class="suc-dato"><span>Dirección</span><?= htmlspecialchars($s['direccion']??'—') ?></div>
+                    <div class="suc-dato"><span>Teléfono</span><?= htmlspecialchars($s['telefono']??'—') ?></div>
                 </div>
 
                 <?php if ($s['datos_ticket']): ?>
@@ -142,7 +142,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <a class="btn-accion btn-editar" href="formSucursal.php?id=<?= $s['sucursal_id'] ?>">Editar datos</a>
                     <a class="btn-accion <?= $s['activo']?'btn-desactivar':'btn-activar' ?>"
                        href="sucursales.php?toggle=<?= $s['sucursal_id'] ?>"
-                       onclick="return confirm('Â¿Cambiar estado de la sucursal?')">
+                       onclick="return confirm('¿Cambiar estado de la sucursal?')">
                         <?= $s['activo']?'Desactivar':'Activar' ?>
                     </a>
                 </div>

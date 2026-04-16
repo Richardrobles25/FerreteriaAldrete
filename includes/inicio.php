@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 session_start();
 
 // Si no hay sesiÃ³n, lo mandas al login

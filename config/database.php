@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 $host     = 'metro.proxy.rlwy.net';
 $port     = '38728';
 $db       = 'railway';

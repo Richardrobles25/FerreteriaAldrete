@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 function verificarSesion() {
     if (!isset($_SESSION['usuario_id'])) {
         header('Location: /index.php');

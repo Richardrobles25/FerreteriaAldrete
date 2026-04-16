@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet\AutoFilter;
 

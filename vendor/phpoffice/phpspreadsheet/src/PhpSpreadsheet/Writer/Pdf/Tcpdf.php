@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Pdf;
 

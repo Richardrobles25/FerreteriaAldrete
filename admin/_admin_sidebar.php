@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 function renderAdminSidebar(string $activeKey): void
 {
     $inventarioOpen = str_starts_with($activeKey, 'inventario_');

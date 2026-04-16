@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use Matrix\Matrix;
 use Matrix\Decomposition\QR;

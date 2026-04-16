@@ -31,7 +31,7 @@ $stmt = $pdo->prepare("
 $stmt->execute($params);
 $ventas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Totales del dÃ­a
+// Totales del día
 $stmtTot = $pdo->prepare("
     SELECT
         COUNT(*) as total_ventas,
@@ -51,7 +51,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historial de Ventas â€” FerreterÃ­a Aldrete</title>
+    <title>Historial de Ventas — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -111,7 +111,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p>Cajero</p>
     </div>
     <div class="sidebar-menu">
@@ -124,7 +124,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
+        <a class="menu-item" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
@@ -142,7 +142,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
         <div class="topbar-right">
             <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -159,13 +159,13 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                     <input type="date" name="fecha" value="<?= htmlspecialchars($fecha) ?>">
                 </div>
                 <div class="filtro-group">
-                    <label>MÃ©todo de pago</label>
+                    <label>Método de pago</label>
                     <select name="metodo">
                         <option value="">Todos</option>
                         <option value="Efectivo" <?= $metodo==='Efectivo'?'selected':'' ?>>Efectivo</option>
                         <option value="Terminal" <?= $metodo==='Terminal'?'selected':'' ?>>Terminal</option>
                         <option value="Mixto" <?= $metodo==='Mixto'?'selected':'' ?>>Mixto</option>
-                        <option value="Credito" <?= $metodo==='Credito'?'selected':'' ?>>CrÃ©dito</option>
+                        <option value="Credito" <?= $metodo==='Credito'?'selected':'' ?>>Crédito</option>
                     </select>
                 </div>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
@@ -177,7 +177,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
             <div class="stat"><p>Total cobrado</p><h3>$<?= number_format($totales['total_cobrado'],2) ?></h3></div>
             <div class="stat"><p>Efectivo</p><h3>$<?= number_format($totales['ef'],2) ?></h3></div>
             <div class="stat"><p>Terminal</p><h3>$<?= number_format($totales['term'],2) ?></h3></div>
-            <div class="stat"><p>CrÃ©dito</p><h3>$<?= number_format($totales['cred'],2) ?></h3></div>
+            <div class="stat"><p>Crédito</p><h3>$<?= number_format($totales['cred'],2) ?></h3></div>
         </div>
 
         <div class="tabla-wrapper">
@@ -187,7 +187,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                     <tr>
                         <th>#</th>
                         <th>Cliente</th>
-                        <th>MÃ©todo</th>
+                        <th>Método</th>
                         <th>Subtotal</th>
                         <th>Descuento</th>
                         <th>Total</th>
@@ -199,10 +199,10 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                     <?php foreach ($ventas as $v): ?>
                     <tr>
                         <td style="color:#aaa;"><?= $v['venta_id'] ?></td>
-                        <td><?= htmlspecialchars($v['cliente'] ?? 'PÃºblico general') ?></td>
+                        <td><?= htmlspecialchars($v['cliente'] ?? 'Público general') ?></td>
                         <td><span class="badge badge-<?= strtolower($v['metodo_pago']) ?>"><?= $v['metodo_pago'] ?></span></td>
                         <td>$<?= number_format($v['subtotal'],2) ?></td>
-                        <td><?= $v['descuento']>0 ? '-$'.number_format($v['descuento'],2) : 'â€”' ?></td>
+                        <td><?= $v['descuento']>0 ? '-$'.number_format($v['descuento'],2) : '—' ?></td>
                         <td style="font-weight:700;">$<?= number_format($v['total'],2) ?></td>
                         <td><span class="badge badge-<?= strtolower($v['estado']) ?>"><?= $v['estado'] ?></span></td>
                         <td style="color:#aaa;font-size:12px;"><?= date('H:i', strtotime($v['created_at'])) ?></td>

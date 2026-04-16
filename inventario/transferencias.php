@@ -111,7 +111,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transferencias â€” FerreterÃ­a Aldrete</title>
+    <title>Transferencias — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -175,13 +175,13 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p><?= $_SESSION['rol'] ?></p>
     </div>
     <div class="sidebar-menu">
         <a class="menu-item" href="inicioInventario.php">Inicio</a>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">CategorÃ­as</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
         <div class="divider"></div>
         <a class="menu-item" href="entradas.php">Entradas de productos</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
@@ -192,7 +192,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="divider"></div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item active" href="transferencias.php">Transferencias</a>
-        <a class="menu-item" href="masVendidos.php">MÃ¡s vendidos</a>
+        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -204,8 +204,8 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2>Transferencias entre sucursales</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -221,7 +221,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php if (count($transferencias) > 0): ?>
                 <table>
                     <thead>
-                        <tr><th>Producto</th><th>Cant.</th><th>Origen â†’ Destino</th><th>Estado</th><th>Solicitante</th><th>Fecha</th><th>Acciones</th></tr>
+                        <tr><th>Producto</th><th>Cant.</th><th>Origen → Destino</th><th>Estado</th><th>Solicitante</th><th>Fecha</th><th>Acciones</th></tr>
                     </thead>
                     <tbody>
                         <?php foreach ($transferencias as $t):
@@ -237,7 +237,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             </td>
                             <td><?= number_format($t['cantidad'],2) ?></td>
                             <td style="font-size:11px;">
-                                <?= htmlspecialchars($t['sucursal_origen']) ?> â†’ <?= htmlspecialchars($t['sucursal_destino']) ?>
+                                <?= htmlspecialchars($t['sucursal_origen']) ?> → <?= htmlspecialchars($t['sucursal_destino']) ?>
                             </td>
                             <td><span class="badge badge-<?= strtolower($t['estado']) ?>"><?= $t['estado'] ?></span></td>
                             <td style="font-size:11px;"><?= htmlspecialchars($t['solicitante']) ?></td>
@@ -245,12 +245,12 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td>
                                 <div class="acciones">
                                     <?php if ($t['estado'] === 'Pendiente' && !$esMiSucursal): ?>
-                                        <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Â¿Aprobar?')">Aprobar</a>
-                                        <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Â¿Rechazar?')">Rechazar</a>
+                                        <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Aprobar?')">Aprobar</a>
+                                        <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Rechazar?')">Rechazar</a>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiSucursal): ?>
-                                        <a class="btn-accion btn-entregar" href="transferencias.php?accion=entregar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Â¿Confirmar entrega y mover stock?')">Entregar</a>
+                                        <a class="btn-accion btn-entregar" href="transferencias.php?accion=entregar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Confirmar entrega y mover stock?')">Entregar</a>
                                     <?php else: ?>
-                                        <span style="color:#aaa;font-size:11px;">â€”</span>
+                                        <span style="color:#aaa;font-size:11px;">—</span>
                                     <?php endif; ?>
                                 </div>
                             </td>

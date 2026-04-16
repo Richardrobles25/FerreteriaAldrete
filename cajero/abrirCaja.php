@@ -10,7 +10,7 @@ $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Ab
 $stmt->execute([$_SESSION['usuario_id']]);
 $cajaAbierta = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Calcular siguiente nÃºmero de turno para esta sucursal
+// Calcular siguiente número de turno para esta sucursal
 $stmtTurno = $pdo->prepare("SELECT COUNT(*) + 1 FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta'");
 $stmtTurno->execute([$_SESSION['sucursal_id']]);
 $siguienteTurno = $stmtTurno->fetchColumn();
@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Abrir Caja â€” FerreterÃ­a Aldrete</title>
+    <title>Abrir Caja — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -84,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p>Cajero</p>
     </div>
     <div class="sidebar-menu">
@@ -97,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
+        <a class="menu-item" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
         <div class="topbar-right">
             <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -128,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                 <div class="info-box">
                     <strong>Turno #<?= $cajaAbierta['numero_turno'] ?></strong>
                     Abierta el <?= date('d/m/Y \a \l\a\s H:i', strtotime($cajaAbierta['abierta_en'])) ?>
-                    Â· Monto inicial: $<?= number_format($cajaAbierta['monto_apertura'], 2) ?>
+                    · Monto inicial: $<?= number_format($cajaAbierta['monto_apertura'], 2) ?>
                 </div>
                 <a class="btn-ir" href="nuevaVenta.php">Ir a nueva venta</a>
             <?php else: ?>
@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                         <label>Observaciones (opcional)</label>
                         <textarea name="observaciones" placeholder="Notas del turno..."></textarea>
                     </div>
-                    <button class="btn-abrir" type="submit">Abrir caja â€” Turno #<?= $siguienteTurno ?></button>
+                    <button class="btn-abrir" type="submit">Abrir caja — Turno #<?= $siguienteTurno ?></button>
                 </form>
             <?php endif; ?>
         </div>

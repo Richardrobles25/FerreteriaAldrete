@@ -71,7 +71,7 @@ $proveedores = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-// CategorÃ­as del proveedor en ediciÃ³n
+// Categorías del proveedor en edición
 $catsEditando = [];
 if ($editando) {
     $stmtC = $pdo->prepare("SELECT categoria_id FROM proveedor_categorias WHERE proveedor_id = ?");
@@ -84,7 +84,7 @@ if ($editando) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Proveedores â€” FerreterÃ­a Aldrete</title>
+    <title>Proveedores — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -154,13 +154,13 @@ if ($editando) {
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p><?= $_SESSION['rol'] ?></p>
     </div>
     <div class="sidebar-menu">
         <a class="menu-item" href="inicioInventario.php">Inicio</a>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">CategorÃ­as</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
         <div class="divider"></div>
         <a class="menu-item" href="entradas.php">Entradas de productos</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
@@ -171,7 +171,7 @@ if ($editando) {
         <div class="divider"></div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
-        <a class="menu-item" href="masVendidos.php">MÃ¡s vendidos</a>
+        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -183,8 +183,8 @@ if ($editando) {
             <h2>Proveedores</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -202,9 +202,9 @@ if ($editando) {
                         <input type="text" name="buscar" placeholder="Nombre del proveedor..." value="<?= htmlspecialchars($busqueda) ?>">
                     </div>
                     <div class="filtro-group">
-                        <label>Filtrar por Ã¡rea</label>
+                        <label>Filtrar por área</label>
                         <select name="categoria">
-                            <option value="">Todas las Ã¡reas</option>
+                            <option value="">Todas las áreas</option>
                             <?php foreach ($categorias as $c): ?>
                                 <option value="<?= $c['categoria_id'] ?>" <?= $filtrocat===$c['categoria_id']?'selected':'' ?>><?= htmlspecialchars($c['nombre']) ?></option>
                             <?php endforeach; ?>
@@ -219,7 +219,7 @@ if ($editando) {
                 <?php if (count($proveedores) > 0): ?>
                 <table>
                     <thead>
-                        <tr><th>Nombre</th><th>TelÃ©fono</th><th>Correo</th><th>Ãreas</th><th>Acciones</th></tr>
+                        <tr><th>Nombre</th><th>Teléfono</th><th>Correo</th><th>Áreas</th><th>Acciones</th></tr>
                     </thead>
                     <tbody>
                         <?php foreach ($proveedores as $p):
@@ -229,23 +229,23 @@ if ($editando) {
                         ?>
                         <tr>
                             <td><strong><?= htmlspecialchars($p['nombre']) ?></strong></td>
-                            <td><?= htmlspecialchars($p['telefono']??'â€”') ?></td>
-                            <td style="font-size:12px;"><?= htmlspecialchars($p['correo']??'â€”') ?></td>
+                            <td><?= htmlspecialchars($p['telefono']??'—') ?></td>
+                            <td style="font-size:12px;"><?= htmlspecialchars($p['correo']??'—') ?></td>
                             <td>
                                 <div class="cats-lista">
                                     <?php foreach ($cats as $cat): ?>
                                         <span class="cat-badge"><?= htmlspecialchars($cat) ?></span>
                                     <?php endforeach; ?>
-                                    <?php if (!$cats): ?><span style="color:#aaa;font-size:12px;">â€”</span><?php endif; ?>
+                                    <?php if (!$cats): ?><span style="color:#aaa;font-size:12px;">—</span><?php endif; ?>
                                 </div>
                             </td>
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="proveedores.php?editar=<?= $p['proveedor_id'] ?>">Editar</a>
-                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="proveedores.php?toggle=<?= $p['proveedor_id'] ?>" onclick="return confirm('Â¿Confirmar cambio?')">
+                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="proveedores.php?toggle=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Confirmar cambio?')">
                                         <?= $p['activo']?'Desactivar':'Activar' ?>
                                     </a>
-                                    <a class="btn-accion btn-eliminar" href="proveedores.php?eliminar=<?= $p['proveedor_id'] ?>" onclick="return confirm('Â¿Eliminar proveedor?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="proveedores.php?eliminar=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Eliminar proveedor?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -271,19 +271,19 @@ if ($editando) {
                         <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Nombre del proveedor">
                     </div>
                     <div class="form-group">
-                        <label>TelÃ©fono</label>
-                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dÃ­gitos">
+                        <label>Teléfono</label>
+                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos">
                     </div>
                     <div class="form-group">
                         <label>Correo</label>
                         <input type="email" name="correo" value="<?= htmlspecialchars($editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com">
                     </div>
                     <div class="form-group">
-                        <label>DirecciÃ³n</label>
-                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="DirecciÃ³n del proveedor">
+                        <label>Dirección</label>
+                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="Dirección del proveedor">
                     </div>
                     <div class="form-group">
-                        <label>Ãreas que abastece</label>
+                        <label>Áreas que abastece</label>
                         <div class="cats-check">
                             <?php foreach ($categorias as $c): ?>
                                 <label class="cat-check-row">

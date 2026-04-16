@@ -74,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Corte de Caja â€” FerreterÃ­a Aldrete</title>
+    <title>Corte de Caja — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -132,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p>Cajero</p>
     </div>
     <div class="sidebar-menu">
@@ -145,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
+        <a class="menu-item" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
@@ -161,8 +161,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <h2>Corte de Caja</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -179,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <?php if ($ventasPendientes > 0): ?>
                 <div class="alerta-pend">
-                    âš  Tienes <strong><?= $ventasPendientes ?></strong> venta(s) pendiente(s) sin liquidar.
+                    ⚠ Tienes <strong><?= $ventasPendientes ?></strong> venta(s) pendiente(s) sin liquidar.
                     <a href="ventasPendientes.php" style="color:#1565c0;font-weight:700;margin-left:6px;">Ver</a>
                 </div>
                 <?php endif; ?>
@@ -192,14 +192,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>Comisiones de terminal</span><span>-$<?= number_format($resumen['comisiones'],2) ?></span></div>
                 </div>
 
-                <!-- Desglose por mÃ©todo -->
+                <!-- Desglose por método -->
                 <div class="seccion">
-                    <h3>Desglose por mÃ©todo de pago</h3>
+                    <h3>Desglose por método de pago</h3>
                     <div class="fila"><span>Efectivo directo</span><span>$<?= number_format($resumen['ef'],2) ?></span></div>
                     <div class="fila"><span>Terminal directa</span><span>$<?= number_format($resumen['term'],2) ?></span></div>
-                    <div class="fila"><span>Mixto â€” parte efectivo</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
-                    <div class="fila"><span>Mixto â€” parte terminal</span><span>$<?= number_format($resumen['mixto_term'],2) ?></span></div>
-                    <div class="fila"><span>CrÃ©dito (no cobrado en caja)</span><span>$<?= number_format($resumen['cred'],2) ?></span></div>
+                    <div class="fila"><span>Mixto — parte efectivo</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
+                    <div class="fila"><span>Mixto — parte terminal</span><span>$<?= number_format($resumen['mixto_term'],2) ?></span></div>
+                    <div class="fila"><span>Crédito (no cobrado en caja)</span><span>$<?= number_format($resumen['cred'],2) ?></span></div>
                 </div>
 
                 <!-- Efectivo esperado -->
@@ -242,7 +242,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <button class="btn-cerrar" type="submit">
-                        Cerrar caja â€” Turno #<?= $caja['numero_turno'] ?>
+                        Cerrar caja — Turno #<?= $caja['numero_turno'] ?>
                     </button>
                 </form>
             </div>
@@ -266,13 +266,13 @@ function calcularDiferencia(val) {
 
     if (Math.abs(diferencia) < 0.01) {
         div.className  = 'diferencia-preview dif-cuadrado';
-        div.textContent = 'âœ… Caja cuadrada â€” Sin diferencia';
+        div.textContent = '✅ Caja cuadrada — Sin diferencia';
     } else if (diferencia < 0) {
         div.className  = 'diferencia-preview dif-faltante';
-        div.textContent = `âš  Faltante: $${Math.abs(diferencia).toFixed(2)} (contaste menos de lo esperado)`;
+        div.textContent = `⚠ Faltante: $${Math.abs(diferencia).toFixed(2)} (contaste menos de lo esperado)`;
     } else {
         div.className  = 'diferencia-preview dif-sobrante';
-        div.textContent = `ðŸ“Œ Sobrante: $${diferencia.toFixed(2)} (contaste mÃ¡s de lo esperado)`;
+        div.textContent = `📌 Sobrante: $${diferencia.toFixed(2)} (contaste más de lo esperado)`;
     }
 }
 
@@ -282,9 +282,9 @@ function confirmarCierre() {
 
     if (Math.abs(diferencia) > 0.01) {
         const tipo = diferencia < 0 ? 'faltante' : 'sobrante';
-        return confirm(`Hay un ${tipo} de $${Math.abs(diferencia).toFixed(2)}. Â¿Confirmas el cierre de caja?`);
+        return confirm(`Hay un ${tipo} de $${Math.abs(diferencia).toFixed(2)}. ¿Confirmas el cierre de caja?`);
     }
-    return confirm('Â¿Confirmas el cierre de caja?');
+    return confirm('¿Confirmas el cierre de caja?');
 }
 </script>
 </body>

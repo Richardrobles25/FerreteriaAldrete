@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             exit();
         } else {
-            $error = 'Usuario o contraseÃ±a incorrectos.';
+            $error = 'Usuario o contraseña incorrectos.';
         }
     } else {
         $error = 'Por favor completa todos los campos.';
@@ -118,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .login-title::before {
-            content: "Iniciar Sesión Ferremateriales ";
+            content: "Iniciar Sesi�n Ferremateriales ";
             color: var(--negro-marca);
             font-size: 24px;
         }
@@ -192,7 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="login-box">
         <div class="brand">
-            <div class="login-title">Iniciar sesión /Ferremateriales Aldrete</div>
+            <div class="login-title">Iniciar sesi�n /Ferremateriales Aldrete</div>
             <img src="/logo.jpeg" alt="Logo Ferremateriales Aldrete">
         </div>
         
@@ -212,14 +212,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 autofocus
             >
 
-            <label>Contraseña</label>
+            <label>Contrase�a</label>
             <input 
                 type="password" 
                 name="contrasena"
-                placeholder="Ingresa tu contraseña"
+                placeholder="Ingresa tu contrase�a"
             >
 
-            <button type="submit">Iniciar sesión</button>
+            <button type="submit">Iniciar sesi�n</button>
         </form>
         <div class="hint">Ferremateriales Aldrete</div>
     </div>

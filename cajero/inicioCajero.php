@@ -11,7 +11,7 @@ $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Ab
 $stmt->execute([$_SESSION['usuario_id']]);
 $cajaActual = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// EstadÃ­sticas del turno actual
+// Estadísticas del turno actual
 $ventasHoy = 0;
 $totalHoy  = 0;
 $pendientes = 0;
@@ -38,7 +38,7 @@ $stmtC = $pdo->prepare("
 $stmtC->execute([$_SESSION['sucursal_id']]);
 $creditosActivos = $stmtC->fetchColumn();
 
-// Ãšltimas ventas
+// Últimas ventas
 $ultimasVentas = [];
 if ($cajaActual) {
     $stmtUV = $pdo->prepare("
@@ -57,7 +57,7 @@ if ($cajaActual) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cajero â€” FerreterÃ­a Aldrete</title>
+    <title>Cajero — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -118,7 +118,7 @@ if ($cajaActual) {
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p>Cajero</p>
     </div>
     <div class="sidebar-menu">
@@ -131,7 +131,7 @@ if ($cajaActual) {
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
+        <a class="menu-item" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
@@ -154,7 +154,7 @@ if ($cajaActual) {
 
 
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
         </div>
     </div>
@@ -162,7 +162,7 @@ if ($cajaActual) {
     <div class="content">
         <?php if (isset($_GET['msg'])): ?>
             <?php if ($_GET['msg'] === 'cajaAbierta'): ?>
-                <div class="msg msg-exito">Caja abierta correctamente. Â¡Buen turno!</div>
+                <div class="msg msg-exito">Caja abierta correctamente. ¡Buen turno!</div>
             <?php elseif ($_GET['msg'] === 'cajaCerrada'): ?>
                 <div class="msg msg-exito">Caja cerrada correctamente.</div>
             <?php endif; ?>
@@ -174,8 +174,8 @@ if ($cajaActual) {
         <?php if ($cajaActual): ?>
             <div class="caja-status caja-abierta">
                 <div class="caja-info">
-                    <h3>Turno #<?= $cajaActual['numero_turno'] ?> â€” Abierta</h3>
-                    <p>Desde <?= date('d/m/Y H:i', strtotime($cajaActual['abierta_en'])) ?> Â· Monto inicial: $<?= number_format($cajaActual['monto_apertura'], 2) ?></p>
+                    <h3>Turno #<?= $cajaActual['numero_turno'] ?> — Abierta</h3>
+                    <p>Desde <?= date('d/m/Y H:i', strtotime($cajaActual['abierta_en'])) ?> · Monto inicial: $<?= number_format($cajaActual['monto_apertura'], 2) ?></p>
                 </div>
                 <a class="btn-caja btn-cerrar-caja" href="corteCaja.php">Cerrar caja</a>
             </div>
@@ -189,7 +189,7 @@ if ($cajaActual) {
             </div>
         <?php endif; ?>
 
-        <!-- EstadÃ­sticas -->
+        <!-- Estadísticas -->
         <div class="stats">
             <div class="stat">
                 <p>Ventas del turno</p>
@@ -207,30 +207,30 @@ if ($cajaActual) {
                 <small>Por entregar</small>
             </div>
             <div class="stat">
-                <p>CrÃ©ditos activos</p>
+                <p>Créditos activos</p>
                 <h3><?= $creditosActivos ?></h3>
                 <small>Por pagar</small>
             </div>
         </div>
 
-        <!-- Ãšltimas ventas -->
+        <!-- Últimas ventas -->
         <div class="tabla">
             <div class="tabla-header">
-                <span>Ãšltimas ventas del turno</span>
+                <span>Últimas ventas del turno</span>
                 <a href="historialVentas.php">Ver todas</a>
             </div>
             <?php if (count($ultimasVentas) > 0): ?>
                 <?php foreach ($ultimasVentas as $v): ?>
                 <div class="tabla-row">
                     <span style="color:#aaa;font-size:12px;">#<?= $v['venta_id'] ?></span>
-                    <span><?= htmlspecialchars($v['cliente'] ?? 'PÃºblico general') ?></span>
+                    <span><?= htmlspecialchars($v['cliente'] ?? 'Público general') ?></span>
                     <span class="badge badge-<?= strtolower($v['metodo_pago']) ?>"><?= $v['metodo_pago'] ?></span>
                     <span style="font-weight:600;">$<?= number_format($v['total'], 2) ?></span>
                     <span style="color:#aaa;font-size:12px;"><?= date('H:i', strtotime($v['created_at'])) ?></span>
                 </div>
                 <?php endforeach; ?>
             <?php else: ?>
-                <div class="tabla-row"><span style="color:#aaa;">No hay ventas en este turno aÃºn.</span></div>
+                <div class="tabla-row"><span style="color:#aaa;">No hay ventas en este turno aún.</span></div>
             <?php endif; ?>
         </div>
     </div>

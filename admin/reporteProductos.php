@@ -247,7 +247,7 @@ $categorias = $pdo->query("SELECT categoria_id, nombre FROM categorias ORDER BY 
 
         <div class="grid-2">
             <div class="card">
-                <div class="card-header">Producto con mejor desempeno</div>
+                <div class="card-header">Producto con mejor desempeño</div>
                 <?php if ($productoTop): ?>
                     <div class="resumen-row"><span>Producto</span><strong><?= htmlspecialchars($productoTop['nombre_producto']) ?></strong></div>
                     <div class="resumen-row"><span>Codigo</span><strong><?= htmlspecialchars($productoTop['codigo']) ?></strong></div>
@@ -260,7 +260,7 @@ $categorias = $pdo->query("SELECT categoria_id, nombre FROM categorias ORDER BY 
                 <?php endif; ?>
             </div>
             <div class="card">
-                <div class="card-header">Desempeno por sucursal</div>
+                <div class="card-header">Desempeño por sucursal</div>
                 <?php if (count($ventasPorSucursal) > 0): ?>
                     <?php foreach ($ventasPorSucursal as $vs): ?>
                         <div class="resumen-row">

@@ -1,8 +1,9 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
@@ -45,7 +46,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Usuarios — Ferretería Aldrete</title>
+    <title>Usuarios â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -111,29 +112,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
 </style>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
-        <p>Administrador</p>
-    </div>
-    <div class="sidebar-menu">
-        <a class="menu-item" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item active" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item" href="reporteProductos.php">Productos más vendidos</a>
-        <a class="menu-item" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('usuarios'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -142,14 +121,14 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
             <h2>Usuarios</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
     <div class="content">
         <div class="content-header">
-            <h1>Gestión de usuarios</h1>
+            <h1>GestiÃ³n de usuarios</h1>
             <a class="btn-nuevo" href="formUsuario.php">+ Nuevo usuario</a>
         </div>
 
@@ -230,7 +209,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                                 <?php if ($u['rol'] !== 'Administrador'): ?>
                                 <a class="btn-accion <?= $u['activo']?'btn-desactivar':'btn-activar' ?>"
                                    href="usuarios.php?toggle=<?= $u['usuario_id'] ?>"
-                                   onclick="return confirm('¿Cambiar estado del usuario?')">
+                                   onclick="return confirm('Â¿Cambiar estado del usuario?')">
                                     <?= $u['activo']?'Desactivar':'Activar' ?>
                                 </a>
                                 <?php endif; ?>
@@ -252,3 +231,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

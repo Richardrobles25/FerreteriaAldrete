@@ -1,8 +1,9 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
@@ -52,7 +53,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cortes de Caja — Ferretería Aldrete</title>
+    <title>Cortes de Caja â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -107,29 +108,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
 </style>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
-        <p>Administrador</p>
-    </div>
-    <div class="sidebar-menu">
-        <a class="menu-item" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item" href="reporteProductos.php">Productos más vendidos</a>
-        <a class="menu-item" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item active" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('cortes_admin'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -138,8 +117,8 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
             <h2>Cortes de Caja</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
@@ -219,7 +198,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
                                     <?= $dif==0?'Cuadrado':($dif<0?'-$'.number_format(abs($dif),2):'+$'.number_format($dif,2)) ?>
                                 </span>
                             <?php else: ?>
-                                <span style="color:#aaa;">—</span>
+                                <span style="color:#aaa;">â€”</span>
                             <?php endif; ?>
                         </td>
                         <td>
@@ -243,3 +222,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

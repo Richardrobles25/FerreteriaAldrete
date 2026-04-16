@@ -1,8 +1,9 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
@@ -13,7 +14,7 @@ $fechaDesde = match($periodo) {
     'semana'   => date('Y-m-d', strtotime('-7 days')),
     'mes'      => date('Y-m-d', strtotime('-30 days')),
     'trimestre'=> date('Y-m-d', strtotime('-90 days')),
-    'año'      => date('Y-m-d', strtotime('-365 days')),
+    'aÃ±o'      => date('Y-m-d', strtotime('-365 days')),
     default    => date('Y-m-d')
 };
 $fechaHasta = date('Y-m-d');
@@ -46,7 +47,7 @@ $stmt = $pdo->prepare("
 $stmt->execute([$fechaDesde, $fechaHasta]);
 $resumen = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Ventas por día
+// Ventas por dÃ­a
 $stmt = $pdo->prepare("
     SELECT DATE(v.created_at) AS fecha,
            COUNT(*) AS num_ventas,
@@ -86,7 +87,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reporte de Ventas — Ferretería Aldrete</title>
+    <title>Reporte de Ventas â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -141,29 +142,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .campo-personalizado.visible { display: flex; gap: 10px; }
 </style>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
-        <p>Administrador</p>
-    </div>
-    <div class="sidebar-menu">
-        <a class="menu-item" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item active" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item" href="reporteProductos.php">Productos más vendidos</a>
-        <a class="menu-item" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('reporte_ventas'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -172,8 +151,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <h2>Reporte de Ventas</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
@@ -183,13 +162,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         <form method="GET">
             <div class="filtros">
                 <div class="filtro-group">
-                    <label>Período</label>
+                    <label>PerÃ­odo</label>
                     <select name="periodo" onchange="togglePersonalizado(this.value)">
                         <option value="hoy" <?= $periodo==='hoy'?'selected':'' ?>>Hoy</option>
-                        <option value="semana" <?= $periodo==='semana'?'selected':'' ?>>Última semana</option>
-                        <option value="mes" <?= $periodo==='mes'?'selected':'' ?>>Último mes</option>
-                        <option value="trimestre" <?= $periodo==='trimestre'?'selected':'' ?>>Último trimestre</option>
-                        <option value="año" <?= $periodo==='año'?'selected':'' ?>>Último año</option>
+                        <option value="semana" <?= $periodo==='semana'?'selected':'' ?>>Ãšltima semana</option>
+                        <option value="mes" <?= $periodo==='mes'?'selected':'' ?>>Ãšltimo mes</option>
+                        <option value="trimestre" <?= $periodo==='trimestre'?'selected':'' ?>>Ãšltimo trimestre</option>
+                        <option value="aÃ±o" <?= $periodo==='aÃ±o'?'selected':'' ?>>Ãšltimo aÃ±o</option>
                         <option value="personalizado" <?= $periodo==='personalizado'?'selected':'' ?>>Personalizado</option>
                     </select>
                 </div>
@@ -221,20 +200,20 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <div class="stat"><p>Total cobrado</p><h3>$<?= number_format($resumen['total_cobrado'],0) ?></h3></div>
             <div class="stat"><p>Descuentos</p><h3>$<?= number_format($resumen['total_descuentos'],0) ?></h3></div>
             <div class="stat"><p>Comisiones term.</p><h3>$<?= number_format($resumen['total_comisiones'],0) ?></h3></div>
-            <div class="stat"><p>Días con ventas</p><h3><?= $resumen['dias_con_ventas'] ?></h3></div>
+            <div class="stat"><p>DÃ­as con ventas</p><h3><?= $resumen['dias_con_ventas'] ?></h3></div>
             <div class="stat">
-                <p>Promedio por día</p>
+                <p>Promedio por dÃ­a</p>
                 <h3>$<?= $resumen['dias_con_ventas']>0 ? number_format($resumen['total_cobrado']/$resumen['dias_con_ventas'],0) : 0 ?></h3>
             </div>
         </div>
 
         <div class="grid-2">
-            <!-- Por método de pago -->
+            <!-- Por mÃ©todo de pago -->
             <div class="card">
-                <div class="card-header">Por método de pago</div>
+                <div class="card-header">Por mÃ©todo de pago</div>
                 <div class="metodo-row"><span>Efectivo</span><strong>$<?= number_format($resumen['efectivo'],2) ?></strong></div>
                 <div class="metodo-row"><span>Terminal</span><strong>$<?= number_format($resumen['terminal'],2) ?></strong></div>
-                <div class="metodo-row"><span>Crédito</span><strong>$<?= number_format($resumen['credito'],2) ?></strong></div>
+                <div class="metodo-row"><span>CrÃ©dito</span><strong>$<?= number_format($resumen['credito'],2) ?></strong></div>
                 <div class="metodo-row"><span>Mixto</span><strong>$<?= number_format($resumen['mixto'],2) ?></strong></div>
             </div>
 
@@ -254,9 +233,9 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             </div>
         </div>
 
-        <!-- Ventas por día -->
+        <!-- Ventas por dÃ­a -->
         <div class="card">
-            <div class="card-header">Detalle por día</div>
+            <div class="card-header">Detalle por dÃ­a</div>
             <?php if (count($ventasPorDia) > 0): ?>
             <table>
                 <thead><tr><th>Fecha</th><th>Sucursal</th><th>Ventas</th><th>Total</th></tr></thead>
@@ -272,7 +251,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 </tbody>
             </table>
             <?php else: ?>
-                <div class="sin-datos">No hay ventas en este período.</div>
+                <div class="sin-datos">No hay ventas en este perÃ­odo.</div>
             <?php endif; ?>
         </div>
     </div>
@@ -286,3 +265,4 @@ function togglePersonalizado(val) {
 </script>
 </body>
 </html>
+

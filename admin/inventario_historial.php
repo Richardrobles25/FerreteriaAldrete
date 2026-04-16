@@ -2,33 +2,29 @@
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
-verificarRol(['Administrador']);
+verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 $fecha    = $_GET['fecha'] ?? '';
 $tipo     = $_GET['tipo'] ?? '';
-$sucursal = intval($_GET['sucursal'] ?? 0);
 $busqueda = trim($_GET['buscar'] ?? '');
 
-$where  = "WHERE 1=1";
-$params = [];
+$where  = "WHERE p.sucursal_id = ?";
+$params = [$_SESSION['sucursal_id']];
 
-if ($sucursal) { $where .= " AND p.sucursal_id = ?"; $params[] = $sucursal; }
-if ($fecha)    { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
-if ($tipo)     { $where .= " AND m.tipo = ?"; $params[] = $tipo; }
+if ($fecha) { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
+if ($tipo)  { $where .= " AND m.tipo = ?"; $params[] = $tipo; }
 if ($busqueda) { $where .= " AND p.nombre_producto LIKE ?"; $params[] = '%'.$busqueda.'%'; }
 
 $stmt = $pdo->prepare("
-    SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo AS usuario, s.nombre AS sucursal
+    SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
-    JOIN sucursales s ON p.sucursal_id = s.sucursal_id
     $where
     ORDER BY m.created_at DESC
-    LIMIT 300
+    LIMIT 200
 ");
 $stmt->execute($params);
 $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -36,18 +32,16 @@ $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Resumen
 $stmtRes = $pdo->prepare("
     SELECT
-        SUM(CASE WHEN m.tipo='Entrada' THEN m.cantidad ELSE 0 END) AS total_entradas,
-        SUM(CASE WHEN m.tipo='Salida' THEN m.cantidad ELSE 0 END) AS total_salidas,
-        COUNT(CASE WHEN m.tipo='Ajuste' THEN 1 END) AS total_ajustes,
-        COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) AS total_transf
+        SUM(CASE WHEN m.tipo='Entrada' THEN m.cantidad ELSE 0 END) as total_entradas,
+        SUM(CASE WHEN m.tipo='Salida' THEN m.cantidad ELSE 0 END) as total_salidas,
+        COUNT(CASE WHEN m.tipo='Ajuste' THEN 1 END) as total_ajustes,
+        COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     $where
 ");
 $stmtRes->execute($params);
 $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
-
-$sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -81,14 +75,16 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
     .content { flex: 1; padding: 24px; overflow-y: auto; }
-    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+    .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .content-header h1 { font-size: 20px; color: #222; font-weight: 600; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 16px; margin-bottom: 16px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
     .filtro-group { display: flex; flex-direction: column; gap: 5px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
     .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
     .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
-    .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; margin-bottom: 14px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; margin-bottom: 16px; }
     .stat { background: white; border-radius: 8px; padding: 14px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; }
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
@@ -109,7 +105,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
 </style>
 
-<?php renderAdminSidebar('historial_admin'); ?>
+<?php renderAdminSidebar('inventario_historial'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -118,12 +114,18 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <h2>Historial de Movimientos</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
+            <form method="POST" action="/logout.php">
+                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
+            </form>
         </div>
     </div>
 
     <div class="content">
+        <div class="content-header">
+            <h1>Movimientos de inventario</h1>
+        </div>
+
         <form method="GET">
             <div class="filtros">
                 <div class="filtro-group">
@@ -144,17 +146,10 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         <option value="Transferencia" <?= $tipo==='Transferencia'?'selected':'' ?>>Transferencia</option>
                     </select>
                 </div>
-                <div class="filtro-group">
-                    <label>Sucursal</label>
-                    <select name="sucursal">
-                        <option value="0">Todas</option>
-                        <?php foreach ($sucursales as $s): ?>
-                            <option value="<?= $s['sucursal_id'] ?>" <?= $sucursal===$s['sucursal_id']?'selected':'' ?>><?= htmlspecialchars($s['nombre']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
-                <?php if ($fecha||$tipo||$sucursal||$busqueda): ?><a class="btn-limpiar" href="historial.php">Limpiar</a><?php endif; ?>
+                <?php if ($fecha || $tipo || $busqueda): ?>
+                    <a class="btn-limpiar" href="inventario_inventario_historial.php">Limpiar</a>
+                <?php endif; ?>
             </div>
         </form>
 
@@ -162,14 +157,23 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'],2) ?></h3></div>
             <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'],2) ?></h3></div>
             <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?></h3></div>
-            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transf'] ?></h3></div>
+            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transferencias'] ?></h3></div>
         </div>
 
         <div class="tabla-wrapper">
             <?php if (count($movimientos) > 0): ?>
             <table>
                 <thead>
-                    <tr><th>Producto</th><th>Sucursal</th><th>Tipo</th><th>Cantidad</th><th>Stock ant.</th><th>Stock nuevo</th><th>Motivo</th><th>Usuario</th><th>Fecha</th></tr>
+                    <tr>
+                        <th>Producto</th>
+                        <th>Tipo</th>
+                        <th>Cantidad</th>
+                        <th>Stock anterior</th>
+                        <th>Stock nuevo</th>
+                        <th>Motivo</th>
+                        <th>Usuario</th>
+                        <th>Fecha</th>
+                    </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($movimientos as $m): ?>
@@ -178,16 +182,17 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                             <strong><?= htmlspecialchars($m['nombre_producto']) ?></strong>
                             <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($m['codigo']) ?></div>
                         </td>
-                        <td style="font-size:12px;"><?= htmlspecialchars($m['sucursal']) ?></td>
-                        <td><span class="badge-tipo tipo-<?= strtolower($m['tipo']) ?>"><?= $m['tipo'] ?></span></td>
-                        <td class="<?= $m['tipo']==='Entrada'?'cantidad-entrada':'cantidad-salida' ?>">
-                            <?= ($m['tipo']==='Entrada'?'+':'-').number_format($m['cantidad'],3) ?>
+                        <td>
+                            <span class="badge-tipo tipo-<?= strtolower($m['tipo']) ?>"><?= $m['tipo'] ?></span>
+                        </td>
+                        <td class="<?= in_array($m['tipo'],['Entrada']) ? 'cantidad-entrada' : 'cantidad-salida' ?>">
+                            <?= ($m['tipo']==='Entrada' ? '+' : '-') . number_format($m['cantidad'],3) ?>
                         </td>
                         <td><?= number_format($m['stock_anterior'],3) ?></td>
                         <td><?= number_format($m['stock_nuevo'],3) ?></td>
-                        <td style="font-size:12px;color:#888;"><?= htmlspecialchars($m['motivo']??'â€”') ?></td>
+                        <td style="color:#888;font-size:12px;"><?= htmlspecialchars($m['motivo'] ?? 'â€”') ?></td>
                         <td style="font-size:12px;"><?= htmlspecialchars($m['usuario']) ?></td>
-                        <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($m['created_at'])) ?></td>
+                        <td style="color:#aaa;font-size:12px;"><?= date('d/m/Y H:i', strtotime($m['created_at'])) ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -200,7 +205,9 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 </div>
 
 <script>
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+}
 </script>
 </body>
 </html>

@@ -1,8 +1,9 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
@@ -169,29 +170,7 @@ $categorias = $pdo->query("SELECT categoria_id, nombre FROM categorias ORDER BY 
     .campo-personalizado.visible { display: flex; gap: 10px; }
 </style>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <h3>Ferreteria Aldrete</h3>
-        <p>Administrador</p>
-    </div>
-    <div class="sidebar-menu">
-        <a class="menu-item" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item active" href="reporteProductos.php">Productos mas vendidos</a>
-        <a class="menu-item" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Creditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('reporte_productos'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -327,3 +306,4 @@ function togglePersonalizado(val) { document.getElementById('campoPers').classLi
 </script>
 </body>
 </html>
+

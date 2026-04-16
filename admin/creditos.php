@@ -1,8 +1,9 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
@@ -144,26 +145,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
 </style>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header"><h3>Ferreteria Aldrete</h3><p>Administrador</p></div>
-    <div class="sidebar-menu">
-        <a class="menu-item" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item" href="reporteProductos.php">Productos mas vendidos</a>
-        <a class="menu-item" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item active" href="creditos.php">Creditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('creditos_admin'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -250,3 +232,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

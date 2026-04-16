@@ -1,7 +1,8 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 
 verificarSesion();
 verificarRol(['Administrador']);
@@ -37,14 +38,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$nombre_usuario)  $errores[] = 'El nombre de usuario es obligatorio.';
     if (!$rol)             $errores[] = 'El rol es obligatorio.';
     if (!$sucursal_id)     $errores[] = 'La sucursal es obligatoria.';
-    if (!$esEdicion && !$contrasena) $errores[] = 'La contraseña es obligatoria.';
-    if ($contrasena && $contrasena !== $confirmar) $errores[] = 'Las contraseñas no coinciden.';
-    if ($contrasena && strlen($contrasena) < 6) $errores[] = 'La contraseña debe tener al menos 6 caracteres.';
+    if (!$esEdicion && !$contrasena) $errores[] = 'La contraseÃ±a es obligatoria.';
+    if ($contrasena && $contrasena !== $confirmar) $errores[] = 'Las contraseÃ±as no coinciden.';
+    if ($contrasena && strlen($contrasena) < 6) $errores[] = 'La contraseÃ±a debe tener al menos 6 caracteres.';
 
     if ($nombre_usuario) {
         $check = $pdo->prepare("SELECT usuario_id FROM usuarios WHERE nombre_usuario = ? AND usuario_id != ?");
         $check->execute([$nombre_usuario, $esEdicion ? intval($_GET['id']) : 0]);
-        if ($check->fetch()) $errores[] = 'Ese nombre de usuario ya está en uso.';
+        if ($check->fetch()) $errores[] = 'Ese nombre de usuario ya estÃ¡ en uso.';
     }
 
     if (empty($errores)) {
@@ -88,35 +89,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $esEdicion ? 'Editar' : 'Nuevo' ?> Usuario — Ferretería Aldrete</title>
+    <title><?= $esEdicion ? 'Editar' : 'Nuevo' ?> Usuario â€” FerreterÃ­a Aldrete</title>
     <link rel="stylesheet" href="css/formUsuario.css">
 
 </head>
 <body>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
-        <p>Administrador</p>
-    </div>
-    <div class="sidebar-menu">
-        <a class="menu-item" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item active" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item" href="reporteProductos.php">Productos más vendidos</a>
-        <a class="menu-item" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('form_usuario'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -127,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="topbar-right">
             <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesión</button>
+                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
             </form>
         </div>
     </div>
@@ -157,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <label>Nombre completo *</label>
                         <input type="text" name="nombre_completo"
                             value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $usuario['nombre_completo'] ?? '') ?>"
-                            placeholder="Ej. Juan Pérez">
+                            placeholder="Ej. Juan PÃ©rez">
                     </div>
                     <div class="form-group">
                         <label>Nombre de usuario *</label>
@@ -169,16 +148,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Teléfono</label>
+                        <label>TelÃ©fono</label>
                         <input type="text" name="telefono"
                             value="<?= htmlspecialchars($_POST['telefono'] ?? $usuario['telefono'] ?? '') ?>"
-                            placeholder="10 dígitos">
+                            placeholder="10 dÃ­gitos">
                     </div>
                     <div class="form-group">
                         <label>Domicilio</label>
                         <input type="text" name="domicilio"
                             value="<?= htmlspecialchars($_POST['domicilio'] ?? $usuario['domicilio'] ?? '') ?>"
-                            placeholder="Dirección del usuario">
+                            placeholder="DirecciÃ³n del usuario">
                     </div>
                 </div>
 
@@ -216,15 +195,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label><?= $esEdicion ? 'Nueva contraseña' : 'Contraseña *' ?></label>
-                        <input type="password" name="contrasena" placeholder="Mínimo 6 caracteres">
+                        <label><?= $esEdicion ? 'Nueva contraseÃ±a' : 'ContraseÃ±a *' ?></label>
+                        <input type="password" name="contrasena" placeholder="MÃ­nimo 6 caracteres">
                         <?php if ($esEdicion): ?>
-                            <span class="hint">Déjala en blanco si no quieres cambiarla.</span>
+                            <span class="hint">DÃ©jala en blanco si no quieres cambiarla.</span>
                         <?php endif; ?>
                     </div>
                     <div class="form-group">
-                        <label>Confirmar contraseña</label>
-                        <input type="password" name="confirmar" placeholder="Repite la contraseña">
+                        <label>Confirmar contraseÃ±a</label>
+                        <input type="password" name="confirmar" placeholder="Repite la contraseÃ±a">
                     </div>
                 </div>
 

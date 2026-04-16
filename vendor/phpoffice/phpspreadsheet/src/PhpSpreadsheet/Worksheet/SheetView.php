@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -197,3 +197,4 @@ class SheetView
         return $this;
     }
 }
+

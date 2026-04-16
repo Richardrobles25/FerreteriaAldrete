@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial;
 
@@ -120,3 +120,4 @@ class FinancialValidations
         return $discount;
     }
 }
+

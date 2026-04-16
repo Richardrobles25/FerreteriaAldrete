@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -173,3 +173,4 @@ class AddressHelper
         return $R1C1Address;
     }
 }
+

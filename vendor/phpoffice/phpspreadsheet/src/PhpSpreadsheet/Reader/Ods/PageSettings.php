@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Ods;
 
@@ -174,3 +174,4 @@ class PageSettings
             ->setFooter($printSettings->marginFooter);
     }
 }
+

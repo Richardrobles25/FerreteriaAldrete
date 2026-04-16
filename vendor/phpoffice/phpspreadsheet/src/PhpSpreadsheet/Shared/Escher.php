@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -64,3 +64,4 @@ class Escher
         return $this->dgContainer = $dgContainer;
     }
 }
+

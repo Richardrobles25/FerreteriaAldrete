@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -73,3 +73,4 @@ class TimeZone
         return $dtobj->getOffset();
     }
 }
+

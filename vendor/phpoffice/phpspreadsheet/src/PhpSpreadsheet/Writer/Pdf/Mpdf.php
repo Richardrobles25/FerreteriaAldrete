@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Pdf;
 
@@ -94,3 +94,4 @@ class Mpdf extends Pdf
         return $inches * 25.4;
     }
 }
+

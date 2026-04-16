@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -373,3 +373,4 @@ class Xf
         return $hidden !== null && array_key_exists($hidden, self::HIDDEN_ARRAY) ? self::HIDDEN_ARRAY[$hidden] : 0;
     }
 }
+

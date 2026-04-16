@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 
@@ -197,3 +197,4 @@ class SheetViews extends BaseParserClass
         }
     }
 }
+

@@ -336,3 +336,4 @@ function toggleCredito(checked) { document.getElementById('creditoCampos').class
 </body>
 </html>
 
+

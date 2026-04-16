@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -40,3 +40,4 @@ class PackFieldTest extends TestCase
         );
     }
 }
+

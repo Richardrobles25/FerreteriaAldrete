@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig\Trig;
 
@@ -116,3 +116,4 @@ class Cotangent
         return Helpers::numberOrNan($result);
     }
 }
+

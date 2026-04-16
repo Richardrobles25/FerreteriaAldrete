@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -136,3 +136,4 @@ class ColumnDimension extends Dimension
         return $this;
     }
 }
+

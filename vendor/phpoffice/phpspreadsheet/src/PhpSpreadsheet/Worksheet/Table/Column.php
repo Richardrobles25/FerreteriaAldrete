@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet\Table;
 
@@ -238,3 +238,4 @@ class Column
         }
     }
 }
+

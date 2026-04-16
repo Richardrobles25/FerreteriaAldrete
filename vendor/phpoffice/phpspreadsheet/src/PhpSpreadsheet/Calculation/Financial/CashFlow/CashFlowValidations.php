@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow;
 
@@ -39,3 +39,4 @@ class CashFlowValidations extends FinancialValidations
         return self::validateFloat($futureValue);
     }
 }
+

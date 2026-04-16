@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting;
 
@@ -72,3 +72,4 @@ class ConditionalFormatValueObject
         return $this;
     }
 }
+

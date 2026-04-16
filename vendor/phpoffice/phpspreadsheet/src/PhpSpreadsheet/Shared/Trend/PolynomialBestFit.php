@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Trend;
 
@@ -218,3 +218,4 @@ class PolynomialBestFit extends BestFit
         }
     }
 }
+

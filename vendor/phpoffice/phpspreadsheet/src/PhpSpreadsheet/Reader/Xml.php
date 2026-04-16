@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -743,3 +743,4 @@ class Xml extends BaseReader
             : ($simple->attributes($node) ?? new SimpleXMLElement('<xml></xml>'));
     }
 }
+

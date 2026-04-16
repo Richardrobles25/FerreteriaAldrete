@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engine;
 
@@ -65,3 +65,4 @@ class CyclicReferenceStack
         return $this->stack;
     }
 }
+

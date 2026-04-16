@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -95,3 +95,4 @@ class Search
         return ExcelError::VALUE();
     }
 }
+

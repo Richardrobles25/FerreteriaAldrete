@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -229,3 +229,4 @@ class RowColumnInformation
         return $rows;
     }
 }
+

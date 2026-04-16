@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -126,3 +126,4 @@ class VLookup extends LookupBase
         return is_int($value) || is_float($value);
     }
 }
+

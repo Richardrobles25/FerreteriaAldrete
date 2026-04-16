@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -405,3 +405,4 @@ class Functions
         return $retVal;
     }
 }
+

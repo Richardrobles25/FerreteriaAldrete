@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Trend;
 
@@ -73,3 +73,4 @@ class LinearBestFit extends BestFit
         }
     }
 }
+

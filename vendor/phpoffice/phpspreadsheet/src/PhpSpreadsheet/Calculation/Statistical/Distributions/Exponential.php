@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -52,3 +52,4 @@ class Exponential
         return $lambda * exp(0 - $value * $lambda);
     }
 }
+

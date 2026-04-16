@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -714,3 +714,4 @@ class Style extends WriterPart
         return $aNumFmts;
     }
 }
+

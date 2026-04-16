@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\OLE;
 
@@ -195,3 +195,4 @@ class ChainedBlockStream
     // bool dir_rewinddir ( void )
     // bool dir_closedir ( void )
 }
+

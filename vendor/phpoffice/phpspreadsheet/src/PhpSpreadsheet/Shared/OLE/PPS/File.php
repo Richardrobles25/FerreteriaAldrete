@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\OLE\PPS;
 
@@ -60,3 +60,4 @@ class File extends PPS
         $this->_data .= $data;
     }
 }
+

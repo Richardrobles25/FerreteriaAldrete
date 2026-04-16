@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Information;
 
@@ -324,3 +324,4 @@ class Value
         return 0;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Pdf;
 
@@ -25,3 +25,4 @@ class TcpdfNoDie extends Tcpdf
         }
     }
 }
+

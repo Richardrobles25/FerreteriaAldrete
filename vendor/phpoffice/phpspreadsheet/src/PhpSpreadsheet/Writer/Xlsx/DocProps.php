@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -248,3 +248,4 @@ class DocProps extends WriterPart
         return $objWriter->getData();
     }
 }
+

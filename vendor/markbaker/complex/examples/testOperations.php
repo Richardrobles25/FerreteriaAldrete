@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use Complex\Complex as Complex;
 use Complex\Operations;
@@ -33,3 +33,4 @@ echo 'Multiplication', PHP_EOL;
 
 $result = Operations::multiply(...$values);
 echo '=> ', $result, PHP_EOL;
+

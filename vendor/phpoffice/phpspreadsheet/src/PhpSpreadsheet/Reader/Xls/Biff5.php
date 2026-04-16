@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls;
 
@@ -69,3 +69,4 @@ class Biff5 extends Xls
         ];
     }
 }
+

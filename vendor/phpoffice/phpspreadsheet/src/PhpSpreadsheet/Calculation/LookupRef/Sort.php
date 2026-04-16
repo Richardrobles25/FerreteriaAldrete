@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -387,3 +387,4 @@ class Sort extends LookupRefValidations
 //        return $lookupArray;
     }
 }
+

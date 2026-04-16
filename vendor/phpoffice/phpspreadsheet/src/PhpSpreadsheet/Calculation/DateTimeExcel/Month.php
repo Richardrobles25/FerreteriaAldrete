@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -102,3 +102,4 @@ class Month
         return Helpers::returnIn3FormatsObject($PHPDateObject);
     }
 }
+

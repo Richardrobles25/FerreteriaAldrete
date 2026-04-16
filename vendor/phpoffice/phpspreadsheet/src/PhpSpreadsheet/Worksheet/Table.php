@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -591,3 +591,4 @@ class Table implements Stringable
         return (string) $this->range;
     }
 }
+

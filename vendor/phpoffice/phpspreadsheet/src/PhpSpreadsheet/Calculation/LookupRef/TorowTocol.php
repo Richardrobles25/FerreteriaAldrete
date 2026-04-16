@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -92,3 +92,4 @@ class TorowTocol
         return $returnMatrix;
     }
 }
+

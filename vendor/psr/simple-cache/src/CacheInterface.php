@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Psr\SimpleCache;
 
@@ -112,3 +112,4 @@ interface CacheInterface
      */
     public function has(string $key): bool;
 }
+

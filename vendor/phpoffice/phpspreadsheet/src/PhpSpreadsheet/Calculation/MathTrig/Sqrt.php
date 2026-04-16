@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -62,3 +62,4 @@ class Sqrt
         return sqrt($number * M_PI);
     }
 }
+

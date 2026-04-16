@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -844,3 +844,4 @@ class Roman
         return self::calculateRoman((int) $aValue, (int) $style);
     }
 }
+

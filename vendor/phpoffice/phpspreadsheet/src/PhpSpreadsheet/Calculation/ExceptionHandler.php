@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -22,3 +22,4 @@ class ExceptionHandler
         restore_error_handler();
     }
 }
+

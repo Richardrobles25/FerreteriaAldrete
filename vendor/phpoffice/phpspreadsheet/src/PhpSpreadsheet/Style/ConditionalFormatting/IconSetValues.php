@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting;
 
@@ -26,3 +26,4 @@ enum IconSetValues: string
     // case ThreeTriangles = "3Triangles";
     // case FiveBoxes = "5Boxes";
 }
+

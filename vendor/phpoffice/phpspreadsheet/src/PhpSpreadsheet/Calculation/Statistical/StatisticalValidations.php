@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -34,3 +34,4 @@ class StatisticalValidations
         return (bool) $value;
     }
 }
+

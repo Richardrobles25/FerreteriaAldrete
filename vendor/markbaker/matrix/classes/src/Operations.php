@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix;
 
@@ -155,3 +155,4 @@ class Operations
         return $result->result();
     }
 }
+

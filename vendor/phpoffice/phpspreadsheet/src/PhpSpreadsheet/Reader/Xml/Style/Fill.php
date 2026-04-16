@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xml\Style;
 
@@ -59,3 +59,4 @@ class Fill extends StyleBase
         return $style;
     }
 }
+

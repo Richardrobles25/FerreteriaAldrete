@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -57,3 +57,4 @@ class ProtectedRange
         return Coordinate::allRanges($this->sqref, false);
     }
 }
+

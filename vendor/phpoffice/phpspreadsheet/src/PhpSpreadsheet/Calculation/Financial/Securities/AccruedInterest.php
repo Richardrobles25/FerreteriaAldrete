@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\Securities;
 
@@ -144,3 +144,4 @@ class AccruedInterest
         return $parValue * $rate * $daysBetweenIssueAndSettlement;
     }
 }
+

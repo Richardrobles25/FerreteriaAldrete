@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -774,3 +774,4 @@ abstract class Coordinate
         }
     }
 }
+

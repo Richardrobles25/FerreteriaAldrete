@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engine\Operands;
 
@@ -362,3 +362,4 @@ final class StructuredReference implements Operand, Stringable
         return $this->value;
     }
 }
+

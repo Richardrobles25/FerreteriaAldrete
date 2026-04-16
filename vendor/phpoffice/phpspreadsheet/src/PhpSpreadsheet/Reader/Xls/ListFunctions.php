@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls;
 
@@ -265,3 +265,4 @@ class ListFunctions extends Xls
         return $worksheetInfo;
     }
 }
+

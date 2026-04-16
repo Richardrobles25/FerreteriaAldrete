@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -157,3 +157,4 @@ class ResourceStream implements StreamInterface
         return $result;
     }
 }
+

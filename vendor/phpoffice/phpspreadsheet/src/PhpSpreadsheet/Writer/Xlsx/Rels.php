@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -563,3 +563,4 @@ class Rels extends WriterPart
         return $sheetData['drawingRelationships'];
     }
 }
+

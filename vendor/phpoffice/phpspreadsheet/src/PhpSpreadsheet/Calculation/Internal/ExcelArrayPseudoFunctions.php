@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Internal;
 
@@ -102,3 +102,4 @@ class ExcelArrayPseudoFunctions
         return $result;
     }
 }
+

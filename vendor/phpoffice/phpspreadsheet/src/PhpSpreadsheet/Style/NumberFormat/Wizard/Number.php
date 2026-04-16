@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat\Wizard;
 
@@ -55,3 +55,4 @@ class Number extends NumberBase implements Wizard
         );
     }
 }
+

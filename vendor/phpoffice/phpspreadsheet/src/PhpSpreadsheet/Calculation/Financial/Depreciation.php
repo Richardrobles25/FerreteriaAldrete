@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial;
 
@@ -263,3 +263,4 @@ class Depreciation
         return $factor;
     }
 }
+

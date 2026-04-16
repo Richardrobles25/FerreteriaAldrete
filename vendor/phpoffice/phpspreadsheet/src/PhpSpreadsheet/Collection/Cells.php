@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Collection;
 
@@ -544,3 +544,4 @@ class Cells
         return $cell;
     }
 }
+

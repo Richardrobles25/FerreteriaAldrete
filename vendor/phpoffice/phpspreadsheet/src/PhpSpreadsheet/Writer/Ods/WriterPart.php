@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods;
 
@@ -29,3 +29,4 @@ abstract class WriterPart
 
     abstract public function write(): string;
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 /*
  * This file is part of composer/pcre.
@@ -53,3 +53,4 @@ class PcreException extends \RuntimeException
         return 'UNDEFINED_ERROR';
     }
 }
+

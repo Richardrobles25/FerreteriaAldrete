@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -153,3 +153,4 @@ class RowIterator implements NativeIterator
         return $this->position <= $this->endRow && $this->position >= $this->startRow;
     }
 }
+

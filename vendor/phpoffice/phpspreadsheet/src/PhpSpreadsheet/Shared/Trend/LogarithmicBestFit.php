@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Trend;
 
@@ -78,3 +78,4 @@ class LogarithmicBestFit extends BestFit
         }
     }
 }
+

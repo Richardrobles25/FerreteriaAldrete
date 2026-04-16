@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting\Wizard;
 
@@ -162,3 +162,4 @@ class TextValue extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

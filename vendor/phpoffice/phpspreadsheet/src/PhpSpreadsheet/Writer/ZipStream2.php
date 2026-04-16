@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -25,3 +25,4 @@ class ZipStream2
         return new ZipStream(null, $options);
     }
 }
+

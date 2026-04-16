@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls;
 
@@ -22,3 +22,4 @@ class ErrorCode
         return self::ERROR_CODE_MAP[$code] ?? false;
     }
 }
+

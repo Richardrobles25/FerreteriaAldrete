@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 /*
  * This file is part of composer/pcre.
@@ -41,3 +41,4 @@ final class ReplaceResult
         $this->result = $result;
     }
 }
+

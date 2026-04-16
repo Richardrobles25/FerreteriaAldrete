@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Database;
 
@@ -45,3 +45,4 @@ class DVarP extends DatabaseAbstract
         );
     }
 }
+

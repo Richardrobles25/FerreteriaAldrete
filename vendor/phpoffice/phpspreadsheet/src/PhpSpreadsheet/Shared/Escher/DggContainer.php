@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Escher;
 
@@ -156,3 +156,4 @@ class DggContainer
         $this->IDCLs = $IDCLs;
     }
 }
+

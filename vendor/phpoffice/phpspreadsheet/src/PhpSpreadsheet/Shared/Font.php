@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -720,3 +720,4 @@ class Font
         return $fontPath;
     }
 }
+

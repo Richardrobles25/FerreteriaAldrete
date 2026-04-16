@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -356,3 +356,4 @@ class Comment implements IComparable, Stringable
         return $this;
     }
 }
+

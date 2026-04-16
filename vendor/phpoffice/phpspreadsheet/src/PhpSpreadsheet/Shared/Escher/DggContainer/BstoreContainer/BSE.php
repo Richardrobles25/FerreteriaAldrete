@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Escher\DggContainer\BstoreContainer;
 
@@ -79,3 +79,4 @@ class BSE
         $this->blipType = $blipType;
     }
 }
+

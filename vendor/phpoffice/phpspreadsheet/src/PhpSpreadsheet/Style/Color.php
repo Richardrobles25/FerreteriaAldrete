@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -476,3 +476,4 @@ class Color extends Supervisor
         return $this->setTheme(Theme::HYPERLINK_THEME);
     }
 }
+

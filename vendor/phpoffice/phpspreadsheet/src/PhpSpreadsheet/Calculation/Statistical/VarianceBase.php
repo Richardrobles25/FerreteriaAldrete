@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -26,3 +26,4 @@ abstract class VarianceBase
         return $value;
     }
 }
+

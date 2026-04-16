@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -10,33 +10,33 @@ class Thai
     use ArrayEnabled;
 
     private const THAI_DIGITS = [
-        0 => 'ศูนย์',
-        1 => 'หนึ่ง',
-        2 => 'สอง',
-        3 => 'สาม',
-        4 => 'สี่',
-        5 => 'ห้า',
-        6 => 'หก',
-        7 => 'เจ็ด',
-        8 => 'แปด',
-        9 => 'เก้า',
+        0 => 'à¸¨à¸¹à¸™à¸¢à¹Œ',
+        1 => 'à¸«à¸™à¸¶à¹ˆà¸‡',
+        2 => 'à¸ªà¸­à¸‡',
+        3 => 'à¸ªà¸²à¸¡',
+        4 => 'à¸ªà¸µà¹ˆ',
+        5 => 'à¸«à¹‰à¸²',
+        6 => 'à¸«à¸',
+        7 => 'à¹€à¸ˆà¹‡à¸”',
+        8 => 'à¹à¸›à¸”',
+        9 => 'à¹€à¸à¹‰à¸²',
     ];
 
     private const THAI_UNITS = [
-        1 => 'สิบ',
-        2 => 'ร้อย',
-        3 => 'พัน',
-        4 => 'หมื่น',
-        5 => 'แสน',
-        6 => 'ล้าน',
+        1 => 'à¸ªà¸´à¸š',
+        2 => 'à¸£à¹‰à¸­à¸¢',
+        3 => 'à¸žà¸±à¸™',
+        4 => 'à¸«à¸¡à¸·à¹ˆà¸™',
+        5 => 'à¹à¸ªà¸™',
+        6 => 'à¸¥à¹‰à¸²à¸™',
     ];
 
-    private const THAI_COMPOUND_ONE = 'เอ็ด';
-    private const THAI_COMPOUND_TWO = 'ยี่';
-    private const THAI_INTEGER = 'ถ้วน';
-    private const THAI_MINUS = 'ลบ';
-    private const THAI_BAHT = 'บาท';
-    private const THAI_SATANG = 'สตางค์';
+    private const THAI_COMPOUND_ONE = 'à¹€à¸­à¹‡à¸”';
+    private const THAI_COMPOUND_TWO = 'à¸¢à¸µà¹ˆ';
+    private const THAI_INTEGER = 'à¸–à¹‰à¸§à¸™';
+    private const THAI_MINUS = 'à¸¥à¸š';
+    private const THAI_BAHT = 'à¸šà¸²à¸—';
+    private const THAI_SATANG = 'à¸ªà¸•à¸²à¸‡à¸„à¹Œ';
 
     /**
      * BAHTTEXT.
@@ -137,3 +137,4 @@ class Thai
         return $out;
     }
 }
+

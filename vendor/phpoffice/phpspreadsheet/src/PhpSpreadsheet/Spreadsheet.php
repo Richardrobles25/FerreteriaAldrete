@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -1951,3 +1951,4 @@ class Spreadsheet implements JsonSerializable
         return $this->usesCheckBoxStyle;
     }
 }
+

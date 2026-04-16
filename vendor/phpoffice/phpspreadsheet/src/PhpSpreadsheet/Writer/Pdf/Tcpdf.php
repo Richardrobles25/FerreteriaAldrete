@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Pdf;
 
@@ -106,3 +106,4 @@ class Tcpdf extends Pdf
         parent::restoreStateAfterSave();
     }
 }
+

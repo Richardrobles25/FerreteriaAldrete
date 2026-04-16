@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -42,3 +42,4 @@ class Formula
         return $worksheet->getCell($cellReference)->getValueString();
     }
 }
+

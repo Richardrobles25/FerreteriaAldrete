@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
@@ -23,3 +23,4 @@ abstract class BaseFormatter
         return $value;
     }
 }
+

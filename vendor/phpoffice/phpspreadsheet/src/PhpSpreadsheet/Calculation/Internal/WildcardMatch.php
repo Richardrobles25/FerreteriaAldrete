@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Internal;
 
@@ -37,3 +37,4 @@ class WildcardMatch
         return (bool) preg_match("/^{$wildcard}\$/mui", $value);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -233,3 +233,4 @@ class FunctionPrefix
         return self::addFunctionPrefix(substr($functionString, 1));
     }
 }
+

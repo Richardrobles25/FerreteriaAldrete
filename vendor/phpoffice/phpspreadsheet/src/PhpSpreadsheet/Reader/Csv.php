@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -760,3 +760,4 @@ class Csv extends BaseReader
         return $version < 90000 ? '\\' : '';
     }
 }
+

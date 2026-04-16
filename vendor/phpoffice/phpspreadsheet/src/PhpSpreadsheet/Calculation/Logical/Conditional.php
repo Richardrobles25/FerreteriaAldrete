@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Logical;
 
@@ -209,3 +209,4 @@ class Conditional
         return ExcelError::NA();
     }
 }
+

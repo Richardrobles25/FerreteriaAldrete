@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig\Trig;
 
@@ -114,3 +114,4 @@ class Sine
         return Helpers::numberOrNan(asinh($number));
     }
 }
+

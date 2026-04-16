@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Escher\DgContainer;
 
@@ -74,3 +74,4 @@ class SpgrContainer
         return $allSpContainers;
     }
 }
+

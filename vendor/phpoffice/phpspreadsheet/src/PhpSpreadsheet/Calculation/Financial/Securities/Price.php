@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\Securities;
 
@@ -274,3 +274,4 @@ class Price
         return $investment / (1 - ($discount * $daysBetweenSettlementAndMaturity));
     }
 }
+

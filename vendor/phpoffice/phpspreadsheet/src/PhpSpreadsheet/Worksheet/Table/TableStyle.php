@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet\Table;
 
@@ -252,3 +252,4 @@ class TableStyle
         return $this;
     }
 }
+

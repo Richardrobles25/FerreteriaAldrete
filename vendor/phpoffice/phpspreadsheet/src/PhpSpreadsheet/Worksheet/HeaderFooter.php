@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -450,3 +450,4 @@ class HeaderFooter
         }
     }
 }
+

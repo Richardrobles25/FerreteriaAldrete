@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -64,3 +64,4 @@ class FeaturePropertyBag extends WriterPart
         return $objWriter->getData();
     }
 }
+

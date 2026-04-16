@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xml;
 
@@ -113,3 +113,4 @@ class Style
         return ($simple !== null) ? $simple : new SimpleXMLElement('<xml></xml>');
     }
 }
+

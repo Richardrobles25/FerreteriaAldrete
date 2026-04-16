@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Document;
 
@@ -507,3 +507,4 @@ class Properties
         return $this;
     }
 }
+

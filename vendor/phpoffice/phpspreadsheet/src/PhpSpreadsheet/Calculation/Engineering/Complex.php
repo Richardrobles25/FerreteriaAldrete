@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -118,3 +118,4 @@ class Complex
         return $complex->getReal();
     }
 }
+

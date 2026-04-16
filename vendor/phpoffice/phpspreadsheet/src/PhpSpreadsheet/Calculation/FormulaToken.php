@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -132,3 +132,4 @@ class FormulaToken
         $this->tokenSubType = $value;
     }
 }
+

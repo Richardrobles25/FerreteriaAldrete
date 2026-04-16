@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -907,3 +907,4 @@ class Xlsx extends BaseWriter
         }
     }
 }
+

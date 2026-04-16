@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -70,3 +70,4 @@ class Fisher
         return (exp(2 * $probability) - 1) / (exp(2 * $probability) + 1);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -200,3 +200,4 @@ final class CallbackOutputTest extends TestCase
         $this->assertTrue(true); // Placeholder assertion
     }
 }
+

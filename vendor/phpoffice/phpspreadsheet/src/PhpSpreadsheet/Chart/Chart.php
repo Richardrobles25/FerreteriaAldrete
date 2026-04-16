@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -783,3 +783,4 @@ class Chart
         $this->fillColor = clone $this->fillColor;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix\Decomposition;
 
@@ -189,3 +189,4 @@ class QR
             ->multiply($Y);
     }
 }
+

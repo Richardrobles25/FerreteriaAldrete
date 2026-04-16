@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\Securities;
 
@@ -148,3 +148,4 @@ class Yields
             * ($daysPerYear / $daysBetweenSettlementAndMaturity);
     }
 }
+

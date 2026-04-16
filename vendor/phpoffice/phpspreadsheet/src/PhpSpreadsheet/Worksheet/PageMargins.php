@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -191,3 +191,4 @@ class PageMargins
         return $value * 72;
     }
 }
+

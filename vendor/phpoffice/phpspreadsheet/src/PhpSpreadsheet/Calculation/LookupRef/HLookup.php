@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -128,3 +128,4 @@ class HLookup extends LookupBase
         return $lookupArray;
     }
 }
+

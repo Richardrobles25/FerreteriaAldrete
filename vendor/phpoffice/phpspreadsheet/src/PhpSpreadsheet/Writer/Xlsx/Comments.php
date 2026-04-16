@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -251,3 +251,4 @@ class Comments extends WriterPart
         $objWriter->endElement();
     }
 }
+

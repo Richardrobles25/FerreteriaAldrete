@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -25,3 +25,4 @@ interface AddressRange
 
     public function __toString(): string;
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Helper;
 
@@ -103,3 +103,4 @@ class Downloader
         header('Content-Length: ' . filesize($this->filepath));
     }
 }
+

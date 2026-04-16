@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -208,3 +208,4 @@ class PlotArea
         }
     }
 }
+

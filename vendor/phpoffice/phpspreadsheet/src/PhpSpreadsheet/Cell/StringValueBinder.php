@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -133,3 +133,4 @@ class StringValueBinder extends DefaultValueBinder implements IValueBinder
         return true;
     }
 }
+

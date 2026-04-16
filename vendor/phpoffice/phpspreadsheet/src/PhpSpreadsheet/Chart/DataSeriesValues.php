@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -579,3 +579,4 @@ class DataSeriesValues extends Properties
         }
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -559,3 +559,4 @@ class OLE
         return IntOrFloat::evaluate($unixTimestamp);
     }
 }
+

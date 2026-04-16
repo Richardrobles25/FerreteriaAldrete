@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Information;
 
@@ -70,3 +70,4 @@ class ErrorValue
         return $value === ExcelError::NA();
     }
 }
+

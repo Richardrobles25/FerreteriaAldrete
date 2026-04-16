@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Token;
 
@@ -124,3 +124,4 @@ class Stack
         $this->count = 0;
     }
 }
+

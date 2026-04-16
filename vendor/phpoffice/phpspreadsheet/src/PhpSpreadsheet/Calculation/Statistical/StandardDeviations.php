@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -87,3 +87,4 @@ class StandardDeviations
         return sqrt((float) $result);
     }
 }
+

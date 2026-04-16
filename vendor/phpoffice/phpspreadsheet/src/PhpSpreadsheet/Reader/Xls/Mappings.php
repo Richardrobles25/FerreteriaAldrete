@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls;
 
@@ -269,3 +269,4 @@ class Mappings
         367 => 'VARA',
     ];
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -80,3 +80,4 @@ class Compare
         return (int) ($number >= $step);
     }
 }
+

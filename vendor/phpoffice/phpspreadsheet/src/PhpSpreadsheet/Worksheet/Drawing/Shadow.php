@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 
@@ -245,3 +245,4 @@ class Shadow implements IComparable
         }
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
@@ -46,3 +46,4 @@ class PercentageFormatter extends BaseFormatter
         return self::adjustSeparators(sprintf($mask, round($valueFloat, $decimalPartSize)));
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -107,3 +107,4 @@ class Erf
         return self::TWO_SQRT_PI * $sum;
     }
 }
+

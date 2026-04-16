@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xml\Style;
 
@@ -89,3 +89,4 @@ class Font extends StyleBase
         return $style;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -47,3 +47,4 @@ class AutoFit
         return $autoFilterIndentRange;
     }
 }
+

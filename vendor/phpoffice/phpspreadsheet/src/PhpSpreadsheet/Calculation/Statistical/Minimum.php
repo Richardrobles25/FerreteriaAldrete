@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -85,3 +85,4 @@ class Minimum extends MaxMinBase
         return $returnValue;
     }
 }
+

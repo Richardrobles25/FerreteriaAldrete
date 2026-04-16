@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -58,3 +58,4 @@ class Current
         return Helpers::dateParseSucceeded($dateArray) ? Helpers::returnIn3FormatsArray($dateArray) : ExcelError::VALUE();
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable;
 
@@ -162,3 +162,4 @@ class Periodic
         return $returnValue;
     }
 }
+

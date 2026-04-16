@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting\Wizard;
 
@@ -107,3 +107,4 @@ class DateValue extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

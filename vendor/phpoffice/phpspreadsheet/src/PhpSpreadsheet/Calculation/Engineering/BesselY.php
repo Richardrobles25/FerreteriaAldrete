@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -135,3 +135,4 @@ class BesselY
         return $fBy;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Averages;
 
@@ -124,3 +124,4 @@ class Mean
         return ExcelError::VALUE();
     }
 }
+

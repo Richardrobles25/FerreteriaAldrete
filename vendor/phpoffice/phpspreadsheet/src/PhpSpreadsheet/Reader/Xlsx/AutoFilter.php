@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 
@@ -161,3 +161,4 @@ class AutoFilter
         }
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -406,3 +406,4 @@ class DataSeries
         }
     }
 }
+

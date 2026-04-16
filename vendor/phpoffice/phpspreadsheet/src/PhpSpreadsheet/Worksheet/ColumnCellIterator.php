@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -196,3 +196,4 @@ class ColumnCellIterator extends CellIterator
         }
     }
 }
+

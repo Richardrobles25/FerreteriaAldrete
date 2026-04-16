@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Database;
 
@@ -226,3 +226,4 @@ abstract class DatabaseAbstract
         return str_replace('[:' . $criterion . ']', $dataValue, $conditions);
     }
 }
+

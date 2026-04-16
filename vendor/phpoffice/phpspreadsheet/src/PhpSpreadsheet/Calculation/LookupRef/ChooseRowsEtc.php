@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -249,3 +249,4 @@ class ChooseRowsEtc
         return $outputArray;
     }
 }
+

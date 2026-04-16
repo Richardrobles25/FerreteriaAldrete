@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engine;
 
@@ -199,3 +199,4 @@ class BranchPruner
         return $storeKeyValue;
     }
 }
+

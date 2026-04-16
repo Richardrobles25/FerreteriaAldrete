@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Internal;
 
@@ -14,3 +14,4 @@ class MakeMatrix
         return $args;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -1164,3 +1164,4 @@ class Workbook extends BIFFwriter
         $this->escher = $escher;
     }
 }
+

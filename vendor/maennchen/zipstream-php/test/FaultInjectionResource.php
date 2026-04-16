@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -139,3 +139,4 @@ class FaultInjectionResource
         return in_array($function, $this->injectFaults, true);
     }
 }
+

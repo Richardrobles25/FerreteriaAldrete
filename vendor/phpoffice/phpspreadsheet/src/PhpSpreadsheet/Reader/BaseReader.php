@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -358,3 +358,4 @@ abstract class BaseReader implements IReader
         return new Spreadsheet();
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat\Wizard;
 
@@ -110,7 +110,7 @@ class CurrencyBase extends Number
             $mask = (string) preg_replace('/\.0+/miu', '', $mask);
         }
 
-        return str_replace('¤', $this->formatCurrencyCode(), $mask);
+        return str_replace('Â¤', $this->formatCurrencyCode(), $mask);
     }
 
     private function formatCurrencyCode(): string
@@ -234,3 +234,4 @@ class CurrencyBase extends Number
         return $format;
     }
 }
+

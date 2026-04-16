@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\RichText;
 
@@ -67,3 +67,4 @@ class TextElement implements ITextElement
         );
     }
 }
+

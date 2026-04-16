@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -64,3 +64,4 @@ class CellDataValidation
         return self::$operatorMap[$operator] ?? self::$operatorMap[DataValidation::OPERATOR_BETWEEN];
     }
 }
+

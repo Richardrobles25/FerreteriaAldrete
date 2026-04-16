@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -172,3 +172,4 @@ class Legend
         $this->fillColor = clone $this->fillColor;
     }
 }
+

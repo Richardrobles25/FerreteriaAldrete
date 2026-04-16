@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Ods;
 
@@ -43,3 +43,4 @@ class AutoFilter extends BaseLoader
         return null;
     }
 }
+

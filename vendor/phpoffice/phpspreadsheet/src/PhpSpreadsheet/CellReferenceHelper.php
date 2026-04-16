@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -176,3 +176,4 @@ class CellReferenceHelper
         return "{$absoluteRow}{$newRow}";
     }
 }
+

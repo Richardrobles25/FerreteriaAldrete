@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -164,3 +164,4 @@ abstract class Supervisor implements IComparable
      */
     abstract public function getStyleArray(array $array): array;
 }
+

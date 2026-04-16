@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat\Wizard;
 
@@ -79,3 +79,4 @@ abstract class NumberBase implements Stringable
         return $this->format();
     }
 }
+

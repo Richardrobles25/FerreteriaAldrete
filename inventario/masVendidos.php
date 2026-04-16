@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -14,7 +14,7 @@ $fechaDesde = match($periodo) {
     'hoy'    => date('Y-m-d'),
     'semana' => date('Y-m-d', strtotime('-7 days')),
     'mes'    => date('Y-m-d', strtotime('-30 days')),
-    'año'    => date('Y-m-d', strtotime('-365 days')),
+    'aÃ±o'    => date('Y-m-d', strtotime('-365 days')),
     default  => date('Y-m-d', strtotime('-30 days'))
 };
 
@@ -61,7 +61,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Más Vendidos — Ferretería Aldrete</title>
+    <title>MÃ¡s Vendidos â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -116,13 +116,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
+        <h3>FerreterÃ­a Aldrete</h3>
         <p><?= $_SESSION['rol'] ?></p>
     </div>
     <div class="sidebar-menu">
         <a class="menu-item" href="inicioInventario.php">Inicio</a>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">CategorÃ­as</a>
         <div class="divider"></div>
         <a class="menu-item" href="entradas.php">Entradas de productos</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
@@ -133,7 +133,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         <div class="divider"></div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
-        <a class="menu-item active" href="masVendidos.php">Más vendidos</a>
+        <a class="menu-item active" href="masVendidos.php">MÃ¡s vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -142,11 +142,11 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Productos más vendidos</h2>
+            <h2>Productos mÃ¡s vendidos</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
@@ -154,12 +154,12 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         <form method="GET">
             <div class="filtros">
                 <div class="filtro-group">
-                    <label>Período</label>
+                    <label>PerÃ­odo</label>
                     <select name="periodo">
                         <option value="hoy" <?= $periodo==='hoy'?'selected':'' ?>>Hoy</option>
-                        <option value="semana" <?= $periodo==='semana'?'selected':'' ?>>Última semana</option>
-                        <option value="mes" <?= $periodo==='mes'?'selected':'' ?>>Último mes</option>
-                        <option value="año" <?= $periodo==='año'?'selected':'' ?>>Último año</option>
+                        <option value="semana" <?= $periodo==='semana'?'selected':'' ?>>Ãšltima semana</option>
+                        <option value="mes" <?= $periodo==='mes'?'selected':'' ?>>Ãšltimo mes</option>
+                        <option value="aÃ±o" <?= $periodo==='aÃ±o'?'selected':'' ?>>Ãšltimo aÃ±o</option>
                     </select>
                 </div>
                 <div class="filtro-group">
@@ -196,7 +196,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         <div class="tabla-wrapper">
             <table>
                 <thead>
-                    <tr><th>#</th><th>Producto</th><th>Categoría</th><th>Unidades vendidas</th><th>Participación</th><th>Ingresos</th><th>Stock actual</th></tr>
+                    <tr><th>#</th><th>Producto</th><th>CategorÃ­a</th><th>Unidades vendidas</th><th>ParticipaciÃ³n</th><th>Ingresos</th><th>Stock actual</th></tr>
                 </thead>
                 <tbody>
                     <?php foreach ($masVendidos as $i => $p):
@@ -209,7 +209,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                             <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
                             <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($p['codigo']) ?></div>
                         </td>
-                        <td style="font-size:12px;"><?= htmlspecialchars($p['categoria']??'—') ?></td>
+                        <td style="font-size:12px;"><?= htmlspecialchars($p['categoria']??'â€”') ?></td>
                         <td>
                             <strong><?= number_format($p['total_vendido'],2) ?></strong>
                             <div style="font-size:11px;color:#aaa;"><?= $p['num_ventas'] ?> ventas</div>
@@ -231,7 +231,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         </div>
         <?php else: ?>
             <div class="sin-resultados" style="background:white;border-radius:8px;border:0.5px solid #e8e8e8;">
-                No hay datos de ventas para este período.
+                No hay datos de ventas para este perÃ­odo.
             </div>
         <?php endif; ?>
     </div>
@@ -242,3 +242,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

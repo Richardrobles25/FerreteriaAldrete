@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -590,3 +590,4 @@ class ComplexFunctions
         return (string) $complex->pow((float) $realNumber);
     }
 }
+

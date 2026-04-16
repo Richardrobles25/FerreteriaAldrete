@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -15,3 +15,4 @@ class IntOrFloat
         return ($value == $iValue) ? $iValue : $value;
     }
 }
+

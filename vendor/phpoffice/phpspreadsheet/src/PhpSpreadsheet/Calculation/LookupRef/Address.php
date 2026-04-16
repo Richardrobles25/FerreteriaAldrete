@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -124,3 +124,4 @@ class Address
         return "{$sheetName}$rowChar{$row}$colChar{$column}";
     }
 }
+

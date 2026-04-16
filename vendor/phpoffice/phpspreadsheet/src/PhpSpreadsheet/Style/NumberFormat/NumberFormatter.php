@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
@@ -325,3 +325,4 @@ class NumberFormatter extends BaseFormatter
         return $scale;
     }
 }
+

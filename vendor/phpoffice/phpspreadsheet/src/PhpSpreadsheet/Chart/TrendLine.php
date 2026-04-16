@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -215,3 +215,4 @@ class TrendLine extends Properties
         return $this;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -108,3 +108,4 @@ class Row
         return $this->worksheet;
     }
 }
+

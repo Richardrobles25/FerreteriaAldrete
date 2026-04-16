@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\Securities;
 
@@ -129,3 +129,4 @@ class Rates
         return (($redemption / $investment) - 1) / ($daysBetweenSettlementAndMaturity);
     }
 }
+

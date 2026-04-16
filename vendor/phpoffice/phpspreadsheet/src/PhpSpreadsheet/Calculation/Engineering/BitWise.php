@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -245,3 +245,4 @@ class BitWise
         return $number;
     }
 }
+

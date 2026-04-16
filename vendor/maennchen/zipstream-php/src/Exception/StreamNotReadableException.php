@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -21,3 +21,4 @@ class StreamNotReadableException extends Exception
         parent::__construct('The stream could not be read.');
     }
 }
+

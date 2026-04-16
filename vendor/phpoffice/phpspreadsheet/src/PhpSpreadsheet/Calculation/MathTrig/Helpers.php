@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -109,3 +109,4 @@ class Helpers
         return is_nan($result) ? ExcelError::NAN() : $result;
     }
 }
+

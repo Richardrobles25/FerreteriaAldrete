@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart\Renderer;
 
@@ -20,3 +20,4 @@ interface IRenderer
      */
     public function render(?string $filename): bool;
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\RichText;
 
@@ -32,3 +32,4 @@ interface ITextElement
      */
     public function getHashCode(): string;
 }
+

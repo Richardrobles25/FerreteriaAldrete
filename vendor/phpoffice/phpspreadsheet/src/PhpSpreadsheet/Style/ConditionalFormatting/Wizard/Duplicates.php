@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting\Wizard;
 
@@ -72,3 +72,4 @@ class Duplicates extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

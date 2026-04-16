@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting\Wizard;
 
@@ -68,3 +68,4 @@ class Expression extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

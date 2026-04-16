@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\OLE;
 
@@ -209,3 +209,4 @@ class PPS
         return $cnt;
     }
 }
+

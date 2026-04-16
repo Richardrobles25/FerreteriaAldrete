@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Helper;
 
@@ -309,3 +309,4 @@ class Sample
         $this->log($message);
     }
 }
+

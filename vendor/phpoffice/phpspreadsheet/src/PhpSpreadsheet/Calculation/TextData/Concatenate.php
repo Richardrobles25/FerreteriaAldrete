@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -223,3 +223,4 @@ class Concatenate
         return $returnValue;
     }
 }
+

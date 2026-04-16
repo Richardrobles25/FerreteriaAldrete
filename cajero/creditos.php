@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -52,7 +52,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Créditos — Ferretería Aldrete</title>
+    <title>CrÃ©ditos â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -114,7 +114,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
+        <h3>FerreterÃ­a Aldrete</h3>
         <p>Cajero</p>
     </div>
     <div class="sidebar-menu">
@@ -127,7 +127,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item active" href="creditos.php">Créditos</a>
+        <a class="menu-item active" href="creditos.php">CrÃ©ditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
@@ -140,19 +140,19 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Créditos de clientes</h2>
+            <h2>CrÃ©ditos de clientes</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
     <div class="content">
-        <div class="content-header"><h1>Créditos</h1></div>
+        <div class="content-header"><h1>CrÃ©ditos</h1></div>
 
         <div class="stats">
-            <div class="stat"><p>Total créditos</p><h3><?= $totales['total'] ?></h3></div>
+            <div class="stat"><p>Total crÃ©ditos</p><h3><?= $totales['total'] ?></h3></div>
             <div class="stat"><p>Activos</p><h3><?= $totales['activos'] ?></h3></div>
             <div class="stat"><p>Vencidos</p><h3><?= $totales['vencidos'] ?></h3></div>
             <div class="stat"><p>Total pendiente</p><h3>$<?= number_format($totales['total_pendiente'],2) ?></h3></div>
@@ -207,7 +207,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                             $<?= number_format($cr['saldo_pendiente'],2) ?>
                         </td>
                         <td style="font-size:12px;">
-                            <?= $cr['fecha_limite'] ? date('d/m/Y', strtotime($cr['fecha_limite'])) : '—' ?>
+                            <?= $cr['fecha_limite'] ? date('d/m/Y', strtotime($cr['fecha_limite'])) : 'â€”' ?>
                         </td>
                         <td><span class="badge badge-<?= strtolower($cr['estado']) ?>"><?= $cr['estado'] ?></span></td>
                         <td>
@@ -223,7 +223,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                 </tbody>
             </table>
             <?php else: ?>
-                <div class="sin-resultados">No hay créditos registrados.</div>
+                <div class="sin-resultados">No hay crÃ©ditos registrados.</div>
             <?php endif; ?>
         </div>
     </div>
@@ -234,3 +234,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

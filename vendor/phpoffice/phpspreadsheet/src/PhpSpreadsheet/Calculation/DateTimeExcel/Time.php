@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -128,3 +128,4 @@ class Time
         return (int) $value;
     }
 }
+

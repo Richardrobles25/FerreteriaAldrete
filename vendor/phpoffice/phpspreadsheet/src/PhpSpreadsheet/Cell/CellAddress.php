@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -147,3 +147,4 @@ class CellAddress implements Stringable
         return $this->fullCellAddress();
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -204,3 +204,4 @@ class WorkDay
         return is_int($result) ? $result : -1;
     }
 }
+

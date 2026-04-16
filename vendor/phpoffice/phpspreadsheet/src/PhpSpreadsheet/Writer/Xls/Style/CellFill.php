@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls\Style;
 
@@ -44,3 +44,4 @@ class CellFill
         return self::$fillStyleMap[Fill::FILL_NONE];
     }
 }
+

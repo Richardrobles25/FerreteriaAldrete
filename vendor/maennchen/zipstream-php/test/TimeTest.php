@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -42,3 +42,4 @@ class TimeTest extends TestCase
         Time::dateTimeToDosTime(new DateTimeImmutable('1970-01-01T00:00:00+00:00'));
     }
 }
+

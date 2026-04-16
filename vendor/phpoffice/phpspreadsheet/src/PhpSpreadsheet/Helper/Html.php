@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Helper;
 
@@ -869,3 +869,4 @@ class Html
         }
     }
 }
+

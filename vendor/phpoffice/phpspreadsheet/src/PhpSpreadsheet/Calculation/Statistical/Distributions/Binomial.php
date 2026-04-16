@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -229,3 +229,4 @@ class Binomial
         return $summer;
     }
 }
+

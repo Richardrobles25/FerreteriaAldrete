@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -153,3 +153,4 @@ class Operations
         return (int) ($numerator / $denominator);
     }
 }
+

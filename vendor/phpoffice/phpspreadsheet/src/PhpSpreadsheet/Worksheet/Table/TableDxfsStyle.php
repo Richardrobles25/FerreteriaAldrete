@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet\Table;
 
@@ -168,3 +168,4 @@ class TableDxfsStyle
         return $this->secondRowStripeStyle;
     }
 }
+

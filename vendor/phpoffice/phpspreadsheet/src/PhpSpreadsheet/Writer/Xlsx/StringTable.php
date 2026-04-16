@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -343,3 +343,4 @@ class StringTable extends WriterPart
         return $returnValue;
     }
 }
+

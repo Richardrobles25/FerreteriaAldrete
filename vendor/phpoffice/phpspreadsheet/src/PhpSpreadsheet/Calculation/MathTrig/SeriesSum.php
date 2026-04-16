@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -51,3 +51,4 @@ class SeriesSum
         return $returnValue;
     }
 }
+

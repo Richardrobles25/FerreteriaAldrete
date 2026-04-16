@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -11,3 +11,4 @@ namespace PhpOffice\PhpSpreadsheet\Chart;
 class GridLines extends Properties
 {
 }
+

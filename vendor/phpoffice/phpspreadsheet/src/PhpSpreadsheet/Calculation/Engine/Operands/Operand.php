@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engine\Operands;
 
@@ -9,3 +9,4 @@ interface Operand
 
     public function value(): string;
 }
+

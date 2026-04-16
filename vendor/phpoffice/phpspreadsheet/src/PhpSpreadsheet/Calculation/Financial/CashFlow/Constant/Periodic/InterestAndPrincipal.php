@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Constant\Periodic;
 
@@ -42,3 +42,4 @@ class InterestAndPrincipal
         return $this->principal;
     }
 }
+

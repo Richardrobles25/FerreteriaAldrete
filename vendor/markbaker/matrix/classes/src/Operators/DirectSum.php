@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix\Operators;
 
@@ -62,3 +62,4 @@ class DirectSum extends Operator
         return $this;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -2683,3 +2683,4 @@ class FunctionArray extends CalculationBase
         ],
     ];
 }
+

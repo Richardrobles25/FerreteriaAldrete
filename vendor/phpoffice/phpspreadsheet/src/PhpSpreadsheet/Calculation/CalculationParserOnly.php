@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -41,3 +41,4 @@ final class CalculationParserOnly extends Calculation
         return $this;
     }
 }
+

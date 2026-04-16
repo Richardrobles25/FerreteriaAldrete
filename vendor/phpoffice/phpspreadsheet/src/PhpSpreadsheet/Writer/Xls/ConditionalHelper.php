@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -58,3 +58,4 @@ class ConditionalHelper
         return $this->size;
     }
 }
+

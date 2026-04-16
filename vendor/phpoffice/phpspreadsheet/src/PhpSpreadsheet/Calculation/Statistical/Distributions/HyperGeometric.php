@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -73,3 +73,4 @@ class HyperGeometric
         return $successesPopulationAndSample * $adjustedPopulationAndSample / $numbersPopulationAndSample;
     }
 }
+

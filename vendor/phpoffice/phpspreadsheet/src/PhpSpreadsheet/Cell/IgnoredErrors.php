@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -74,3 +74,4 @@ class IgnoredErrors
         return $this->evalError;
     }
 }
+

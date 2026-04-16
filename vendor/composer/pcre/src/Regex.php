@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 /*
  * This file is part of composer/pcre.
@@ -174,3 +174,4 @@ class Regex
         }
     }
 }
+

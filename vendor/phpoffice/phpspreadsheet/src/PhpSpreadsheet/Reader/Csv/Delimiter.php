@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Csv;
 
@@ -142,3 +142,4 @@ class Delimiter
         return ($line !== '') ? $line : false;
     }
 }
+

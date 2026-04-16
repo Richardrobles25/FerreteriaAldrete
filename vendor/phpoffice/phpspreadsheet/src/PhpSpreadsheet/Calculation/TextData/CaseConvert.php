@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -88,3 +88,4 @@ class CaseConvert
         return StringHelper::strToTitle($mixedCaseValue);
     }
 }
+

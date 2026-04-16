@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -114,3 +114,4 @@ class Replace
         return StringHelper::convertToString(Functions::scalar(self::REPLACE($text, ++$pos, StringHelper::countCharacters($fromText), $toText)));
     }
 }
+

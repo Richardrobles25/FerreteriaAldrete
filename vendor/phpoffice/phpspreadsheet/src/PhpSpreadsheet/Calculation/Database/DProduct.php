@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Database;
 
@@ -42,3 +42,4 @@ class DProduct extends DatabaseAbstract
         );
     }
 }
+

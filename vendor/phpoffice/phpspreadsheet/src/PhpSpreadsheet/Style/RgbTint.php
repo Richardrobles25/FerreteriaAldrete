@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -170,3 +170,4 @@ class RgbTint
         );
     }
 }
+

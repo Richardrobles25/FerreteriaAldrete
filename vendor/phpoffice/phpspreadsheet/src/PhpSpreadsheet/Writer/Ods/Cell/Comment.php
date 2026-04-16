@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods\Cell;
 
@@ -43,3 +43,4 @@ class Comment
         $objWriter->endElement();
     }
 }
+

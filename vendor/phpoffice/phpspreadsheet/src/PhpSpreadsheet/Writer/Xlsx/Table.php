@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -112,3 +112,4 @@ class Table extends WriterPart
         return $objWriter->getData();
     }
 }
+

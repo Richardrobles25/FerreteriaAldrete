@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -272,3 +272,4 @@ class Week
             && !$origNull && $dateObject->format('Y-m-d') === '1904-01-01';
     }
 }
+

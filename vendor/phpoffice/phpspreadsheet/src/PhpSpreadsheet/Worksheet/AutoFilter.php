@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -1119,3 +1119,4 @@ class AutoFilter implements Stringable
         return (string) $this->range;
     }
 }
+

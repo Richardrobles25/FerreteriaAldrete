@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -371,3 +371,4 @@ class Csv extends BaseWriter
         return $this;
     }
 }
+

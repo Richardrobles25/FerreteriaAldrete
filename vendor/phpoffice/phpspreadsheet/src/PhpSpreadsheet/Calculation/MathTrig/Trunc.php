@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -34,3 +34,4 @@ class Trunc
         return Round::down($value, $digits);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Psr\SimpleCache;
 
@@ -8,3 +8,4 @@ namespace Psr\SimpleCache;
 interface CacheException extends \Throwable
 {
 }
+

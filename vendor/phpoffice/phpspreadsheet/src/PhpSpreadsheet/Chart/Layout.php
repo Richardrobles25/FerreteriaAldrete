@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -534,3 +534,4 @@ class Layout
         $this->labelEffects = ($this->labelEffects === null) ? null : clone $this->labelEffects;
     }
 }
+

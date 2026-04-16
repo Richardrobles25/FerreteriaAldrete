@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -11,7 +11,7 @@ $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Ab
 $stmt->execute([$_SESSION['usuario_id']]);
 $cajaActual = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Estadísticas del turno
+// EstadÃ­sticas del turno
 $ventasTurno = 0;
 $totalTurno  = 0;
 $pendientes  = 0;
@@ -31,11 +31,11 @@ $stmtStock = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE sucursal_id = ?
 $stmtStock->execute([$_SESSION['sucursal_id']]);
 $stockBajo = $stmtStock->fetchColumn();
 
-// Créditos activos
+// CrÃ©ditos activos
 $stmtCred = $pdo->query("SELECT COUNT(*) FROM creditos WHERE estado = 'Activo'");
 $creditosActivos = $stmtCred->fetchColumn();
 
-// Últimas ventas del turno
+// Ãšltimas ventas del turno
 $ultimasVentas = [];
 if ($cajaActual) {
     $stmtUV = $pdo->prepare("
@@ -54,7 +54,7 @@ if ($cajaActual) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Inicio — Ferretería Aldrete</title>
+    <title>Inicio â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -127,7 +127,7 @@ if ($cajaActual) {
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
+        <h3>FerreterÃ­a Aldrete</h3>
         <p>Cajero / Inventario</p>
     </div>
     <div class="sidebar-menu">
@@ -149,13 +149,13 @@ if ($cajaActual) {
 
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
+        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="../inventario/productos.php">Productos</a>
-        <a class="menu-item" href="../inventario/categorias.php">Categorías</a>
+        <a class="menu-item" href="../inventario/categorias.php">CategorÃ­as</a>
         <a class="menu-item" href="../inventario/entradas.php">Entradas</a>
         <a class="menu-item" href="../inventario/salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="../inventario/historialMovimientos.php">Movimientos</a>
@@ -166,10 +166,10 @@ if ($cajaActual) {
         <a class="menu-item" href="../inventario/compras.php">Compras</a>
         <div class="divider"></div>
 
-        <div class="menu-label">Más</div>
+        <div class="menu-label">MÃ¡s</div>
         <a class="menu-item" href="../inventario/paquetes.php">Paquetes</a>
         <a class="menu-item" href="../inventario/transferencias.php">Transferencias</a>
-        <a class="menu-item" href="../inventario/masVendidos.php">Más vendidos</a>
+        <a class="menu-item" href="../inventario/masVendidos.php">MÃ¡s vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -183,10 +183,10 @@ if ($cajaActual) {
         <div class="topbar-right">
             <span>
                 <?= htmlspecialchars($_SESSION['nombre_completo']) ?>
-                <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span>
+                <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span>
             </span>
             <form method="POST" action="/logout.php">
-                <button class="logout-btn" type="submit">Cerrar sesión</button>
+                <button class="logout-btn" type="submit">Cerrar sesiÃ³n</button>
             </form>
         </div>
     </div>
@@ -196,8 +196,8 @@ if ($cajaActual) {
         <?php if ($cajaActual): ?>
             <div class="caja-status caja-abierta">
                 <div class="caja-info">
-                    <h3>Turno #<?= $cajaActual['numero_turno'] ?> — Abierta</h3>
-                    <p>Desde <?= date('d/m/Y H:i', strtotime($cajaActual['abierta_en'])) ?> · Apertura: $<?= number_format($cajaActual['monto_apertura'],2) ?></p>
+                    <h3>Turno #<?= $cajaActual['numero_turno'] ?> â€” Abierta</h3>
+                    <p>Desde <?= date('d/m/Y H:i', strtotime($cajaActual['abierta_en'])) ?> Â· Apertura: $<?= number_format($cajaActual['monto_apertura'],2) ?></p>
                 </div>
                 <a class="btn-caja btn-cerrar" href="corteCaja.php">Cerrar caja</a>
             </div>
@@ -214,7 +214,7 @@ if ($cajaActual) {
         <!-- Alerta stock bajo -->
         <?php if ($stockBajo > 0): ?>
             <div class="alerta-stock">
-                <span>⚠ Hay <strong><?= $stockBajo ?></strong> producto(s) con stock bajo en tu sucursal.</span>
+                <span>âš  Hay <strong><?= $stockBajo ?></strong> producto(s) con stock bajo en tu sucursal.</span>
                 <a href="../inventario/productos.php?stock_bajo=1">Ver productos</a>
             </div>
         <?php endif; ?>
@@ -237,7 +237,7 @@ if ($cajaActual) {
                 <small>Por entregar</small>
             </div>
             <div class="stat">
-                <p>Créditos activos</p>
+                <p>CrÃ©ditos activos</p>
                 <h3><?= $creditosActivos ?></h3>
                 <small>Global</small>
             </div>
@@ -248,45 +248,45 @@ if ($cajaActual) {
             </div>
         </div>
 
-        <!-- Accesos rápidos -->
+        <!-- Accesos rÃ¡pidos -->
         <div class="accesos">
             <a class="acceso-card" href="nuevaVenta.php">
-                <div class="acceso-icon icon-venta">🛒</div>
+                <div class="acceso-icon icon-venta">ðŸ›’</div>
                 <div class="acceso-info"><h4>Nueva venta</h4><p>Registrar cobro</p></div>
             </a>
             <a class="acceso-card" href="../inventario/entradas.php">
-                <div class="acceso-icon icon-entradas">📦</div>
-                <div class="acceso-info"><h4>Entrada de productos</h4><p>Registrar mercancía</p></div>
+                <div class="acceso-icon icon-entradas">ðŸ“¦</div>
+                <div class="acceso-info"><h4>Entrada de productos</h4><p>Registrar mercancÃ­a</p></div>
             </a>
             <a class="acceso-card" href="clientes.php">
-                <div class="acceso-icon icon-clientes">👤</div>
+                <div class="acceso-icon icon-clientes">ðŸ‘¤</div>
                 <div class="acceso-info"><h4>Clientes</h4><p>Buscar o registrar</p></div>
             </a>
             <a class="acceso-card" href="../inventario/productos.php">
-                <div class="acceso-icon icon-productos">🔧</div>
+                <div class="acceso-icon icon-productos">ðŸ”§</div>
                 <div class="acceso-info"><h4>Inventario</h4><p>Ver productos y stock</p></div>
             </a>
             <a class="acceso-card" href="creditos.php">
-                <div class="acceso-icon icon-creditos">💳</div>
-                <div class="acceso-info"><h4>Créditos</h4><p>Ver saldos pendientes</p></div>
+                <div class="acceso-icon icon-creditos">ðŸ’³</div>
+                <div class="acceso-info"><h4>CrÃ©ditos</h4><p>Ver saldos pendientes</p></div>
             </a>
             <a class="acceso-card" href="../inventario/transferencias.php">
-                <div class="acceso-icon icon-inv">🔄</div>
+                <div class="acceso-icon icon-inv">ðŸ”„</div>
                 <div class="acceso-info"><h4>Transferencias</h4><p>Stock entre sucursales</p></div>
             </a>
         </div>
 
-        <!-- Últimas ventas -->
+        <!-- Ãšltimas ventas -->
         <div class="tabla">
             <div class="tabla-header">
-                <span>Últimas ventas del turno</span>
+                <span>Ãšltimas ventas del turno</span>
                 <a href="historialVentas.php">Ver todas</a>
             </div>
             <?php if (count($ultimasVentas) > 0): ?>
                 <?php foreach ($ultimasVentas as $v): ?>
                 <div class="tabla-row">
                     <span style="color:#aaa;font-size:12px;">#<?= $v['venta_id'] ?></span>
-                    <span><?= htmlspecialchars($v['cliente'] ?? 'Público general') ?></span>
+                    <span><?= htmlspecialchars($v['cliente'] ?? 'PÃºblico general') ?></span>
                     <span class="badge badge-<?= strtolower($v['metodo_pago']) ?>"><?= $v['metodo_pago'] ?></span>
                     <span style="font-weight:600;">$<?= number_format($v['total'],2) ?></span>
                     <span style="color:#aaa;font-size:12px;"><?= date('H:i', strtotime($v['created_at'])) ?></span>
@@ -304,3 +304,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

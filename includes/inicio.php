@@ -1,13 +1,13 @@
-<?php
+﻿<?php
 session_start();
 
-// Si no hay sesión, lo mandas al login
+// Si no hay sesiÃ³n, lo mandas al login
 if (!isset($_SESSION['rol'])) {
     header('Location: /index.php');
     exit();
 }
 
-// Redirección según rol
+// RedirecciÃ³n segÃºn rol
 switch ($_SESSION['rol']) {
     case 'Administrador':
         header('Location: /admin/inicioAdmin.php');

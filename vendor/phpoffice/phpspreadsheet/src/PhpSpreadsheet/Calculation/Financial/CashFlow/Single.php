@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow;
 
@@ -105,3 +105,4 @@ class Single
         return ($futureValue / $presentValue) ** (1 / $periods) - 1;
     }
 }
+

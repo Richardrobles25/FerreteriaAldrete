@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -380,3 +380,4 @@ abstract class GammaBase
         return $res;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engine;
 
@@ -216,3 +216,4 @@ class ArrayArgumentHelper
         );
     }
 }
+

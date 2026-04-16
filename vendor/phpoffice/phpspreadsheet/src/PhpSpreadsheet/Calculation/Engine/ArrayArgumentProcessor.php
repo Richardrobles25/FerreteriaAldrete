@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engine;
 
@@ -174,3 +174,4 @@ class ArrayArgumentProcessor
         return $result;
     }
 }
+

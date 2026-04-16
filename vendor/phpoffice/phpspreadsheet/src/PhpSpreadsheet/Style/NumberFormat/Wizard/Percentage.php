@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat\Wizard;
 
@@ -38,3 +38,4 @@ class Percentage extends NumberBase implements Wizard
         return sprintf('0%s%%', $this->decimals > 0 ? '.' . str_repeat('0', $this->decimals) : null);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -167,3 +167,4 @@ class Matrix
         return $row;
     }
 }
+

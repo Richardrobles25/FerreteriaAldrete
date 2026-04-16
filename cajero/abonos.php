@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
     $cred_id    = intval($_POST['credito_id'] ?? 0);
 
     if ($monto <= 0) $errores[] = 'El monto debe ser mayor a 0.';
-    if (!$metodo)    $errores[] = 'Selecciona el método de pago.';
+    if (!$metodo)    $errores[] = 'Selecciona el mÃ©todo de pago.';
 
     if ($credito && $monto > $credito['saldo_pendiente']) {
         $errores[] = 'El monto no puede ser mayor al saldo pendiente ($'.number_format($credito['saldo_pendiente'],2).')';
@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
     }
 }
 
-// Historial de abonos del crédito
+// Historial de abonos del crÃ©dito
 $abonos = [];
 if ($credito_id) {
     $stmt = $pdo->prepare("
@@ -67,7 +67,7 @@ if ($credito_id) {
     $abonos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Si no hay crédito específico, mostrar lista de créditos activos
+// Si no hay crÃ©dito especÃ­fico, mostrar lista de crÃ©ditos activos
 $creditosActivos = [];
 if (!$credito_id) {
     $stmt = $pdo->query("
@@ -85,7 +85,7 @@ if (!$credito_id) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Abonos — Ferretería Aldrete</title>
+    <title>Abonos â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -151,7 +151,7 @@ if (!$credito_id) {
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
+        <h3>FerreterÃ­a Aldrete</h3>
         <p>Cajero</p>
     </div>
     <div class="sidebar-menu">
@@ -164,7 +164,7 @@ if (!$credito_id) {
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
+        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
         <a class="menu-item active" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
@@ -177,11 +177,11 @@ if (!$credito_id) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Abonos a créditos</h2>
+            <h2>Abonos a crÃ©ditos</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
@@ -189,7 +189,7 @@ if (!$credito_id) {
     <div class="content">
         <!-- Panel izquierdo: formulario de abono -->
         <div>
-            <a class="btn-volver" href="abonos.php">← Volver</a>
+            <a class="btn-volver" href="abonos.php">â† Volver</a>
 
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'abonado'): ?>
                 <div class="msg msg-exito">Abono registrado correctamente.</div>
@@ -197,7 +197,7 @@ if (!$credito_id) {
 
             <div class="info-credito">
                 <h4><?= htmlspecialchars($credito['nombre_completo']) ?></h4>
-                <div class="info-fila"><span>Tel:</span><span><?= htmlspecialchars($credito['telefono']??'—') ?></span></div>
+                <div class="info-fila"><span>Tel:</span><span><?= htmlspecialchars($credito['telefono']??'â€”') ?></span></div>
                 <div class="info-fila"><span>Monto original:</span><span>$<?= number_format($credito['monto_total'],2) ?></span></div>
                 <div class="info-fila <?= $credito['saldo_pendiente']<=0?'liquidado':'pendiente' ?>">
                     <span>Saldo pendiente:</span>
@@ -220,7 +220,7 @@ if (!$credito_id) {
                             <input type="number" name="monto" placeholder="0.00" step="0.01" min="0.01" max="<?= $credito['saldo_pendiente'] ?>" autofocus>
                         </div>
                         <div class="form-group">
-                            <label>Método de pago *</label>
+                            <label>MÃ©todo de pago *</label>
                             <select name="metodo_pago">
                                 <option value="">-- Selecciona --</option>
                                 <option value="Efectivo">Efectivo</option>
@@ -236,7 +236,7 @@ if (!$credito_id) {
                     </form>
                 </div>
             <?php elseif ($credito['estado'] === 'Liquidado'): ?>
-                <div class="msg msg-exito">Este crédito ya está liquidado completamente.</div>
+                <div class="msg msg-exito">Este crÃ©dito ya estÃ¡ liquidado completamente.</div>
             <?php endif; ?>
         </div>
 
@@ -252,7 +252,7 @@ if (!$credito_id) {
                         <tr>
                             <th>#</th>
                             <th>Monto</th>
-                            <th>Método</th>
+                            <th>MÃ©todo</th>
                             <th>Cajero</th>
                             <th>Fecha</th>
                             <th>Notas</th>
@@ -266,7 +266,7 @@ if (!$credito_id) {
                             <td><span class="badge badge-<?= strtolower($a['metodo_pago']) ?>"><?= $a['metodo_pago'] ?></span></td>
                             <td style="font-size:12px;"><?= htmlspecialchars($a['cajero']) ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($a['created_at'])) ?></td>
-                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($a['notas']??'—') ?></td>
+                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($a['notas']??'â€”') ?></td>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -279,9 +279,9 @@ if (!$credito_id) {
     </div>
 
     <?php else: ?>
-    <!-- Lista de créditos activos para seleccionar -->
+    <!-- Lista de crÃ©ditos activos para seleccionar -->
     <div class="content-full">
-        <h1 style="font-size:20px;font-weight:600;color:#222;margin:0 0 20px;">Selecciona un crédito</h1>
+        <h1 style="font-size:20px;font-weight:600;color:#222;margin:0 0 20px;">Selecciona un crÃ©dito</h1>
         <?php if (count($creditosActivos) > 0): ?>
             <div class="lista-creditos">
                 <?php foreach ($creditosActivos as $cr): ?>
@@ -298,7 +298,7 @@ if (!$credito_id) {
                 <?php endforeach; ?>
             </div>
         <?php else: ?>
-            <div class="sin-resultados" style="background:white;border-radius:8px;border:0.5px solid #e8e8e8;">No hay créditos activos.</div>
+            <div class="sin-resultados" style="background:white;border-radius:8px;border:0.5px solid #e8e8e8;">No hay crÃ©ditos activos.</div>
         <?php endif; ?>
     </div>
     <?php endif; ?>
@@ -309,3 +309,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

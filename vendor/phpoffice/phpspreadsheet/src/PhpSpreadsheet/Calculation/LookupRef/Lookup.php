@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -121,3 +121,4 @@ class Lookup
         return count($dataArray[$row]);
     }
 }
+

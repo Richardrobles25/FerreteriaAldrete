@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -51,3 +51,4 @@ class Hyperlink
         return $displayName;
     }
 }
+

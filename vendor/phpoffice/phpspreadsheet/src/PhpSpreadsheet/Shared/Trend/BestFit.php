@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Trend;
 
@@ -437,3 +437,4 @@ abstract class BestFit
         $this->yValues = $yValues;
     }
 }
+

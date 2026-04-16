@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -267,3 +267,4 @@ abstract class DefinedName
         }
     }
 }
+

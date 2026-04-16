@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -917,3 +917,4 @@ class Xls extends BaseWriter
         return $data;
     }
 }
+

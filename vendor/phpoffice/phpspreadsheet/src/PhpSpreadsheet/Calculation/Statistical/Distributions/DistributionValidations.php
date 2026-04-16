@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -19,3 +19,4 @@ class DistributionValidations extends StatisticalValidations
         return $probability;
     }
 }
+

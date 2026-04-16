@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -131,3 +131,4 @@ class Font
         return 0x00;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -16,3 +16,4 @@ class DefaultReadFilter implements IReadFilter
         return true;
     }
 }
+

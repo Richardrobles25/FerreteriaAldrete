@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -57,3 +57,4 @@ abstract class AggregateBase
         return false;
     }
 }
+

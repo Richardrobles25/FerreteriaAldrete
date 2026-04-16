@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -71,7 +71,7 @@ if ($verCorte) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historial de Cortes — Ferretería Aldrete</title>
+    <title>Historial de Cortes â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -152,7 +152,7 @@ if ($verCorte) {
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
+        <h3>FerreterÃ­a Aldrete</h3>
         <p>Cajero</p>
     </div>
     <div class="sidebar-menu">
@@ -165,7 +165,7 @@ if ($verCorte) {
         <a class="menu-item active" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
+        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
@@ -181,8 +181,8 @@ if ($verCorte) {
             <h2>Historial de cortes</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
@@ -226,11 +226,11 @@ if ($verCorte) {
                             <p>
                                 <?= date('d/m/Y H:i', strtotime($c['abierta_en'])) ?>
                                 <?php if ($c['cerrada_en']): ?>
-                                    → <?= date('H:i', strtotime($c['cerrada_en'])) ?>
+                                    â†’ <?= date('H:i', strtotime($c['cerrada_en'])) ?>
                                 <?php else: ?>
-                                    · <span style="color:#14ace7;">En curso</span>
+                                    Â· <span style="color:#14ace7;">En curso</span>
                                 <?php endif; ?>
-                                · <?= htmlspecialchars($c['nombre_sucursal']) ?>
+                                Â· <?= htmlspecialchars($c['nombre_sucursal']) ?>
                             </p>
                         </div>
                         <div class="corte-total">
@@ -257,10 +257,10 @@ if ($verCorte) {
         <div>
             <div class="detalle-card">
                 <?php if ($detalleCorte): ?>
-                    <h3>Turno #<?= $detalleCorte['numero_turno'] ?> — Detalle</h3>
+                    <h3>Turno #<?= $detalleCorte['numero_turno'] ?> â€” Detalle</h3>
 
                     <div class="det-seccion">
-                        <h4>Información del turno</h4>
+                        <h4>InformaciÃ³n del turno</h4>
                         <div class="det-fila"><span>Apertura</span><span><?= date('d/m/Y H:i', strtotime($detalleCorte['abierta_en'])) ?></span></div>
                         <?php if ($detalleCorte['cerrada_en']): ?>
                             <div class="det-fila"><span>Cierre</span><span><?= date('d/m/Y H:i', strtotime($detalleCorte['cerrada_en'])) ?></span></div>
@@ -277,7 +277,7 @@ if ($verCorte) {
                         <?php
                             $dif = floatval($detalleCorte['diferencia']??0);
                             $difBoxClass = $dif==0?'cuadrado':($dif<0?'faltante':'sobrante');
-                            $difBoxLabel = $dif==0?'✅ Caja cuadrada':($dif<0?'⚠ Faltante: $'.number_format(abs($dif),2):'📌 Sobrante: $'.number_format($dif,2));
+                            $difBoxLabel = $dif==0?'âœ… Caja cuadrada':($dif<0?'âš  Faltante: $'.number_format(abs($dif),2):'ðŸ“Œ Sobrante: $'.number_format($dif,2));
                         ?>
                         <div class="dif-box <?= $difBoxClass ?>"><?= $difBoxLabel ?></div>
                     </div>
@@ -296,7 +296,7 @@ if ($verCorte) {
                         <div class="ventas-mini">
                             <?php foreach ($detalleVentas as $v): ?>
                             <div class="venta-mini-row">
-                                <span><?= htmlspecialchars($v['cliente']??'Público general') ?></span>
+                                <span><?= htmlspecialchars($v['cliente']??'PÃºblico general') ?></span>
                                 <div style="display:flex;align-items:center;gap:6px;">
                                     <span class="badge-mini badge-<?= strtolower(substr($v['metodo_pago'],0,2)) === 'ef'?'ef':(strtolower(substr($v['metodo_pago'],0,2))==='te'?'term':(strtolower(substr($v['metodo_pago'],0,2))==='mi'?'mix':'cred')) ?>"><?= $v['metodo_pago'] ?></span>
                                     <strong>$<?= number_format($v['total'],2) ?></strong>
@@ -328,3 +328,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

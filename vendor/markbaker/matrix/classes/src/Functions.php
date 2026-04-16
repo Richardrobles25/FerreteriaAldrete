@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix;
 
@@ -233,7 +233,7 @@ class Functions
 
     /**
      * Return the identity matrix
-     * The identity matrix, or sometimes ambiguously called a unit matrix, of size n is the n × n square matrix
+     * The identity matrix, or sometimes ambiguously called a unit matrix, of size n is the n Ã— n square matrix
      *   with ones on the main diagonal and zeros elsewhere
      *
      * @param Matrix|array $matrix The matrix whose identity we wish to calculate
@@ -374,3 +374,4 @@ class Functions
         return new Matrix($grid);
     }
 }
+

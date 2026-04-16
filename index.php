@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once 'config/database.php';
 
@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             exit();
         } else {
-            $error = 'Usuario o contraseña incorrectos.';
+            $error = 'Usuario o contraseÃ±a incorrectos.';
         }
     } else {
         $error = 'Por favor completa todos los campos.';
@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ferretería Aldrete</title>
+    <title>FerreterÃ­a Aldrete</title>
     <style>
         :root {
             --azul-principal: #17b6f1;
@@ -118,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .login-title::before {
-            content: "Iniciar Sesión Ferremateriales ";
+            content: "Iniciar SesiÃ³n Ferremateriales ";
             color: var(--negro-marca);
             font-size: 24px;
         }
@@ -192,11 +192,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="login-box">
         <div class="brand">
-            <div class="login-title">Iniciar sesión /Ferremateriales Aldrete</div>
+            <div class="login-title">Iniciar sesiÃ³n /Ferremateriales Aldrete</div>
             <img src="/logo.jpeg" alt="Logo Ferremateriales Aldrete">
         </div>
         
-        <h1>Ferretería Aldrete</h1>
+        <h1>FerreterÃ­a Aldrete</h1>
 
         <?php if ($error): ?>
             <div class="error"><?= htmlspecialchars($error) ?></div>
@@ -212,16 +212,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 autofocus
             >
 
-            <label>Contraseña</label>
+            <label>ContraseÃ±a</label>
             <input 
                 type="password" 
                 name="contrasena"
-                placeholder="Ingresa tu contraseña"
+                placeholder="Ingresa tu contraseÃ±a"
             >
 
-            <button type="submit">Iniciar sesión</button>
+            <button type="submit">Iniciar sesiÃ³n</button>
         </form>
         <div class="hint">Ferremateriales Aldrete</div>
     </div>
 </body>
 </html>
+

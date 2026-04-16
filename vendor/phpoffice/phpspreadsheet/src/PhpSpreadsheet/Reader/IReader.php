@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -173,3 +173,4 @@ interface IReader
      */
     public function load(string $filename, int $flags = 0): Spreadsheet;
 }
+

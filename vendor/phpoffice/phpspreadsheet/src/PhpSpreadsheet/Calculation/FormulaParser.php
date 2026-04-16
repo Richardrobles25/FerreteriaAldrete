@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -605,3 +605,4 @@ class FormulaParser
         }
     }
 }
+

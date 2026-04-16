@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -70,3 +70,4 @@ class CalculationBase
         return false;
     }
 }
+

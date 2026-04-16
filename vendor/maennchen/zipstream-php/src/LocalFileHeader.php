@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -38,3 +38,4 @@ abstract class LocalFileHeader
         ) . $fileName . $extraField;
     }
 }
+

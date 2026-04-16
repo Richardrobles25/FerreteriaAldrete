@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 
@@ -96,3 +96,4 @@ class Properties
         return is_array($array) ? (string) ($array[0] ?? '') : '';
     }
 }
+

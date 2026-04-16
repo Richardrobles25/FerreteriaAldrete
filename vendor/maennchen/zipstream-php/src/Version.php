@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -13,3 +13,4 @@ enum Version: int
     case DEFLATE = 0x0014; // 2.00
     case ZIP64 = 0x002D; // 4.50
 }
+

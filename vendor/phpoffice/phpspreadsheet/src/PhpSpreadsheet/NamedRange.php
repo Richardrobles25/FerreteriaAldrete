@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -54,3 +54,4 @@ class NamedRange extends DefinedName
         return Coordinate::extractAllCellReferencesInRange($range);
     }
 }
+

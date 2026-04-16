@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -324,3 +324,4 @@ class Fill extends Supervisor
         return $exportedArray;
     }
 }
+

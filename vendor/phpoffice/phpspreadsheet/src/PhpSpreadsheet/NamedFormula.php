@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -43,3 +43,4 @@ class NamedFormula extends DefinedName
         return $this;
     }
 }
+

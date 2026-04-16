@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -342,3 +342,4 @@ class Axis extends Properties
         $this->fillColor = clone $this->fillColor;
     }
 }
+

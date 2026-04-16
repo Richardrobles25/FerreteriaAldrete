@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\OLE\PPS;
 
@@ -404,3 +404,4 @@ class Root extends PPS
         }
     }
 }
+

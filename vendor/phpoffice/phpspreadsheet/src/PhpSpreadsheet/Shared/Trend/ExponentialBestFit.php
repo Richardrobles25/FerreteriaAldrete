@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Trend;
 
@@ -106,3 +106,4 @@ class ExponentialBestFit extends BestFit
         }
     }
 }
+

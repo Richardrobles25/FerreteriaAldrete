@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat\Wizard;
 
@@ -33,3 +33,4 @@ enum CurrencyNegative
         };
     }
 }
+

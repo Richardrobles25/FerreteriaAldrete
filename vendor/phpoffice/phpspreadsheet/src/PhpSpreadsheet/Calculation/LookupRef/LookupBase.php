@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -65,3 +65,4 @@ abstract class LookupBase
         return $rowNumber;
     }
 }
+

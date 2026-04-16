@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls;
 
@@ -690,3 +690,4 @@ class LoadSpreadsheet extends Xls
         return $xls->spreadsheet;
     }
 }
+

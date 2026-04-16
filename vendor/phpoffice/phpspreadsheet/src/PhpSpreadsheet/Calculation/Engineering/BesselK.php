@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -128,3 +128,4 @@ class BesselK
         return $fBk;
     }
 }
+

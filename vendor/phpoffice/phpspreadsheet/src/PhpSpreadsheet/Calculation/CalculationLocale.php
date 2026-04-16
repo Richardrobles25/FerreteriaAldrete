@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -427,3 +427,4 @@ class CalculationLocale extends CalculationBase
         return $function;
     }
 }
+

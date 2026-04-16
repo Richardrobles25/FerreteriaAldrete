@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls\Style;
 
@@ -40,3 +40,4 @@ class FillPattern
         return self::$fillPatternMap[$index] ?? Fill::FILL_NONE;
     }
 }
+

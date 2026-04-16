@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -46,3 +46,4 @@ class Pane
         return $this;
     }
 }
+

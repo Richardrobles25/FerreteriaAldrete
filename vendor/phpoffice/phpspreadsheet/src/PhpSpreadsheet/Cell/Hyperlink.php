@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -117,3 +117,4 @@ class Hyperlink
         );
     }
 }
+

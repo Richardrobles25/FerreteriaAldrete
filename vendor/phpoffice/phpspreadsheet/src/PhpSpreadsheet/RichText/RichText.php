@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\RichText;
 
@@ -162,3 +162,4 @@ class RichText implements IComparable, Stringable
         }
     }
 }
+

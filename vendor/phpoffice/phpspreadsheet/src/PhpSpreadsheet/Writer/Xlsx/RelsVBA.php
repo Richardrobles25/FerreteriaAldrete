@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -38,3 +38,4 @@ class RelsVBA extends WriterPart
         return $objWriter->getData();
     }
 }
+

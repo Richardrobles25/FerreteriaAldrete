@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Constant\Periodic;
 
@@ -136,3 +136,4 @@ class Cumulative
         return $principal;
     }
 }
+

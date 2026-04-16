@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting;
 
@@ -88,3 +88,4 @@ class StyleMerger
         }
     }
 }
+

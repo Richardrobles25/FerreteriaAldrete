@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls\Style;
 
@@ -37,3 +37,4 @@ class CellFont
         }
     }
 }
+

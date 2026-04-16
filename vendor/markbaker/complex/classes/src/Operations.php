@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Complex;
 
@@ -208,3 +208,4 @@ class Operations
         return $result;
     }
 }
+

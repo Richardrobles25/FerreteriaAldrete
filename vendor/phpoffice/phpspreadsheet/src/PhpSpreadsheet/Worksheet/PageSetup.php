@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -822,3 +822,4 @@ class PageSetup
         return $this;
     }
 }
+

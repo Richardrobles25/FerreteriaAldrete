@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -150,3 +150,4 @@ class TimeParts
         return (int) $timeValue->format('s');
     }
 }
+

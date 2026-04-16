@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
@@ -229,3 +229,4 @@ class Formatter extends BaseFormatter
         return str_replace(chr(0x00), '.', $value);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -116,3 +116,4 @@ class Days360
         return $endDay;
     }
 }
+

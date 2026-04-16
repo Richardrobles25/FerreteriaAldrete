@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -546,3 +546,4 @@ class Alignment extends Supervisor
         return $exportedArray;
     }
 }
+

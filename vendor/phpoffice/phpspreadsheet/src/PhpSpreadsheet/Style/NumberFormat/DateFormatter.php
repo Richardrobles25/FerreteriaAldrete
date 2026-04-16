@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
@@ -221,3 +221,4 @@ class DateFormatter
         return '\\' . implode('\\', mb_str_split($matches[1], 1, 'UTF-8'));
     }
 }
+

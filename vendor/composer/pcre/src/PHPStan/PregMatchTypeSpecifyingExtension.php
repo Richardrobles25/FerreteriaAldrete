@@ -1,4 +1,4 @@
-<?php declare(strict_types=1);
+﻿<?php declare(strict_types=1);
 
 namespace Composer\Pcre\PHPStan;
 
@@ -117,3 +117,4 @@ final class PregMatchTypeSpecifyingExtension implements StaticMethodTypeSpecifyi
         );
     }
 }
+

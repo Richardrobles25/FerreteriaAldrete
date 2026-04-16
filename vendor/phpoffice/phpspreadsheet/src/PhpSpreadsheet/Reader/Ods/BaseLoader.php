@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Ods;
 
@@ -19,3 +19,4 @@ abstract class BaseLoader
 
     abstract public function read(DOMElement $workbookData): void;
 }
+

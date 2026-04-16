@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -73,3 +73,4 @@ class Helpers
         return [$cellAddress, $worksheet, $sheetName];
     }
 }
+

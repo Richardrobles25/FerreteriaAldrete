@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -210,3 +210,4 @@ class BIFFwriter
         return $tmp;
     }
 }
+

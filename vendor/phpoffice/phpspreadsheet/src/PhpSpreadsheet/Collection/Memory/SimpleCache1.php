@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Collection\Memory;
 
@@ -85,3 +85,4 @@ class SimpleCache1 implements CacheInterface
         return true;
     }
 }
+

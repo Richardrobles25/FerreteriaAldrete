@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Psr\SimpleCache;
 
@@ -11,3 +11,4 @@ namespace Psr\SimpleCache;
 interface InvalidArgumentException extends CacheException
 {
 }
+

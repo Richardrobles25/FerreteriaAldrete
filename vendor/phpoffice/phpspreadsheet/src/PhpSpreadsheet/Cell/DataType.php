@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -91,3 +91,4 @@ class DataType
         return $value;
     }
 }
+

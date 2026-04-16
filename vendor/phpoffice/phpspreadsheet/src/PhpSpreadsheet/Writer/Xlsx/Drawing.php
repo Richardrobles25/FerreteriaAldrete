@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -627,3 +627,4 @@ class Drawing extends WriterPart
         return reset($drawings) ?: null;
     }
 }
+

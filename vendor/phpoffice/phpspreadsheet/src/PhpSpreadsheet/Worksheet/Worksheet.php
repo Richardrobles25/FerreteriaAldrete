@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -4100,3 +4100,4 @@ class Worksheet
         $this->setCellValue($toCell, $newFormula);
     }
 }
+

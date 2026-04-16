@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\Securities;
 
@@ -30,3 +30,4 @@ class SecurityValidations extends FinancialValidations
         return $redemption;
     }
 }
+

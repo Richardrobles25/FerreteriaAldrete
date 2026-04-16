@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 
@@ -242,3 +242,4 @@ class ColumnAndRowAttributes extends BaseParserClass
         return $rowAttributes;
     }
 }
+

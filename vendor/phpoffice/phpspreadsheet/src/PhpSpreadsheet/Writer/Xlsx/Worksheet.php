@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -1873,3 +1873,4 @@ class Worksheet extends WriterPart
         }
     }
 }
+

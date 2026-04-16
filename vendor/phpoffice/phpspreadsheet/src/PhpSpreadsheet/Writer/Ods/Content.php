@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods;
 
@@ -467,3 +467,4 @@ class Content extends WriterPart
         $objWriter->writeAttribute('table:number-rows-spanned', (string) $rowSpan);
     }
 }
+

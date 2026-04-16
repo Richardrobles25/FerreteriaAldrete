@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -248,3 +248,4 @@ class Text
         return StringHelper::convertToString($cellValue);
     }
 }
+

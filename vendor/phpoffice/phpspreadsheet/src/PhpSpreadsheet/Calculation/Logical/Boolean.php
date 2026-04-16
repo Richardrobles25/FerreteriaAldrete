@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Logical;
 
@@ -34,3 +34,4 @@ class Boolean
         return false;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -1072,3 +1072,4 @@ class Cell implements Stringable
         return $hidden !== Protection::PROTECTION_UNPROTECTED;
     }
 }
+

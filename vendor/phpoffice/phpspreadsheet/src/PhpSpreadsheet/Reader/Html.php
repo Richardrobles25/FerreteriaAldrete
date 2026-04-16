@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -319,11 +319,11 @@ class Html extends BaseReader
                     }
                     if ($datatype === DataType::TYPE_BOOL) {
                         // This is the case where we can set cellContent to bool rather than string
-                        if ($cellContent === '☑') {
+                        if ($cellContent === 'â˜‘') {
                             $cellContent = true;
                             $sheet->getStyle($column . $row)
                                 ->setCheckBox(true);
-                        } elseif ($cellContent === '☐') {
+                        } elseif ($cellContent === 'â˜') {
                             $cellContent = false;
                             $sheet->getStyle($column . $row)
                                 ->setCheckBox(true);
@@ -1386,3 +1386,4 @@ class Html extends BaseReader
         return $info;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -47,3 +47,4 @@ class Standardize extends StatisticalValidations
         return ($value - $mean) / $stdDev;
     }
 }
+

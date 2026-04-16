@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Helper;
 
@@ -193,3 +193,4 @@ class TextGrid
         return mb_strlen($value);
     }
 }
+

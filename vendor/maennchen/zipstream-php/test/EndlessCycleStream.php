@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -102,3 +102,4 @@ class EndlessCycleStream implements StreamInterface
         return $key !== null ? null : [];
     }
 }
+

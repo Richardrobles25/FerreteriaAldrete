@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat\Wizard;
 
@@ -8,3 +8,4 @@ class Currency extends CurrencyBase
 
     protected ?CurrencyNegative $overrideNegative = null;
 }
+

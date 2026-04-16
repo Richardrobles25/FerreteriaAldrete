@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods;
 
@@ -86,3 +86,4 @@ class Styles extends WriterPart
         return $objWriter->getData();
     }
 }
+

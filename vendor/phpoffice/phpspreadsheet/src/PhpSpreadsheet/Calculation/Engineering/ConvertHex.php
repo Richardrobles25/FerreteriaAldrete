@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -173,3 +173,4 @@ class ConvertHex extends ConvertBase
         return $value;
     }
 }
+

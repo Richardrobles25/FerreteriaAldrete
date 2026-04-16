@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -75,3 +75,4 @@ class ErfC
         return self::ONE_SQRT_PI * exp(-$value * $value) * $q2;
     }
 }
+

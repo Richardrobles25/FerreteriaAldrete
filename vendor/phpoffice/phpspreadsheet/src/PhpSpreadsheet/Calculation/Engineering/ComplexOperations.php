@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -126,3 +126,4 @@ class ComplexOperations
         return (string) $returnValue;
     }
 }
+

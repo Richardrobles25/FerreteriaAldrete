@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Security;
 
@@ -115,3 +115,4 @@ class XmlScanner
         return $this->scan(file_get_contents($filestream));
     }
 }
+

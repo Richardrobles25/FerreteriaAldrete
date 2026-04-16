@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -151,3 +151,4 @@ class Difference
         return (int) $PHPDiffDateObject->format('%m');
     }
 }
+

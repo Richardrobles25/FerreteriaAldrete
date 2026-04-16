@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -22,3 +22,4 @@ class FileNotReadableException extends Exception
         parent::__construct("The file with the path $path isn't readable.");
     }
 }
+

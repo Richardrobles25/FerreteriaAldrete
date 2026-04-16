@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -25,3 +25,4 @@ class EngineeringValidations
         return (int) floor((float) $value);
     }
 }
+

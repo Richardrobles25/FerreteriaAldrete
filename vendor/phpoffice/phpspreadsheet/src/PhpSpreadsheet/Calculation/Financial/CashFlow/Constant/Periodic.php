@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Constant;
 
@@ -193,3 +193,4 @@ class Periodic
         return (-$presentValue - $futureValue) / $payment;
     }
 }
+

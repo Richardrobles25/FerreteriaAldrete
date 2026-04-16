@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -146,3 +146,4 @@ class Gamma extends GammaBase
         return log(self::gammaValue($value));
     }
 }
+

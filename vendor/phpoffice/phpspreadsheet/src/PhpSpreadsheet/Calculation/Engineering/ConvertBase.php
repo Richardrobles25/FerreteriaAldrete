@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -68,3 +68,4 @@ abstract class ConvertBase
         return substr($value, -10);
     }
 }
+

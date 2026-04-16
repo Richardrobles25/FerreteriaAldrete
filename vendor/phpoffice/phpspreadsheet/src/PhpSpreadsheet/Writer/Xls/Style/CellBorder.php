@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls\Style;
 
@@ -38,3 +38,4 @@ class CellBorder
         return self::$styleMap[Border::BORDER_NONE];
     }
 }
+

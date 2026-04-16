@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial;
 
@@ -144,3 +144,4 @@ class TreasuryBill
         return ((100 - $price) / $price) * (360 / $daysBetweenSettlementAndMaturity);
     }
 }
+

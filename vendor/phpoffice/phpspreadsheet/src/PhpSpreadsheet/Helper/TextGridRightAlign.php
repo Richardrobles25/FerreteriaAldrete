@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Helper;
 
@@ -8,3 +8,4 @@ enum TextGridRightAlign
     case numeric;
     case floatOrInt;
 }
+

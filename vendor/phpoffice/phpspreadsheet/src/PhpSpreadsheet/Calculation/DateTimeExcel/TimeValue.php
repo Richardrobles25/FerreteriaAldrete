@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -95,3 +95,4 @@ class TimeValue
         return $retValue;
     }
 }
+

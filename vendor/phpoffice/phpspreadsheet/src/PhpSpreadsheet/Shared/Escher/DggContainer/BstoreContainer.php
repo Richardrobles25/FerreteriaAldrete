@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Escher\DggContainer;
 
@@ -30,3 +30,4 @@ class BstoreContainer
         return $this->BSECollection;
     }
 }
+

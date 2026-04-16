@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -22,3 +22,4 @@ class HeaderFooterDrawing extends Drawing
         );
     }
 }
+

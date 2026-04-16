@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -49,3 +49,4 @@ class Selection
         return $chooseArgs[$chosenEntry];
     }
 }
+

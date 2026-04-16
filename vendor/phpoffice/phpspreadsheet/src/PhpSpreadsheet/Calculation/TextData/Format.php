@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -326,3 +326,4 @@ class Format
         return is_array($value) ? ExcelError::VALUE() : (float) $value;
     }
 }
+

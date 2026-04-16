@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -20,3 +20,4 @@ class Exception extends PhpSpreadsheetException
         throw $e;
     }
 }
+

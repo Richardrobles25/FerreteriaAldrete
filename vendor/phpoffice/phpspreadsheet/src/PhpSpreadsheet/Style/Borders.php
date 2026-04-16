@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -376,3 +376,4 @@ class Borders extends Supervisor
         return $exportedArray;
     }
 }
+

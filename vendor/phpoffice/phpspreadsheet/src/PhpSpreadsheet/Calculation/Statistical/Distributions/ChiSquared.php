@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -330,3 +330,4 @@ class ChiSquared
         return $h * exp(-$x + $a * log($x) - $gln);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix\Operators;
 
@@ -84,3 +84,4 @@ class Multiplication extends Operator
         return $this;
     }
 }
+

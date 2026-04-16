@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xml;
 
@@ -176,3 +176,4 @@ class DataValidations
         }
     }
 }
+

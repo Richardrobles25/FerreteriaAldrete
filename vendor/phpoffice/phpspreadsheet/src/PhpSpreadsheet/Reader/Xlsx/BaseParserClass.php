@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 
@@ -19,3 +19,4 @@ class BaseParserClass
         return $value === 'true' || $value === 'TRUE';
     }
 }
+

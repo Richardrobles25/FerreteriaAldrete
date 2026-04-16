@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -15,3 +15,4 @@ abstract class MaxMinBase
         return $value;
     }
 }
+

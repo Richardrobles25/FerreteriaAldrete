@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -58,3 +58,4 @@ class CentralDirectoryFileHeaderTest extends TestCase
         );
     }
 }
+

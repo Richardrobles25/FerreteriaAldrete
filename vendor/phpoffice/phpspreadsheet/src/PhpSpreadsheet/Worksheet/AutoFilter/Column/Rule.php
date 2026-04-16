@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet\AutoFilter\Column;
 
@@ -404,3 +404,4 @@ class Rule
         }
     }
 }
+

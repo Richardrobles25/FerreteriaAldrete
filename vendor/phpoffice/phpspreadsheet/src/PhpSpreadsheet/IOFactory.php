@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -275,3 +275,4 @@ abstract class IOFactory
         self::$readers[$readerType] = $readerClass;
     }
 }
+

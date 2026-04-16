@@ -1,4 +1,4 @@
-
+﻿
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
@@ -8,7 +8,7 @@ body {
     overflow: hidden;
 }
 
-/* 🔹 SIDEBAR */
+/* ðŸ”¹ SIDEBAR */
 .sidebar {
     width: 220px;
     background: white;
@@ -54,7 +54,7 @@ body {
     color: #bbb;
 }
 
-/* 🔹 MAIN */
+/* ðŸ”¹ MAIN */
 .main {
     flex: 1;
     display: flex;
@@ -63,7 +63,7 @@ body {
     background: #f7f7f7;
 }
 
-/* 🔹 TOPBAR */
+/* ðŸ”¹ TOPBAR */
 .topbar {
     background: #14ace7;
     color: white;
@@ -105,7 +105,7 @@ body {
 }
 .logout-btn:hover { background: rgba(255,255,255,0.3); }
 
-/* 🔹 CONTENT */
+/* ðŸ”¹ CONTENT */
 .content {
     flex: 1;
     padding: 28px;
@@ -115,7 +115,7 @@ body {
     align-items: flex-start;
 }
 
-/* 🔹 BREADCRUMB */
+/* ðŸ”¹ BREADCRUMB */
 .breadcrumb {
     font-size: 12px;
     color: #aaa;
@@ -124,7 +124,7 @@ body {
 .breadcrumb a { color: #14ace7; text-decoration: none; }
 .breadcrumb a:hover { text-decoration: underline; }
 
-/* 🔹 FORM */
+/* ðŸ”¹ FORM */
 .form-card {
     background: white;
     border-radius: 8px;
@@ -133,7 +133,7 @@ body {
     width: 800px;
     max-width: 95%;
     margin: auto;
-    /* ❌ quitamos el translateX */
+    /* âŒ quitamos el translateX */
 }
 
 .form-card h1 {
@@ -193,14 +193,14 @@ body {
     display: block;
 }
 
-/* 🔹 GRID */
+/* ðŸ”¹ GRID */
 .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 16px;
 }
 
-/* 🔹 BOTONES */
+/* ðŸ”¹ BOTONES */
 .form-actions {
     display: flex;
     gap: 12px;
@@ -259,7 +259,7 @@ body {
         padding: 20px;
     }
 
-    /* 🔥 esto arregla que no se vea todo apretado */
+    /* ðŸ”¥ esto arregla que no se vea todo apretado */
     .form-row {
         grid-template-columns: 1fr;
     }
@@ -286,3 +286,4 @@ body {
         display: none; /* opcional: quita el nombre para ahorrar espacio */
     }
 }
+

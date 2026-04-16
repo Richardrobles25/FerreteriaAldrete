@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 $host     = 'metro.proxy.rlwy.net';
 $port     = '38728';
 $db       = 'railway';
@@ -13,5 +13,5 @@ try {
     );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
-    die("Error de conexión: " . $e->getMessage());
+    die("Error de conexiÃ³n: " . $e->getMessage());
 }

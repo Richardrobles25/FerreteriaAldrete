@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -85,3 +85,4 @@ interface IWriter
      */
     public function getDiskCachingDirectory(): string;
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls\Color;
 
@@ -73,3 +73,4 @@ class BIFF5
         return ['rgb' => self::BIFF5_COLOR_MAP[$color] ?? '000000'];
     }
 }
+

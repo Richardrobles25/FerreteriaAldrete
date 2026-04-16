@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial;
 
@@ -393,3 +393,4 @@ class Coupons
         }
     }
 }
+

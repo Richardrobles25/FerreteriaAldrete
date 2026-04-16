@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -177,3 +177,4 @@ class MatrixFunctions
         }
     }
 }
+

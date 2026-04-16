@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -742,3 +742,4 @@ class Theme extends WriterPart
         }
     }
 }
+

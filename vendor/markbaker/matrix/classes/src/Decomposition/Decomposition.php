@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix\Decomposition;
 
@@ -25,3 +25,4 @@ class Decomposition
         }
     }
 }
+

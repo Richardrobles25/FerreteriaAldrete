@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -39,3 +39,4 @@ class EndOfCentralDirectoryTest extends TestCase
         );
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 /**
  *
@@ -386,3 +386,4 @@ class Complex
         throw new Exception('Complex Function or Operation does not exist');
     }
 }
+

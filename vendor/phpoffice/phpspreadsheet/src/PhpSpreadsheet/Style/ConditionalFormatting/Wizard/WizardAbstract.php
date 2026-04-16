@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\ConditionalFormatting\Wizard;
 
@@ -181,3 +181,4 @@ abstract class WizardAbstract
         );
     }
 }
+

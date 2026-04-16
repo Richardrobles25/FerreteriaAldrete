@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable;
 
@@ -322,3 +322,4 @@ class NonPeriodic
         }
     }
 }
+

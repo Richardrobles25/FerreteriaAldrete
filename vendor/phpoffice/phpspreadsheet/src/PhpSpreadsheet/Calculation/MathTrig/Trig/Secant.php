@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig\Trig;
 
@@ -62,3 +62,4 @@ class Secant
         return Helpers::verySmallDenominator(1.0, cosh($angle));
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -187,3 +187,4 @@ class Protection extends Supervisor
         return $exportedArray;
     }
 }
+

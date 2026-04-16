@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -436,3 +436,4 @@ class Trends
         return $returnArray;
     }
 }
+

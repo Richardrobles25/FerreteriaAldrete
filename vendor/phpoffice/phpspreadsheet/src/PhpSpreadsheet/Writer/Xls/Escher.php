@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -505,3 +505,4 @@ class Escher
         return $this->spTypes;
     }
 }
+

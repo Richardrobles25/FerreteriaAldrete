@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 # required: PHP 5.3+ and zlib extension
 
@@ -60,3 +60,4 @@ $phar->compressFiles(Phar::GZ);
 echo "Complete.\n";
 
 exit();
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -140,3 +140,4 @@ abstract class BaseWriter implements IWriter
         }
     }
 }
+

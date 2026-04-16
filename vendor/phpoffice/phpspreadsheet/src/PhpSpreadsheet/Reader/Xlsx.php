@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -2713,3 +2713,4 @@ class Xlsx extends BaseReader
         return true;
     }
 }
+

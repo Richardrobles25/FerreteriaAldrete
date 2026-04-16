@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -901,3 +901,4 @@ class Font extends Supervisor
         $this->underlineColor = ($this->underlineColor === null) ? null : clone $this->underlineColor;
     }
 }
+

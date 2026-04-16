@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Document;
 
@@ -255,3 +255,4 @@ class Security
         return $this;
     }
 }
+

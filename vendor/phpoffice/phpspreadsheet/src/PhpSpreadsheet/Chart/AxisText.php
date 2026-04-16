@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -61,3 +61,4 @@ class AxisText extends Properties
         $this->font = clone $this->font;
     }
 }
+

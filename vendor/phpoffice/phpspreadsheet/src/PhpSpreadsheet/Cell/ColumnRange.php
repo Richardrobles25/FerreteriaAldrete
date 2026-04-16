@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -123,3 +123,4 @@ class ColumnRange implements AddressRange, Stringable
         return "{$from}:{$to}";
     }
 }
+

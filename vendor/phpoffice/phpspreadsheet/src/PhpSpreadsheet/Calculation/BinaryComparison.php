@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -148,3 +148,4 @@ class BinaryComparison
         return self::equal($operand1, $operand2) !== true;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls;
 
@@ -343,3 +343,4 @@ class ConditionalFormatting extends Xls
         }
     }
 }
+

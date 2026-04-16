@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Escher\DgContainer\SpgrContainer;
 
@@ -298,3 +298,4 @@ class SpContainer
         return $nestingLevel;
     }
 }
+

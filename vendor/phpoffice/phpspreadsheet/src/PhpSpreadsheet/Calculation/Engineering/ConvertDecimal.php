@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -211,3 +211,4 @@ class ConvertDecimal extends ConvertBase
         return $value;
     }
 }
+

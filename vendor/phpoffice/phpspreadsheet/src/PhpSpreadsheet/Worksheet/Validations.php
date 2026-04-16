@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -126,3 +126,4 @@ class Validations
         return $coordinate;
     }
 }
+

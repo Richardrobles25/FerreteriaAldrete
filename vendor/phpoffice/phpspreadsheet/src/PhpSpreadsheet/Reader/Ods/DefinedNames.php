@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Ods;
 
@@ -68,3 +68,4 @@ class DefinedNames extends BaseLoader
         }
     }
 }
+

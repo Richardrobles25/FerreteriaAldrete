@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -137,3 +137,4 @@ class LogNormal
         return exp($mean + $stdDev * $inverse);
     }
 }
+

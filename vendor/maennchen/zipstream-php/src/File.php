@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -428,3 +428,4 @@ final class File
         return $this->operationMode === OperationMode::SIMULATE_LAX || $this->operationMode === OperationMode::SIMULATE_STRICT;
     }
 }
+

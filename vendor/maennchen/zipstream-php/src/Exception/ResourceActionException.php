@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -29,3 +29,4 @@ class ResourceActionException extends Exception
         parent::__construct('Function ' . $function . 'failed on resource.');
     }
 }
+

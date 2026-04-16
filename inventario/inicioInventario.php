@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -17,7 +17,7 @@ $stmtBajo = $pdo->prepare("
 $stmtBajo->execute([$_SESSION['sucursal_id']]);
 $stockBajo = $stmtBajo->fetchAll(PDO::FETCH_ASSOC);
 
-// Estadísticas generales
+// EstadÃ­sticas generales
 $stmtStats = $pdo->prepare("
     SELECT
         COUNT(*) AS total_productos,
@@ -30,7 +30,7 @@ $stmtStats = $pdo->prepare("
 $stmtStats->execute([$_SESSION['sucursal_id']]);
 $stats = $stmtStats->fetch(PDO::FETCH_ASSOC);
 
-// Últimos movimientos
+// Ãšltimos movimientos
 $stmtMov = $pdo->prepare("
     SELECT m.tipo, m.cantidad, m.created_at, p.nombre_producto, m.motivo
     FROM movimientos_inventario m
@@ -50,7 +50,7 @@ $stmtTransf = $pdo->prepare("
 $stmtTransf->execute([$_SESSION['sucursal_id']]);
 $transfPendientes = $stmtTransf->fetchColumn();
 
-// Últimas compras a proveedor
+// Ãšltimas compras a proveedor
 $stmtCompras = $pdo->prepare("
     SELECT cp.compras_proveedor_id, cp.total, cp.created_at, p.nombre AS proveedor
     FROM compras_proveedor cp
@@ -67,7 +67,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Inventario — Ferretería Aldrete</title>
+    <title>Inventario â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -131,13 +131,13 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
+        <h3>FerreterÃ­a Aldrete</h3>
         <p><?= $_SESSION['rol'] ?></p>
     </div>
     <div class="sidebar-menu">
         <a class="menu-item active" href="inicioInventario.php">Inicio</a>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">CategorÃ­as</a>
         <div class="divider"></div>
         <a class="menu-item" href="entradas.php">Entradas de productos</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
@@ -148,7 +148,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <div class="divider"></div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias <?= $transfPendientes>0?"({$transfPendientes})":'' ?></a>
-        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
+        <a class="menu-item" href="masVendidos.php">MÃ¡s vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -160,8 +160,8 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             <h2>Panel de Inventario</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
@@ -170,7 +170,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <?php if (count($stockBajo) > 0): ?>
         <div class="alerta-stock">
             <div class="alerta-stock-header">
-                <h3>⚠ <?= count($stockBajo) ?> producto(s) con stock bajo</h3>
+                <h3>âš  <?= count($stockBajo) ?> producto(s) con stock bajo</h3>
                 <a href="productos.php?stock_bajo=1">Ver todos</a>
             </div>
             <?php foreach ($stockBajo as $p): ?>
@@ -181,7 +181,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <div>
                     <span class="alerta-stock-val"><?= number_format($p['stock_actual'],2) ?></span>
-                    <span class="alerta-minimo">mín: <?= number_format($p['stock_minimo'],2) ?></span>
+                    <span class="alerta-minimo">mÃ­n: <?= number_format($p['stock_minimo'],2) ?></span>
                     <a href="entradas.php?producto_id=<?= $p['producto_id'] ?>"
                        style="background:#14ace7;color:white;font-size:11px;padding:2px 8px;border-radius:4px;text-decoration:none;margin-left:8px;">
                        Entrada
@@ -192,10 +192,10 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         </div>
         <?php endif; ?>
 
-        <!-- Notificación de transferencias -->
+        <!-- NotificaciÃ³n de transferencias -->
         <?php if ($transfPendientes > 0): ?>
         <div class="notif-transf">
-            <span>📦 Tienes <strong><?= $transfPendientes ?></strong> solicitud(es) de transferencia pendiente(s) de aprobar.</span>
+            <span>ðŸ“¦ Tienes <strong><?= $transfPendientes ?></strong> solicitud(es) de transferencia pendiente(s) de aprobar.</span>
             <a href="transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
@@ -210,7 +210,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             <div class="stat">
                 <p>Stock bajo</p>
                 <h3 style="color:<?= $stats['con_stock_bajo']>0?'#c0392b':'#2e7d32' ?>;"><?= $stats['con_stock_bajo'] ?></h3>
-                <small>Bajo mínimo</small>
+                <small>Bajo mÃ­nimo</small>
             </div>
             <div class="stat">
                 <p>Sin stock</p>
@@ -224,39 +224,39 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </div>
 
-        <!-- Accesos rápidos -->
+        <!-- Accesos rÃ¡pidos -->
         <div class="accesos">
             <a class="acceso" href="entradas.php">
-                <span class="acceso-icon">📥</span>
-                <div><div class="acceso-label">Entradas</div><div class="acceso-sub">Registrar mercancía</div></div>
+                <span class="acceso-icon">ðŸ“¥</span>
+                <div><div class="acceso-label">Entradas</div><div class="acceso-sub">Registrar mercancÃ­a</div></div>
             </a>
             <a class="acceso" href="salidas.php">
-                <span class="acceso-icon">📤</span>
+                <span class="acceso-icon">ðŸ“¤</span>
                 <div><div class="acceso-label">Salidas</div><div class="acceso-sub">Mermas y ajustes</div></div>
             </a>
             <a class="acceso" href="compras.php">
-                <span class="acceso-icon">🛒</span>
+                <span class="acceso-icon">ðŸ›’</span>
                 <div><div class="acceso-label">Compras</div><div class="acceso-sub">Pedidos a proveedor</div></div>
             </a>
             <a class="acceso" href="transferencias.php">
-                <span class="acceso-icon">🔄</span>
+                <span class="acceso-icon">ðŸ”„</span>
                 <div><div class="acceso-label">Transferencias</div><div class="acceso-sub"><?= $transfPendientes>0?$transfPendientes.' pendiente(s)':'Entre sucursales' ?></div></div>
             </a>
             <a class="acceso" href="productos.php">
-                <span class="acceso-icon">🔧</span>
+                <span class="acceso-icon">ðŸ”§</span>
                 <div><div class="acceso-label">Productos</div><div class="acceso-sub">Ver inventario completo</div></div>
             </a>
             <a class="acceso" href="masVendidos.php">
-                <span class="acceso-icon">📊</span>
-                <div><div class="acceso-label">Más vendidos</div><div class="acceso-sub">Estadísticas</div></div>
+                <span class="acceso-icon">ðŸ“Š</span>
+                <div><div class="acceso-label">MÃ¡s vendidos</div><div class="acceso-sub">EstadÃ­sticas</div></div>
             </a>
         </div>
 
         <div class="grid-2">
-            <!-- Últimos movimientos -->
+            <!-- Ãšltimos movimientos -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Últimos movimientos</span>
+                    <span>Ãšltimos movimientos</span>
                     <a href="historialMovimientos.php">Ver todos</a>
                 </div>
                 <?php if (count($movimientos) > 0): ?>
@@ -264,7 +264,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                     <div class="tabla-row">
                         <div>
                             <div style="font-size:13px;color:#333;"><?= htmlspecialchars($m['nombre_producto']) ?></div>
-                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($m['motivo']??'—') ?></div>
+                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($m['motivo']??'â€”') ?></div>
                         </div>
                         <div style="text-align:right;">
                             <span class="badge-tipo tipo-<?= strtolower($m['tipo']) ?>"><?= $m['tipo'] ?></span>
@@ -277,10 +277,10 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
             </div>
 
-            <!-- Últimas compras -->
+            <!-- Ãšltimas compras -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Últimas compras a proveedor</span>
+                    <span>Ãšltimas compras a proveedor</span>
                     <a href="compras.php">Ver todas</a>
                 </div>
                 <?php if (count($ultimasCompras) > 0): ?>
@@ -306,3 +306,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

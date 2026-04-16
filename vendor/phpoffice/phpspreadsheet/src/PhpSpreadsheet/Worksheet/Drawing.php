@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -251,3 +251,4 @@ class Drawing extends BaseDrawing
         return image_type_to_mime_type(self::IMAGE_TYPES_CONVERTION_MAP[$this->type]);
     }
 }
+

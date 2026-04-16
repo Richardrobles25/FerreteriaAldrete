@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -94,3 +94,4 @@ class Counts extends AggregateBase
         return $returnValue;
     }
 }
+

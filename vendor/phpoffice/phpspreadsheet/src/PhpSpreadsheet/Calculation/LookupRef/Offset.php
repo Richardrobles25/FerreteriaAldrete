@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -163,3 +163,4 @@ class Offset
         return $endCellRow;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods;
 
@@ -58,3 +58,4 @@ class MetaInf extends WriterPart
         return $objWriter->getData();
     }
 }
+

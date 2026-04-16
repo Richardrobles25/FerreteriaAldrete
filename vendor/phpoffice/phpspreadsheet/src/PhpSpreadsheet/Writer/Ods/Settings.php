@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods;
 
@@ -150,3 +150,4 @@ class Settings extends WriterPart
         $this->writeSplitValue($objWriter, 'ActiveSplitRange', 'short', '3');
     }
 }
+

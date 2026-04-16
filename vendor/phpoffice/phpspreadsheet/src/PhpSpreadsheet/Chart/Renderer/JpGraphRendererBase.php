@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart\Renderer;
 
@@ -884,3 +884,4 @@ abstract class JpGraphRendererBase implements IRenderer
         return true;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xls\Style;
 
@@ -48,3 +48,4 @@ class CellAlignment
         $alignment->setWrapText((bool) $wrap);
     }
 }
+

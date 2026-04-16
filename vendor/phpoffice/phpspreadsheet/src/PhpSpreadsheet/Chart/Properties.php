@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -933,3 +933,4 @@ abstract class Properties
         $this->shadowColor = clone $this->shadowColor;
     }
 }
+

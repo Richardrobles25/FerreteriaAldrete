@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Helper;
 
@@ -43,3 +43,4 @@ class Handler
         return trigger_error('userWarning', E_USER_WARNING);
     }
 }
+

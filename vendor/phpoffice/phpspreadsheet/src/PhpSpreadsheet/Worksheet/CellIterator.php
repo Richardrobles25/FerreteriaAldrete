@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -83,3 +83,4 @@ abstract class CellIterator implements NativeIterator
         $this->adjustForExistingOnlyRange();
     }
 }
+

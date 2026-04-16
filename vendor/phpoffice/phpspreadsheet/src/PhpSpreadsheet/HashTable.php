@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -173,3 +173,4 @@ class HashTable
         }
     }
 }
+

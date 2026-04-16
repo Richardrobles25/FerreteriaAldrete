@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -27,3 +27,4 @@ abstract class WriterPart
         $this->parentWriter = $writer;
     }
 }
+

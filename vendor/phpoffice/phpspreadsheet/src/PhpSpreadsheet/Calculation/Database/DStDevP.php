@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Database;
 
@@ -43,3 +43,4 @@ class DStDevP extends DatabaseAbstract
         );
     }
 }
+

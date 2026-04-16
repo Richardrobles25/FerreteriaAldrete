@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -32,3 +32,4 @@ class LookupRefValidations
         return $value;
     }
 }
+

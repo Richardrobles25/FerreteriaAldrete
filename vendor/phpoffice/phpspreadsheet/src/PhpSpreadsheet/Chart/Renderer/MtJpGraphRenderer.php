@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart\Renderer;
 
@@ -36,3 +36,4 @@ class MtJpGraphRenderer extends JpGraphRendererBase
         $loaded = true;
     }
 }
+

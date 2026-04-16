@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xls\Style;
 
@@ -57,3 +57,4 @@ class CellAlignment
         return self::$verticalMap[Alignment::VERTICAL_BOTTOM];
     }
 }
+

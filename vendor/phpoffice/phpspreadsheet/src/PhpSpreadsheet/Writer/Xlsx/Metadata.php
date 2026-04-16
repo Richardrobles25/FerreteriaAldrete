@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -158,3 +158,4 @@ class Metadata extends WriterPart
         $objWriter->endElement(); // valueMetadata
     }
 }
+

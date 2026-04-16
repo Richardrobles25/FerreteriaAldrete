@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -227,3 +227,4 @@ abstract class Pdf extends Html
         $this->maybeCloseFileHandle();
     }
 }
+

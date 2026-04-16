@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -397,3 +397,4 @@ class DataValidation
         return $this;
     }
 }
+

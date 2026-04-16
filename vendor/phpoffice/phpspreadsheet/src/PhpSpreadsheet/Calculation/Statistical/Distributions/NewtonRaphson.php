@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -66,3 +66,4 @@ class NewtonRaphson
         return $x;
     }
 }
+

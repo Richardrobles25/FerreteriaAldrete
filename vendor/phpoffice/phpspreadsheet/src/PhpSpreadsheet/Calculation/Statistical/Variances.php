@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -184,3 +184,4 @@ class Variances extends VarianceBase
         return $returnValue;
     }
 }
+

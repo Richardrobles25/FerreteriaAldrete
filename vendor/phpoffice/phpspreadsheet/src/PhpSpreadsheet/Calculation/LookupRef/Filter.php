@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -93,3 +93,4 @@ class Filter
         return Matrix::transpose($result);
     }
 }
+

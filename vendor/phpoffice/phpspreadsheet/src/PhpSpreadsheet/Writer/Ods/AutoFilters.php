@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods;
 
@@ -55,3 +55,4 @@ class AutoFilters
         return "'{$title}'.{$range}";
     }
 }
+

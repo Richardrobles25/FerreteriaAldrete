@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Logical;
 
@@ -165,3 +165,4 @@ class Operations
         return ($count === 0) ? ExcelError::VALUE() : $func($trueValueCount, $count);
     }
 }
+

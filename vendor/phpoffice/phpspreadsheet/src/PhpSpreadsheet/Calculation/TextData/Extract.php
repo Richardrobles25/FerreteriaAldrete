@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -288,3 +288,4 @@ class Extract
         return ($matchMode === 0) ? 'mu' : 'miu';
     }
 }
+

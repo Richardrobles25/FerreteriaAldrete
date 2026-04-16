@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engine;
 
@@ -14,7 +14,7 @@ class FormattedNumber
     private const STRING_REGEXP_PERCENT = '~^(?:(?: *(?<PrefixedSign>[-+])? *\% *(?<PrefixedSign2>[-+])? *(?<PrefixedValue>[0-9]+\.?[0-9*]*(?:E[-+]?[0-9]*)?) *)|(?: *(?<PostfixedSign>[-+])? *(?<PostfixedValue>[0-9]+\.?[0-9]*(?:E[-+]?[0-9]*)?) *\% *))$~i';
 
     // preg_quoted string for major currency symbols, with a %s for locale currency
-    private const CURRENCY_CONVERSION_LIST = '\$€£¥%s';
+    private const CURRENCY_CONVERSION_LIST = '\$â‚¬Â£Â¥%s';
 
     /**
      * Identify whether a string contains a formatted numeric value,
@@ -137,3 +137,4 @@ class FormattedNumber
         return '~^(?:(?: *(?<PrefixedSign>[-+])? *(?<PrefixedCurrency>[' . $currencyCodes . ']) *(?<PrefixedSign2>[-+])? *(?<PrefixedValue>[0-9]+[' . $decimalSeparator . ']?[0-9*]*(?:E[-+]?[0-9]*)?) *)|(?: *(?<PostfixedSign>[-+])? *(?<PostfixedValue>[0-9]+' . $decimalSeparator . '?[0-9]*(?:E[-+]?[0-9]*)?) *(?<PostfixedCurrency>[' . $currencyCodes . ']) *))$~ui';
     }
 }
+

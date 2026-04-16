@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -611,3 +611,4 @@ class BaseDrawing implements IComparable
         return $this->index;
     }
 }
+

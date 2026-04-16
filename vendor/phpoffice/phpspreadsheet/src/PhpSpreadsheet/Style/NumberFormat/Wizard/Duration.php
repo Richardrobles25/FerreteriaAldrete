@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat\Wizard;
 
@@ -151,3 +151,4 @@ class Duration extends DateTimeWizard
         return implode('', array_map([$this, 'intersperse'], $this->formatBlocks, $this->separators));
     }
 }
+

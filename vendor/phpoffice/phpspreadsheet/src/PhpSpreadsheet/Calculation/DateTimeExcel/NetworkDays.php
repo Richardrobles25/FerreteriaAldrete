@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -117,3 +117,4 @@ class NetworkDays
         return ($sDate > $eDate) ? -$result : $result;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet;
 
@@ -156,3 +156,4 @@ class Settings
         return self::$requestFactory;
     }
 }
+

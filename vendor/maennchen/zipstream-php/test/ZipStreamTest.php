@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -60,12 +60,12 @@ class ZipStreamTest extends TestCase
             sendHttpHeaders: false,
         );
 
-        $name = 'árvíztűrő tükörfúrógép.txt';
+        $name = 'Ã¡rvÃ­ztÅ±rÅ‘ tÃ¼kÃ¶rfÃºrÃ³gÃ©p.txt';
         $content = 'Sample String Data';
         $comment
             = 'Filename has every special characters '
             . 'from Hungarian language in lowercase. '
-            . 'In uppercase: ÁÍŰŐÜÖÚÓÉ';
+            . 'In uppercase: ÃÃÅ°ÅÃœÃ–ÃšÃ“Ã‰';
 
         $zip->addFile(fileName: $name, data: $content, comment: $comment);
         $zip->finish();
@@ -88,9 +88,9 @@ class ZipStreamTest extends TestCase
             sendHttpHeaders: false,
         );
 
-        $name = 'á.txt';
+        $name = 'Ã¡.txt';
         $content = 'any';
-        $comment = mb_convert_encoding('á', 'ISO-8859-2', 'UTF-8');
+        $comment = mb_convert_encoding('Ã¡', 'ISO-8859-2', 'UTF-8');
 
         // @see https://libzip.org/documentation/zip_file_get_comment.html
         //
@@ -1217,3 +1217,4 @@ class ZipStreamTest extends TestCase
         unlink($tmp);
     }
 }
+

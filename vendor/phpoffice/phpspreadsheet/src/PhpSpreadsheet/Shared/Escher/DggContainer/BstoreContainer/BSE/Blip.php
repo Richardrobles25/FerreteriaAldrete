@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared\Escher\DggContainer\BstoreContainer\BSE;
 
@@ -48,3 +48,4 @@ class Blip
         return $this->parent;
     }
 }
+

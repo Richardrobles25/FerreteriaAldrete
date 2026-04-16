@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -48,3 +48,4 @@ class Trim
         return trim(preg_replace('/ +/', ' ', trim("$stringValue", ' ')) ?? '', ' ');
     }
 }
+

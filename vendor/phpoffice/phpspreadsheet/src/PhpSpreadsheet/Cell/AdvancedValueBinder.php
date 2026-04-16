@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -210,3 +210,4 @@ class AdvancedValueBinder extends DefaultValueBinder implements IValueBinder
         return true;
     }
 }
+

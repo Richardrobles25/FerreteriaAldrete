@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -96,14 +96,14 @@ class NumberFormat extends Supervisor
     private const FORMAT_CURRENCY_AMOUNT_FLOAT = '#,##0.00_-';
     const FORMAT_CURRENCY_USD_INTEGER = '$' . self::FORMAT_CURRENCY_AMOUNT_INTEGER;
     const FORMAT_CURRENCY_USD = '$' . self::FORMAT_CURRENCY_AMOUNT_FLOAT;
-    const FORMAT_CURRENCY_GBP_INTEGER = '£' . self::FORMAT_CURRENCY_AMOUNT_INTEGER;
-    const FORMAT_CURRENCY_GBP = '£' . self::FORMAT_CURRENCY_AMOUNT_FLOAT;
-    const FORMAT_CURRENCY_YEN_YUAN_INTEGER = '￥' . self::FORMAT_CURRENCY_AMOUNT_INTEGER;
-    const FORMAT_CURRENCY_YEN_YUAN = '￥' . self::FORMAT_CURRENCY_AMOUNT_FLOAT;
-    const FORMAT_CURRENCY_EUR_INTEGER = '#,##0_-[$€]';
-    const FORMAT_CURRENCY_EUR = '#,##0.00_-[$€]';
+    const FORMAT_CURRENCY_GBP_INTEGER = 'Â£' . self::FORMAT_CURRENCY_AMOUNT_INTEGER;
+    const FORMAT_CURRENCY_GBP = 'Â£' . self::FORMAT_CURRENCY_AMOUNT_FLOAT;
+    const FORMAT_CURRENCY_YEN_YUAN_INTEGER = 'ï¿¥' . self::FORMAT_CURRENCY_AMOUNT_INTEGER;
+    const FORMAT_CURRENCY_YEN_YUAN = 'ï¿¥' . self::FORMAT_CURRENCY_AMOUNT_FLOAT;
+    const FORMAT_CURRENCY_EUR_INTEGER = '#,##0_-[$â‚¬]';
+    const FORMAT_CURRENCY_EUR = '#,##0.00_-[$â‚¬]';
     const FORMAT_ACCOUNTING_USD = '_("$"* #,##0.00_);_("$"* \(#,##0.00\);_("$"* "-"??_);_(@_)';
-    const FORMAT_ACCOUNTING_EUR = '_("€"* #,##0.00_);_("€"* \(#,##0.00\);_("€"* "-"??_);_(@_)';
+    const FORMAT_ACCOUNTING_EUR = '_("â‚¬"* #,##0.00_);_("â‚¬"* \(#,##0.00\);_("â‚¬"* "-"??_);_(@_)';
 
     const SHORT_DATE_INDEX = 14;
     const DATE_TIME_INDEX = 22;
@@ -398,20 +398,20 @@ class NumberFormat extends Supervisor
             self::$builtInFormats[70] = 't# ??/??';
 
             // JPN
-            self::$builtInFormats[28] = '[$-411]ggge"年"m"月"d"日"';
-            self::$builtInFormats[29] = '[$-411]ggge"年"m"月"d"日"';
-            self::$builtInFormats[31] = 'yyyy"年"m"月"d"日"';
-            self::$builtInFormats[32] = 'h"時"mm"分"';
-            self::$builtInFormats[33] = 'h"時"mm"分"ss"秒"';
-            self::$builtInFormats[34] = 'yyyy"年"m"月"';
-            self::$builtInFormats[35] = 'm"月"d"日"';
-            self::$builtInFormats[51] = '[$-411]ggge"年"m"月"d"日"';
-            self::$builtInFormats[52] = 'yyyy"年"m"月"';
-            self::$builtInFormats[53] = 'm"月"d"日"';
-            self::$builtInFormats[54] = '[$-411]ggge"年"m"月"d"日"';
-            self::$builtInFormats[55] = 'yyyy"年"m"月"';
-            self::$builtInFormats[56] = 'm"月"d"日"';
-            self::$builtInFormats[58] = '[$-411]ggge"年"m"月"d"日"';
+            self::$builtInFormats[28] = '[$-411]ggge"å¹´"m"æœˆ"d"æ—¥"';
+            self::$builtInFormats[29] = '[$-411]ggge"å¹´"m"æœˆ"d"æ—¥"';
+            self::$builtInFormats[31] = 'yyyy"å¹´"m"æœˆ"d"æ—¥"';
+            self::$builtInFormats[32] = 'h"æ™‚"mm"åˆ†"';
+            self::$builtInFormats[33] = 'h"æ™‚"mm"åˆ†"ss"ç§’"';
+            self::$builtInFormats[34] = 'yyyy"å¹´"m"æœˆ"';
+            self::$builtInFormats[35] = 'm"æœˆ"d"æ—¥"';
+            self::$builtInFormats[51] = '[$-411]ggge"å¹´"m"æœˆ"d"æ—¥"';
+            self::$builtInFormats[52] = 'yyyy"å¹´"m"æœˆ"';
+            self::$builtInFormats[53] = 'm"æœˆ"d"æ—¥"';
+            self::$builtInFormats[54] = '[$-411]ggge"å¹´"m"æœˆ"d"æ—¥"';
+            self::$builtInFormats[55] = 'yyyy"å¹´"m"æœˆ"';
+            self::$builtInFormats[56] = 'm"æœˆ"d"æ—¥"';
+            self::$builtInFormats[58] = '[$-411]ggge"å¹´"m"æœˆ"d"æ—¥"';
 
             // Flip array (for faster lookups)
             self::$flippedBuiltInFormats = array_flip(self::$builtInFormats);
@@ -538,3 +538,4 @@ class NumberFormat extends Supervisor
         self::$timeFormat = $timeFormat;
     }
 }
+

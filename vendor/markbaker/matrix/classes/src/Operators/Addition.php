@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix\Operators;
 
@@ -66,3 +66,4 @@ class Addition extends Operator
         return $this;
     }
 }
+

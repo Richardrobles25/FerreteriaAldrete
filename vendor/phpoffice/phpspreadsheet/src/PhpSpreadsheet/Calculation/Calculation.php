@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation;
 
@@ -101,7 +101,7 @@ class Calculation extends CalculationLocale
         '+' => true, '-' => true, '*' => true, '/' => true,
         '^' => true, '&' => true, '%' => false, '~' => false,
         '>' => true, '<' => true, '=' => true, '>=' => true,
-        '<=' => true, '<>' => true, '∩' => true, '∪' => true,
+        '<=' => true, '<>' => true, 'âˆ©' => true, 'âˆª' => true,
         ':' => true,
     ];
 
@@ -112,7 +112,7 @@ class Calculation extends CalculationLocale
         '+' => true, '-' => true, '*' => true, '/' => true,
         '^' => true, '&' => true, '>' => true, '<' => true,
         '=' => true, '>=' => true, '<=' => true, '<>' => true,
-        '∩' => true, '∪' => true, ':' => true,
+        'âˆ©' => true, 'âˆª' => true, ':' => true,
     ];
 
     /**
@@ -1043,8 +1043,8 @@ class Calculation extends CalculationLocale
      */
     private const OPERATOR_PRECEDENCE = [
         ':' => 9, //    Range
-        '∩' => 8, //    Intersect
-        '∪' => 7, //    Union
+        'âˆ©' => 8, //    Intersect
+        'âˆª' => 7, //    Union
         '~' => 6, //    Negation
         '%' => 5, //    Percentage
         '^' => 4, //    Exponentiation
@@ -1057,7 +1057,7 @@ class Calculation extends CalculationLocale
     /** @param string[] $matches */
     private static function unionForComma(array $matches): string
     {
-        return $matches[1] . str_replace(',', '∪', $matches[2]);
+        return $matches[1] . str_replace(',', 'âˆª', $matches[2]);
     }
 
     private const CELL_OR_CELLRANGE_OR_DEFINED_NAME
@@ -1149,7 +1149,7 @@ class Calculation extends CalculationLocale
                 ++$index;
             } elseif ($opCharacter === '+' && !$expectingOperator) {            //    Positive (unary plus rather than binary operator plus) can be discarded?
                 ++$index; //    Drop the redundant plus symbol
-            } elseif ((($opCharacter === '~') /*|| ($opCharacter === '∩') || ($opCharacter === '∪')*/) && (!$isOperandOrFunction)) {
+            } elseif ((($opCharacter === '~') /*|| ($opCharacter === 'âˆ©') || ($opCharacter === 'âˆª')*/) && (!$isOperandOrFunction)) {
                 //    We have to explicitly deny a tilde, union or intersect because they are legal
                 return $this->raiseFormulaError("Formula Error: Illegal character '~'"); //        on the stack but not in the input expression
             } elseif ((isset(self::CALCULATION_OPERATORS[$opCharacter]) || $isOperandOrFunction) && $expectingOperator) {    //    Are we putting an operator on the stack?
@@ -1268,7 +1268,7 @@ class Calculation extends CalculationLocale
                     //    but at this point, we can't differentiate (so allow both)
                     //return $this->raiseFormulaError('Formula Error: Unexpected ,');
 
-                    $stack->push('Binary Operator', '∪');
+                    $stack->push('Binary Operator', 'âˆª');
 
                     ++$index;
                     $expectingOperator = false;
@@ -1566,7 +1566,7 @@ class Calculation extends CalculationLocale
                     while (self::swapOperands($stack, $opCharacter)) {
                         $output[] = $stack->pop(); //    Swap operands and higher precedence operators from the stack to the output
                     }
-                    $stack->push('Binary Operator', '∩'); //    Put an Intersect Operator on the stack
+                    $stack->push('Binary Operator', 'âˆ©'); //    Put an Intersect Operator on the stack
                     $expectingOperator = false;
                 }
             }
@@ -1947,7 +1947,7 @@ class Calculation extends CalculationLocale
                         }
 
                         break;
-                    case '∩':            //    Intersect
+                    case 'âˆ©':            //    Intersect
                         /** @var mixed[][] $operand1 */
                         /** @var mixed[][] $operand2 */
                         $rowIntersect = array_intersect_key($operand1, $operand2);
@@ -1970,7 +1970,7 @@ class Calculation extends CalculationLocale
                         }
 
                         break;
-                    case '∪':            //    union
+                    case 'âˆª':            //    union
                         /** @var mixed[][] $operand1 */
                         /** @var mixed[][] $operand2 */
                         $cellUnion = array_merge($operand1, $operand2);
@@ -2860,7 +2860,7 @@ class Calculation extends CalculationLocale
             if (Preg::isMatch('/^(.*!)?(.*)$/', $definedNameValue, $matches)) {
                 $matches2 = Preg::replace(
                     ['/ +/', '/,/'],
-                    [' ∩ ', ' ∪ '],
+                    [' âˆ© ', ' âˆª '],
                     trim($matches[2])
                 );
                 $definedNameValue = $matches[1] . $matches2;
@@ -2968,3 +2968,4 @@ class Calculation extends CalculationLocale
         return $this->spreadsheet;
     }
 }
+

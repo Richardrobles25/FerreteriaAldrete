@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xml\Style;
 
@@ -69,3 +69,4 @@ class Alignment extends StyleBase
         return $style;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Complex;
 
@@ -50,3 +50,4 @@ for ($real = -3.5; $real <= 3.5; $real += 0.5) {
         echo PHP_EOL;
     }
 }
+

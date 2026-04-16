@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -174,3 +174,4 @@ class DateValue
         return (array_key_exists($index, $array) && is_numeric($array[$index])) ? (int) $array[$index] : 0;
     }
 }
+

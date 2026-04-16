@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\LookupRef;
 
@@ -46,3 +46,4 @@ class Hstack
         return $returnMatrix;
     }
 }
+

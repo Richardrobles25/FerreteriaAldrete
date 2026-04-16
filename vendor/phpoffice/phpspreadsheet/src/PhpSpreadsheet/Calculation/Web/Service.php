@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Web;
 
@@ -76,3 +76,4 @@ class Service
         return str_replace('+', '%20', urlencode($text));
     }
 }
+

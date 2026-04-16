@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -107,3 +107,4 @@ enum CompressionMethod: int
     //  */
     // case AE_X_ENCRYPTION = 0x63;
 }
+

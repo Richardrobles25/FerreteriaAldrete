@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Chart;
 
@@ -159,3 +159,4 @@ class ChartColor
         return 100 - ((int) $alpha / 1000);
     }
 }
+

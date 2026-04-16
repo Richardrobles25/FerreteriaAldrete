@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -139,3 +139,4 @@ class BesselI
         return ($x < 0.0 && (($ord % 2) === 1)) ? -$ans : $ans;
     }
 }
+

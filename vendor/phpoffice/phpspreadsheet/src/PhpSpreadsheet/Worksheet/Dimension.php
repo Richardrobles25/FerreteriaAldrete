@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -122,3 +122,4 @@ abstract class Dimension
         return $this;
     }
 }
+

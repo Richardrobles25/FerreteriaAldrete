@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Collection;
 
@@ -18,3 +18,4 @@ abstract class CellsFactory
         return new Cells($worksheet, Settings::getCache());
     }
 }
+

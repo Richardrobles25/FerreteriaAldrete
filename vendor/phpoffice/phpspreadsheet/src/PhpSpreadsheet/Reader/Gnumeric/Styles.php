@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Gnumeric;
 
@@ -293,3 +293,4 @@ class Styles
         return $styleArray;
     }
 }
+

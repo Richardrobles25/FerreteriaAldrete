@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -61,3 +61,4 @@ class Angle
         return deg2rad($number);
     }
 }
+

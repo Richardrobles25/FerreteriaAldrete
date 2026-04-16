@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -141,3 +141,4 @@ class SumSquares
         return $result;
     }
 }
+

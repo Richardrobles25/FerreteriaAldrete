@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -1941,3 +1941,4 @@ class Chart extends WriterPart
         $objWriter->endElement(); // a:p
     }
 }
+

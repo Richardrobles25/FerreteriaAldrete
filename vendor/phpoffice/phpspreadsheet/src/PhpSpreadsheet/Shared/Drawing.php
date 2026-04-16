@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -148,3 +148,4 @@ class Drawing
         return 0;
     }
 }
+

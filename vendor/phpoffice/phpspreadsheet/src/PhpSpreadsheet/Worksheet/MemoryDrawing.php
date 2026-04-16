@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Worksheet;
 
@@ -314,3 +314,4 @@ class MemoryDrawing extends BaseDrawing
         );
     }
 }
+

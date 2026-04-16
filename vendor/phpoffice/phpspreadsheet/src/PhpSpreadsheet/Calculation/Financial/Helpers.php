@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial;
 
@@ -59,3 +59,4 @@ class Helpers
         return $date->format('d') === $date->format('t');
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -104,3 +104,4 @@ class PasswordHasher
         return base64_encode($hashValue);
     }
 }
+

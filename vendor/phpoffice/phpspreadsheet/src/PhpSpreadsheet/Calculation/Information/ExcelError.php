@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Information;
 
@@ -165,3 +165,4 @@ class ExcelError
         return self::ERROR_CODES['spill'];
     }
 }
+

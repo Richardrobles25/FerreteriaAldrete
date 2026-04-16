@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\TextData;
 
@@ -91,3 +91,4 @@ class Helpers
         return (int) StringHelper::convertToString($value);
     }
 }
+

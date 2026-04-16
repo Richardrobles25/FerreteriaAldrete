@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -20,3 +20,4 @@ class ExtendedInformationExtraFieldTest extends TestCase
         );
     }
 }
+

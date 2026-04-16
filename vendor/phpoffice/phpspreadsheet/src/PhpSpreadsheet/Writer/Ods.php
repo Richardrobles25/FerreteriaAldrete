@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer;
 
@@ -163,3 +163,4 @@ class Ods extends BaseWriter
         return $this;
     }
 }
+

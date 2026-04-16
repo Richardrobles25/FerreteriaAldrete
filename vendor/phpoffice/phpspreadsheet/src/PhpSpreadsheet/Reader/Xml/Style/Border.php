@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xml\Style;
 
@@ -104,3 +104,4 @@ class Border extends StyleBase
         return [$borderPosition, $diagonalDirection];
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -181,3 +181,4 @@ class File
         return self::fileExists($zipfile);
     }
 }
+

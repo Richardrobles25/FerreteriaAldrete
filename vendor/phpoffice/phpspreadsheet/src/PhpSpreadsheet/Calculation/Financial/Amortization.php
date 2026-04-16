@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial;
 
@@ -211,3 +211,4 @@ class Amortization
         return 2.5;
     }
 }
+

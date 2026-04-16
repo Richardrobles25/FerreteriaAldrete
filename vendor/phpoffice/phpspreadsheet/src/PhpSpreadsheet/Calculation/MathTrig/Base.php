@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -63,3 +63,4 @@ class Base
         return ExcelError::VALUE();
     }
 }
+

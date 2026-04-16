@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use Matrix\Matrix;
 use Matrix\Decomposition\QR;
@@ -31,3 +31,4 @@ $resolve = $matrix->multiply($X);
 echo 'Resolve', PHP_EOL;
 var_export($resolve->toArray());
 echo PHP_EOL;
+

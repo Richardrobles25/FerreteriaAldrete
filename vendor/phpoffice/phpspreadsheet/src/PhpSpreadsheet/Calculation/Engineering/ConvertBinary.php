@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -161,3 +161,4 @@ class ConvertBinary extends ConvertBase
         return $value;
     }
 }
+

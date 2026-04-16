@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -98,3 +98,4 @@ class Permutations
         return IntOrFloat::evaluate($result);
     }
 }
+

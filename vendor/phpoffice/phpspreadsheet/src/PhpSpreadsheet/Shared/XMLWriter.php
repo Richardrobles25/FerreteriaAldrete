@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -99,3 +99,4 @@ class XMLWriter extends \XMLWriter
         return $this->text($rawTextData ?? '');
     }
 }
+

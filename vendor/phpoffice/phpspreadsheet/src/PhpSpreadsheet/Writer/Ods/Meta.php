@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Ods;
 
@@ -120,3 +120,4 @@ class Meta extends WriterPart
         }
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -126,3 +126,4 @@ class Factorial
         return is_numeric($summer) ? ($summer / $divisor) : ExcelError::VALUE();
     }
 }
+

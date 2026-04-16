@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical;
 
@@ -136,3 +136,4 @@ class Deviations
         return ExcelError::DIV0();
     }
 }
+

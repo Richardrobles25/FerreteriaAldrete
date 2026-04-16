@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Ods;
 
@@ -139,3 +139,4 @@ class Properties
         $docProps->setCustomProperty($propertyValueName, $propertyValue, $propertyValueType);
     }
 }
+

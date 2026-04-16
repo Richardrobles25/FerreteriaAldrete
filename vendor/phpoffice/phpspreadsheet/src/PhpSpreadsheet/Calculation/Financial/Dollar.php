@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Financial;
 
@@ -129,3 +129,4 @@ class Dollar
         return $dollars + $cents;
     }
 }
+

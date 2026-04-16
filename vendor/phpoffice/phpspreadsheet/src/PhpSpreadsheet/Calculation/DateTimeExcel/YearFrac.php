@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\DateTimeExcel;
 
@@ -122,3 +122,4 @@ class YearFrac
         return $days / $tmpCalcAnnualBasis;
     }
 }
+

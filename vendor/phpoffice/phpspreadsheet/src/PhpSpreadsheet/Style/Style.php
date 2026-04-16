@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Style;
 
@@ -780,3 +780,4 @@ class Style extends Supervisor
         return $exportedArray;
     }
 }
+

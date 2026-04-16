@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Pdf;
 
@@ -61,3 +61,4 @@ class Dompdf extends Pdf
     {
     }
 }
+

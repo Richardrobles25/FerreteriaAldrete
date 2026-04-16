@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader;
 
@@ -623,3 +623,4 @@ class Gnumeric extends BaseReader
         return $arrayFormulaRange;
     }
 }
+

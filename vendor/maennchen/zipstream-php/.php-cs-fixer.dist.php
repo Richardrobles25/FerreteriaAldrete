@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -73,3 +73,4 @@ return $config->setRules([
     ->setRiskyAllowed(true)
     ->setUnsupportedPhpVersionAllowed(true)
     ->setParallelConfig(Runner\Parallel\ParallelConfigFactory::detect());
+

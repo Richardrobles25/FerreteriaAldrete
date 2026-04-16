@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix\Decomposition;
 
@@ -258,3 +258,4 @@ class LU
         return new Matrix($X);
     }
 }
+

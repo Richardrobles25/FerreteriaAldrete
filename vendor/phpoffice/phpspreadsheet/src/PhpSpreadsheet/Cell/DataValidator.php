@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Cell;
 
@@ -141,3 +141,4 @@ class DataValidator
         return true;
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Reader\Xml\Style;
 
@@ -32,3 +32,4 @@ class NumberFormat extends StyleBase
         return $style;
     }
 }
+

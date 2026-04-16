@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 declare(strict_types=1);
 
@@ -35,3 +35,4 @@ enum OperationMode
      */
     case SIMULATE_LAX;
 }
+

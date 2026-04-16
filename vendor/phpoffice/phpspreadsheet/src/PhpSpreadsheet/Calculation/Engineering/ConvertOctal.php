@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Engineering;
 
@@ -172,3 +172,4 @@ class ConvertOctal extends ConvertBase
         return $value;
     }
 }
+

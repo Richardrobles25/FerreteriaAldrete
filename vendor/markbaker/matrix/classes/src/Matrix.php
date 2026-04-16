@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 /**
  *
@@ -421,3 +421,4 @@ class Matrix
         throw new Exception('Function or Operation does not exist');
     }
 }
+

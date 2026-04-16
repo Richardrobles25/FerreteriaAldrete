@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -36,3 +36,4 @@ class Sign
         return Helpers::returnSign($number);
     }
 }
+

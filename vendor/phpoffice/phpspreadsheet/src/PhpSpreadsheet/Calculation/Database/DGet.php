@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Database;
 
@@ -48,3 +48,4 @@ class DGet extends DatabaseAbstract
         return array_pop($row);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig;
 
@@ -222,3 +222,4 @@ class Floor
         return ExcelError::NAN();
     }
 }
+

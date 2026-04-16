@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace Matrix\Operators;
 
@@ -76,3 +76,4 @@ abstract class Operator
         return new Matrix($this->matrix);
     }
 }
+

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 /*
  * This file is part of Composer.
@@ -394,3 +394,4 @@ class InstalledVersions
         return $installed;
     }
 }
+

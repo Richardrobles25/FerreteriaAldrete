@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\MathTrig\Trig;
 
@@ -119,7 +119,7 @@ class Tangent
      * ATAN2.
      *
      * This function calculates the arc tangent of the two variables x and y. It is similar to
-     *        calculating the arc tangent of y ÷ x, except that the signs of both arguments are used
+     *        calculating the arc tangent of y Ã· x, except that the signs of both arguments are used
      *        to determine the quadrant of the result.
      * The arctangent is the angle from the x-axis to a line containing the origin (0, 0) and a
      *        point with coordinates (xCoordinate, yCoordinate). The angle is given in radians between
@@ -158,3 +158,4 @@ class Tangent
         return atan2($yCoordinate, $xCoordinate);
     }
 }
+

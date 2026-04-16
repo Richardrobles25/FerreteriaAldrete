@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Calculation\Statistical\Distributions;
 
@@ -64,3 +64,4 @@ class Poisson
         return (exp(0 - $mean) * $mean ** $value) / $fact;
     }
 }
+

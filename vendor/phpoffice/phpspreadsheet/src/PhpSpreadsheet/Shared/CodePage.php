@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace PhpOffice\PhpSpreadsheet\Shared;
 
@@ -113,3 +113,4 @@ class CodePage
         return self::$pageArray;
     }
 }
+

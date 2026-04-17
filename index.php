@@ -118,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .login-title::before {
-            content: "Iniciar Sesi�n Ferremateriales ";
+            content: "Iniciar Sesión Ferremateriales ";
             color: var(--negro-marca);
             font-size: 24px;
         }
@@ -192,7 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="login-box">
         <div class="brand">
-            <div class="login-title">Iniciar sesi�n /Ferremateriales Aldrete</div>
+            <div class="login-title">Iniciar sesión /Ferremateriales Aldrete</div>
             <img src="/logo.jpeg" alt="Logo Ferremateriales Aldrete">
         </div>
         
@@ -212,14 +212,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 autofocus
             >
 
-            <label>Contrase�a</label>
+            <label>Contraseña</label>
             <input 
                 type="password" 
                 name="contrasena"
-                placeholder="Ingresa tu contrase�a"
+                placeholder="Ingresa tu contraseña"
             >
 
-            <button type="submit">Iniciar sesi�n</button>
+            <button type="submit">Iniciar sesión</button>
         </form>
         <div class="hint">Ferremateriales Aldrete</div>
     </div>

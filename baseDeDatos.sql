@@ -163,6 +163,7 @@
     -- 11. VENTAS
     CREATE TABLE ventas (
         venta_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        folio VARCHAR(20) DEFAULT NULL,
         caja_id INT UNSIGNED NOT NULL,
         cliente_id INT UNSIGNED,
         usuario_id INT UNSIGNED NOT NULL,
@@ -177,6 +178,8 @@
         estado ENUM('Completada', 'Cancelada', 'Pendiente') DEFAULT 'Completada',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_folio (folio),
+        INDEX idx_ventas_mes (created_at),
         FOREIGN KEY (caja_id) REFERENCES cajas(caja_id),
         FOREIGN KEY (cliente_id) REFERENCES clientes(cliente_id),
         FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)

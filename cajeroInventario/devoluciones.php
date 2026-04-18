@@ -120,6 +120,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .menu-item:hover { background: #eef8ff; color: #14ace7; }
     .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
+    .menu-label { padding: 6px 16px 2px; font-size: 10px; font-weight: 700; color: #bbb; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
@@ -165,23 +166,48 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
         <h3>Ferretería Aldrete</h3>
-        <p>Cajero</p>
+        <p>Cajero / Inventario</p>
     </div>
     <div class="sidebar-menu">
-        <a class="menu-item" href="inicioCajero.php">Inicio</a>
+        <a class="menu-item" href="inicioCajeroInventario.php">Inicio</a>
+        <div class="divider"></div>
+
+        <div class="menu-label">Ventas</div>
         <a class="menu-item" href="nuevaVenta.php">Nueva venta</a>
         <a class="menu-item" href="historialVentas.php">Historial de ventas</a>
+        <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
+        <a class="menu-item active" href="devoluciones.php">Devoluciones</a>
         <div class="divider"></div>
+
+        <div class="menu-label">Caja</div>
         <a class="menu-item" href="abrirCaja.php">Abrir caja</a>
         <a class="menu-item" href="corteCaja.php">Corte de caja</a>
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
+
+        <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
         <a class="menu-item" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
-        <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
-        <a class="menu-item active" href="devoluciones.php">Devoluciones</a>
+
+        <div class="menu-label">Inventario</div>
+        <a class="menu-item" href="productos.php">Productos</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="entradas.php">Entradas</a>
+        <a class="menu-item" href="salidas.php">Salidas y mermas</a>
+        <a class="menu-item" href="historial.php">Movimientos</a>
+        <div class="divider"></div>
+
+        <div class="menu-label">Proveedores</div>
+        <a class="menu-item" href="proveedores.php">Proveedores</a>
+        <a class="menu-item" href="compras.php">Compras</a>
+        <div class="divider"></div>
+
+        <div class="menu-label">Más</div>
+        <a class="menu-item" href="paquetes.php">Paquetes</a>
+        <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -214,7 +240,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div class="form-group">
                     <label>Buscar por folio</label>
                     <div class="buscar-row">
-                        <input type="number" id="inputFolioNum" placeholder="Ej. 42" min="1" max="9999" style="width:90px;">
+                        <input type="number" id="inputFolioNum" placeholder="Ej. 0042" min="1" max="9999" style="width:100px;">
                         <select id="selectMes" style="padding:9px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
                             <option value="01">Enero</option><option value="02">Febrero</option>
                             <option value="03">Marzo</option><option value="04">Abril</option>
@@ -230,7 +256,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </select>
                         <button class="btn-buscar" onclick="buscarVenta()">Buscar</button>
                     </div>
-                    <div style="font-size:11px;color:#aaa;margin-top:4px;">Número de folio (ej. 42) + mes y año de la venta.</div>
+                    <div style="font-size:11px;color:#aaa;margin-top:4px;">Ingresa el número de folio (ej. 42) y selecciona el mes y año de la venta.</div>
                 </div>
 
                 <div class="venta-info" id="ventaInfo">
@@ -311,7 +337,7 @@ function buscarVenta() {
             if (!data) { alert('Folio no encontrado o la venta no está completada.'); return; }
             ventaActual = data;
             document.getElementById('ventaCliente').textContent = data.cliente || 'Público general';
-            document.getElementById('ventaFecha').textContent = 'Folio: '+(data.folio || ('#'+data.venta_id));
+            document.getElementById('ventaFecha').textContent = 'Folio: ' + (data.folio || ('#'+data.venta_id));
             document.getElementById('ventaTotal').textContent = 'Total: $'+parseFloat(data.total).toFixed(2)+' · '+data.metodo_pago;
             document.getElementById('ventaInfo').classList.add('visible');
             document.getElementById('inputVentaIdHidden').value = data.venta_id;
@@ -348,4 +374,3 @@ function prepararDevolucion() {
 </script>
 </body>
 </html>
-

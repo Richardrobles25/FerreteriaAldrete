@@ -178,6 +178,10 @@ if (isset($_GET['ticket_venta'])) {
     ");
     $stmtV->execute([$venta_id]);
     $venta = $stmtV->fetch(PDO::FETCH_ASSOC);
+    if ($venta) {
+        // Formatear fecha en servidor (evita problemas de zona horaria en JS)
+        $venta['fecha_formateada'] = date('d/m/Y H:i', strtotime($venta['created_at']));
+    }
 
     $stmtP = $pdo->prepare("
         SELECT vp.cantidad, vp.precio_unitario, vp.subtotal, p.nombre_producto, p.codigo
@@ -194,6 +198,7 @@ if (isset($_GET['ticket_venta'])) {
 }
 
 // ── Procesar venta ───────────────────────────────────────────────────────────
+$errorVenta = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $items             = json_decode($_POST['items'], true);
     $cliente_id        = intval($_POST['cliente_id'] ?? 0) ?: null;
@@ -207,52 +212,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $cambio            = floatval($_POST['cambio'] ?? 0);
 
     if (!empty($items) && $metodo_pago) {
-        // Generar folio mensual: NNNN-MM-YYYY (se reinicia cada 1ro de mes)
-        $mesFolio  = date('m');
-        $anioFolio = date('Y');
-        $stmtFolio = $pdo->prepare("
-            SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(folio,'-',1) AS UNSIGNED)),0)+1
-            FROM ventas
-            WHERE folio IS NOT NULL
-              AND MONTH(created_at) = ? AND YEAR(created_at) = ?
-        ");
-        $stmtFolio->execute([$mesFolio, $anioFolio]);
-        $numFolio = intval($stmtFolio->fetchColumn());
-        $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT) . '-' . $mesFolio . '-' . $anioFolio;
+        $pdo->beginTransaction();
+        try {
+            // Generar folio mensual: NNNN-MM-YYYY (se reinicia cada 1ro de mes)
+            $mesFolio  = date('m');
+            $anioFolio = date('Y');
+            // SELECT con FOR UPDATE para evitar folios duplicados en ventas simultáneas
+            $stmtFolio = $pdo->prepare("
+                SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(folio,'-',1) AS UNSIGNED)),0)+1
+                FROM ventas
+                WHERE folio IS NOT NULL
+                  AND MONTH(created_at) = ? AND YEAR(created_at) = ?
+                FOR UPDATE
+            ");
+            $stmtFolio->execute([$mesFolio, $anioFolio]);
+            $numFolio = intval($stmtFolio->fetchColumn());
+            $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT) . '-' . $mesFolio . '-' . $anioFolio;
 
-        $stmt = $pdo->prepare("
-            INSERT INTO ventas
-            (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
-             total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada')
-        ");
-        $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
-                        $subtotal,$descuento,$comision_terminal,$total,
-                        $metodo_pago,$monto_efectivo,$monto_terminal,$cambio]);
-        $venta_id = $pdo->lastInsertId();
+            $stmt = $pdo->prepare("
+                INSERT INTO ventas
+                (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
+                 total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada')
+            ");
+            $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
+                            $subtotal,$descuento,$comision_terminal,$total,
+                            $metodo_pago,$monto_efectivo,$monto_terminal,$cambio]);
+            $venta_id = $pdo->lastInsertId();
 
-        foreach ($items as $item) {
-            $subtotalItem = $item['cantidad'] * $item['precio'];
-            $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,descuento,subtotal) VALUES (?,?,?,?,0,?)")
-                ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$item['precio'],$subtotalItem]);
+            foreach ($items as $item) {
+                $subtotalItem = $item['cantidad'] * $item['precio'];
+                $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,descuento,subtotal) VALUES (?,?,?,?,0,?)")
+                    ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$item['precio'],$subtotalItem]);
 
-            $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-            $stmtS->execute([$item['producto_id']]);
-            $stockAnterior = floatval($stmtS->fetchColumn());
-            $stockNuevo    = $stockAnterior - $item['cantidad'];
+                // Bloquear la fila del producto para evitar condición de carrera
+                $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? FOR UPDATE");
+                $stmtS->execute([$item['producto_id']]);
+                $stockAnterior = floatval($stmtS->fetchColumn());
 
-            $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo,$item['producto_id']]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Salida',?,?,?,'Venta')")
-                ->execute([$item['producto_id'],$_SESSION['usuario_id'],$item['cantidad'],$stockAnterior,$stockNuevo]);
+                // Validar stock en servidor antes de descontar
+                if ($stockAnterior < $item['cantidad']) {
+                    throw new Exception("Stock insuficiente para uno de los productos. Verifica el carrito e intenta de nuevo.");
+                }
+
+                $stockNuevo = $stockAnterior - $item['cantidad'];
+                $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo,$item['producto_id']]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Salida',?,?,?,'Venta')")
+                    ->execute([$item['producto_id'],$_SESSION['usuario_id'],$item['cantidad'],$stockAnterior,$stockNuevo]);
+            }
+
+            if ($metodo_pago === 'Credito' && $cliente_id) {
+                $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado) VALUES (?,?,?,?,'Activo')")
+                    ->execute([$cliente_id,$venta_id,$total,$total]);
+            }
+
+            $pdo->commit();
+            header('Location: nuevaVenta.php?msg=exito&venta_id='.$venta_id);
+            exit();
+
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $errorVenta = $e->getMessage();
         }
-
-        if ($metodo_pago === 'Credito' && $cliente_id) {
-            $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado) VALUES (?,?,?,?,'Activo')")
-                ->execute([$cliente_id,$venta_id,$total,$total]);
-        }
-
-        header('Location: nuevaVenta.php?msg=exito&venta_id='.$venta_id);
-        exit();
     }
 }
 ?>
@@ -277,7 +298,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .menu-item:hover { background: #eef8ff; color: #14ace7; }
     .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
-    .menu-label { padding: 6px 16px 2px; font-size: 10px; font-weight: 700; color: #bbb; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+    .menu-label { padding: 8px 16px 4px; font-size: 10px; font-weight: 700; color: #14ace7; text-transform: uppercase; letter-spacing: 0.5px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
@@ -473,6 +494,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 <button class="btn-print-ticket" onclick="imprimirTicket(<?= intval($_GET['venta_id'] ?? 0) ?>)">
                     🖨 Imprimir ticket
                 </button>
+            </div>
+        <?php endif; ?>
+        <?php if ($errorVenta): ?>
+            <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;border-left:3px solid #c0392b;grid-column:span 2;margin-bottom:4px;">
+                ⚠ <?= htmlspecialchars($errorVenta) ?>
             </div>
         <?php endif; ?>
 
@@ -733,7 +759,7 @@ document.getElementById('inputScanner').addEventListener('input', function() {
             procesarScan(document.getElementById('inputScanner').value.trim());
             document.getElementById('inputScanner').value = '';
         }
-    }, 150);
+    }, 450);
 });
 
 function procesarScan(codigo) {
@@ -1087,6 +1113,12 @@ function recalcularTodo() {
     document.getElementById('inputDescuento').value        = descuento.toFixed(2);
     document.getElementById('inputComisionTerminal').value = comision.toFixed(2);
     document.getElementById('inputTotal').value            = total.toFixed(2);
+    // Para pago Terminal: guardar el monto completo en monto_terminal (campo hidden)
+    // Esto es necesario para que el corte de caja pueda sumar correctamente
+    if (metodoPago === 'Terminal') {
+        document.getElementById('inputMontoTerminal').value = total.toFixed(2);
+        document.getElementById('inputMontoEfectivo').value = '0.00';
+    }
     verificarCobrar();
 }
 
@@ -1161,7 +1193,8 @@ function imprimirTicket(ventaId) {
 
 function generarTicketHTML(venta) {
     const linea = '--------------------------------';
-    const fecha = new Date(venta.created_at).toLocaleString('es-MX');
+    // Usar fecha ya formateada en servidor (evita desfase de zona horaria en el navegador)
+    const fecha = venta.fecha_formateada || venta.created_at;
 
     let html = `
         <div class="t-centro t-bold t-grande">${datosTicket.nombre}</div>`;

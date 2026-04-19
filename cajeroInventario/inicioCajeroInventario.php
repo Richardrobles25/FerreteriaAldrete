@@ -69,7 +69,7 @@ if ($cajaActual) {
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
     .menu-item:hover { background: #eef8ff; color: #14ace7; }
     .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
-    .menu-label { padding: 8px 16px 4px; font-size: 10px; color: #bbb; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+    .menu-label { padding: 8px 16px 4px; font-size: 10px; color: #14ace7; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }

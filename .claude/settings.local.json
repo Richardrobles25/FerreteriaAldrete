@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v \"\\\\.claude\\\\|vendor\" echo \"---\" ls /c/FerreteriaAldrete/cajeroInventario/)",
+      "Bash(python3)"
+    ]
+  }
+}

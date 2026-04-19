@@ -12,6 +12,10 @@ try {
         $password
     );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec("SET time_zone = '-07:00'");
 } catch (PDOException $e) {
     die("Error de conexión: " . $e->getMessage());
 }
+
+// Zona horaria de PHP: Ixtlán del Río, Nayarit (UTC-7 todo el año)
+date_default_timezone_set('America/Mazatlan');

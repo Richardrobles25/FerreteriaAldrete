@@ -67,6 +67,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     .menu-item:hover { background: #eef8ff; color: #14ace7; }
     .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
+    .menu-label { padding: 8px 16px 4px; font-size: 10px; font-weight: 700; color: #14ace7; text-transform: uppercase; letter-spacing: 0.5px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }

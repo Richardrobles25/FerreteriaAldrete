@@ -36,6 +36,15 @@ if ($verDetalle) {
     }
 }
 
+// ── Migración: asegurar columna proveedor_id en movimientos_inventario ────────
+$colExiste = $pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'movimientos_inventario'
+      AND COLUMN_NAME  = 'proveedor_id'")->fetchColumn();
+if (!$colExiste) {
+    $pdo->exec("ALTER TABLE movimientos_inventario ADD COLUMN proveedor_id INT NULL DEFAULT NULL");
+}
+
 // Procesar nueva compra
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
@@ -58,15 +67,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
                 ->execute([$compra_id, $item['producto_id'], $item['cantidad'], $item['precio_unitario'], $subtotal]);
 
-            // Actualizar stock
             $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
             $stmtS->execute([$item['producto_id']]);
             $stockAnterior = $stmtS->fetchColumn();
             $stockNuevo    = $stockAnterior + $item['cantidad'];
 
             $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,?,?,'Compra a proveedor #')")
-                ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
+            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
+                ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
         }
 
         header('Location: inventario_compras.php?msg=creado');

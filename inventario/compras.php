@@ -35,6 +35,15 @@ if ($verDetalle) {
     }
 }
 
+// ── Migración: asegurar columna proveedor_id en movimientos_inventario ────────
+$colExiste = $pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = 'movimientos_inventario'
+      AND COLUMN_NAME  = 'proveedor_id'")->fetchColumn();
+if (!$colExiste) {
+    $pdo->exec("ALTER TABLE movimientos_inventario ADD COLUMN proveedor_id INT NULL DEFAULT NULL");
+}
+
 // Procesar nueva compra
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
@@ -57,15 +66,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
                 ->execute([$compra_id, $item['producto_id'], $item['cantidad'], $item['precio_unitario'], $subtotal]);
 
-            // Actualizar stock
             $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
             $stmtS->execute([$item['producto_id']]);
             $stockAnterior = $stmtS->fetchColumn();
             $stockNuevo    = $stockAnterior + $item['cantidad'];
 
             $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,?,?,'Compra a proveedor #')")
-                ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
+            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
+                ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
         }
 
         header('Location: compras.php?msg=creado');
@@ -160,9 +168,17 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: Arial, sans-serif; }
     .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .agregar-row { display: flex; gap: 8px; margin-bottom: 13px; }
-    .agregar-row select { flex: 2; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
-    .agregar-row input { flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
-    .agregar-row input:focus, .agregar-row select:focus { outline: none; border-color: #14ace7; }
+    .agregar-row > div { flex: 2; }
+    .agregar-row input[type="text"] { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
+    .agregar-row input[type="number"] { flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
+    .agregar-row input:focus { outline: none; border-color: #14ace7; }
+    .prod-search-wrap { position: relative; }
+    .prod-drop { display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.1); z-index: 200; max-height: 200px; overflow-y: auto; margin-top: 2px; }
+    .prod-drop-item { padding: 9px 13px; cursor: pointer; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .prod-drop-item:hover { background: #eef8ff; }
+    .prod-drop-item:last-child { border-bottom: none; }
+    .prod-chip { display: none; margin-top: 6px; background: #eef8ff; border: 1px solid #bbdefb; border-radius: 6px; padding: 7px 12px; font-size: 13px; justify-content: space-between; align-items: center; }
+    .prod-chip button { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 12px; font-weight: 700; }
     .btn-agregar-prod { background: #14ace7; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
     .lista-compra { border: 0.5px solid #eee; border-radius: 6px; min-height: 60px; margin-bottom: 13px; overflow: hidden; }
     .compra-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; }

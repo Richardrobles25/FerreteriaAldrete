@@ -170,7 +170,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
         <form method="GET">
             <div class="filtros">
-                <div class="filtro-group"><label>Buscar cliente</label><input type="text" name="buscar" placeholder="Nombre o telefono..." value="<?= htmlspecialchars($busqueda) ?>"></div>
+                <div class="filtro-group"><label>Buscar cliente</label><input type="text" name="buscar" placeholder="Nombre o telefono..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)"></div>
                 <div class="filtro-group">
                     <label>Estado</label>
                     <select name="estado">
@@ -204,7 +204,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <?php if (count($creditos) > 0): ?>
                 <table>
                     <thead><tr><th>#</th><th>Cliente</th><th>Sucursal</th><th>Venta</th><th>Abonos</th><th>Pendiente</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($creditos as $credito): ?>
                             <tr>
                                 <td style="color:#aaa;"><?= intval($credito['credito_id']) ?></td>
@@ -228,6 +228,15 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
 </body>

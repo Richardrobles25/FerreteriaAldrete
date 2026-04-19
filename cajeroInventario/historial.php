@@ -177,7 +177,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar producto</label>
-                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;">
+                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" style="width:160px;">
                 </div>
                 <div class="filtro-group">
                     <label>Fecha</label>
@@ -222,7 +222,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
                         <th>Fecha</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="tablaFiltrable">
                     <?php foreach ($movimientos as $m): ?>
                     <tr>
                         <td>
@@ -252,6 +252,15 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
 }

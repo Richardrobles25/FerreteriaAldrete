@@ -251,7 +251,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
             <form method="GET">
                 <div class="filtros">
-                    <div class="filtro-group"><label>Buscar</label><input type="text" name="buscar" placeholder="Nombre, telefono o correo..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;"></div>
+                    <div class="filtro-group"><label>Buscar</label><input type="text" name="buscar" placeholder="Nombre, telefono o correo..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;" oninput="filtrarTabla(this.value)"></div>
                     <div class="filtro-group">
                         <label>Sucursal</label>
                         <select name="sucursal">
@@ -278,7 +278,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <?php if (count($clientes) > 0): ?>
                     <table>
                         <thead><tr><th>Cliente</th><th>Compras</th><th>Credito</th><th>Sucursales</th><th>Estado</th><th>Acciones</th></tr></thead>
-                        <tbody>
+                        <tbody id="tablaFiltrable">
                             <?php foreach ($clientes as $cliente): ?>
                                 <tr class="<?= !$cliente['activo'] ? 'inactivo' : '' ?>">
                                     <td>
@@ -330,6 +330,15 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleCredito(checked) { document.getElementById('creditoCampos').classList.toggle('visible', checked); }
 </script>

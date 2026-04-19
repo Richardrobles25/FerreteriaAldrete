@@ -23,11 +23,26 @@ $stmtSuc->execute([$_SESSION['sucursal_id']]);
 $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
 // ── AJAX: paquetes activos ───────────────────────────────────────────────────
+// ── AJAX: todos los productos de la sucursal (para búsqueda local en JS) ─────
+if (isset($_GET['get_productos_all'])) {
+    $stmt = $pdo->prepare("
+        SELECT producto_id, codigo, nombre_producto, precio_venta,
+               precio_mayoreo, stock_actual, tipo_venta
+        FROM productos
+        WHERE sucursal_id = ? AND activo = 1
+        ORDER BY nombre_producto ASC
+    ");
+    $stmt->execute([$_SESSION['sucursal_id']]);
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
 if (isset($_GET['get_paquetes'])) {
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_requerida,
-               pr.nombre_producto
+               pr.nombre_producto, pr.stock_actual
         FROM paquetes pk
         JOIN paquete_productos pp ON pk.paquete_id = pp.paquete_id
         JOIN productos pr ON pp.producto_id = pr.producto_id
@@ -50,7 +65,8 @@ if (isset($_GET['get_paquetes'])) {
         $agrupados[$pid]['productos'][] = [
             'producto_id'        => intval($f['producto_id']),
             'nombre_producto'    => $f['nombre_producto'],
-            'cantidad_requerida' => floatval($f['cantidad_requerida'])
+            'cantidad_requerida' => floatval($f['cantidad_requerida']),
+            'stock_actual'       => floatval($f['stock_actual'])
         ];
     }
     header('Content-Type: application/json');
@@ -98,6 +114,67 @@ if (isset($_GET['buscar_paquete'])) {
     }
     header('Content-Type: application/json');
     echo json_encode(array_values($resultado));
+    exit();
+}
+
+// ── AJAX: búsqueda combinada (producto + paquete en un solo request) ─────────
+if (isset($_GET['buscar_combo'])) {
+    $termino     = trim($_GET['buscar_combo']);
+    $sucursal_id = intval($_GET['sucursal_id'] ?? $_SESSION['sucursal_id']);
+    $like        = '%' . $termino . '%';
+
+    // Productos
+    $stmtP = $pdo->prepare("
+        SELECT producto_id, codigo, nombre_producto, precio_venta,
+               precio_mayoreo, stock_actual, tipo_venta
+        FROM productos
+        WHERE sucursal_id = ? AND activo = 1
+          AND (codigo LIKE ? OR nombre_producto LIKE ?)
+        LIMIT 10
+    ");
+    $stmtP->execute([$sucursal_id, $like, $like]);
+    $productos = $stmtP->fetchAll(PDO::FETCH_ASSOC);
+
+    // Paquetes
+    $stmtPaq = $pdo->prepare("
+        SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
+               pp.producto_id, pp.cantidad AS cantidad_req,
+               pr.stock_actual, pr.nombre_producto
+        FROM paquetes pk
+        JOIN paquete_productos pp ON pk.paquete_id = pp.paquete_id
+        JOIN productos pr ON pp.producto_id = pr.producto_id
+        WHERE pk.activo = 1 AND pr.sucursal_id = ?
+          AND (pk.codigo LIKE ? OR pk.nombre LIKE ?)
+    ");
+    $stmtPaq->execute([$sucursal_id, $like, $like]);
+    $filasPaq = $stmtPaq->fetchAll(PDO::FETCH_ASSOC);
+
+    $paquetes = [];
+    foreach ($filasPaq as $f) {
+        $pid = intval($f['paquete_id']);
+        if (!isset($paquetes[$pid])) {
+            $paquetes[$pid] = [
+                'paquete_id'     => $pid,
+                'codigo'         => $f['codigo'],
+                'nombre'         => $f['nombre'],
+                'precio_paquete' => floatval($f['precio_paquete']),
+                'disponible'     => true,
+                'productos'      => []
+            ];
+        }
+        $paquetes[$pid]['productos'][] = [
+            'producto_id'     => intval($f['producto_id']),
+            'nombre_producto' => $f['nombre_producto'],
+            'cantidad_req'    => floatval($f['cantidad_req']),
+            'stock_actual'    => floatval($f['stock_actual'])
+        ];
+        if (floatval($f['stock_actual']) < floatval($f['cantidad_req'])) {
+            $paquetes[$pid]['disponible'] = false;
+        }
+    }
+
+    header('Content-Type: application/json');
+    echo json_encode(['productos' => $productos, 'paquetes' => array_values($paquetes)]);
     exit();
 }
 
@@ -151,7 +228,20 @@ if (isset($_GET['inventario_sucursal'])) {
     exit();
 }
 
-// ── AJAX: buscar cliente ─────────────────────────────────────────────────────
+// ── AJAX: todos los clientes (para búsqueda local en JS) ────────────────────
+if (isset($_GET['get_clientes_all'])) {
+    $stmt = $pdo->query("
+        SELECT cliente_id, nombre_completo, telefono,
+               descuento_fijo, credito_autorizado
+        FROM clientes WHERE activo = 1
+        ORDER BY nombre_completo ASC
+    ");
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
+// ── AJAX: buscar cliente (mantenido por compatibilidad) ──────────────────────
 if (isset($_GET['buscar_cliente'])) {
     $termino = trim($_GET['buscar_cliente']);
     $stmt = $pdo->prepare("
@@ -690,10 +780,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
 <script>
 // ── Estado global ────────────────────────────────────────────────────────────
-let carrito          = [];
-let clienteActual    = null;
-let metodoPago       = null;
-let paquetesGlobales = [];
+let carrito           = [];
+let clienteActual     = null;
+let metodoPago        = null;
+let paquetesGlobales  = [];
+let productosGlobales = [];
+let clientesGlobales  = [];
 let modoScannerActivo = false;
 let scannerTimer      = null;
 
@@ -709,22 +801,42 @@ const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
-// ── Cargar paquetes al iniciar ───────────────────────────────────────────────
-fetch('nuevaVenta.php?get_paquetes=1')
-    .then(r => r.json())
-    .then(data => {
-        paquetesGlobales = data.map(paq => ({
-            ...paq,
-            paquete_id:     parseInt(paq.paquete_id),
-            precio_paquete: parseFloat(paq.precio_paquete),
-            productos: paq.productos.map(p => ({
-                ...p,
-                producto_id:        parseInt(p.producto_id),
-                cantidad_requerida: parseFloat(p.cantidad_requerida)
-            }))
-        }));
-    })
-    .catch(() => {});
+// ── Normalizar texto: minúsculas + sin acentos (ñ→n, é→e, etc.) ─────────────
+function normalizar(str) {
+    return String(str || '').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// ── Cargar productos, paquetes y clientes en paralelo al iniciar ─────────────
+Promise.all([
+    fetch('nuevaVenta.php?get_productos_all=1').then(r => r.json()),
+    fetch('nuevaVenta.php?get_paquetes=1').then(r => r.json()),
+    fetch('nuevaVenta.php?get_clientes_all=1').then(r => r.json())
+]).then(([prods, paqs, clis]) => {
+    productosGlobales = prods.map(p => ({
+        ...p,
+        producto_id:  parseInt(p.producto_id),
+        precio_venta: parseFloat(p.precio_venta),
+        stock_actual: parseFloat(p.stock_actual)
+    }));
+    paquetesGlobales = paqs.map(paq => ({
+        ...paq,
+        paquete_id:     parseInt(paq.paquete_id),
+        precio_paquete: parseFloat(paq.precio_paquete),
+        productos: paq.productos.map(p => ({
+            ...p,
+            producto_id:        parseInt(p.producto_id),
+            cantidad_requerida: parseFloat(p.cantidad_requerida),
+            stock_actual:       parseFloat(p.stock_actual)
+        }))
+    }));
+    clientesGlobales = clis.map(c => ({
+        ...c,
+        cliente_id:         parseInt(c.cliente_id),
+        descuento_fijo:     parseFloat(c.descuento_fijo),
+        credito_autorizado: parseInt(c.credito_autorizado)
+    }));
+}).catch(() => {});
 
 // ── Modo scanner ─────────────────────────────────────────────────────────────
 function toggleModoScanner() {
@@ -795,18 +907,36 @@ function procesarScan(codigo) {
         });
 }
 
-// ── Búsqueda manual de productos + paquetes ──────────────────────────────────
+// ── Búsqueda local: filtra productosGlobales y paquetesGlobales en JS ────────
 let toProd;
 document.getElementById('inputProducto').addEventListener('input', function() {
     clearTimeout(toProd);
     const val = this.value.trim();
-    if (val.length < 2) { document.getElementById('dropdownProductos').classList.remove('visible'); return; }
+    if (!val) { document.getElementById('dropdownProductos').classList.remove('visible'); return; }
+
+    // Sin debounce pesado: 60ms solo para no disparar en cada tecla de un paste
     toProd = setTimeout(() => {
-        Promise.all([
-            fetch(`nuevaVenta.php?buscar_producto=${encodeURIComponent(val)}&sucursal_id=${miSucursalId}`).then(r=>r.json()),
-            fetch(`nuevaVenta.php?buscar_paquete=${encodeURIComponent(val)}`).then(r=>r.json())
-        ]).then(([productos, paquetes]) => mostrarResultadosCombinados(productos, paquetes));
-    }, 300);
+        const q = normalizar(val);
+
+        // Filtrar productos localmente
+        const productos = productosGlobales
+            .filter(p => normalizar(p.codigo).includes(q) || normalizar(p.nombre_producto).includes(q))
+            .slice(0, 10);
+
+        // Filtrar paquetes localmente y calcular disponibilidad
+        const paquetes = paquetesGlobales
+            .filter(paq => normalizar(paq.codigo).includes(q) || normalizar(paq.nombre).includes(q))
+            .map(paq => {
+                const disponible = paq.productos.every(pp => pp.stock_actual >= pp.cantidad_requerida);
+                return {
+                    ...paq,
+                    disponible,
+                    productos: paq.productos.map(pp => ({ ...pp, cantidad_req: pp.cantidad_requerida }))
+                };
+            });
+
+        mostrarResultadosCombinados(productos, paquetes);
+    }, 60);
 });
 
 function mostrarResultadosCombinados(productos, paquetes) {
@@ -1027,16 +1157,20 @@ function verificarRecomendaciones() {
     divRec.style.display = 'block';
 }
 
-// ── Clientes ─────────────────────────────────────────────────────────────────
+// ── Clientes (búsqueda local) ─────────────────────────────────────────────────
 let toCli;
 document.getElementById('inputCliente').addEventListener('input', function() {
     clearTimeout(toCli);
     const val = this.value.trim();
-    if (val.length < 2) { document.getElementById('dropdownClientes').classList.remove('visible'); return; }
+    if (!val) { document.getElementById('dropdownClientes').classList.remove('visible'); return; }
     toCli = setTimeout(() => {
-        fetch(`nuevaVenta.php?buscar_cliente=${encodeURIComponent(val)}`)
-            .then(r => r.json()).then(mostrarClientes);
-    }, 300);
+        const q = normalizar(val);
+        const resultados = clientesGlobales
+            .filter(c => normalizar(c.nombre_completo).includes(q) ||
+                         normalizar(c.telefono || '').includes(q))
+            .slice(0, 8);
+        mostrarClientes(resultados);
+    }, 60);
 });
 
 function mostrarClientes(lista) {
@@ -1209,7 +1343,7 @@ function generarTicketHTML(venta) {
 
     html += `
         <div class="t-linea"></div>
-        <div class="t-fila"><span>Folio:</span><span>${venta.folio || ('#'+venta.venta_id)}</span></div>
+        <div class="t-fila"><span>Folio:</span><span>${venta.folio ? parseInt(venta.folio.split('-')[0]) : ('#'+venta.venta_id)}</span></div>
         <div class="t-fila"><span>Fecha:</span><span>${fecha}</span></div>
         <div class="t-fila"><span>Cajero:</span><span>${esc(cajeroNombre)}</span></div>`;
 

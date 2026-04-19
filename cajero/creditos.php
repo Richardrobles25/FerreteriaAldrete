@@ -162,7 +162,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar cliente</label>
-                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>">
+                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
                 </div>
                 <div class="filtro-group">
                     <label>Estado</label>
@@ -193,7 +193,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                         <th>Acciones</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="tablaFiltrable">
                     <?php foreach ($creditos as $cr): ?>
                     <tr>
                         <td style="color:#aaa;"><?= $cr['credito_id'] ?></td>
@@ -230,6 +230,15 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
 </body>

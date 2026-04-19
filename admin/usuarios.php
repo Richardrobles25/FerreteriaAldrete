@@ -142,7 +142,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" placeholder="Nombre o usuario..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;">
+                    <input type="text" name="buscar" placeholder="Nombre o usuario..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;" oninput="filtrarTabla(this.value)">
                 </div>
                 <div class="filtro-group">
                     <label>Rol</label>
@@ -177,7 +177,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                 <thead>
                     <tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Sucursal</th><th>Estado</th><th>Acciones</th></tr>
                 </thead>
-                <tbody>
+                <tbody id="tablaFiltrable">
                     <?php foreach ($usuarios as $u): ?>
                     <tr class="<?= !$u['activo']?'inactivo':'' ?>">
                         <td>
@@ -227,6 +227,15 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
 </body>

@@ -9,7 +9,8 @@ try {
     $pdo = new PDO(
         "mysql:host=$host;port=$port;dbname=$db;charset=utf8",
         $user,
-        $password
+        $password,
+        [PDO::ATTR_PERSISTENT => true]   // reutiliza la conexión TCP entre requests
     );
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec("SET time_zone = '-07:00'");

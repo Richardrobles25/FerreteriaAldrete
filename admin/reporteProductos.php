@@ -229,7 +229,7 @@ $categorias = $pdo->query("SELECT categoria_id, nombre FROM categorias ORDER BY 
                 </div>
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Producto o codigo">
+                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Producto o codigo" oninput="filtrarTabla(this.value)">
                 </div>
                 <button class="btn-filtrar" type="submit">Aplicar</button>
                 <?php if ($sucursal || $categoria || $busqueda !== '' || $periodo !== 'mes'): ?><a class="btn-limpiar" href="reporteProductos.php">Limpiar</a><?php endif; ?>
@@ -279,7 +279,7 @@ $categorias = $pdo->query("SELECT categoria_id, nombre FROM categorias ORDER BY 
             <?php if (count($productos) > 0): ?>
                 <table>
                     <thead><tr><th>#</th><th>Producto</th><th>Categoria</th><th>Cantidad</th><th>Total generado</th><th>Ventas</th><th>Ultima venta</th></tr></thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($productos as $index => $producto): ?>
                             <tr>
                                 <td><?= $index + 1 ?></td>
@@ -301,6 +301,15 @@ $categorias = $pdo->query("SELECT categoria_id, nombre FROM categorias ORDER BY 
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function togglePersonalizado(val) { document.getElementById('campoPers').classList.toggle('visible', val === 'personalizado'); }
 </script>

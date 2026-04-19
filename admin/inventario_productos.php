@@ -342,7 +342,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;">
+                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;" oninput="filtrarTabla(this.value)">
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -381,7 +381,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                         <th>Acciones</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="tablaFiltrable">
                     <?php foreach ($productos as $p):
                         $esStockBajo = $p['stock_actual'] <= $p['stock_minimo'];
                     ?>
@@ -424,6 +424,15 @@ $totalStockBajo = $stmtBajo->fetchColumn();
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleImport() { document.getElementById('importCard').classList.toggle('visible'); }
 </script>

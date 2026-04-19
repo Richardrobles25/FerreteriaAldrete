@@ -154,22 +154,22 @@ if ($cajaActual) {
         <div class="divider"></div>
 
         <div class="menu-label">Inventario</div>
-        <a class="menu-item" href="../inventario/productos.php">Productos</a>
-        <a class="menu-item" href="../inventario/categorias.php">Categorías</a>
-        <a class="menu-item" href="../inventario/entradas.php">Entradas</a>
-        <a class="menu-item" href="../inventario/salidas.php">Salidas y mermas</a>
-        <a class="menu-item" href="../inventario/historialMovimientos.php">Movimientos</a>
+        <a class="menu-item" href="productos.php">Productos</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="entradas.php">Entradas</a>
+        <a class="menu-item" href="salidas.php">Salidas y mermas</a>
+        <a class="menu-item" href="historial.php">Movimientos</a>
         <div class="divider"></div>
 
         <div class="menu-label">Proveedores</div>
-        <a class="menu-item" href="../inventario/proveedores.php">Proveedores</a>
-        <a class="menu-item" href="../inventario/compras.php">Compras</a>
+        <a class="menu-item" href="proveedores.php">Proveedores</a>
+        <a class="menu-item" href="compras.php">Compras</a>
         <div class="divider"></div>
 
         <div class="menu-label">Más</div>
-        <a class="menu-item" href="../inventario/paquetes.php">Paquetes</a>
-        <a class="menu-item" href="../inventario/transferencias.php">Transferencias</a>
-        <a class="menu-item" href="../inventario/masVendidos.php">Más vendidos</a>
+        <a class="menu-item" href="paquetes.php">Paquetes</a>
+        <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -215,7 +215,7 @@ if ($cajaActual) {
         <?php if ($stockBajo > 0): ?>
             <div class="alerta-stock">
                 <span>⚠ Hay <strong><?= $stockBajo ?></strong> producto(s) con stock bajo en tu sucursal.</span>
-                <a href="../inventario/productos.php?stock_bajo=1">Ver productos</a>
+                <a href="productos.php?stock_bajo=1">Ver productos</a>
             </div>
         <?php endif; ?>
 
@@ -254,7 +254,7 @@ if ($cajaActual) {
                 <div class="acceso-icon icon-venta">🛒</div>
                 <div class="acceso-info"><h4>Nueva venta</h4><p>Registrar cobro</p></div>
             </a>
-            <a class="acceso-card" href="../inventario/entradas.php">
+            <a class="acceso-card" href="entradas.php">
                 <div class="acceso-icon icon-entradas">📦</div>
                 <div class="acceso-info"><h4>Entrada de productos</h4><p>Registrar mercancía</p></div>
             </a>
@@ -262,7 +262,7 @@ if ($cajaActual) {
                 <div class="acceso-icon icon-clientes">👤</div>
                 <div class="acceso-info"><h4>Clientes</h4><p>Buscar o registrar</p></div>
             </a>
-            <a class="acceso-card" href="../inventario/productos.php">
+            <a class="acceso-card" href="productos.php">
                 <div class="acceso-icon icon-productos">🔧</div>
                 <div class="acceso-info"><h4>Inventario</h4><p>Ver productos y stock</p></div>
             </a>
@@ -270,7 +270,7 @@ if ($cajaActual) {
                 <div class="acceso-icon icon-creditos">💳</div>
                 <div class="acceso-info"><h4>Créditos</h4><p>Ver saldos pendientes</p></div>
             </a>
-            <a class="acceso-card" href="../inventario/transferencias.php">
+            <a class="acceso-card" href="transferencias.php">
                 <div class="acceso-icon icon-inv">🔄</div>
                 <div class="acceso-info"><h4>Transferencias</h4><p>Stock entre sucursales</p></div>
             </a>

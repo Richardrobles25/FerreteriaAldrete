@@ -180,7 +180,7 @@ if (isset($_GET['editar'])) {
 
             <form method="GET" action="categorias.php">
                 <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar categoría..." value="<?= htmlspecialchars($busqueda) ?>">
+                    <input type="text" name="buscar" placeholder="Buscar categoría..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
                     <button class="btn-buscar" type="submit">Buscar</button>
                     <?php if ($busqueda): ?>
                         <a class="btn-limpiar" href="categorias.php">Limpiar</a>
@@ -199,7 +199,7 @@ if (isset($_GET['editar'])) {
                             <th>Acciones</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($categorias as $c): ?>
                         <tr>
                             <td style="color:#aaa;"><?= $c['categoria_id'] ?></td>
@@ -244,6 +244,15 @@ if (isset($_GET['editar'])) {
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
 }

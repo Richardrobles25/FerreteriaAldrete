@@ -22,12 +22,40 @@ $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
 $stmtSuc->execute([$_SESSION['sucursal_id']]);
 $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
+// ── AJAX: todos los productos de la sucursal (búsqueda local en JS) ──────────
+if (isset($_GET['get_productos_all'])) {
+    $stmt = $pdo->prepare("
+        SELECT producto_id, codigo, nombre_producto, precio_venta,
+               precio_mayoreo, stock_actual, tipo_venta
+        FROM productos
+        WHERE sucursal_id = ? AND activo = 1
+        ORDER BY nombre_producto ASC
+    ");
+    $stmt->execute([$_SESSION['sucursal_id']]);
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
+// ── AJAX: todos los clientes (búsqueda local en JS) ──────────────────────────
+if (isset($_GET['get_clientes_all'])) {
+    $stmt = $pdo->query("
+        SELECT cliente_id, nombre_completo, telefono,
+               descuento_fijo, credito_autorizado
+        FROM clientes WHERE activo = 1
+        ORDER BY nombre_completo ASC
+    ");
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
 // ── AJAX: paquetes activos ───────────────────────────────────────────────────
 if (isset($_GET['get_paquetes'])) {
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_requerida,
-               pr.nombre_producto
+               pr.nombre_producto, pr.stock_actual
         FROM paquetes pk
         JOIN paquete_productos pp ON pk.paquete_id = pp.paquete_id
         JOIN productos pr ON pp.producto_id = pr.producto_id
@@ -50,7 +78,8 @@ if (isset($_GET['get_paquetes'])) {
         $agrupados[$pid]['productos'][] = [
             'producto_id'        => intval($f['producto_id']),
             'nombre_producto'    => $f['nombre_producto'],
-            'cantidad_requerida' => floatval($f['cantidad_requerida'])
+            'cantidad_requerida' => floatval($f['cantidad_requerida']),
+            'stock_actual'       => floatval($f['stock_actual'])
         ];
     }
     header('Content-Type: application/json');
@@ -638,12 +667,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
 <script>
 // ── Estado global ────────────────────────────────────────────────────────────
-let carrito          = [];
-let clienteActual    = null;
-let metodoPago       = null;
-let paquetesGlobales = [];
+let carrito           = [];
+let clienteActual     = null;
+let metodoPago        = null;
+let paquetesGlobales  = [];
+let productosGlobales = [];
+let clientesGlobales  = [];
 let modoScannerActivo = false;
 let scannerTimer      = null;
+
+function normalizar(str) {
+    return String(str || '').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 
 const miSucursalId = <?= intval($_SESSION['sucursal_id']) ?>;
 const datosTicket  = <?= json_encode([
@@ -657,22 +693,25 @@ const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
-// ── Cargar paquetes al iniciar ───────────────────────────────────────────────
-fetch('nuevaVenta.php?get_paquetes=1')
-    .then(r => r.json())
-    .then(data => {
-        paquetesGlobales = data.map(paq => ({
-            ...paq,
-            paquete_id:     parseInt(paq.paquete_id),
-            precio_paquete: parseFloat(paq.precio_paquete),
-            productos: paq.productos.map(p => ({
-                ...p,
-                producto_id:        parseInt(p.producto_id),
-                cantidad_requerida: parseFloat(p.cantidad_requerida)
-            }))
-        }));
-    })
-    .catch(() => {});
+// ── Precargar productos, paquetes y clientes al iniciar ──────────────────────
+Promise.all([
+    fetch('nuevaVenta.php?get_productos_all=1').then(r => r.json()),
+    fetch('nuevaVenta.php?get_paquetes=1').then(r => r.json()),
+    fetch('nuevaVenta.php?get_clientes_all=1').then(r => r.json())
+]).then(([prods, paqs, clis]) => {
+    productosGlobales = prods;
+    paquetesGlobales  = paqs.map(paq => ({
+        ...paq,
+        paquete_id:     parseInt(paq.paquete_id),
+        precio_paquete: parseFloat(paq.precio_paquete),
+        productos: paq.productos.map(p => ({
+            ...p,
+            producto_id:        parseInt(p.producto_id),
+            cantidad_requerida: parseFloat(p.cantidad_requerida)
+        }))
+    }));
+    clientesGlobales = clis;
+}).catch(() => {});
 
 // ── Modo scanner ─────────────────────────────────────────────────────────────
 function toggleModoScanner() {
@@ -707,7 +746,7 @@ document.getElementById('inputScanner').addEventListener('input', function() {
             procesarScan(document.getElementById('inputScanner').value.trim());
             document.getElementById('inputScanner').value = '';
         }
-    }, 150);
+    }, 450);
 });
 
 function procesarScan(codigo) {
@@ -743,18 +782,23 @@ function procesarScan(codigo) {
         });
 }
 
-// ── Búsqueda manual de productos + paquetes ──────────────────────────────────
+// ── Búsqueda manual de productos + paquetes (local, sin peticiones al servidor) ──
 let toProd;
 document.getElementById('inputProducto').addEventListener('input', function() {
     clearTimeout(toProd);
     const val = this.value.trim();
-    if (val.length < 2) { document.getElementById('dropdownProductos').classList.remove('visible'); return; }
+    if (!val) { document.getElementById('dropdownProductos').classList.remove('visible'); return; }
     toProd = setTimeout(() => {
-        Promise.all([
-            fetch(`nuevaVenta.php?buscar_producto=${encodeURIComponent(val)}&sucursal_id=${miSucursalId}`).then(r=>r.json()),
-            fetch(`nuevaVenta.php?buscar_paquete=${encodeURIComponent(val)}`).then(r=>r.json())
-        ]).then(([productos, paquetes]) => mostrarResultadosCombinados(productos, paquetes));
-    }, 300);
+        const q = normalizar(val);
+        const productos = productosGlobales.filter(p =>
+            p.sucursal_id == miSucursalId &&
+            (normalizar(p.nombre_producto).includes(q) || normalizar(p.codigo).includes(q))
+        ).slice(0, 30);
+        const paquetes = paquetesGlobales.filter(paq =>
+            normalizar(paq.nombre).includes(q) || normalizar(paq.codigo).includes(q)
+        ).slice(0, 10);
+        mostrarResultadosCombinados(productos, paquetes);
+    }, 60);
 });
 
 function mostrarResultadosCombinados(productos, paquetes) {
@@ -975,16 +1019,20 @@ function verificarRecomendaciones() {
     divRec.style.display = 'block';
 }
 
-// ── Clientes ─────────────────────────────────────────────────────────────────
+// ── Clientes (búsqueda local, sin peticiones al servidor) ───────────────────
 let toCli;
 document.getElementById('inputCliente').addEventListener('input', function() {
     clearTimeout(toCli);
     const val = this.value.trim();
-    if (val.length < 2) { document.getElementById('dropdownClientes').classList.remove('visible'); return; }
+    if (!val) { document.getElementById('dropdownClientes').classList.remove('visible'); return; }
     toCli = setTimeout(() => {
-        fetch(`nuevaVenta.php?buscar_cliente=${encodeURIComponent(val)}`)
-            .then(r => r.json()).then(mostrarClientes);
-    }, 300);
+        const q = normalizar(val);
+        const lista = clientesGlobales.filter(c =>
+            normalizar(c.nombre_completo).includes(q) ||
+            normalizar(c.telefono ?? '').includes(q)
+        ).slice(0, 20);
+        mostrarClientes(lista);
+    }, 60);
 });
 
 function mostrarClientes(lista) {

@@ -32,24 +32,26 @@ if (isset($_GET['exportar'])) {
 
     // Encabezados
     $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción'];
-    foreach ($headers as $i => $h) {
-        $sheet->setCellValueByColumnAndRow($i+1, 1, $h);
-        $sheet->getStyleByColumnAndRow($i+1, 1)->getFont()->setBold(true);
-    }
+    $sheet->fromArray($headers, null, 'A1');
+    $sheet->getStyle('A1:K1')->getFont()->setBold(true);
 
     // Datos
-    foreach ($datos as $row => $p) {
-        $sheet->setCellValueByColumnAndRow(1,  $row+2, $p['codigo']);
-        $sheet->setCellValueByColumnAndRow(2,  $row+2, $p['nombre_producto']);
-        $sheet->setCellValueByColumnAndRow(3,  $row+2, $p['categoria'] ?? '');
-        $sheet->setCellValueByColumnAndRow(4,  $row+2, $p['precio_compra']);
-        $sheet->setCellValueByColumnAndRow(5,  $row+2, $p['precio_venta']);
-        $sheet->setCellValueByColumnAndRow(6,  $row+2, $p['precio_mayoreo']);
-        $sheet->setCellValueByColumnAndRow(7,  $row+2, $p['stock_actual']);
-        $sheet->setCellValueByColumnAndRow(8,  $row+2, $p['stock_minimo']);
-        $sheet->setCellValueByColumnAndRow(9,  $row+2, $p['stock_maximo']);
-        $sheet->setCellValueByColumnAndRow(10, $row+2, $p['tipo_venta']);
-        $sheet->setCellValueByColumnAndRow(11, $row+2, $p['descripcion'] ?? '');
+    $rowIndex = 2;
+    foreach ($datos as $p) {
+        $sheet->fromArray([
+            $p['codigo'],
+            $p['nombre_producto'],
+            $p['categoria'] ?? '',
+            $p['precio_compra'],
+            $p['precio_venta'],
+            $p['precio_mayoreo'],
+            $p['stock_actual'],
+            $p['stock_minimo'],
+            $p['stock_maximo'],
+            $p['tipo_venta'],
+            $p['descripcion'] ?? '',
+        ], null, 'A' . $rowIndex);
+        $rowIndex++;
     }
 
     // Auto ancho
@@ -140,15 +142,11 @@ if (isset($_GET['plantilla'])) {
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Plantilla');
     $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción'];
-    foreach ($headers as $i => $h) {
-        $sheet->setCellValueByColumnAndRow($i+1, 1, $h);
-        $sheet->getStyleByColumnAndRow($i+1, 1)->getFont()->setBold(true);
-    }
+    $sheet->fromArray($headers, null, 'A1');
+    $sheet->getStyle('A1:K1')->getFont()->setBold(true);
     // Fila de ejemplo
     $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional'];
-    foreach ($ejemplo as $i => $v) {
-        $sheet->setCellValueByColumnAndRow($i+1, 2, $v);
-    }
+    $sheet->fromArray($ejemplo, null, 'A2');
     foreach (range('A','K') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
@@ -390,7 +388,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;">
+                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" style="width:180px;">
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -429,7 +427,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                         <th>Acciones</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="tablaFiltrable">
                     <?php foreach ($productos as $p):
                         $esStockBajo = $p['stock_actual'] <= $p['stock_minimo'];
                     ?>
@@ -472,6 +470,15 @@ $totalStockBajo = $stmtBajo->fetchColumn();
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleImport() { document.getElementById('importCard').classList.toggle('visible'); }
 </script>

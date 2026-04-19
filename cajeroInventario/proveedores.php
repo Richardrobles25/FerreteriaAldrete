@@ -226,7 +226,7 @@ if ($editando) {
                 <div class="filtros">
                     <div class="filtro-group">
                         <label>Buscar</label>
-                        <input type="text" name="buscar" placeholder="Nombre del proveedor..." value="<?= htmlspecialchars($busqueda) ?>">
+                        <input type="text" name="buscar" placeholder="Nombre del proveedor..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
                     </div>
                     <div class="filtro-group">
                         <label>Filtrar por área</label>
@@ -248,7 +248,7 @@ if ($editando) {
                     <thead>
                         <tr><th>Nombre</th><th>Teléfono</th><th>Correo</th><th>Áreas</th><th>Acciones</th></tr>
                     </thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($proveedores as $p):
                             $stmtC = $pdo->prepare("SELECT c.nombre FROM proveedor_categorias pc JOIN categorias c ON pc.categoria_id = c.categoria_id WHERE pc.proveedor_id = ?");
                             $stmtC->execute([$p['proveedor_id']]);
@@ -330,6 +330,15 @@ if ($editando) {
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
 </body>

@@ -226,7 +226,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div class="filtros">
                     <div class="filtro-group">
                         <label>Proveedor</label>
-                        <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>">
+                        <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
                     </div>
                     <div class="filtro-group">
                         <label>Fecha</label>
@@ -243,7 +243,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <thead>
                         <tr><th>#</th><th>Proveedor</th><th>Total</th><th>Usuario</th><th>Fecha</th><th>Notas</th><th></th></tr>
                     </thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($compras as $c): ?>
                         <tr>
                             <td style="color:#aaa;"><?= $c['compras_proveedor_id'] ?></td>
@@ -355,6 +355,15 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <script>
 let itemsCompra = [];
 
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
 function agregarProdCompra() {

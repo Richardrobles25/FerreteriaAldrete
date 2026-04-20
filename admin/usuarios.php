@@ -30,7 +30,8 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
 
     $stmtExp = $pdo->prepare("
-        SELECT u.nombre_completo, u.nombre_usuario, u.rol, s.nombre AS sucursal, u.activo
+        SELECT u.nombre_completo, u.nombre_usuario, u.rol, s.nombre AS sucursal,
+               u.telefono, u.domicilio, u.activo
         FROM usuarios u
         JOIN sucursales s ON u.sucursal_id = s.sucursal_id
         $where
@@ -41,12 +42,14 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 
     $titulo = 'Listado de Usuarios';
     $subtitulo = $busqueda ? "Búsqueda: $busqueda" : 'Todos los usuarios';
-    $columnas = ['Nombre Completo','Usuario','Rol','Sucursal','Estado'];
+    $columnas = ['Nombre Completo','Usuario','Rol','Sucursal','Teléfono','Domicilio','Estado'];
     $filas = array_map(fn($r) => [
         $r['nombre_completo'],
         $r['nombre_usuario'],
         $r['rol'],
         $r['sucursal'],
+        $r['telefono'] ?: '—',
+        $r['domicilio'] ?: '—',
         $r['activo'] ? 'Activo' : 'Inactivo',
     ], $expData);
     $resumen = [
@@ -54,7 +57,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     ];
 
     if ($_GET['exportar'] === 'pdf') {
-        exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'P');
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
     } else {
         exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
     }

@@ -7,18 +7,21 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-$fecha    = $_GET['fecha'] ?? '';
-$tipo     = $_GET['tipo'] ?? '';
-$sucursal = intval($_GET['sucursal'] ?? 0);
-$busqueda = trim($_GET['buscar'] ?? '');
+$fechaInicio = $_GET['fecha_inicio'] ?? '';
+$fechaFin    = $_GET['fecha_fin']    ?? '';
+$tipo        = $_GET['tipo']         ?? '';
+$sucursal    = intval($_GET['sucursal'] ?? 0);
+$busqueda    = trim($_GET['buscar']  ?? '');
 
 $where  = "WHERE 1=1";
 $params = [];
 
-if ($sucursal) { $where .= " AND p.sucursal_id = ?"; $params[] = $sucursal; }
-if ($fecha)    { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
-if ($tipo)     { $where .= " AND m.tipo = ?"; $params[] = $tipo; }
-if ($busqueda) { $where .= " AND p.nombre_producto LIKE ?"; $params[] = '%'.$busqueda.'%'; }
+if ($sucursal)                      { $where .= " AND p.sucursal_id = ?";                        $params[] = $sucursal; }
+if ($fechaInicio && $fechaFin)      { $where .= " AND DATE(m.created_at) BETWEEN ? AND ?";       $params[] = $fechaInicio; $params[] = $fechaFin; }
+elseif ($fechaInicio)               { $where .= " AND DATE(m.created_at) >= ?";                  $params[] = $fechaInicio; }
+elseif ($fechaFin)                  { $where .= " AND DATE(m.created_at) <= ?";                  $params[] = $fechaFin; }
+if ($tipo)                          { $where .= " AND m.tipo = ?";                               $params[] = $tipo; }
+if ($busqueda)                      { $where .= " AND p.nombre_producto LIKE ?";                 $params[] = '%'.$busqueda.'%'; }
 
 // ── Exportar ─────────────────────────────────────────────────────────
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
@@ -37,12 +40,14 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
 
     $titulo = 'Historial General de Movimientos';
+    $rangoFecha = $fechaInicio && $fechaFin ? "Del $fechaInicio al $fechaFin"
+                : ($fechaInicio ? "Desde $fechaInicio" : ($fechaFin ? "Hasta $fechaFin" : ''));
     $subtitulo = implode(' | ', array_filter([
-        $fecha    ? "Fecha: $fecha"  : '',
+        $rangoFecha,
         $tipo     ? "Tipo: $tipo"    : '',
         $sucursal ? "Sucursal ID: $sucursal" : '',
         $busqueda ? "Búsqueda: $busqueda" : '',
-    ]));
+    ])) ?: 'Todos los movimientos';
     $columnas = ['Producto','Código','Tipo','Cantidad','Stock Ant.','Stock Nuevo','Motivo','Usuario','Sucursal','Fecha'];
     $filas = array_map(fn($r) => [
         $r['nombre_producto'],
@@ -182,8 +187,12 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                     <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;" oninput="filtrarTabla(this.value)">
                 </div>
                 <div class="filtro-group">
-                    <label>Fecha</label>
-                    <input type="date" name="fecha" value="<?= htmlspecialchars($fecha) ?>">
+                    <label>Fecha inicio</label>
+                    <input type="date" name="fecha_inicio" value="<?= htmlspecialchars($fechaInicio) ?>">
+                </div>
+                <div class="filtro-group">
+                    <label>Fecha fin</label>
+                    <input type="date" name="fecha_fin" value="<?= htmlspecialchars($fechaFin) ?>">
                 </div>
                 <div class="filtro-group">
                     <label>Tipo</label>
@@ -205,7 +214,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                     </select>
                 </div>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
-                <?php if ($fecha||$tipo||$sucursal||$busqueda): ?><a class="btn-limpiar" href="historial.php">Limpiar</a><?php endif; ?>
+                <?php if ($fechaInicio||$fechaFin||$tipo||$sucursal||$busqueda): ?><a class="btn-limpiar" href="historial.php">Limpiar</a><?php endif; ?>
             </div>
         </form>
 

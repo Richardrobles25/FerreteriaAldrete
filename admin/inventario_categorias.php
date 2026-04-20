@@ -5,6 +5,7 @@ require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
@@ -93,6 +94,11 @@ if (isset($_GET['editar'])) {
     .card h3 { font-size: 15px; font-weight: 600; color: #333; margin: 0 0 16px; }
     .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
     .content-header h1 { font-size: 20px; color: #222; font-weight: 600; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
+    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
     .barra-busqueda { display: flex; gap: 10px; margin-bottom: 16px; }
     .barra-busqueda input { flex: 1; padding: 9px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .barra-busqueda input:focus { outline: none; border-color: #14ace7; }
@@ -144,6 +150,7 @@ if (isset($_GET['editar'])) {
     <div class="content">
         <!-- Lista -->
         <div>
+        <div class="filtros"><?php renderSucursalSwitcher(); ?></div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php if ($_GET['msg'] === 'creado'): ?>
                     <div class="msg msg-exito">Categoría creada correctamente.</div>

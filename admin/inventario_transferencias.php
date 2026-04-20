@@ -15,10 +15,11 @@ if (isset($_GET['accion']) && isset($_GET['id'])) {
     $miSucursal = $sucursalVista;
 
     if ($accion === 'aprobar') {
-        $pdo->prepare("UPDATE transferencias SET estado='Aprobada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_destino_id=?")
+        // La sucursal ORIGEN aprueba (tiene los productos)
+        $pdo->prepare("UPDATE transferencias SET estado='Aprobada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
             ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
     } elseif ($accion === 'rechazar') {
-        $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_destino_id=?")
+        $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
             ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
     } elseif ($accion === 'enviar') {
         $pdo->prepare("UPDATE transferencias SET estado='En tránsito' WHERE transferencias_id=? AND estado='Aprobada' AND sucursal_origen_id=?")
@@ -300,9 +301,9 @@ $bc = $badgeMap[$t['estado']] ?? 'badge-pendiente';
                             <td style="color:#aaa;font-size:11px;"><?= date('d/m/Y', strtotime($t['created_at'])) ?></td>
                             <td>
                                 <div class="acciones">
-                                    <?php if ($t['estado'] === 'Pendiente' && !$esMiSucursal): ?>
-                                        <a class="btn-accion btn-aprobar" href="inventario_transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Aprobar esta solicitud de transferencia?')">Aprobar</a>
-                                        <a class="btn-accion btn-rechazar" href="inventario_transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Rechazar esta transferencia?')">Rechazar</a>
+                                    <?php if ($t['estado'] === 'Pendiente' && $esMiSucursal): ?>
+                                        <a class="btn-accion btn-aprobar" href="inventario_transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Aprobar y comprometerse a enviar los productos?')">Aprobar</a>
+                                        <a class="btn-accion btn-rechazar" href="inventario_transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Rechazar esta solicitud?')">Rechazar</a>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiSucursal): ?>
                                         <a class="btn-accion btn-enviar" href="inventario_transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Confirmar que ya enviaste los productos?')">Marcar enviado</a>
                                     <?php elseif ($t['estado'] === 'En tránsito' && !$esMiSucursal): ?>

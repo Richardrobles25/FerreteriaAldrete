@@ -45,9 +45,22 @@ $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 // Notificaciones de transferencias
 $mySuc = $_SESSION['sucursal_id'];
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'Pendiente'");
-$stmt->execute([$mySuc]);
-$transfParaAprobar = intval($stmt->fetchColumn());
+// Solicitudes pendientes donde YO soy el ORIGEN (tengo los productos, debo aprobar)
+$stmt = $pdo->prepare("
+    SELECT t.transferencias_id, t.cantidad,
+           COALESCE(p.nombre_producto,'?') AS nombre_producto,
+           COALESCE(mp.stock_actual,0) AS mi_stock,
+           sd.nombre AS sucursal_destino
+    FROM transferencias t
+    LEFT JOIN productos p ON t.producto_id = p.producto_id AND p.sucursal_id = ?
+    LEFT JOIN productos mp ON t.producto_id = mp.producto_id AND mp.sucursal_id = ?
+    JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
+    WHERE t.sucursal_origen_id = ? AND t.estado = 'Pendiente'
+    ORDER BY t.created_at ASC LIMIT 5
+");
+$stmt->execute([$mySuc, $mySuc, $mySuc]);
+$solicitudesPendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$transfParaAprobar = count($solicitudesPendientes);
 
 $stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_origen_id = ? AND estado = 'Aprobada'");
 $stmt->execute([$mySuc]);
@@ -208,8 +221,18 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <!-- Notificaciones de transferencias -->
         <?php if ($transfParaAprobar > 0): ?>
         <div class="notif-transf">
-            <span>📦 Tienes <strong><?= $transfParaAprobar ?></strong> solicitud(es) pendiente(s) de aprobar.</span>
-            <a href="transferencias.php">Ver transferencias</a>
+            <div>
+                <div>&#128230; <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
+                <?php foreach ($solicitudesPendientes as $sp): ?>
+                <div style="font-size:12px;margin-top:5px;padding-left:6px;">
+                    &bull; <strong><?= htmlspecialchars($sp['nombre_producto']) ?></strong>
+                    &times; <?= number_format($sp['cantidad'], 0) ?>
+                    &mdash; Tu stock: <strong style="color:<?= $sp['mi_stock'] < $sp['cantidad'] ? '#c0392b' : '#2e7d32' ?>;"><?= number_format($sp['mi_stock'], 0) ?></strong>
+                    <span style="opacity:.65;">(pide: <?= htmlspecialchars($sp['sucursal_destino']) ?>)</span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <a href="transferencias.php" style="margin-left:16px;white-space:nowrap;">Ver</a>
         </div>
         <?php endif; ?>
         <?php if ($transfParaEnviar > 0): ?>

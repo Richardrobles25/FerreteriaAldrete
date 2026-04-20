@@ -47,12 +47,16 @@ function exportarPDF(
         $nombreArchivo = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $titulo)) . '_' . date('Y-m-d') . '.pdf';
     }
 
+    $tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'mpdf';
+    if (!is_dir($tmpDir)) @mkdir($tmpDir, 0777, true);
+
     $mpdf = new Mpdf([
         'orientation'  => $orientacion,
         'margin_top'   => 38,
         'margin_bottom'=> 15,
         'margin_left'  => 12,
         'margin_right' => 12,
+        'tempDir'      => $tmpDir,
     ]);
 
     // Marca de agua: tamaño moderado, centrada

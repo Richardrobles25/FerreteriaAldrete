@@ -169,9 +169,17 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: Arial, sans-serif; }
     .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .agregar-row { display: flex; gap: 8px; margin-bottom: 13px; }
-    .agregar-row select { flex: 2; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
-    .agregar-row input { flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
-    .agregar-row input:focus, .agregar-row select:focus { outline: none; border-color: #14ace7; }
+    .agregar-row > div { flex: 2; }
+    .agregar-row input[type="text"] { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
+    .agregar-row input[type="number"] { flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
+    .agregar-row input:focus { outline: none; border-color: #14ace7; }
+    .prod-search-wrap { position: relative; }
+    .prod-drop { display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.1); z-index: 200; max-height: 200px; overflow-y: auto; margin-top: 2px; }
+    .prod-drop-item { padding: 9px 13px; cursor: pointer; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .prod-drop-item:hover { background: #eef8ff; }
+    .prod-drop-item:last-child { border-bottom: none; }
+    .prod-chip { display: none; margin-top: 6px; background: #eef8ff; border: 1px solid #bbdefb; border-radius: 6px; padding: 7px 12px; font-size: 13px; justify-content: space-between; align-items: center; }
+    .prod-chip button { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 12px; font-weight: 700; }
     .btn-agregar-prod { background: #14ace7; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
     .lista-compra { border: 0.5px solid #eee; border-radius: 6px; min-height: 60px; margin-bottom: 13px; overflow: hidden; }
     .compra-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; }
@@ -260,29 +268,31 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                 <div class="form-group">
                     <label>Proveedor *</label>
-                    <select id="selectProveedor">
-                        <option value="">-- Selecciona --</option>
-                        <?php foreach ($proveedores as $p): ?>
-                            <option value="<?= $p['proveedor_id'] ?>"><?= htmlspecialchars($p['nombre']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
+                    <input type="hidden" id="proveedorIdCompra" value="">
+                    <div class="prod-search-wrap">
+                        <input type="text" id="buscarProveedorCompra" placeholder="Buscar proveedor..." autocomplete="off"
+                            oninput="filtrarProveedoresCompra(this.value)"
+                            style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                        <div class="prod-drop" id="dropProveedoresCompra"></div>
+                    </div>
+                    <div class="prod-chip" id="proveedorChipCompra">
+                        <span id="proveedorChipNombreCompra"></span>
+                        <button type="button" onclick="limpiarProveedorCompra()">✕ Cambiar</button>
+                    </div>
                 </div>
 
                 <div class="form-group">
                     <label>Agregar producto</label>
                     <div class="agregar-row">
-                        <select id="selectProdCompra">
-                            <option value="">-- Producto --</option>
-                            <?php foreach ($productos as $p): ?>
-                                <option value="<?= $p['producto_id'] ?>"
-                                    data-nombre="<?= htmlspecialchars($p['nombre_producto']) ?>"
-                                    data-precio="<?= $p['precio_compra'] ?>">
-                                    <?= htmlspecialchars($p['nombre_producto']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <input type="number" id="cantCompra" placeholder="Cant." step="1" min="1" style="width:70px;">
-                        <input type="number" id="precioCompra" placeholder="Precio" step="0.01" min="0" style="width:80px;">
+                        <div style="position:relative;">
+                            <input type="text" id="buscarProdCompra" placeholder="Buscar producto..." autocomplete="off"
+                                oninput="filtrarProductosCompra(this.value)">
+                            <input type="hidden" id="prodCompraId" value="">
+                            <input type="hidden" id="prodCompraNombre" value="">
+                            <div class="prod-drop" id="dropProdCompra"></div>
+                        </div>
+                        <input type="number" id="cantCompra" placeholder="Cant." step="1" min="1" style="width:70px;flex:none;">
+                        <input type="number" id="precioCompra" placeholder="Precio" step="0.01" min="0" style="width:80px;flex:none;">
                         <button class="btn-agregar-prod" onclick="agregarProdCompra()">+</button>
                     </div>
                 </div>
@@ -340,6 +350,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <?php endif; ?>
 
 <script>
+const productosData   = <?= json_encode(array_values($productos)) ?>;
+const proveedoresData = <?= json_encode(array_values($proveedores)) ?>;
 let itemsCompra = [];
 
 function normalizar(str) {
@@ -353,68 +365,121 @@ function filtrarTabla(q) {
 }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
+// ── Autocomplete de proveedor ────────────────────────────────────────────────
+function filtrarProveedoresCompra(q) {
+    const drop = document.getElementById('dropProveedoresCompra');
+    if (!q.trim()) { drop.style.display = 'none'; return; }
+    const norm = normalizar(q);
+    const matches = proveedoresData.filter(p => normalizar(p.nombre).includes(norm)).slice(0, 20);
+    drop.innerHTML = matches.length
+        ? matches.map(p => '<div class="prod-drop-item" onclick="seleccionarProveedorCompra(' + p.proveedor_id + ')"><strong>' + p.nombre + '</strong></div>').join('')
+        : '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>';
+    drop.style.display = 'block';
+}
+function seleccionarProveedorCompra(id) {
+    const p = proveedoresData.find(x => x.proveedor_id == id);
+    if (!p) return;
+    document.getElementById('proveedorIdCompra').value = id;
+    document.getElementById('proveedorChipNombreCompra').textContent = p.nombre;
+    document.getElementById('proveedorChipCompra').style.display = 'flex';
+    document.getElementById('buscarProveedorCompra').value = '';
+    document.getElementById('dropProveedoresCompra').style.display = 'none';
+}
+function limpiarProveedorCompra() {
+    document.getElementById('proveedorIdCompra').value = '';
+    document.getElementById('proveedorChipCompra').style.display = 'none';
+    document.getElementById('buscarProveedorCompra').value = '';
+}
+
+// ── Autocomplete de producto en compra ──────────────────────────────────────
+function filtrarProductosCompra(q) {
+    const drop = document.getElementById('dropProdCompra');
+    if (!q.trim()) { drop.style.display = 'none'; return; }
+    const norm = normalizar(q);
+    const matches = productosData.filter(p =>
+        normalizar(p.nombre_producto).includes(norm) || normalizar(p.codigo).includes(norm)
+    ).slice(0, 25);
+    drop.innerHTML = matches.length
+        ? matches.map(p =>
+            '<div class="prod-drop-item" onclick="seleccionarProdCompra(' + p.producto_id + ')">'
+            + '<div><strong>' + p.nombre_producto + '</strong><span style="color:#aaa;font-size:11px;"> · ' + p.codigo + '</span></div>'
+            + '<span style="font-size:12px;color:#888;">$' + parseFloat(p.precio_compra || 0).toFixed(2) + '</span>'
+            + '</div>').join('')
+        : '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>';
+    drop.style.display = 'block';
+}
+function seleccionarProdCompra(id) {
+    const p = productosData.find(x => x.producto_id == id);
+    if (!p) return;
+    document.getElementById('prodCompraId').value     = id;
+    document.getElementById('prodCompraNombre').value = p.nombre_producto;
+    document.getElementById('buscarProdCompra').value = p.nombre_producto;
+    document.getElementById('precioCompra').value     = p.precio_compra || '';
+    document.getElementById('dropProdCompra').style.display = 'none';
+    document.getElementById('cantCompra').focus();
+}
+
 function agregarProdCompra() {
-    const sel    = document.getElementById('selectProdCompra');
+    const id     = document.getElementById('prodCompraId').value;
+    const nombre = document.getElementById('prodCompraNombre').value;
     const cant   = parseFloat(document.getElementById('cantCompra').value) || 0;
     const precio = parseFloat(document.getElementById('precioCompra').value) || 0;
 
-    if (!sel.value || cant <= 0 || precio <= 0) { alert('Completa producto, cantidad y precio.'); return; }
+    if (!id || cant <= 0 || precio <= 0) { alert('Completa producto, cantidad y precio.'); return; }
 
-    const opt    = sel.options[sel.selectedIndex];
-    const id     = parseInt(sel.value);
-    const nombre = opt.dataset.nombre;
-
-    const existe = itemsCompra.find(i => i.producto_id === id);
+    const existe = itemsCompra.find(i => i.producto_id == id);
     if (existe) { existe.cantidad += cant; }
-    else { itemsCompra.push({ producto_id: id, nombre, cantidad: cant, precio_unitario: precio }); }
+    else { itemsCompra.push({ producto_id: parseInt(id), nombre, cantidad: cant, precio_unitario: precio }); }
 
-    sel.value = '';
-    document.getElementById('cantCompra').value = '';
-    document.getElementById('precioCompra').value = '';
+    document.getElementById('prodCompraId').value     = '';
+    document.getElementById('prodCompraNombre').value = '';
+    document.getElementById('buscarProdCompra').value = '';
+    document.getElementById('cantCompra').value       = '';
+    document.getElementById('precioCompra').value     = '';
     renderListaCompra();
 }
 
 function renderListaCompra() {
-    const div  = document.getElementById('listaCompra');
-    const tot  = document.getElementById('totalCompra');
-    const vacio = document.getElementById('compraVacio');
-
+    const div = document.getElementById('listaCompra');
+    const tot = document.getElementById('totalCompra');
     if (!itemsCompra.length) {
-        div.innerHTML = '<div class="compra-vacio" id="compraVacio">Sin productos</div>';
+        div.innerHTML = '<div class="compra-vacio">Sin productos</div>';
         tot.style.display = 'none';
         return;
     }
-
     let total = 0;
-    div.innerHTML = itemsCompra.map((i,idx) => {
+    div.innerHTML = itemsCompra.map(function(i, idx) {
         const sub = i.cantidad * i.precio_unitario;
         total += sub;
-        return `<div class="compra-item">
-            <div>
-                <div style="font-size:13px;">${i.nombre}</div>
-                <div style="font-size:11px;color:#aaa;">${i.cantidad} × $${i.precio_unitario.toFixed(2)}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;">
-                <span style="font-weight:700;">$${sub.toFixed(2)}</span>
-                <button class="btn-quitar" onclick="quitarProdCompra(${idx})">×</button>
-            </div>
-        </div>`;
+        return '<div class="compra-item">'
+            + '<div><div style="font-size:13px;">' + i.nombre + '</div>'
+            + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2) + '</div></div>'
+            + '<div style="display:flex;align-items:center;gap:10px;">'
+            + '<span style="font-weight:700;">$' + sub.toFixed(2) + '</span>'
+            + '<button class="btn-quitar" onclick="quitarProdCompra(' + idx + ')">×</button>'
+            + '</div></div>';
     }).join('');
-
-    document.getElementById('totalCompraValor').textContent = '$'+total.toFixed(2);
+    document.getElementById('totalCompraValor').textContent = '$' + total.toFixed(2);
     tot.style.display = 'flex';
 }
 
-function quitarProdCompra(i) { itemsCompra.splice(i,1); renderListaCompra(); }
+function quitarProdCompra(i) { itemsCompra.splice(i, 1); renderListaCompra(); }
 
 function prepararCompra() {
-    const prov = document.getElementById('selectProveedor').value;
+    const prov = document.getElementById('proveedorIdCompra').value;
     if (!prov) { alert('Selecciona un proveedor.'); return false; }
     if (!itemsCompra.length) { alert('Agrega al menos un producto.'); return false; }
-    document.getElementById('inputProveedorId').value = prov;
-    document.getElementById('inputItemsCompra').value = JSON.stringify(itemsCompra);
+    document.getElementById('inputProveedorId').value  = prov;
+    document.getElementById('inputItemsCompra').value  = JSON.stringify(itemsCompra);
     return true;
 }
+
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.prod-search-wrap')) {
+        document.getElementById('dropProveedoresCompra').style.display = 'none';
+        document.getElementById('dropProdCompra').style.display = 'none';
+    }
+});
 </script>
 </body>
 </html>

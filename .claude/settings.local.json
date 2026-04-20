@@ -2,7 +2,20 @@
   "permissions": {
     "allow": [
       "Bash(grep -v \"\\\\.claude\\\\|vendor\" echo \"---\" ls /c/FerreteriaAldrete/cajeroInventario/)",
-      "Bash(python3)"
+      "Bash(python3)",
+      "Read(//c/Users/ricar/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/af47cd4f-8c1f-46d5-8083-6bbf9ed9f43c/be9e14ad-8605-4423-83ea-7befa0b5fe38/skills/xlsx/**)",
+      "Bash(extract-text \"C:\\\\Users\\\\ricar\\\\Downloads\\\\plantilla de prueba para importacion.xls\")",
+      "Bash(python -c ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(where python *)",
+      "Bash(where python3 *)",
+      "Bash(where py *)",
+      "Bash(py --version)",
+      "Read(//usr/**)",
+      "Read(//usr/local/**)",
+      "Bash(php -r \" require_once 'C:/FerreteriaAldrete/vendor/autoload.php'; echo 'PhpSpreadsheet disponible'; \")",
+      "Bash(php -r ' *)",
+      "Bash(php -r \"echo PHP_VERSION;\")"
     ]
   }
 }

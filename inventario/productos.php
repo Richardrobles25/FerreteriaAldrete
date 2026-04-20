@@ -70,6 +70,40 @@ if (isset($_GET['exportar'])) {
 $erroresImport = [];
 $exitoImport   = false;
 
+function normalizarEncabezado(string $s): string {
+    $s = mb_strtolower(trim($s));
+    $s = strtr($s, ['á'=>'a','é'=>'e','í'=>'i','ó'=>'o','ú'=>'u','ñ'=>'n','ü'=>'u']);
+    $s = preg_replace('/[^a-z0-9]/', '', $s);
+    return $s;
+}
+function detectarCampo(string $header): ?string {
+    $h = normalizarEncabezado($header);
+    $mapa = [
+        'codigo'        => 'codigo',
+        'preciocosto'   => 'precio_compra',
+        'preciocompra'  => 'precio_compra',
+        'precioventa'   => 'precio_venta',
+        'preciomayoreo' => 'precio_mayoreo',
+        'departamento'  => 'categoria',
+        'categoria'     => 'categoria',
+        'stockactual'   => 'stock_actual',
+        'existencia'    => 'stock_actual',
+        'stockinicial'  => 'stock_actual',
+        'invminimo'     => 'stock_minimo',
+        'stockminimo'   => 'stock_minimo',
+        'invmaximo'     => 'stock_maximo',
+        'stockmaximo'   => 'stock_maximo',
+        'tipoventa'     => 'tipo_venta',
+        'tipodevent'    => 'tipo_venta',
+        'descripcion'   => 'descripcion',
+        'nombre'        => 'nombre',
+    ];
+    foreach ($mapa as $patron => $campo) {
+        if (str_contains($h, $patron)) return $campo;
+    }
+    return null;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
     $archivo = $_FILES['archivo_excel'];
     if ($archivo['error'] === 0) {
@@ -79,53 +113,94 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $sheet       = $spreadsheet->getActiveSheet();
             $rows        = $sheet->toArray();
 
-            // Saltar encabezado
-            array_shift($rows);
+            if (empty($rows)) throw new Exception('El archivo está vacío.');
+
+            $headerRow = $rows[0];
+            $colMap = [];
+            foreach ($headerRow as $idx => $header) {
+                if ($header === null || $header === '') continue;
+                $campo = detectarCampo((string)$header);
+                if ($campo && !isset($colMap[$campo])) $colMap[$campo] = $idx;
+            }
+
+            // Compatibilidad sistema anterior: "Descripcion" (col B) era el nombre del producto
+            if (!isset($colMap['nombre']) && isset($colMap['descripcion'])) {
+                $colMap['nombre'] = $colMap['descripcion'];
+                unset($colMap['descripcion']);
+            }
+
+            if (!isset($colMap['codigo']) || !isset($colMap['nombre'])) {
+                throw new Exception('No se encontraron las columnas Código y Nombre. Verifica que la primera fila sea el encabezado.');
+            }
+
+            // Desactivar modo estricto solo para esta sesión para evitar errores en valores ENUM no exactos
+            $pdo->exec("SET SESSION sql_mode = ''");
 
             $importados = 0;
             $omitidos   = 0;
+            $categoriasCache  = [];
+            $categoriasCreadas = [];
 
-            foreach ($rows as $row) {
-                if (empty($row[0]) || empty($row[1])) continue;
+            for ($i = 1; $i < count($rows); $i++) {
+                $row = $rows[$i];
+                $codigo = trim($row[$colMap['codigo']] ?? '');
+                $nombre = trim($row[$colMap['nombre']] ?? '');
+                if ($codigo === '' || $nombre === '') continue;
 
-                $codigo         = trim($row[0]);
-                $nombre_producto = trim($row[1]);
-                $precio_compra  = floatval($row[3] ?? 0);
-                $precio_venta   = floatval($row[4] ?? 0);
-                $precio_mayoreo = floatval($row[5] ?? 0);
-                $stock_actual   = floatval($row[6] ?? 0);
-                $stock_minimo   = floatval($row[7] ?? 0);
-                $stock_maximo   = floatval($row[8] ?? 0);
-                $tipo_venta     = trim($row[9] ?? 'Unidad');
-                $descripcion    = trim($row[10] ?? '');
+                $precio_compra  = floatval($row[$colMap['precio_compra']  ?? -1] ?? 0);
+                $precio_venta   = floatval($row[$colMap['precio_venta']   ?? -1] ?? 0);
+                $precio_mayoreo = floatval($row[$colMap['precio_mayoreo'] ?? -1] ?? 0);
+                $stock_actual   = floatval($row[$colMap['stock_actual']   ?? -1] ?? 0);
+                $stock_minimo   = floatval($row[$colMap['stock_minimo']   ?? -1] ?? 0);
+                $stock_maximo   = floatval($row[$colMap['stock_maximo']   ?? -1] ?? 0);
+                $tv = strtolower(trim($row[$colMap['tipo_venta'] ?? -1] ?? ''));
+                $tipo_venta = str_contains($tv, 'suelto') || str_contains($tv, 'granel') || str_contains($tv, 'kg') || str_contains($tv, 'gr') ? 'Suelto' : 'Unidad';
+                $descripcion    = trim($row[$colMap['descripcion']        ?? -1] ?? '');
 
-                // Buscar categoría por nombre
                 $categoria_id = null;
-                if (!empty($row[2])) {
-                    $stmtCat = $pdo->prepare("SELECT categoria_id FROM categorias WHERE nombre = ? LIMIT 1");
-                    $stmtCat->execute([trim($row[2])]);
-                    $cat = $stmtCat->fetchColumn();
-                    if ($cat) $categoria_id = $cat;
+                $nombreCat = isset($colMap['categoria']) ? trim($row[$colMap['categoria']] ?? '') : '';
+                if ($nombreCat !== '') {
+                    if (isset($categoriasCache[$nombreCat])) {
+                        $categoria_id = $categoriasCache[$nombreCat];
+                    } else {
+                        $stmtCat = $pdo->prepare("SELECT categoria_id FROM categorias WHERE nombre = ? LIMIT 1");
+                        $stmtCat->execute([$nombreCat]);
+                        $cat = $stmtCat->fetchColumn();
+                        if ($cat) {
+                            $categoria_id = (int)$cat;
+                        } else {
+                            $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)")->execute([$nombreCat]);
+                            $stmtCat2 = $pdo->prepare("SELECT categoria_id FROM categorias WHERE nombre = ? LIMIT 1");
+                            $stmtCat2->execute([$nombreCat]);
+                            $categoria_id = (int)($stmtCat2->fetchColumn() ?: 0) ?: null;
+                            if ($categoria_id) $categoriasCreadas[] = $nombreCat;
+                        }
+                        if ($categoria_id) $categoriasCache[$nombreCat] = $categoria_id;
+                    }
                 }
 
-                // Verificar si el código ya existe
                 $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ?");
                 $check->execute([$codigo, $_SESSION['sucursal_id']]);
 
                 if ($check->fetch()) {
-                    // Actualizar
-                    $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
-                        ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                    if ($categoria_id !== null) {
+                        $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
+                            ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                    } else {
+                        $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
+                            ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                    }
                     $omitidos++;
                 } else {
-                    // Insertar
                     $pdo->prepare("INSERT INTO productos (sucursal_id, categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, tipo_venta, activo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)")
-                        ->execute([$_SESSION['sucursal_id'], $categoria_id, $codigo, $nombre_producto, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta]);
+                        ->execute([$_SESSION['sucursal_id'], $categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta]);
                     $importados++;
                 }
             }
 
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s).";
+            if ($categoriasCreadas) $exitoImport .= ' Categorías nuevas: ' . implode(', ', array_unique($categoriasCreadas)) . '.';
+            if (!isset($colMap['categoria'])) $exitoImport .= ' (El archivo no tiene columna de Categoría)';
         } catch (Exception $e) {
             $erroresImport[] = 'Error al leer el archivo: ' . $e->getMessage();
         }

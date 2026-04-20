@@ -151,6 +151,11 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
     .prod-drop-item:last-child { border-bottom: none; }
     .prod-chip { display: none; margin-top: 8px; background: #eef8ff; border: 1px solid #bbdefb; border-radius: 6px; padding: 8px 12px; font-size: 13px; justify-content: space-between; align-items: center; }
     .prod-chip button { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 12px; font-weight: 700; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
+    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
 </style>
 
 <?php renderAdminSidebar('inventario_entradas'); ?>
@@ -168,7 +173,9 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
     </div>
 
     <div class="content" style="display:block;padding:24px;">
-        <?php renderSucursalSwitcher(); ?>
+        <div class="filtros">
+            <?php renderSucursalSwitcher(); ?>
+        </div>
         <div style="display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start;">
         <!-- Formulario -->
         <div>

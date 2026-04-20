@@ -208,6 +208,11 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .stock-disp { background: #eef8ff; border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #1565c0; margin-bottom: 12px; display: none; }
     .btn-guardar { width: 100%; background: #14ace7; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-guardar:hover { background: #1196cb; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
+    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
 </style>
 
 <?php renderAdminSidebar('inventario_transferencias'); ?>
@@ -225,7 +230,9 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     </div>
 
     <div class="content">
-        <?php renderSucursalSwitcher(); ?>
+        <div class="filtros">
+            <?php renderSucursalSwitcher(); ?>
+        </div>
         <!-- Lista -->
         <div>
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">

@@ -6,8 +6,6 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
-require_once __DIR__ . '/_admin_sucursal_filtro.php';
-
 if (isset($_GET['eliminar'])) {
     $pdo->prepare("UPDATE proveedores SET activo = 0 WHERE proveedor_id = ?")->execute([intval($_GET['eliminar'])]);
     header('Location: inventario_proveedores.php?msg=eliminado'); exit();
@@ -229,7 +227,6 @@ if ($editando) {
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <?php renderSucursalSwitcher(); ?>
                     <button class="btn-filtrar" type="submit">Filtrar</button>
                     <?php if ($busqueda || $filtrocat): ?><a class="btn-limpiar" href="inventario_proveedores.php">Limpiar</a><?php endif; ?>
                 </div>

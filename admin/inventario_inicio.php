@@ -129,6 +129,11 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .acceso-icon { font-size: 20px; }
     .acceso-label { font-size: 13px; font-weight: 600; color: #333; }
     .acceso-sub { font-size: 11px; color: #aaa; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
+    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
 </style>
 
 <?php renderAdminSidebar('inventario_inicio'); ?>
@@ -146,7 +151,9 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
-        <?php renderSucursalSwitcher(); ?>
+        <div class="filtros">
+            <?php renderSucursalSwitcher(); ?>
+        </div>
         <!-- Alerta de stock bajo -->
         <?php if (count($stockBajo) > 0): ?>
         <div class="alerta-stock">

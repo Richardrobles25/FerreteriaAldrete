@@ -112,6 +112,11 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     td { padding: 10px 14px; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
     tr:last-child td { border-bottom: none; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
+    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
 </style>
 
 <?php renderAdminSidebar('inventario_salidas'); ?>
@@ -129,7 +134,9 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content" style="display:block;padding:24px;">
-        <?php renderSucursalSwitcher(); ?>
+        <div class="filtros">
+            <?php renderSucursalSwitcher(); ?>
+        </div>
         <div style="display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start;">
         <div>
             <div class="card">

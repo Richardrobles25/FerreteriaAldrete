@@ -51,27 +51,24 @@ function renderSucursalSwitcher(): void {
     if ($_SESSION['rol'] !== 'Administrador') return;
     if (empty($_todasSucursales)) return;
 
-    // Params actuales sin 'sucursal' (para preservarlos al cambiar)
-    $paramsBase = $_GET;
-    unset($paramsBase['sucursal']);
     ?>
-<style>
-.sucursal-switcher { display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
-.sucursal-label { font-size:12px; color:#888; font-weight:600; }
-.suc-btn { padding:5px 14px; border-radius:20px; font-size:12px; font-weight:600; text-decoration:none; border:1.5px solid #14ace7; color:#14ace7; background:white; transition:all 0.15s; }
-.suc-btn:hover { background:#eef8ff; }
-.suc-btn.active { background:#14ace7; color:white; }
-</style>
-<div class="sucursal-switcher">
-    <span class="sucursal-label">&#128205; Sucursal:</span>
-    <?php foreach ($_todasSucursales as $_s): ?>
-        <?php
-        $params = array_merge($paramsBase, ['sucursal' => $_s['sucursal_id']]);
-        $url = '?' . http_build_query($params);
-        $activo = (intval($_s['sucursal_id']) === intval($sucursalVista)) ? ' active' : '';
-        ?>
-        <a href="<?= htmlspecialchars($url) ?>" class="suc-btn<?= $activo ?>"><?= htmlspecialchars($_s['nombre']) ?></a>
-    <?php endforeach; ?>
+<div class="filtro-group">
+    <label>Sucursal</label>
+    <select onchange="cambiarSucursal(this.value)">
+        <?php foreach ($_todasSucursales as $_s): ?>
+            <option value="<?= intval($_s['sucursal_id']) ?>"<?= intval($_s['sucursal_id']) === intval($sucursalVista) ? ' selected' : '' ?>><?= htmlspecialchars($_s['nombre']) ?></option>
+        <?php endforeach; ?>
+    </select>
 </div>
+<script>
+if (!window._sucursalFnSet) {
+    window._sucursalFnSet = true;
+    window.cambiarSucursal = function(id) {
+        var p = new URLSearchParams(window.location.search);
+        p.set('sucursal', id);
+        window.location.search = p.toString();
+    };
+}
+</script>
     <?php
 }

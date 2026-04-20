@@ -246,7 +246,6 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     </div>
 
     <div class="content">
-        <?php renderSucursalSwitcher(); ?>
         <!-- Lista de compras -->
         <div>
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
@@ -270,6 +269,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                         <label>Fecha</label>
                         <input type="date" name="fecha" value="<?= htmlspecialchars($fecha) ?>">
                     </div>
+                    <?php renderSucursalSwitcher(); ?>
                     <button class="btn-filtrar" type="submit">Filtrar</button>
                     <?php if ($busqueda || $fecha): ?><a class="btn-limpiar" href="inventario_compras.php">Limpiar</a><?php endif; ?>
                 </div>

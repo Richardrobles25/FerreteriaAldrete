@@ -201,7 +201,6 @@ if ($editando) {
     </div>
 
     <div class="content">
-        <?php renderSucursalSwitcher(); ?>
         <div>
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
                 <h1 style="font-size:20px;color:#222;font-weight:600;">Proveedores</h1>
@@ -230,6 +229,7 @@ if ($editando) {
                             <?php endforeach; ?>
                         </select>
                     </div>
+                    <?php renderSucursalSwitcher(); ?>
                     <button class="btn-filtrar" type="submit">Filtrar</button>
                     <?php if ($busqueda || $filtrocat): ?><a class="btn-limpiar" href="inventario_proveedores.php">Limpiar</a><?php endif; ?>
                 </div>

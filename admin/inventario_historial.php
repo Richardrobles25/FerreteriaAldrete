@@ -164,7 +164,6 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
-        <?php renderSucursalSwitcher(); ?>
         <div class="content-header">
             <h1>Movimientos de inventario</h1>
             <div style="display:flex;gap:8px;">
@@ -193,6 +192,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
                         <option value="Transferencia" <?= $tipo==='Transferencia'?'selected':'' ?>>Transferencia</option>
                     </select>
                 </div>
+                <?php renderSucursalSwitcher(); ?>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
                 <?php if ($fecha || $tipo || $busqueda): ?>
                     <a class="btn-limpiar" href="inventario_inventario_historial.php">Limpiar</a>

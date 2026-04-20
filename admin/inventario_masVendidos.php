@@ -178,7 +178,6 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     </div>
 
     <div class="content">
-        <?php renderSucursalSwitcher(); ?>
         <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <h1 style="font-size:20px;color:#222;font-weight:600;">Productos más vendidos</h1>
             <div style="display:flex;gap:8px;">
@@ -213,6 +212,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                         <option value="50" <?= $limite===50?'selected':'' ?>>Top 50</option>
                     </select>
                 </div>
+                <?php renderSucursalSwitcher(); ?>
                 <button class="btn-filtrar" type="submit">Aplicar</button>
             </div>
         </form>

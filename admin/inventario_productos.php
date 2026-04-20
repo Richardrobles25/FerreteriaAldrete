@@ -404,7 +404,6 @@ $totalStockBajo = $stmtBajo->fetchColumn();
     </div>
 
     <div class="content">
-        <?php renderSucursalSwitcher(); ?>
         <div class="content-header">
             <h1>Inventario de productos</h1>
             <div class="acciones-header">
@@ -465,6 +464,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                     </select>
                 </div>
                 <?php if ($stock_bajo): ?><input type="hidden" name="stock_bajo" value="1"><?php endif; ?>
+                <?php renderSucursalSwitcher(); ?>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
                 <?php if ($busqueda || $categoria || $stock_bajo): ?>
                     <a class="btn-limpiar" href="inventario_productos.php">Limpiar</a>

@@ -42,13 +42,22 @@ $stmtMov = $pdo->prepare("
 $stmtMov->execute([$_SESSION['sucursal_id']]);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
-// Transferencias pendientes hacia esta sucursal
-$stmtTransf = $pdo->prepare("
-    SELECT COUNT(*) FROM transferencias
-    WHERE sucursal_destino_id = ? AND estado = 'Pendiente'
-");
-$stmtTransf->execute([$_SESSION['sucursal_id']]);
-$transfPendientes = $stmtTransf->fetchColumn();
+// Notificaciones de transferencias
+$mySuc = $_SESSION['sucursal_id'];
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'Pendiente'");
+$stmt->execute([$mySuc]);
+$transfParaAprobar = intval($stmt->fetchColumn());
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_origen_id = ? AND estado = 'Aprobada'");
+$stmt->execute([$mySuc]);
+$transfParaEnviar = intval($stmt->fetchColumn());
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'En tránsito'");
+$stmt->execute([$mySuc]);
+$transfParaRecibir = intval($stmt->fetchColumn());
+
+$totalTransfAlertas = $transfParaAprobar + $transfParaEnviar + $transfParaRecibir;
 
 // Últimas compras a proveedor
 $stmtCompras = $pdo->prepare("
@@ -103,8 +112,12 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .alerta-nombre { color: #333; font-weight: 500; }
     .alerta-stock-val { color: #c0392b; font-weight: 700; font-size: 12px; }
     .alerta-minimo { color: #aaa; font-size: 11px; margin-left: 6px; }
-    .notif-transf { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 12px 18px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #1565c0; }
+    .notif-transf { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #1565c0; }
     .notif-transf a { color: #1565c0; font-weight: 700; text-decoration: none; }
+    .notif-transf-enviar { background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #2e7d32; }
+    .notif-transf-enviar a { color: #2e7d32; font-weight: 700; text-decoration: none; }
+    .notif-transf-recibir { background: #f3e5f5; border: 1px solid #e1bee7; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #6a1b9a; }
+    .notif-transf-recibir a { color: #6a1b9a; font-weight: 700; text-decoration: none; }
     .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: 14px; margin-bottom: 20px; }
     .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -147,7 +160,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <a class="menu-item" href="compras.php">Compras a proveedor</a>
         <div class="divider"></div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
-        <a class="menu-item" href="transferencias.php">Transferencias <?= $transfPendientes>0?"({$transfPendientes})":'' ?></a>
+        <a class="menu-item" href="transferencias.php">Transferencias <?= $totalTransfAlertas>0?"({$totalTransfAlertas})":'' ?></a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -192,10 +205,22 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         </div>
         <?php endif; ?>
 
-        <!-- Notificación de transferencias -->
-        <?php if ($transfPendientes > 0): ?>
+        <!-- Notificaciones de transferencias -->
+        <?php if ($transfParaAprobar > 0): ?>
         <div class="notif-transf">
-            <span>📦 Tienes <strong><?= $transfPendientes ?></strong> solicitud(es) de transferencia pendiente(s) de aprobar.</span>
+            <span>📦 Tienes <strong><?= $transfParaAprobar ?></strong> solicitud(es) pendiente(s) de aprobar.</span>
+            <a href="transferencias.php">Ver transferencias</a>
+        </div>
+        <?php endif; ?>
+        <?php if ($transfParaEnviar > 0): ?>
+        <div class="notif-transf-enviar">
+            <span>✅ Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
+            <a href="transferencias.php">Ver transferencias</a>
+        </div>
+        <?php endif; ?>
+        <?php if ($transfParaRecibir > 0): ?>
+        <div class="notif-transf-recibir">
+            <span>🚚 Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepción.</span>
             <a href="transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
@@ -240,7 +265,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             </a>
             <a class="acceso" href="transferencias.php">
                 <span class="acceso-icon">🔄</span>
-                <div><div class="acceso-label">Transferencias</div><div class="acceso-sub"><?= $transfPendientes>0?$transfPendientes.' pendiente(s)':'Entre sucursales' ?></div></div>
+                <div><div class="acceso-label">Transferencias</div><div class="acceso-sub"><?= $totalTransfAlertas>0?$totalTransfAlertas.' pendiente(s)':'Entre sucursales' ?></div></div>
             </a>
             <a class="acceso" href="productos.php">
                 <span class="acceso-icon">🔧</span>

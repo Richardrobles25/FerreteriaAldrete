@@ -8,42 +8,45 @@ verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-// Aprobar/rechazar/entregar transferencia
+// Aprobar/rechazar/enviar/recibir transferencia
 if (isset($_GET['accion']) && isset($_GET['id'])) {
     $id     = intval($_GET['id']);
     $accion = $_GET['accion'];
+    $miSucursal = $sucursalVista;
 
     if ($accion === 'aprobar') {
-        $pdo->prepare("UPDATE transferencias SET estado='Aprobada', usuario_aprueba_id=? WHERE transferencias_id=?")->execute([$_SESSION['usuario_id'], $id]);
+        $pdo->prepare("UPDATE transferencias SET estado='Aprobada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_destino_id=?")
+            ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
     } elseif ($accion === 'rechazar') {
-        $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=?")->execute([$_SESSION['usuario_id'], $id]);
-    } elseif ($accion === 'entregar') {
-        // Mover stock: restar de origen, sumar en destino
+        $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_destino_id=?")
+            ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
+    } elseif ($accion === 'enviar') {
+        $pdo->prepare("UPDATE transferencias SET estado='En tránsito' WHERE transferencias_id=? AND estado='Aprobada' AND sucursal_origen_id=?")
+            ->execute([$id, $miSucursal]);
+    } elseif ($accion === 'recibir') {
         $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ?");
         $stmt->execute([$id]);
         $transf = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($transf && $transf['estado'] === 'Aprobada') {
-            // Restar stock en sucursal origen
-            $stmtOrigen = $pdo->prepare("SELECT stock_actual, producto_id FROM productos WHERE producto_id = ? AND sucursal_id = ?");
+        if ($transf && $transf['estado'] === 'En tránsito' && $transf['sucursal_destino_id'] == $miSucursal) {
+            $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? AND sucursal_id = ?");
             $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
             $prodOrigen = $stmtOrigen->fetch(PDO::FETCH_ASSOC);
 
             if ($prodOrigen && $prodOrigen['stock_actual'] >= $transf['cantidad']) {
-                $stockAntOrigen = $prodOrigen['stock_actual'];
+                $stockAntOrigen   = $prodOrigen['stock_actual'];
                 $stockNuevoOrigen = $stockAntOrigen - $transf['cantidad'];
                 $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                     ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
                 $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Transferencia',?,?,?,'Transferencia enviada')")
                     ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
 
-                // Sumar stock en sucursal destino
                 $stmtDest = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? AND sucursal_id = ?");
                 $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
                 $prodDest = $stmtDest->fetch(PDO::FETCH_ASSOC);
 
                 if ($prodDest) {
-                    $stockAntDest = $prodDest['stock_actual'];
+                    $stockAntDest   = $prodDest['stock_actual'];
                     $stockNuevoDest = $stockAntDest + $transf['cantidad'];
                     $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                         ->execute([$stockNuevoDest, $transf['producto_id'], $transf['sucursal_destino_id']]);
@@ -51,7 +54,8 @@ if (isset($_GET['accion']) && isset($_GET['id'])) {
                         ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
                 }
 
-                $pdo->prepare("UPDATE transferencias SET estado='Entregada' WHERE transferencias_id=?")->execute([$id]);
+                $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
+                    ->execute([$_SESSION['usuario_id'], $id]);
             }
         }
     }
@@ -200,6 +204,9 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .btn-aprobar { background: #e8f5e9; color: #2e7d32; }
     .btn-rechazar { background: #fdecea; color: #c0392b; }
     .btn-entregar { background: #e3f2fd; color: #1565c0; }
+    .badge-transito { background: #fff8e1; color: #e65100; }
+    .btn-enviar { background: #e8f5e9; color: #2e7d32; }
+    .btn-recibir { background: #f3e5f5; color: #6a1b9a; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; }
     .form-group { margin-bottom: 13px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 5px; font-weight: 600; }
@@ -246,7 +253,13 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 </div>
             </div>
             <?php if (isset($_GET['msg'])): ?>
-                <?php $msgs = ['solicitado'=>'Transferencia solicitada.','aprobar'=>'Transferencia aprobada.','rechazar'=>'Transferencia rechazada.','entregar'=>'Stock transferido correctamente.']; ?>
+                <?php $msgs = [
+                    'solicitado' => 'Solicitud enviada. La sucursal destino debe aprobarla.',
+                    'aprobar'    => 'Transferencia aprobada. Ya puedes marcar el envío.',
+                    'rechazar'   => 'Transferencia rechazada.',
+                    'enviar'     => 'Productos marcados como enviados. La sucursal destino debe confirmar la recepción.',
+                    'recibir'    => 'Recepción confirmada. El stock ha sido actualizado en ambas sucursales.',
+                ]; ?>
                 <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
             <?php endif; ?>
 
@@ -272,16 +285,28 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                             <td style="font-size:11px;">
                                 <?= htmlspecialchars($t['sucursal_origen']) ?> → <?= htmlspecialchars($t['sucursal_destino']) ?>
                             </td>
-                            <td><span class="badge badge-<?= strtolower($t['estado']) ?>"><?= $t['estado'] ?></span></td>
+                            <td><?php
+$badgeMap = [
+    'Pendiente'    => 'badge-pendiente',
+    'Aprobada'     => 'badge-aprobada',
+    'En tránsito'  => 'badge-transito',
+    'Entregada'    => 'badge-entregada',
+    'Rechazada'    => 'badge-rechazada',
+];
+$bc = $badgeMap[$t['estado']] ?? 'badge-pendiente';
+?>
+<span class="badge <?= $bc ?>"><?= htmlspecialchars($t['estado']) ?></span></td>
                             <td style="font-size:11px;"><?= htmlspecialchars($t['solicitante']) ?></td>
                             <td style="color:#aaa;font-size:11px;"><?= date('d/m/Y', strtotime($t['created_at'])) ?></td>
                             <td>
                                 <div class="acciones">
                                     <?php if ($t['estado'] === 'Pendiente' && !$esMiSucursal): ?>
-                                        <a class="btn-accion btn-aprobar" href="inventario_transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Aprobar?')">Aprobar</a>
-                                        <a class="btn-accion btn-rechazar" href="inventario_transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Rechazar?')">Rechazar</a>
+                                        <a class="btn-accion btn-aprobar" href="inventario_transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Aprobar esta solicitud de transferencia?')">Aprobar</a>
+                                        <a class="btn-accion btn-rechazar" href="inventario_transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Rechazar esta transferencia?')">Rechazar</a>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiSucursal): ?>
-                                        <a class="btn-accion btn-entregar" href="inventario_transferencias.php?accion=entregar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Confirmar entrega y mover stock?')">Entregar</a>
+                                        <a class="btn-accion btn-enviar" href="inventario_transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Confirmar que ya enviaste los productos?')">Marcar enviado</a>
+                                    <?php elseif ($t['estado'] === 'En tránsito' && !$esMiSucursal): ?>
+                                        <a class="btn-accion btn-recibir" href="inventario_transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('¿Confirmar recepción? Esto moverá el stock en ambas sucursales.')">Confirmar recepción</a>
                                     <?php else: ?>
                                         <span style="color:#aaa;font-size:11px;">—</span>
                                     <?php endif; ?>

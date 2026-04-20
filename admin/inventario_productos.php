@@ -36,7 +36,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
         $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'],
     ], $datos);
     $resumen = [['label' => 'Total Productos', 'valor' => count($datos)]];
-    exportarPDF('Inventario de Productos', 'Todos los productos activos', $columnas, $filas, $resumen, 'L');
+    exportarPDF('Inventario de Productos', 'Todos los productos activos — ' . $nombreSucursalVista, $columnas, $filas, $resumen, 'L');
 }
 
 // Exportar a Excel (formato limpio para reimportación)

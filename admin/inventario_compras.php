@@ -124,7 +124,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     ")->fetchAll(PDO::FETCH_ASSOC);
 
     $titulo = 'Historial de Compras a Proveedores';
-    $subtitulo = 'Generado: ' . date('d/m/Y H:i');
+    $subtitulo = 'Sucursal: ' . $nombreSucursalVista . ' — Generado: ' . date('d/m/Y H:i');
     $columnas = ['# Compra','Proveedor','Sucursal','Usuario','Total','Notas','Fecha'];
     $filas = array_map(fn($r) => [
         '#' . $r['compras_proveedor_id'],

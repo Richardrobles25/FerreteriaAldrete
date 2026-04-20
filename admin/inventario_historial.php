@@ -35,6 +35,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 
     $titulo = 'Historial de Movimientos de Inventario';
     $subtitulo = implode(' | ', array_filter([
+        "Sucursal: $nombreSucursalVista",
         $fecha    ? "Fecha: $fecha"  : '',
         $tipo     ? "Tipo: $tipo"    : '',
         $busqueda ? "Búsqueda: $busqueda" : '',

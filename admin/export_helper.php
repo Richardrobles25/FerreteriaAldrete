@@ -198,9 +198,20 @@ function exportarExcel(
         'font' => ['size' => 8, 'italic' => true, 'color' => ['argb' => 'FFaaaaaa']],
     ]);
 
-    $sheet->getRowDimension(1)->setRowHeight(16);
-    $sheet->getRowDimension(2)->setRowHeight(13);
-    $sheet->getRowDimension(3)->setRowHeight(12);
+    // Logo en columna A
+    if (file_exists(LOGO_PATH)) {
+        $drawing = new Drawing();
+        $drawing->setPath(LOGO_PATH);
+        $drawing->setCoordinates('A1');
+        $drawing->setHeight(46);
+        $drawing->setOffsetX(4);
+        $drawing->setOffsetY(2);
+        $drawing->setWorksheet($sheet);
+    }
+    $sheet->getColumnDimension('A')->setWidth(10);
+    $sheet->getRowDimension(1)->setRowHeight(20);
+    $sheet->getRowDimension(2)->setRowHeight(14);
+    $sheet->getRowDimension(3)->setRowHeight(13);
 
     // Línea separadora debajo del header
     $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([

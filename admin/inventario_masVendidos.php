@@ -81,7 +81,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     $totalUnidadesExp = array_sum(array_column($expData,'total_vendido')) ?: 1;
 
     $titulo = 'Productos Más Vendidos';
-    $subtitulo = "Período: $periodo | Desde: $fechaDesde";
+    $subtitulo = "Sucursal: $nombreSucursalVista | Período: $periodo | Desde: $fechaDesde";
     $columnas = ['#','Código','Producto','Categoría','Unidades Vendidas','Participación %','Ingresos','Stock Actual'];
     $filas = array_map(function($r, $i) use ($totalUnidadesExp) {
         return [

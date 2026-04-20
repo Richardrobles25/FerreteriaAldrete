@@ -17,6 +17,47 @@ if ($fecha) { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
 if ($tipo)  { $where .= " AND m.tipo = ?"; $params[] = $tipo; }
 if ($busqueda) { $where .= " AND p.nombre_producto LIKE ?"; $params[] = '%'.$busqueda.'%'; }
 
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $stmtExp = $pdo->prepare("
+        SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
+        FROM movimientos_inventario m
+        JOIN productos p ON m.producto_id = p.producto_id
+        JOIN usuarios u ON m.usuario_id = u.usuario_id
+        $where
+        ORDER BY m.created_at DESC
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Historial de Movimientos de Inventario';
+    $subtitulo = implode(' | ', array_filter([
+        $fecha    ? "Fecha: $fecha"  : '',
+        $tipo     ? "Tipo: $tipo"    : '',
+        $busqueda ? "Búsqueda: $busqueda" : '',
+    ]));
+    $columnas = ['Producto','Código','Tipo','Cantidad','Stock Ant.','Stock Nuevo','Motivo','Usuario','Fecha'];
+    $filas = array_map(fn($r) => [
+        $r['nombre_producto'],
+        $r['codigo'],
+        $r['tipo'],
+        $r['cantidad'],
+        $r['stock_anterior'],
+        $r['stock_nuevo'],
+        $r['motivo'] ?? '',
+        $r['usuario'],
+        date('d/m/Y H:i', strtotime($r['created_at'])),
+    ], $expData);
+
+    if ($_GET['exportar'] === 'pdf') {
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, [], 'L');
+    } else {
+        exportarExcel($titulo, $subtitulo, $columnas, $filas, []);
+    }
+}
+
 $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
     FROM movimientos_inventario m
@@ -124,6 +165,10 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
     <div class="content">
         <div class="content-header">
             <h1>Movimientos de inventario</h1>
+            <div style="display:flex;gap:8px;">
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+            </div>
         </div>
 
         <form method="GET">

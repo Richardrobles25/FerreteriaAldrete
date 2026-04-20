@@ -35,6 +35,61 @@ if ($vencimiento === 'vencido') {
     $where .= " AND cr.estado = 'Vencido'";
 }
 
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $stmtExp = $pdo->prepare("
+        SELECT cr.credito_id, c.nombre_completo, c.telefono, cr.monto_total, cr.saldo_pendiente,
+               cr.estado, cr.fecha_limite, cr.created_at, s.nombre AS sucursal,
+               COALESCE(SUM(a.monto),0) AS total_abonado
+        FROM creditos cr
+        JOIN clientes c ON cr.cliente_id = c.cliente_id
+        JOIN ventas v ON cr.venta_id = v.venta_id
+        JOIN cajas ca ON v.caja_id = ca.caja_id
+        JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+        LEFT JOIN abonos a ON cr.credito_id = a.credito_id
+        $where
+        GROUP BY cr.credito_id, c.nombre_completo, c.telefono, cr.monto_total, cr.saldo_pendiente, cr.estado, cr.fecha_limite, cr.created_at, s.nombre
+        ORDER BY (cr.estado='Vencido') DESC, (cr.estado='Activo') DESC, cr.created_at DESC
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Reporte de Créditos';
+    $subtitulo = implode(' | ', array_filter([
+        $busqueda  ? "Búsqueda: $busqueda" : '',
+        $estado    ? "Estado: $estado"      : '',
+        $sucursal  ? "Sucursal ID: $sucursal" : '',
+    ]));
+    $columnas = ['# Crédito','Cliente','Teléfono','Monto Total','Saldo Pendiente','Total Abonado','Estado','Vencimiento','Fecha','Sucursal'];
+    $filas = array_map(fn($r) => [
+        '#' . $r['credito_id'],
+        $r['nombre_completo'],
+        $r['telefono'] ?? '',
+        '$' . number_format($r['monto_total'], 2),
+        '$' . number_format($r['saldo_pendiente'], 2),
+        '$' . number_format($r['total_abonado'], 2),
+        $r['estado'],
+        $r['fecha_limite'] ? date('d/m/Y', strtotime($r['fecha_limite'])) : '—',
+        date('d/m/Y', strtotime($r['created_at'])),
+        $r['sucursal'],
+    ], $expData);
+
+    // Calcular resumen rápido
+    $totalPendiente = array_sum(array_column($expData, 'saldo_pendiente'));
+    $resumen = [
+        ['label' => 'Total Créditos', 'valor' => count($expData)],
+        ['label' => 'Saldo Pendiente Total', 'valor' => '$' . number_format($totalPendiente, 2)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') {
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    } else {
+        exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+    }
+}
+
 $stmt = $pdo->prepare("
     SELECT
         cr.credito_id,
@@ -157,7 +212,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     </div>
 
     <div class="content">
-        <div class="content-header"><h1>Control de creditos</h1></div>
+        <div class="content-header">
+            <h1>Control de creditos</h1>
+            <div style="display:flex;gap:8px;">
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+            </div>
+        </div>
 
         <div class="stats">
             <div class="stat"><p>Total creditos</p><h3><?= intval($totales['total'] ?? 0) ?></h3></div>

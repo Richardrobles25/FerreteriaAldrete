@@ -106,6 +106,41 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $stmt = $pdo->prepare("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1 AND sucursal_id != ?");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $expData = $pdo->query("
+        SELECT t.transferencias_id, p.nombre_producto, p.codigo, t.cantidad,
+               so.nombre AS sucursal_origen, sd.nombre AS sucursal_destino,
+               t.estado, u.nombre_completo AS usuario, t.notas, t.created_at
+        FROM transferencias t
+        JOIN productos p ON t.producto_id = p.producto_id
+        JOIN sucursales so ON t.sucursal_origen_id = so.sucursal_id
+        JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
+        JOIN usuarios u ON t.usuario_solicita_id = u.usuario_id
+        ORDER BY t.created_at DESC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Historial de Transferencias de Inventario';
+    $subtitulo = 'Generado: ' . date('d/m/Y H:i');
+    $columnas = ['#','Producto','Código','Cantidad','Origen','Destino','Estado','Usuario','Notas','Fecha'];
+    $filas = array_map(fn($r) => [
+        '#' . $r['transferencias_id'],
+        $r['nombre_producto'],
+        $r['codigo'],
+        $r['cantidad'],
+        $r['sucursal_origen'],
+        $r['sucursal_destino'],
+        $r['estado'],
+        $r['usuario'],
+        $r['notas'] ?? '',
+        date('d/m/Y H:i', strtotime($r['created_at'])),
+    ], $expData);
+
+    if ($_GET['exportar'] === 'pdf') exportarPDF($titulo, $subtitulo, $columnas, $filas, [], 'L');
+    else exportarExcel($titulo, $subtitulo, $columnas, $filas, []);
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -191,6 +226,13 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="content">
         <!-- Lista -->
         <div>
+            <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h1 style="font-size:20px;color:#222;font-weight:600;">Transferencias entre sucursales</h1>
+                <div style="display:flex;gap:8px;">
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                </div>
+            </div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs = ['solicitado'=>'Transferencia solicitada.','aprobar'=>'Transferencia aprobada.','rechazar'=>'Transferencia rechazada.','entregar'=>'Stock transferido correctamente.']; ?>
                 <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>

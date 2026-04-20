@@ -25,6 +25,41 @@ if ($busqueda)   { $where .= " AND (u.nombre_completo LIKE ? OR u.nombre_usuario
 if ($filtroRol)  { $where .= " AND u.rol = ?"; $params[] = $filtroRol; }
 if ($filtroSuc)  { $where .= " AND u.sucursal_id = ?"; $params[] = $filtroSuc; }
 
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $stmtExp = $pdo->prepare("
+        SELECT u.nombre_completo, u.nombre_usuario, u.rol, s.nombre AS sucursal, u.activo
+        FROM usuarios u
+        JOIN sucursales s ON u.sucursal_id = s.sucursal_id
+        $where
+        ORDER BY u.activo DESC, u.nombre_completo ASC
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Listado de Usuarios';
+    $subtitulo = $busqueda ? "Búsqueda: $busqueda" : 'Todos los usuarios';
+    $columnas = ['Nombre Completo','Usuario','Rol','Sucursal','Estado'];
+    $filas = array_map(fn($r) => [
+        $r['nombre_completo'],
+        $r['nombre_usuario'],
+        $r['rol'],
+        $r['sucursal'],
+        $r['activo'] ? 'Activo' : 'Inactivo',
+    ], $expData);
+    $resumen = [
+        ['label' => 'Total Usuarios', 'valor' => count($expData)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') {
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'P');
+    } else {
+        exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+    }
+}
+
 $stmt = $pdo->prepare("
     SELECT u.*, s.nombre AS nombre_sucursal
     FROM usuarios u
@@ -129,7 +164,11 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     <div class="content">
         <div class="content-header">
             <h1>Gestión de usuarios</h1>
-            <a class="btn-nuevo" href="formUsuario.php">+ Nuevo usuario</a>
+            <div style="display:flex;gap:8px;">
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                <a class="btn-nuevo" href="formUsuario.php">+ Nuevo usuario</a>
+            </div>
         </div>
 
         <div class="stats">

@@ -56,6 +56,53 @@ $stmtTotal->execute([$sucursal, $fechaDesde]);
 $totalUnidades = $stmtTotal->fetchColumn() ?: 1;
 
 $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
+
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    // Usar el mismo query que ya tiene el archivo pero sin LIMIT
+    $stmtExp = $pdo->prepare("
+        SELECT p.codigo, p.nombre_producto, c.nombre AS categoria,
+               SUM(vp.cantidad) AS total_vendido,
+               SUM(vp.subtotal) AS total_ingresos,
+               p.stock_actual
+        FROM venta_productos vp
+        JOIN ventas v ON vp.venta_id = v.venta_id
+        JOIN productos p ON vp.producto_id = p.producto_id
+        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        WHERE p.sucursal_id = ? AND v.estado = 'Completada' AND DATE(v.created_at) >= ?
+        GROUP BY p.producto_id
+        ORDER BY total_vendido DESC
+    ");
+    $stmtExp->execute([$sucursal, $fechaDesde]);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalUnidadesExp = array_sum(array_column($expData,'total_vendido')) ?: 1;
+
+    $titulo = 'Productos Más Vendidos';
+    $subtitulo = "Período: $periodo | Desde: $fechaDesde";
+    $columnas = ['#','Código','Producto','Categoría','Unidades Vendidas','Participación %','Ingresos','Stock Actual'];
+    $filas = array_map(function($r, $i) use ($totalUnidadesExp) {
+        return [
+            $i + 1,
+            $r['codigo'],
+            $r['nombre_producto'],
+            $r['categoria'] ?? '—',
+            $r['total_vendido'],
+            number_format(($r['total_vendido'] / $totalUnidadesExp) * 100, 1) . '%',
+            '$' . number_format($r['total_ingresos'], 2),
+            $r['stock_actual'],
+        ];
+    }, $expData, array_keys($expData));
+    $resumen = [
+        ['label' => 'Productos en Ranking', 'valor' => count($expData)],
+        ['label' => 'Unidades Vendidas', 'valor' => array_sum(array_column($expData,'total_vendido'))],
+        ['label' => 'Ingresos Generados', 'valor' => '$' . number_format(array_sum(array_column($expData,'total_ingresos')), 2)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    else exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -130,6 +177,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     </div>
 
     <div class="content">
+        <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <h1 style="font-size:20px;color:#222;font-weight:600;">Productos más vendidos</h1>
+            <div style="display:flex;gap:8px;">
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+            </div>
+        </div>
         <form method="GET">
             <div class="filtros">
                 <div class="filtro-group">

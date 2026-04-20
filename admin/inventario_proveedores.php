@@ -64,6 +64,38 @@ $params = [];
 if ($busqueda)  { $where .= " AND p.nombre LIKE ?"; $params[] = '%'.$busqueda.'%'; }
 if ($filtrocat) { $where .= " AND pc.categoria_id = ?"; $params[] = $filtrocat; }
 
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $expData = $pdo->query("
+        SELECT p.nombre, p.telefono, p.correo, p.direccion,
+               GROUP_CONCAT(c.nombre ORDER BY c.nombre SEPARATOR ', ') AS categorias
+        FROM proveedores p
+        LEFT JOIN proveedor_categorias pc ON p.proveedor_id = pc.proveedor_id
+        LEFT JOIN categorias c ON pc.categoria_id = c.categoria_id
+        WHERE p.activo = 1
+        GROUP BY p.proveedor_id
+        ORDER BY p.nombre ASC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Listado de Proveedores';
+    $subtitulo = 'Generado: ' . date('d/m/Y H:i');
+    $columnas = ['Nombre','Teléfono','Correo','Dirección','Categorías'];
+    $filas = array_map(fn($r) => [
+        $r['nombre'],
+        $r['telefono'] ?? '',
+        $r['correo'] ?? '',
+        $r['direccion'] ?? '',
+        $r['categorias'] ?? '—',
+    ], $expData);
+    $resumen = [
+        ['label' => 'Total Proveedores', 'valor' => count($expData)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    else exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+}
+
 $join = $filtrocat ? "JOIN proveedor_categorias pc ON p.proveedor_id = pc.proveedor_id" : "LEFT JOIN proveedor_categorias pc ON p.proveedor_id = pc.proveedor_id";
 
 $stmt = $pdo->prepare("SELECT DISTINCT p.* FROM proveedores p $join $where ORDER BY p.nombre ASC");
@@ -169,6 +201,13 @@ if ($editando) {
 
     <div class="content">
         <div>
+            <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h1 style="font-size:20px;color:#222;font-weight:600;">Proveedores</h1>
+                <div style="display:flex;gap:8px;">
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                </div>
+            </div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs = ['creado'=>'Proveedor creado.','editado'=>'Proveedor actualizado.','eliminado'=>'Proveedor eliminado.']; ?>
                 <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>

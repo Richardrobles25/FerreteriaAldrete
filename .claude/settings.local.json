@@ -15,7 +15,15 @@
       "Read(//usr/local/**)",
       "Bash(php -r \" require_once 'C:/FerreteriaAldrete/vendor/autoload.php'; echo 'PhpSpreadsheet disponible'; \")",
       "Bash(php -r ' *)",
-      "Bash(php -r \"echo PHP_VERSION;\")"
+      "Bash(php -r \"echo PHP_VERSION;\")",
+      "Bash(composer require *)",
+      "Bash(php -l admin/export_helper.php)",
+      "Bash(php -l admin/reporteVentas.php)",
+      "Bash(php -l admin/cajero_historialVentas.php)",
+      "Bash(php -l admin/inventario_historial.php)",
+      "Bash(php -l admin/clientes.php)",
+      "Bash(php -l C:/FerreteriaAldrete/admin/inventario_productos.php)",
+      "Bash(php -l C:/FerreteriaAldrete/admin/export_helper.php)"
     ]
   }
 }

@@ -26,6 +26,60 @@ if ($periodo === 'personalizado') {
 
 $sucursalWhere = $sucursal ? "AND ca.sucursal_id = $sucursal" : "";
 
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    // Ventas por día (sin LIMIT para exportar todo)
+    $stmtExp = $pdo->prepare("
+        SELECT DATE(v.created_at) AS fecha,
+               s.nombre AS sucursal,
+               COUNT(*) AS num_ventas,
+               SUM(v.total) AS total
+        FROM ventas v
+        JOIN cajas ca ON v.caja_id = ca.caja_id
+        JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+        WHERE v.estado='Completada' AND DATE(v.created_at) BETWEEN ? AND ?
+        $sucursalWhere
+        GROUP BY DATE(v.created_at), ca.sucursal_id
+        ORDER BY fecha DESC
+    ");
+    $stmtExp->execute([$fechaDesde, $fechaHasta]);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    // Resumen
+    $stmtR = $pdo->prepare("
+        SELECT COUNT(*) AS total_ventas,
+               COALESCE(SUM(v.total),0) AS total_cobrado,
+               COALESCE(SUM(v.descuento),0) AS total_descuentos
+        FROM ventas v JOIN cajas ca ON v.caja_id=ca.caja_id
+        WHERE v.estado='Completada' AND DATE(v.created_at) BETWEEN ? AND ? $sucursalWhere
+    ");
+    $stmtR->execute([$fechaDesde, $fechaHasta]);
+    $resExp = $stmtR->fetch(PDO::FETCH_ASSOC);
+
+    $titulo = 'Reporte de Ventas';
+    $subtitulo = "Período: $fechaDesde al $fechaHasta";
+    $columnas = ['Fecha', 'Sucursal', 'No. Ventas', 'Total'];
+    $filas = array_map(fn($r) => [
+        date('d/m/Y', strtotime($r['fecha'])),
+        $r['sucursal'],
+        $r['num_ventas'],
+        '$' . number_format($r['total'], 2),
+    ], $expData);
+    $resumen = [
+        ['label' => 'Total Ventas',    'valor' => $resExp['total_ventas']],
+        ['label' => 'Total Cobrado',   'valor' => '$' . number_format($resExp['total_cobrado'], 2)],
+        ['label' => 'Total Descuentos','valor' => '$' . number_format($resExp['total_descuentos'], 2)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') {
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    } else {
+        exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+    }
+}
+
 // Resumen general
 $stmt = $pdo->prepare("
     SELECT
@@ -157,7 +211,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     </div>
 
     <div class="content">
-        <div class="content-header"><h1>Reporte de ventas</h1></div>
+        <div class="content-header">
+            <h1>Reporte de ventas</h1>
+            <div style="display:flex;gap:8px;">
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+            </div>
+        </div>
 
         <form method="GET">
             <div class="filtros">

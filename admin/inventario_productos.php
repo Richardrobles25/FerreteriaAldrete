@@ -13,8 +13,33 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx as ReaderXlsx;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
-// Exportar a Excel
-if (isset($_GET['exportar'])) {
+// Exportar PDF
+if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
+    require_once __DIR__ . '/export_helper.php';
+    $stmt = $pdo->prepare("
+        SELECT p.codigo, p.nombre_producto, c.nombre as categoria, p.precio_compra,
+               p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.tipo_venta
+        FROM productos p
+        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        WHERE p.sucursal_id = ? AND p.activo = 1
+        ORDER BY p.nombre_producto ASC
+    ");
+    $stmt->execute([$_SESSION['sucursal_id']]);
+    $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Stock','Mín.','Tipo'];
+    $filas = array_map(fn($p) => [
+        $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
+        '$' . number_format($p['precio_compra'], 2),
+        '$' . number_format($p['precio_venta'], 2),
+        '$' . number_format($p['precio_mayoreo'], 2),
+        $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'],
+    ], $datos);
+    $resumen = [['label' => 'Total Productos', 'valor' => count($datos)]];
+    exportarPDF('Inventario de Productos', 'Todos los productos activos', $columnas, $filas, $resumen, 'L');
+}
+
+// Exportar a Excel (formato limpio para reimportación)
+if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
     $stmt = $pdo->prepare("
         SELECT p.codigo, p.nombre_producto, c.nombre as categoria, p.precio_compra,
                p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo,
@@ -31,39 +56,33 @@ if (isset($_GET['exportar'])) {
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Productos');
 
-    // Encabezados
     $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción'];
     foreach ($headers as $i => $h) {
-        $sheet->setCellValueByColumnAndRow($i+1, 1, $h);
-        $sheet->getStyleByColumnAndRow($i+1, 1)->getFont()->setBold(true);
+        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+        $sheet->setCellValue("{$col}1", $h);
+        $sheet->getStyle("{$col}1")->applyFromArray([
+            'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF14ace7']],
+        ]);
     }
 
-    // Datos
-    foreach ($datos as $row => $p) {
-        $sheet->setCellValueByColumnAndRow(1,  $row+2, $p['codigo']);
-        $sheet->setCellValueByColumnAndRow(2,  $row+2, $p['nombre_producto']);
-        $sheet->setCellValueByColumnAndRow(3,  $row+2, $p['categoria'] ?? '');
-        $sheet->setCellValueByColumnAndRow(4,  $row+2, $p['precio_compra']);
-        $sheet->setCellValueByColumnAndRow(5,  $row+2, $p['precio_venta']);
-        $sheet->setCellValueByColumnAndRow(6,  $row+2, $p['precio_mayoreo']);
-        $sheet->setCellValueByColumnAndRow(7,  $row+2, $p['stock_actual']);
-        $sheet->setCellValueByColumnAndRow(8,  $row+2, $p['stock_minimo']);
-        $sheet->setCellValueByColumnAndRow(9,  $row+2, $p['stock_maximo']);
-        $sheet->setCellValueByColumnAndRow(10, $row+2, $p['tipo_venta']);
-        $sheet->setCellValueByColumnAndRow(11, $row+2, $p['descripcion'] ?? '');
+    foreach ($datos as $r => $p) {
+        $fila = $r + 2;
+        $vals = [$p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '', $p['precio_compra'], $p['precio_venta'], $p['precio_mayoreo'], $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'], $p['tipo_venta'], $p['descripcion'] ?? ''];
+        foreach ($vals as $i => $v) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+            $sheet->setCellValue("{$col}{$fila}", $v);
+        }
     }
 
-    // Auto ancho
-    foreach (range('A','K') as $col) {
+    foreach (range('A', 'K') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
 
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="productos_' . date('Y-m-d') . '.xlsx"');
     header('Cache-Control: max-age=0');
-
-    $writer = new Xlsx($spreadsheet);
-    $writer->save('php://output');
+    (new Xlsx($spreadsheet))->save('php://output');
     exit();
 }
 
@@ -227,13 +246,15 @@ if (isset($_GET['plantilla'])) {
     $sheet->setTitle('Plantilla');
     $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción'];
     foreach ($headers as $i => $h) {
-        $sheet->setCellValueByColumnAndRow($i+1, 1, $h);
-        $sheet->getStyleByColumnAndRow($i+1, 1)->getFont()->setBold(true);
+        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+        $sheet->setCellValue("{$col}1", $h);
+        $sheet->getStyle("{$col}1")->getFont()->setBold(true);
     }
     // Fila de ejemplo
     $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional'];
     foreach ($ejemplo as $i => $v) {
-        $sheet->setCellValueByColumnAndRow($i+1, 2, $v);
+        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+        $sheet->setCellValue("{$col}2", $v);
     }
     foreach (range('A','K') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
@@ -387,7 +408,8 @@ $totalStockBajo = $stmtBajo->fetchColumn();
             <div class="acciones-header">
                 <a class="btn-plantilla" href="inventario_productos.php?plantilla=1">Descargar plantilla</a>
                 <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
-                <a class="btn-excel-export" href="inventario_productos.php?exportar=1">Exportar Excel</a>
+                <a style="background:#c0392b;color:white;border:none;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;" href="inventario_productos.php?exportar=pdf">⬇ PDF</a>
+                <a class="btn-excel-export" href="inventario_productos.php?exportar=excel">⬇ Excel</a>
                 <a class="btn-agregar" href="inventario_formProducto.php">+ Agregar producto</a>
             </div>
         </div>

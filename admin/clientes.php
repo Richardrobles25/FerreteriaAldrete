@@ -86,6 +86,47 @@ if ($sucursal) {
     $params[] = $sucursal;
 }
 
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $stmtExp = $pdo->prepare("
+        SELECT
+            c.nombre_completo, c.telefono, c.correo, c.descuento_fijo,
+            c.credito_autorizado, c.limite_credito,
+            (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.cliente_id) AS total_ventas,
+            (SELECT COALESCE(SUM(v.total),0) FROM ventas v WHERE v.cliente_id = c.cliente_id AND v.estado='Completada') AS total_comprado
+        FROM clientes c
+        $where
+        ORDER BY c.nombre_completo ASC
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Listado de Clientes';
+    $subtitulo = $busqueda ? "Búsqueda: $busqueda" : 'Todos los clientes';
+    $columnas = ['Nombre','Teléfono','Correo','Descuento %','Crédito','Límite Crédito','No. Ventas','Total Comprado'];
+    $filas = array_map(fn($r) => [
+        $r['nombre_completo'],
+        $r['telefono'] ?? '',
+        $r['correo'] ?? '',
+        $r['descuento_fijo'] . '%',
+        $r['credito_autorizado'] ? 'Sí' : 'No',
+        '$' . number_format($r['limite_credito'], 2),
+        $r['total_ventas'],
+        '$' . number_format($r['total_comprado'], 2),
+    ], $expData);
+    $resumen = [
+        ['label' => 'Total Clientes', 'valor' => count($expData)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') {
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    } else {
+        exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+    }
+}
+
 $stmt = $pdo->prepare("
     SELECT
         c.*,
@@ -237,7 +278,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
     <div class="content">
         <div>
-            <div class="content-header"><h1>Administracion de clientes</h1></div>
+            <div class="content-header">
+                <h1>Administracion de clientes</h1>
+                <div style="display:flex;gap:8px;">
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                </div>
+            </div>
             <?php if (isset($_GET['msg'])): $mensajes = ['creado' => 'Cliente registrado correctamente.', 'editado' => 'Cliente actualizado correctamente.']; ?>
                 <div class="msg msg-exito"><?= htmlspecialchars($mensajes[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>

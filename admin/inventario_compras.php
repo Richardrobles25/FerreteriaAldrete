@@ -108,6 +108,40 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
 $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_compra FROM productos WHERE sucursal_id = ? AND activo = 1 ORDER BY nombre_producto ASC");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $expData = $pdo->query("
+        SELECT cp.compras_proveedor_id, p.nombre AS proveedor, s.nombre AS sucursal,
+               u.nombre_completo AS usuario, cp.total, cp.notas, cp.created_at
+        FROM compras_proveedor cp
+        JOIN proveedores p ON cp.proveedor_id = p.proveedor_id
+        JOIN sucursales s ON cp.sucursal_id = s.sucursal_id
+        JOIN usuarios u ON cp.usuario_id = u.usuario_id
+        ORDER BY cp.created_at DESC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Historial de Compras a Proveedores';
+    $subtitulo = 'Generado: ' . date('d/m/Y H:i');
+    $columnas = ['# Compra','Proveedor','Sucursal','Usuario','Total','Notas','Fecha'];
+    $filas = array_map(fn($r) => [
+        '#' . $r['compras_proveedor_id'],
+        $r['proveedor'],
+        $r['sucursal'],
+        $r['usuario'],
+        '$' . number_format($r['total'], 2),
+        $r['notas'] ?? '',
+        date('d/m/Y H:i', strtotime($r['created_at'])),
+    ], $expData);
+    $resumen = [
+        ['label' => 'Total Compras', 'valor' => count($expData)],
+        ['label' => 'Total Gastado', 'valor' => '$' . number_format(array_sum(array_column($expData,'total')), 2)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    else exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -213,6 +247,13 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="content">
         <!-- Lista de compras -->
         <div>
+            <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h1 style="font-size:20px;color:#222;font-weight:600;">Compras a proveedor</h1>
+                <div style="display:flex;gap:8px;">
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                </div>
+            </div>
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'creado'): ?>
                 <div class="msg msg-exito">Compra registrada y stock actualizado.</div>
             <?php endif; ?>

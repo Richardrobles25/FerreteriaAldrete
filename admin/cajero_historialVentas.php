@@ -22,6 +22,52 @@ if ($metodo) {
     $params[] = $metodo;
 }
 
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $stmtExp = $pdo->prepare("
+        SELECT v.venta_id, c.nombre_completo AS cliente, v.metodo_pago, v.subtotal, v.descuento, v.total, v.estado, v.created_at
+        FROM ventas v
+        LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
+        $where
+        ORDER BY v.created_at DESC
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtTotExp = $pdo->prepare("
+        SELECT COUNT(*) as total_ventas, COALESCE(SUM(total),0) as total_cobrado
+        FROM ventas WHERE usuario_id = ? AND DATE(created_at) = ? AND estado = 'Completada'
+    ");
+    $stmtTotExp->execute([$_SESSION['usuario_id'], $fecha]);
+    $totExp = $stmtTotExp->fetch(PDO::FETCH_ASSOC);
+
+    $titulo = 'Historial de Ventas';
+    $subtitulo = "Fecha: $fecha" . ($metodo ? " | Método: $metodo" : '');
+    $columnas = ['# Venta','Cliente','Método','Subtotal','Descuento','Total','Estado','Hora'];
+    $filas = array_map(fn($r) => [
+        '#' . $r['venta_id'],
+        $r['cliente'] ?? 'Público general',
+        $r['metodo_pago'],
+        '$' . number_format($r['subtotal'], 2),
+        '$' . number_format($r['descuento'], 2),
+        '$' . number_format($r['total'], 2),
+        $r['estado'],
+        date('H:i', strtotime($r['created_at'])),
+    ], $expData);
+    $resumen = [
+        ['label' => 'Total Ventas',  'valor' => $totExp['total_ventas']],
+        ['label' => 'Total Cobrado', 'valor' => '$' . number_format($totExp['total_cobrado'], 2)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') {
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    } else {
+        exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+    }
+}
+
 $stmt = $pdo->prepare("
     SELECT v.*, c.nombre_completo as cliente
     FROM ventas v
@@ -129,6 +175,10 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     <div class="content">
         <div class="content-header">
             <h1>Mis ventas</h1>
+            <div style="display:flex;gap:8px;">
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+            </div>
         </div>
 
         <form method="GET">

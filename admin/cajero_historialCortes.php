@@ -14,6 +14,50 @@ $params = [$_SESSION['usuario_id']];
 
 if ($fecha) { $where .= " AND DATE(c.abierta_en) = ?"; $params[] = $fecha; }
 
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $stmtExp = $pdo->prepare("
+        SELECT c.caja_id, s.nombre AS sucursal, c.estado,
+               c.abierta_en, c.cerrada_en,
+               COUNT(v.venta_id) AS total_ventas,
+               COALESCE(SUM(v.total),0) AS total_cobrado,
+               c.monto_contado, c.diferencia, c.observaciones
+        FROM cajas c
+        JOIN sucursales s ON c.sucursal_id = s.sucursal_id
+        LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado = 'Completada'
+        $where
+        GROUP BY c.caja_id
+        ORDER BY c.abierta_en DESC
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Historial de Cortes de Caja';
+    $subtitulo = $fecha ? "Fecha: $fecha" : 'Todos los turnos';
+    $columnas = ['Turno #','Sucursal','Estado','Apertura','Cierre','Ventas','Total Cobrado','Contado','Diferencia'];
+    $filas = array_map(fn($r) => [
+        '#' . $r['caja_id'],
+        $r['sucursal'],
+        $r['estado'],
+        date('d/m/Y H:i', strtotime($r['abierta_en'])),
+        $r['cerrada_en'] ? date('d/m/Y H:i', strtotime($r['cerrada_en'])) : '—',
+        $r['total_ventas'],
+        '$' . number_format($r['total_cobrado'], 2),
+        $r['monto_contado'] !== null ? '$' . number_format($r['monto_contado'], 2) : '—',
+        $r['diferencia'] !== null ? '$' . number_format($r['diferencia'], 2) : '—',
+    ], $expData);
+    $resumen = [
+        ['label' => 'Turnos',        'valor' => count($expData)],
+        ['label' => 'Total Ventas',  'valor' => array_sum(array_column($expData,'total_ventas'))],
+        ['label' => 'Total Cobrado', 'valor' => '$' . number_format(array_sum(array_column($expData,'total_cobrado')), 2)],
+    ];
+
+    if ($_GET['exportar'] === 'pdf') exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
+    else exportarExcel($titulo, $subtitulo, $columnas, $filas, $resumen);
+}
+
 $stmt = $pdo->prepare("
     SELECT c.*,
         s.nombre AS nombre_sucursal,
@@ -168,6 +212,13 @@ if ($verCorte) {
     <div class="content">
         <!-- Lista de cortes -->
         <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h1 style="font-size:18px;color:#222;font-weight:600;">Historial de Cortes</h1>
+                <div style="display:flex;gap:8px;">
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                </div>
+            </div>
             <div class="stats">
                 <div class="stat"><p>Turnos totales</p><h3><?= count($cortes) ?></h3></div>
                 <div class="stat"><p>Total ventas</p><h3><?= $totalVentas ?></h3></div>

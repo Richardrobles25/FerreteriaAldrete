@@ -163,7 +163,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Panel Administrador</h2>
+            <h2>Agregame en ista @ricardo.nr</h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">- <?= htmlspecialchars($nombreSucursal) ?></span></span>

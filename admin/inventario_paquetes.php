@@ -6,6 +6,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if (isset($_GET['toggle'])) {
     $pdo->prepare("UPDATE paquetes SET activo = NOT activo WHERE paquete_id = ?")->execute([intval($_GET['toggle'])]);
@@ -40,7 +41,7 @@ if (isset($_GET['editar'])) {
             LEFT JOIN productos px ON pp.producto_id = px.producto_id AND px.sucursal_id = ?
             WHERE pp.paquete_id = ?
         ");
-        $stmtPP->execute([$_SESSION['sucursal_id'], $editando['paquete_id']]);
+        $stmtPP->execute([$sucursalVista, $editando['paquete_id']]);
         $prodsPaquete = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
     }
 }
@@ -99,7 +100,7 @@ $stmtProds = $pdo->prepare("
     WHERE sucursal_id = ? AND activo = 1
     ORDER BY nombre_producto ASC
 ");
-$stmtProds->execute([$_SESSION['sucursal_id']]);
+$stmtProds->execute([$sucursalVista]);
 $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -207,6 +208,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <!-- Lista -->
         <div>
             <?php if (isset($_GET['msg'])): ?>
@@ -228,7 +230,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                         LEFT JOIN productos p2 ON pp.producto_id = p2.producto_id AND p2.sucursal_id = ?
                         WHERE pp.paquete_id = ?
                     ");
-                    $stmtPP->execute([$_SESSION['sucursal_id'], $paq['paquete_id']]);
+                    $stmtPP->execute([$sucursalVista, $paq['paquete_id']]);
                     $prods = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
                     $precioSeparado = array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_venta'], $prods));
                     $ahorro = $precioSeparado > 0 ? $precioSeparado - $paq['precio_paquete'] : 0;

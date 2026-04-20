@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(php -l *)",
+      "Bash(php --ini *)",
+      "Bash(php -r *)",
+      "Bash(grep -n *)",
+      "Bash(grep -r *)",
+      "Bash(grep -rn *)",
+      "Bash(grep -l *)",
+      "Bash(grep -rl *)",
+      "Bash(grep -i *)",
+      "Bash(tail -* *)"
+    ]
+  }
+}

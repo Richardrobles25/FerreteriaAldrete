@@ -6,9 +6,10 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $periodo    = $_GET['periodo'] ?? 'mes';
-$sucursal   = intval($_GET['sucursal'] ?? $_SESSION['sucursal_id']);
+$sucursal   = intval($_GET['sucursal'] ?? $sucursalVista);
 $limite     = intval($_GET['limite'] ?? 20);
 
 $fechaDesde = match($periodo) {
@@ -177,6 +178,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <h1 style="font-size:20px;color:#222;font-weight:600;">Productos más vendidos</h1>
             <div style="display:flex;gap:8px;">

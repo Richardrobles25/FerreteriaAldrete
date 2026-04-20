@@ -6,6 +6,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Productos con stock bajo
 $stmtBajo = $pdo->prepare("
@@ -15,7 +16,7 @@ $stmtBajo = $pdo->prepare("
     ORDER BY (stock_actual / NULLIF(stock_minimo,0)) ASC
     LIMIT 10
 ");
-$stmtBajo->execute([$_SESSION['sucursal_id']]);
+$stmtBajo->execute([$sucursalVista]);
 $stockBajo = $stmtBajo->fetchAll(PDO::FETCH_ASSOC);
 
 // Estadísticas generales
@@ -28,7 +29,7 @@ $stmtStats = $pdo->prepare("
     FROM productos
     WHERE sucursal_id = ? AND activo = 1
 ");
-$stmtStats->execute([$_SESSION['sucursal_id']]);
+$stmtStats->execute([$sucursalVista]);
 $stats = $stmtStats->fetch(PDO::FETCH_ASSOC);
 
 // Últimos movimientos
@@ -40,7 +41,7 @@ $stmtMov = $pdo->prepare("
     ORDER BY m.created_at DESC
     LIMIT 8
 ");
-$stmtMov->execute([$_SESSION['sucursal_id']]);
+$stmtMov->execute([$sucursalVista]);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
 // Transferencias pendientes hacia esta sucursal
@@ -48,7 +49,7 @@ $stmtTransf = $pdo->prepare("
     SELECT COUNT(*) FROM transferencias
     WHERE sucursal_destino_id = ? AND estado = 'Pendiente'
 ");
-$stmtTransf->execute([$_SESSION['sucursal_id']]);
+$stmtTransf->execute([$sucursalVista]);
 $transfPendientes = $stmtTransf->fetchColumn();
 
 // Últimas compras a proveedor
@@ -60,7 +61,7 @@ $stmtCompras = $pdo->prepare("
     ORDER BY cp.created_at DESC
     LIMIT 5
 ");
-$stmtCompras->execute([$_SESSION['sucursal_id']]);
+$stmtCompras->execute([$sucursalVista]);
 $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -145,6 +146,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <!-- Alerta de stock bajo -->
         <?php if (count($stockBajo) > 0): ?>
         <div class="alerta-stock">

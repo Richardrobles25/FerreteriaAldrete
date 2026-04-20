@@ -23,7 +23,23 @@
       "Bash(php -l admin/inventario_historial.php)",
       "Bash(php -l admin/clientes.php)",
       "Bash(php -l C:/FerreteriaAldrete/admin/inventario_productos.php)",
-      "Bash(php -l C:/FerreteriaAldrete/admin/export_helper.php)"
+      "Bash(php -l C:/FerreteriaAldrete/admin/export_helper.php)",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\_admin_sucursal_filtro.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_inicio.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_productos.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_compras.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_entradas.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_salidas.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_historial.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_proveedores.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_categorias.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_paquetes.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_transferencias.php\")",
+      "Bash(php -l \"C:\\\\FerreteriaAldrete\\\\admin\\\\inventario_masVendidos.php\")",
+      "Bash(php -l C:/FerreteriaAldrete/admin/_admin_sucursal_filtro.php)",
+      "Bash(php -l C:/FerreteriaAldrete/admin/__TRACKED_VAR__.php)",
+      "Bash(python3 -c \" import sys, json from collections import Counter cmds = Counter\\(\\) for line in sys.stdin: try: obj = json.loads\\(line\\) msg = obj.get\\('message', {}\\) if msg.get\\('role'\\) == 'assistant': for c in msg.get\\('content', []\\): if c.get\\('type'\\) == 'tool_use' and c.get\\('name'\\) == 'Bash': cmd = c.get\\('input', {}\\).get\\('command', ''\\) first = cmd.strip\\(\\).split\\(\\)[0] if cmd.strip\\(\\) else '' cmds[first] += 1 except: pass for k,v in cmds.most_common\\(30\\): print\\(v, k\\) \")",
+      "Bash(awk '{print $1}')"
     ]
   }
 }

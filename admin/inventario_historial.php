@@ -5,13 +5,14 @@ require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $fecha    = $_GET['fecha'] ?? '';
 $tipo     = $_GET['tipo'] ?? '';
 $busqueda = trim($_GET['buscar'] ?? '');
 
 $where  = "WHERE p.sucursal_id = ?";
-$params = [$_SESSION['sucursal_id']];
+$params = [$sucursalVista];
 
 if ($fecha) { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
 if ($tipo)  { $where .= " AND m.tipo = ?"; $params[] = $tipo; }
@@ -163,6 +164,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <div class="content-header">
             <h1>Movimientos de inventario</h1>
             <div style="display:flex;gap:8px;">

@@ -5,6 +5,7 @@ require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
@@ -143,6 +144,7 @@ if (isset($_GET['editar'])) {
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <!-- Lista -->
         <div>
             <?php if (isset($_GET['msg'])): ?>

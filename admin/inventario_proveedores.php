@@ -6,6 +6,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if (isset($_GET['eliminar'])) {
     $pdo->prepare("UPDATE proveedores SET activo = 0 WHERE proveedor_id = ?")->execute([intval($_GET['eliminar'])]);
@@ -200,6 +201,7 @@ if ($editando) {
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <div>
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
                 <h1 style="font-size:20px;color:#222;font-weight:600;">Proveedores</h1>

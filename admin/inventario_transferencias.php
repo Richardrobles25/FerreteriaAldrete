@@ -6,6 +6,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Aprobar/rechazar/entregar transferencia
 if (isset($_GET['accion']) && isset($_GET['id'])) {
@@ -68,11 +69,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$producto_id)         $errores[] = 'Selecciona un producto.';
     if (!$sucursal_destino_id) $errores[] = 'Selecciona la sucursal destino.';
     if ($cantidad <= 0)        $errores[] = 'La cantidad debe ser mayor a 0.';
-    if ($sucursal_destino_id == $_SESSION['sucursal_id']) $errores[] = 'La sucursal destino no puede ser la misma.';
+    if ($sucursal_destino_id == $sucursalVista) $errores[] = 'La sucursal destino no puede ser la misma.';
 
     if (empty($errores)) {
         $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado) VALUES (?,?,?,?,?,?,'Pendiente')")
-            ->execute([$producto_id, $_SESSION['sucursal_id'], $sucursal_destino_id, $_SESSION['usuario_id'], $cantidad, $notas]);
+            ->execute([$producto_id, $sucursalVista, $sucursal_destino_id, $_SESSION['usuario_id'], $cantidad, $notas]);
         header('Location: inventario_transferencias.php?msg=solicitado'); exit();
     }
 }
@@ -95,16 +96,16 @@ $stmt = $pdo->prepare("
     ORDER BY t.created_at DESC
     LIMIT 50
 ");
-$stmt->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
+$stmt->execute([$sucursalVista, $sucursalVista]);
 $transferencias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Datos para el formulario
 $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto ASC");
-$stmt->execute([$_SESSION['sucursal_id']]);
+$stmt->execute([$sucursalVista]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $stmt = $pdo->prepare("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1 AND sucursal_id != ?");
-$stmt->execute([$_SESSION['sucursal_id']]);
+$stmt->execute([$sucursalVista]);
 $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
@@ -224,6 +225,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <!-- Lista -->
         <div>
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
@@ -246,7 +248,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                     </thead>
                     <tbody>
                         <?php foreach ($transferencias as $t):
-                            $esMiSucursal = $t['sucursal_origen_id'] == $_SESSION['sucursal_id'];
+                            $esMiSucursal = $t['sucursal_origen_id'] == $sucursalVista;
                         ?>
                         <tr>
                             <td>

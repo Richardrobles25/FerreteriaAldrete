@@ -6,11 +6,12 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $productoPreseleccionado = null;
 if (isset($_GET['producto_id'])) {
     $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-    $stmt->execute([intval($_GET['producto_id']), $_SESSION['sucursal_id']]);
+    $stmt->execute([intval($_GET['producto_id']), $sucursalVista]);
     $productoPreseleccionado = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
@@ -35,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         $stmtP = $pdo->prepare("SELECT stock_actual, nombre_producto FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-        $stmtP->execute([$producto_id, $_SESSION['sucursal_id']]);
+        $stmtP->execute([$producto_id, $sucursalVista]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
         if (!$prod) {
@@ -66,7 +67,7 @@ $stmtH = $pdo->prepare("
     ORDER BY m.created_at DESC
     LIMIT 25
 ");
-$stmtH->execute([$_SESSION['sucursal_id']]);
+$stmtH->execute([$sucursalVista]);
 $historial = $stmtH->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos con su proveedor default
@@ -81,7 +82,7 @@ $stmtProds = $pdo->prepare("
     GROUP BY p.producto_id, p.codigo, p.nombre_producto, p.stock_actual, p.stock_minimo, p.stock_maximo
     ORDER BY p.nombre_producto ASC
 ");
-$stmtProds->execute([$_SESSION['sucursal_id']]);
+$stmtProds->execute([$sucursalVista]);
 $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 
 // Todos los proveedores activos
@@ -166,7 +167,9 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
         </div>
     </div>
 
-    <div class="content">
+    <div class="content" style="display:block;padding:24px;">
+        <?php renderSucursalSwitcher(); ?>
+        <div style="display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start;">
         <!-- Formulario -->
         <div>
             <div class="card">
@@ -283,8 +286,9 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                 <?php endif; ?>
             </div>
         </div>
-    </div>
-</div>
+        </div><!-- /inner grid -->
+    </div><!-- /content -->
+</div><!-- /main -->
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }

@@ -7,6 +7,7 @@ require_once __DIR__ . '/_admin_sidebar.php';
 require_once '../vendor/autoload.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -24,7 +25,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
         WHERE p.sucursal_id = ? AND p.activo = 1
         ORDER BY p.nombre_producto ASC
     ");
-    $stmt->execute([$_SESSION['sucursal_id']]);
+    $stmt->execute([$sucursalVista]);
     $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Stock','Mín.','Tipo'];
     $filas = array_map(fn($p) => [
@@ -49,7 +50,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         WHERE p.sucursal_id = ? AND p.activo = 1
         ORDER BY p.nombre_producto ASC
     ");
-    $stmt->execute([$_SESSION['sucursal_id']]);
+    $stmt->execute([$sucursalVista]);
     $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $spreadsheet = new Spreadsheet();
@@ -269,7 +270,7 @@ if (isset($_GET['plantilla'])) {
 // Eliminar producto
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
-    $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $_SESSION['sucursal_id']]);
+    $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
     header('Location: inventario_productos.php?msg=eliminado');
     exit();
 }
@@ -280,7 +281,7 @@ $categoria  = intval($_GET['categoria'] ?? 0);
 $stock_bajo = isset($_GET['stock_bajo']);
 
 $where  = "WHERE p.sucursal_id = ? AND p.activo = 1";
-$params = [$_SESSION['sucursal_id']];
+$params = [$sucursalVista];
 
 if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
@@ -293,7 +294,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtBajo = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
-$stmtBajo->execute([$_SESSION['sucursal_id']]);
+$stmtBajo->execute([$sucursalVista]);
 $totalStockBajo = $stmtBajo->fetchColumn();
 ?>
 <!DOCTYPE html>
@@ -403,6 +404,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <div class="content-header">
             <h1>Inventario de productos</h1>
             <div class="acciones-header">

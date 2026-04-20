@@ -6,6 +6,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $errores = [];
 
@@ -20,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         $stmtP = $pdo->prepare("SELECT stock_actual, nombre_producto FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-        $stmtP->execute([$producto_id, $_SESSION['sucursal_id']]);
+        $stmtP->execute([$producto_id, $sucursalVista]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
         if (!$prod) {
@@ -49,11 +50,11 @@ $stmt = $pdo->prepare("
     WHERE m.tipo = 'Salida' AND p.sucursal_id = ?
     ORDER BY m.created_at DESC LIMIT 30
 ");
-$stmt->execute([$_SESSION['sucursal_id']]);
+$stmt->execute([$sucursalVista]);
 $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto ASC");
-$stmt->execute([$_SESSION['sucursal_id']]);
+$stmt->execute([$sucursalVista]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -127,7 +128,9 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
     </div>
 
-    <div class="content">
+    <div class="content" style="display:block;padding:24px;">
+        <?php renderSucursalSwitcher(); ?>
+        <div style="display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start;">
         <div>
             <div class="card">
                 <h3>Registrar salida</h3>
@@ -209,8 +212,9 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
             </div>
         </div>
-    </div>
-</div>
+        </div><!-- /inner grid -->
+    </div><!-- /content -->
+</div><!-- /main -->
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }

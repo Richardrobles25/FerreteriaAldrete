@@ -6,6 +6,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Ver detalle de compra
 $verDetalle = intval($_GET['ver'] ?? 0);
@@ -87,7 +88,7 @@ $busqueda = trim($_GET['buscar'] ?? '');
 $fecha    = $_GET['fecha'] ?? '';
 
 $where  = "WHERE cp.sucursal_id = ?";
-$params = [$_SESSION['sucursal_id']];
+$params = [$sucursalVista];
 if ($busqueda) { $where .= " AND p.nombre LIKE ?"; $params[] = '%'.$busqueda.'%'; }
 if ($fecha)    { $where .= " AND DATE(cp.created_at) = ?"; $params[] = $fecha; }
 
@@ -106,7 +107,7 @@ $compras = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Datos para el formulario
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo = 1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_compra FROM productos WHERE sucursal_id = ? AND activo = 1 ORDER BY nombre_producto ASC");
-$stmt->execute([$_SESSION['sucursal_id']]);
+$stmt->execute([$sucursalVista]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
@@ -245,6 +246,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     </div>
 
     <div class="content">
+        <?php renderSucursalSwitcher(); ?>
         <!-- Lista de compras -->
         <div>
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">

@@ -276,7 +276,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                                 <td style="font-weight:700;color:<?= $credito['saldo_pendiente'] > 0 ? '#c0392b' : '#2e7d32' ?>;">$<?= number_format($credito['saldo_pendiente'], 2) ?></td>
                                 <td style="font-size:12px;"><?= $credito['fecha_limite'] ? date('d/m/Y', strtotime($credito['fecha_limite'])) : '-' ?></td>
                                 <td><span class="badge badge-<?= strtolower($credito['estado']) ?>"><?= htmlspecialchars($credito['estado']) ?></span></td>
-                                <td><div class="acciones"><a class="btn-accion btn-ver" href="../cajero/abonos.php?ver=<?= intval($credito['credito_id']) ?>">Ver abonos</a></div></td>
+                                <td><div class="acciones"><a class="btn-accion btn-ver" href="abonos.php?ver=<?= intval($credito['credito_id']) ?>">Ver abonos</a></div></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

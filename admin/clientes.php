@@ -92,7 +92,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 
     $stmtExp = $pdo->prepare("
         SELECT
-            c.nombre_completo, c.telefono, c.correo, c.descuento_fijo,
+            c.nombre_completo, c.telefono, c.direccion, c.correo, c.descuento_fijo,
             c.credito_autorizado, c.limite_credito,
             (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.cliente_id) AS total_ventas,
             (SELECT COALESCE(SUM(v.total),0) FROM ventas v WHERE v.cliente_id = c.cliente_id AND v.estado='Completada') AS total_comprado
@@ -105,11 +105,12 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 
     $titulo = 'Listado de Clientes';
     $subtitulo = $busqueda ? "Búsqueda: $busqueda" : 'Todos los clientes';
-    $columnas = ['Nombre','Teléfono','Correo','Descuento %','Crédito','Límite Crédito','No. Ventas','Total Comprado'];
+    $columnas = ['Nombre','Teléfono','Dirección','Correo','Descuento %','Crédito','Límite Crédito','No. Ventas','Total Comprado'];
     $filas = array_map(fn($r) => [
         $r['nombre_completo'],
-        $r['telefono'] ?? '',
-        $r['correo'] ?? '',
+        $r['telefono']  ?: '—',
+        $r['direccion'] ?: '—',
+        $r['correo']    ?: '—',
         $r['descuento_fijo'] . '%',
         $r['credito_autorizado'] ? 'Sí' : 'No',
         '$' . number_format($r['limite_credito'], 2),

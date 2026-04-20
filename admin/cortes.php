@@ -7,15 +7,18 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-$fecha    = $_GET['fecha'] ?? '';
-$sucursal = intval($_GET['sucursal'] ?? 0);
-$usuario  = intval($_GET['usuario'] ?? 0);
+$fechaInicio = $_GET['fecha_inicio'] ?? '';
+$fechaFin    = $_GET['fecha_fin']    ?? '';
+$sucursal    = intval($_GET['sucursal'] ?? 0);
+$usuario     = intval($_GET['usuario']  ?? 0);
 
 $where  = "WHERE 1=1";
 $params = [];
-if ($sucursal) { $where .= " AND c.sucursal_id = ?"; $params[] = $sucursal; }
-if ($usuario)  { $where .= " AND c.usuario_id = ?"; $params[] = $usuario; }
-if ($fecha)    { $where .= " AND DATE(c.abierta_en) = ?"; $params[] = $fecha; }
+if ($sucursal)                 { $where .= " AND c.sucursal_id = ?";                      $params[] = $sucursal; }
+if ($usuario)                  { $where .= " AND c.usuario_id = ?";                       $params[] = $usuario; }
+if ($fechaInicio && $fechaFin) { $where .= " AND DATE(c.abierta_en) BETWEEN ? AND ?";     $params[] = $fechaInicio; $params[] = $fechaFin; }
+elseif ($fechaInicio)          { $where .= " AND DATE(c.abierta_en) >= ?";                $params[] = $fechaInicio; }
+elseif ($fechaFin)             { $where .= " AND DATE(c.abierta_en) <= ?";                $params[] = $fechaFin; }
 
 $stmt = $pdo->prepare("
     SELECT c.*,
@@ -126,8 +129,12 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
         <form method="GET">
             <div class="filtros">
                 <div class="filtro-group">
-                    <label>Fecha</label>
-                    <input type="date" name="fecha" value="<?= htmlspecialchars($fecha) ?>">
+                    <label>Fecha inicio</label>
+                    <input type="date" name="fecha_inicio" value="<?= htmlspecialchars($fechaInicio) ?>">
+                </div>
+                <div class="filtro-group">
+                    <label>Fecha fin</label>
+                    <input type="date" name="fecha_fin" value="<?= htmlspecialchars($fechaFin) ?>">
                 </div>
                 <div class="filtro-group">
                     <label>Sucursal</label>
@@ -148,7 +155,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
                     </select>
                 </div>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
-                <?php if ($fecha||$sucursal||$usuario): ?><a class="btn-limpiar" href="cortes.php">Limpiar</a><?php endif; ?>
+                <?php if ($fechaInicio||$fechaFin||$sucursal||$usuario): ?><a class="btn-limpiar" href="cortes.php">Limpiar</a><?php endif; ?>
             </div>
         </form>
 

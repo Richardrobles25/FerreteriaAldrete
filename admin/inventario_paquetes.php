@@ -212,10 +212,13 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
         </div>
     </div>
 
-    <div class="content">
+    <div style="padding: 14px 20px 0;">
         <div class="filtros">
             <?php renderSucursalSwitcher(); ?>
         </div>
+    </div>
+
+    <div class="content">
         <!-- Lista -->
         <div>
             <?php if (isset($_GET['msg'])): ?>

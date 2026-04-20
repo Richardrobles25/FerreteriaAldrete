@@ -24,6 +24,7 @@ function renderAdminSidebar(string $activeKey): void
             <div class="divider"></div>
             <a class="menu-item<?= $isActive('clientes_admin') ?>" href="clientes.php">Clientes</a>
             <a class="menu-item<?= $isActive('creditos_admin') ?>" href="creditos.php">Creditos</a>
+            <a class="menu-item<?= $isActive('abonos_admin') ?>" href="abonos.php">Abonos</a>
             <div class="divider"></div>
 
             <button type="button" class="menu-item" onclick="toggleAdminSection('inventarioSubmenu')" style="width:100%;text-align:left;background:none;border:none;">

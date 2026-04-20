@@ -229,10 +229,13 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         </div>
     </div>
 
-    <div class="content">
+    <div style="padding: 14px 20px 0;">
         <div class="filtros">
             <?php renderSucursalSwitcher(); ?>
         </div>
+    </div>
+
+    <div class="content">
         <!-- Lista -->
         <div>
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">

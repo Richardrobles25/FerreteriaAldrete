@@ -305,6 +305,17 @@ $totalStockBajo = $stmtBajo->fetchColumn();
     .btn-eliminar { background: #fdecea; color: #c0392b; }
     .btn-eliminar:hover { background: #ffcdd2; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 999; }
+    .modal-overlay.visible { display: flex; }
+    .modal-card { width: 100%; max-width: 520px; background: white; border-radius: 10px; border: 1px solid #e8e8e8; box-shadow: 0 20px 45px rgba(0,0,0,0.18); padding: 22px; }
+    .modal-card h3 { margin: 0 0 10px; font-size: 18px; color: #222; }
+    .modal-card p { margin: 0 0 14px; font-size: 13px; color: #666; line-height: 1.45; }
+    .modal-card textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 13px; font-family: Arial, sans-serif; }
+    .modal-card textarea:focus { outline: none; border-color: #14ace7; }
+    .modal-acciones { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+    .btn-modal-cancelar { background: white; color: #666; border: 1px solid #ddd; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .btn-modal-confirmar { background: #c0392b; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .modal-error { color: #c0392b; font-size: 12px; margin-top: 8px; display: none; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -519,6 +530,18 @@ $totalStockBajo = $stmtBajo->fetchColumn();
     <input type="hidden" name="producto_id" id="inputEliminarProductoId">
     <input type="hidden" name="motivo_eliminacion" id="inputEliminarProductoMotivo">
 </form>
+<div class="modal-overlay" id="modalEliminarProducto" aria-hidden="true">
+    <div class="modal-card">
+        <h3>Eliminar producto</h3>
+        <p id="textoEliminarProducto">Se desactivará el producto seleccionado y el motivo se guardará en el historial de movimientos.</p>
+        <textarea id="textareaEliminarProducto" placeholder="Escribe el motivo de la eliminación"></textarea>
+        <div class="modal-error" id="errorEliminarProducto">Necesitas capturar un motivo para continuar.</div>
+        <div class="modal-acciones">
+            <button type="button" class="btn-modal-cancelar" onclick="cerrarModalEliminacion()">Cancelar</button>
+            <button type="button" class="btn-modal-confirmar" onclick="enviarEliminacionProducto()">Eliminar producto</button>
+        </div>
+    </div>
+</div>
 
 <script>
 function normalizar(str) {
@@ -545,6 +568,40 @@ function confirmarEliminacion(id, nombre) {
 }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleImport() { document.getElementById('importCard').classList.toggle('visible'); }
+let productoEliminarActual = null;
+confirmarEliminacion = function(id, nombre) {
+    productoEliminarActual = { id, nombre };
+    document.getElementById('textoEliminarProducto').textContent = 'Se desactivará "' + nombre + '" y se registrará el motivo en el historial de movimientos.';
+    document.getElementById('textareaEliminarProducto').value = '';
+    document.getElementById('errorEliminarProducto').style.display = 'none';
+    document.getElementById('modalEliminarProducto').classList.add('visible');
+    document.getElementById('modalEliminarProducto').setAttribute('aria-hidden', 'false');
+    setTimeout(() => document.getElementById('textareaEliminarProducto').focus(), 0);
+};
+function cerrarModalEliminacion() {
+    productoEliminarActual = null;
+    document.getElementById('modalEliminarProducto').classList.remove('visible');
+    document.getElementById('modalEliminarProducto').setAttribute('aria-hidden', 'true');
+}
+function enviarEliminacionProducto() {
+    if (!productoEliminarActual) return;
+    const motivo = document.getElementById('textareaEliminarProducto').value.trim();
+    if (!motivo) {
+        document.getElementById('errorEliminarProducto').style.display = 'block';
+        document.getElementById('textareaEliminarProducto').focus();
+        return;
+    }
+    document.getElementById('inputEliminarProductoId').value = productoEliminarActual.id;
+    document.getElementById('inputEliminarProductoMotivo').value = motivo;
+    cerrarModalEliminacion();
+    document.getElementById('formEliminarProducto').submit();
+}
+document.getElementById('modalEliminarProducto').addEventListener('click', function(e) {
+    if (e.target === this) cerrarModalEliminacion();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') cerrarModalEliminacion();
+});
 </script>
 </body>
 </html>

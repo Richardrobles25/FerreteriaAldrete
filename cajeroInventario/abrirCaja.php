@@ -2,6 +2,7 @@
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
+require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
@@ -139,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
             <h2>Abrir Caja</h2>
         </div>
         <div class="topbar-right">
-            <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
             <form method="POST" action="/logout.php">
                 <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>

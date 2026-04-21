@@ -40,7 +40,9 @@
       "Bash(php -l C:/FerreteriaAldrete/admin/__TRACKED_VAR__.php)",
       "Bash(python3 -c \" import sys, json from collections import Counter cmds = Counter\\(\\) for line in sys.stdin: try: obj = json.loads\\(line\\) msg = obj.get\\('message', {}\\) if msg.get\\('role'\\) == 'assistant': for c in msg.get\\('content', []\\): if c.get\\('type'\\) == 'tool_use' and c.get\\('name'\\) == 'Bash': cmd = c.get\\('input', {}\\).get\\('command', ''\\) first = cmd.strip\\(\\).split\\(\\)[0] if cmd.strip\\(\\) else '' cmds[first] += 1 except: pass for k,v in cmds.most_common\\(30\\): print\\(v, k\\) \")",
       "Bash(awk '{print $1}')",
-      "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\")"
+      "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\")",
+      "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\\\\historial.php\")",
+      "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\\\\\")"
     ]
   }
 }

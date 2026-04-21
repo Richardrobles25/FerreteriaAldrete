@@ -124,6 +124,7 @@ $stmt = $pdo->prepare("
         po.nombre_producto,
         po.stock_actual,
         po.sucursal_id,
+        pm.stock_actual AS mi_stock,
         (pm.stock_actual < pm.stock_minimo AND pm.stock_minimo > 0) AS bajo
     FROM productos po
     INNER JOIN productos pm
@@ -140,11 +141,12 @@ $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
 $prodsBySucursal = [];
 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     $prodsBySucursal[$p['sucursal_id']][] = [
-        'id'     => intval($p['producto_id']),
-        'codigo' => $p['codigo'],
-        'nombre' => $p['nombre_producto'],
-        'stock'  => floatval($p['stock_actual']),
-        'bajo'   => (bool)$p['bajo'],
+        'id'       => intval($p['producto_id']),
+        'codigo'   => $p['codigo'],
+        'nombre'   => $p['nombre_producto'],
+        'stock'    => floatval($p['stock_actual']),
+        'mi_stock' => floatval($p['mi_stock']),
+        'bajo'     => (bool)$p['bajo'],
     ];
 }
 ?>
@@ -222,7 +224,10 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     .sug-item:hover { background: #eef8ff; }
     .sug-nombre { color: #333; font-weight: 500; }
     .sug-codigo { font-size: 11px; color: #aaa; margin-left: 6px; }
-    .sug-stock { font-size: 11px; color: #555; white-space: nowrap; margin-left: 8px; }
+    .sug-stocks { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; white-space: nowrap; margin-left: 8px; }
+    .sug-stock-row { font-size: 11px; }
+    .sug-stock-orig { color: #1565c0; }
+    .sug-stock-dest { color: #2e7d32; }
     .badge-bajo { background: #fdecea; color: #c0392b; font-size: 10px; padding: 1px 6px; border-radius: 99px; font-weight: 700; margin-left: 6px; }
     .prod-seleccionado { background: #eef8ff; border: 1px solid #bbdefb; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; display: none; }
     .prod-sel-nombre { font-size: 13px; font-weight: 600; color: #1565c0; }
@@ -483,13 +488,16 @@ function renderSug(prods) {
     const div = document.getElementById('sugerencias');
     if (!prods.length) { hideSug(); return; }
     div.innerHTML = prods.map(p => `
-        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${esc(p.nombre)}', '${esc(p.codigo)}', ${p.stock}, ${p.bajo})">
+        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${esc(p.nombre)}', '${esc(p.codigo)}', ${p.stock}, ${p.mi_stock}, ${p.bajo})">
             <div>
                 <span class="sug-nombre">${esc(p.nombre)}</span>
                 <span class="sug-codigo">${esc(p.codigo)}</span>
                 ${p.bajo ? '<span class="badge-bajo">Stock bajo</span>' : ''}
             </div>
-            <span class="sug-stock">Stock: ${parseFloat(p.stock).toFixed(0)}</span>
+            <div class="sug-stocks">
+                <span class="sug-stock-row sug-stock-orig">Origen: ${parseFloat(p.stock).toFixed(0)}</span>
+                <span class="sug-stock-row sug-stock-dest">Destino: ${parseFloat(p.mi_stock).toFixed(0)}</span>
+            </div>
         </div>
     `).join('');
     div.style.display = 'block';
@@ -497,13 +505,15 @@ function renderSug(prods) {
 
 function hideSug() { document.getElementById('sugerencias').style.display = 'none'; }
 
-function seleccionarProd(id, nombre, codigo, stock, bajo) {
+function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo) {
     prodSelId = id;
     document.getElementById('busquedaProd').value = nombre;
     hideSug();
     document.getElementById('prodSelNombre').textContent = nombre + ' (' + codigo + ')';
-    document.getElementById('prodSelStock').textContent = 'Stock disponible en sucursal origen: ' + parseFloat(stock).toFixed(0);
-    if (bajo) document.getElementById('prodSelStock').textContent += ' — ¡tu sucursal tiene stock bajo de este producto!';
+    document.getElementById('prodSelStock').innerHTML =
+        'Origen: <strong style="color:#1565c0;">' + parseFloat(stock).toFixed(0) + '</strong>' +
+        ' &nbsp;|&nbsp; Destino (tu sucursal): <strong style="color:#2e7d32;">' + parseFloat(mi_stock).toFixed(0) + '</strong>' +
+        (bajo ? ' <span style="color:#c0392b;font-size:11px;">(stock bajo)</span>' : '');
     document.getElementById('prodSeleccionado').style.display = 'block';
     document.getElementById('cantProd').value = '';
     document.getElementById('cantProd').focus();

@@ -115,31 +115,36 @@ $stmt = $pdo->prepare("SELECT sucursal_id, nombre FROM sucursales WHERE activo =
 $stmt->execute([$_SESSION['sucursal_id']]);
 $sucursalesOrigen = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Productos de OTRAS sucursales con stock disponible
-$stmt = $pdo->query("SELECT producto_id, codigo, nombre_producto, stock_actual, sucursal_id FROM productos WHERE activo = 1 AND stock_actual > 0 ORDER BY nombre_producto");
-$allProds = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Codigos de productos que existen en MI sucursal (filtro de productos comunes por codigo)
-$stmt = $pdo->prepare("SELECT codigo FROM productos WHERE sucursal_id = ? AND activo = 1 AND codigo IS NOT NULL AND codigo != ''");
-$stmt->execute([$_SESSION['sucursal_id']]);
-$misCodigos = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'codigo'));
-
-// Codigos con stock bajo en MI sucursal (para sugerir primero en el buscador)
-$stmt = $pdo->prepare("SELECT codigo FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo AND codigo IS NOT NULL AND codigo != ''");
-$stmt->execute([$_SESSION['sucursal_id']]);
-$lowStockCodigos = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'codigo'));
+// INNER JOIN por codigo: solo productos que existen en AMBAS sucursales
+// "bajo" = mi sucursal tiene ese producto con stock < minimo (y minimo > 0)
+$stmt = $pdo->prepare("
+    SELECT
+        po.producto_id,
+        po.codigo,
+        po.nombre_producto,
+        po.stock_actual,
+        po.sucursal_id,
+        (pm.stock_actual < pm.stock_minimo AND pm.stock_minimo > 0) AS bajo
+    FROM productos po
+    INNER JOIN productos pm
+        ON po.codigo = pm.codigo
+        AND pm.sucursal_id = ?
+        AND pm.activo = 1
+    WHERE po.sucursal_id != ?
+      AND po.activo = 1
+      AND po.stock_actual > 0
+    ORDER BY bajo DESC, po.nombre_producto ASC
+");
+$stmt->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
 
 $prodsBySucursal = [];
-foreach ($allProds as $p) {
-    if ($p['sucursal_id'] == $_SESSION['sucursal_id']) continue;
-    // Solo productos cuyo codigo tambien existe en mi sucursal
-    if (!$p['codigo'] || !isset($misCodigos[$p['codigo']])) continue;
+foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     $prodsBySucursal[$p['sucursal_id']][] = [
         'id'     => intval($p['producto_id']),
         'codigo' => $p['codigo'],
         'nombre' => $p['nombre_producto'],
         'stock'  => floatval($p['stock_actual']),
-        'bajo'   => isset($lowStockCodigos[$p['codigo']]),
+        'bajo'   => (bool)$p['bajo'],
     ];
 }
 ?>

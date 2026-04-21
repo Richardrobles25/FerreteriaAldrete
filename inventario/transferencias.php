@@ -366,7 +366,7 @@ foreach ($allProds as $p) {
                         <label>Buscar producto *</label>
                         <div class="search-wrap">
                             <input type="text" id="busquedaProd" class="search-input"
-                                   placeholder="Escribe nombre o código..."
+                                   placeholder="Selecciona primero la sucursal origen..."
                                    autocomplete="off"
                                    oninput="buscarProducto()"
                                    onfocus="buscarProducto()"
@@ -418,10 +418,11 @@ function onOrigenChange(val) {
     const input = document.getElementById('busquedaProd');
     input.value = '';
     input.disabled = !val;
+    input.placeholder = val ? 'Escribe nombre o código...' : 'Selecciona primero la sucursal origen...';
     document.getElementById('prodSeleccionado').style.display = 'none';
-    document.getElementById('sugerencias').style.display = 'none';
     prodSelId = null;
-    if (val) buscarProducto();
+    hideSug();
+    if (val) { setTimeout(() => { input.focus(); }, 50); }
 }
 
 function buscarProducto() {
@@ -429,19 +430,16 @@ function buscarProducto() {
     const q = document.getElementById('busquedaProd').value.toLowerCase().trim();
     if (!origenId || !prodsBySucursal[origenId]) { hideSug(); return; }
 
-    let prods = prodsBySucursal[origenId];
+    let prods = [...prodsBySucursal[origenId]].sort((a, b) => {
+        if (a.bajo !== b.bajo) return b.bajo ? 1 : -1;
+        return a.nombre.localeCompare(b.nombre);
+    });
 
-    // Ordenar: primero los de stock bajo, luego el resto
-    prods = [...prods].sort((a, b) => (b.bajo ? 1 : 0) - (a.bajo ? 1 : 0));
+    const filtered = q === ''
+        ? prods
+        : prods.filter(p => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q));
 
-    let filtered = q === ''
-        ? prods.slice(0, 10)
-        : prods.filter(p => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q)).slice(0, 10);
-
-    // Mostrar hint si hay stock bajo
-    const hayBajo = filtered.some(p => p.bajo);
-    document.getElementById('hintBajo').style.display = hayBajo ? 'block' : 'none';
-
+    document.getElementById('hintBajo').style.display = filtered.some(p => p.bajo) ? 'block' : 'none';
     renderSug(filtered);
 }
 
@@ -523,9 +521,9 @@ function prepararEnvio() {
     return true;
 }
 
-// Cerrar sugerencias al hacer clic fuera
-document.addEventListener('click', function(e) {
-    if (!e.target.closest('.search-wrap')) hideSug();
+// Cerrar sugerencias al perder foco (delay para permitir click en una sugerencia)
+document.getElementById('busquedaProd').addEventListener('blur', function() {
+    setTimeout(hideSug, 200);
 });
 </script>
 </body>

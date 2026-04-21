@@ -140,7 +140,7 @@ if (isset($_GET['editar'])) {
             <h2>Categorías</h2>
         </div>
         <div class="topbar-right">
-            <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
             <form method="POST" action="/logout.php">
                 <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>

@@ -157,7 +157,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
             <h2>Historial de Movimientos</h2>
         </div>
         <div class="topbar-right">
-            <span>Hola, <?= htmlspecialchars($_SESSION['nombre_completo']) ?></span>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
             <form method="POST" action="/logout.php">
                 <button class="logout-btn" type="submit">Cerrar sesión</button>
             </form>
@@ -233,8 +233,9 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
                         <td>
                             <span class="badge-tipo tipo-<?= strtolower($m['tipo']) ?>"><?= $m['tipo'] ?></span>
                         </td>
-                        <td class="<?= in_array($m['tipo'],['Entrada']) ? 'cantidad-entrada' : 'cantidad-salida' ?>">
-                            <?= ($m['tipo']==='Entrada' ? '+' : '-') . number_format($m['cantidad'],3) ?>
+                        <?php $esPos = $m['stock_nuevo'] >= $m['stock_anterior']; ?>
+                        <td class="<?= $esPos ? 'cantidad-entrada' : 'cantidad-salida' ?>">
+                            <?= ($esPos ? '+' : '-') . number_format(abs($m['cantidad']),3) ?>
                         </td>
                         <td><?= number_format($m['stock_anterior'],3) ?></td>
                         <td><?= number_format($m['stock_nuevo'],3) ?></td>

@@ -267,11 +267,35 @@ if (isset($_GET['plantilla'])) {
     exit();
 }
 
-// Eliminar producto
-if (isset($_GET['eliminar'])) {
-    $id = intval($_GET['eliminar']);
-    $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
-    header('Location: inventario_productos.php?msg=eliminado');
+// Eliminar producto con motivo
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto'])) {
+    $id     = intval($_POST['producto_id'] ?? 0);
+    $motivo = trim($_POST['motivo_eliminacion'] ?? '');
+
+    if ($id && $motivo !== '') {
+        $stmtProd = $pdo->prepare("SELECT producto_id, stock_actual FROM productos WHERE producto_id = ? AND sucursal_id = ?");
+        $stmtProd->execute([$id, $sucursalVista]);
+        $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
+
+        if ($productoEliminar) {
+            $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
+            $pdo->prepare("
+                INSERT INTO movimientos_inventario
+                (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+                VALUES (?, ?, 'Ajuste', 0, ?, ?, ?)
+            ")->execute([
+                $id,
+                $_SESSION['usuario_id'],
+                $productoEliminar['stock_actual'],
+                $productoEliminar['stock_actual'],
+                'Producto eliminado: ' . $motivo
+            ]);
+            header('Location: inventario_productos.php?msg=eliminado');
+            exit();
+        }
+    }
+
+    header('Location: inventario_productos.php?msg=error_eliminar');
     exit();
 }
 
@@ -445,6 +469,9 @@ $totalStockBajo = $stmtBajo->fetchColumn();
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'eliminado'): ?>
             <div class="msg msg-exito">Producto eliminado correctamente.</div>
         <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_eliminar'): ?>
+            <div class="msg msg-error">No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.</div>
+        <?php endif; ?>
 
         <form method="GET" action="inventario_productos.php">
             <div class="filtros">
@@ -518,7 +545,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                             <div class="acciones">
                                 <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?>">Editar</a>
                                 <a class="btn-accion btn-entrada" href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
-                                <a class="btn-accion btn-eliminar" href="inventario_productos.php?eliminar=<?= $p['producto_id'] ?>" onclick="return confirm('¿Eliminar este producto?')">Eliminar</a>
+                                <button class="btn-accion btn-eliminar" type="button" onclick="confirmarEliminacion(<?= $p['producto_id'] ?>, <?= json_encode($p['nombre_producto']) ?>)">Eliminar</button>
                             </div>
                         </td>
                     </tr>
@@ -532,6 +559,12 @@ $totalStockBajo = $stmtBajo->fetchColumn();
     </div>
 </div>
 
+<form method="POST" id="formEliminarProducto" style="display:none;">
+    <input type="hidden" name="eliminar_producto" value="1">
+    <input type="hidden" name="producto_id" id="inputEliminarProductoId">
+    <input type="hidden" name="motivo_eliminacion" id="inputEliminarProductoMotivo">
+</form>
+
 <script>
 function normalizar(str) {
     return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -541,6 +574,19 @@ function filtrarTabla(q) {
     document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
+}
+function confirmarEliminacion(id, nombre) {
+    const seguro = confirm('Se va a desactivar "' + nombre + '". Este movimiento se guardara en historial. ¿Deseas continuar?');
+    if (!seguro) return;
+    const motivo = prompt('Escribe el motivo de la eliminacion del producto:');
+    if (motivo === null) return;
+    if (!motivo.trim()) {
+        alert('Necesitas capturar un motivo para eliminar el producto.');
+        return;
+    }
+    document.getElementById('inputEliminarProductoId').value = id;
+    document.getElementById('inputEliminarProductoMotivo').value = motivo.trim();
+    document.getElementById('formEliminarProducto').submit();
 }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleImport() { document.getElementById('importCard').classList.toggle('visible'); }

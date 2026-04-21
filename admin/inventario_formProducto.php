@@ -12,6 +12,13 @@ $errores   = [];
 $esEdicion = isset($_GET['id']);
 $proveedoresProducto = [];
 
+function esValorEnteroValido($valor): bool {
+    if ($valor === null || $valor === '') {
+        return true;
+    }
+    return preg_match('/^\d+$/', trim((string) $valor)) === 1;
+}
+
 if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
     $stmt->execute([intval($_GET['id']), $_SESSION['sucursal_id']]);
@@ -36,10 +43,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $precio_compra    = floatval($_POST['precio_compra'] ?? 0);
     $precio_venta     = floatval($_POST['precio_venta'] ?? 0);
     $precio_mayoreo   = floatval($_POST['precio_mayoreo'] ?? 0);
-    $stock_minimo     = floatval($_POST['stock_minimo'] ?? 0);
-    $stock_maximo     = floatval($_POST['stock_maximo'] ?? 0);
+    $stock_minimo_raw = $_POST['stock_minimo'] ?? 0;
+    $stock_maximo_raw = $_POST['stock_maximo'] ?? 0;
+    $stock_minimo     = floatval($stock_minimo_raw);
+    $stock_maximo     = floatval($stock_maximo_raw);
     $tipo_venta       = $_POST['tipo_venta'] ?? 'Unidad';
-    $cantidad_inicial = floatval($_POST['cantidad_inicial'] ?? 0);
+    $cantidad_inicial_raw = $_POST['cantidad_inicial'] ?? 0;
+    $cantidad_inicial = floatval($cantidad_inicial_raw);
     $proveedores_sel  = $_POST['proveedores'] ?? [];
     $codigos_prov     = $_POST['codigos_prov'] ?? [];
     $producto_id      = intval($_POST['producto_id'] ?? 0);
@@ -47,6 +57,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$codigo)           $errores[] = 'El código es obligatorio.';
     if (!$nombre_producto)  $errores[] = 'El nombre del producto es obligatorio.';
     if ($precio_venta <= 0) $errores[] = 'El precio de venta debe ser mayor a 0.';
+    if (!esValorEnteroValido($stock_minimo_raw)) $errores[] = 'El stock minimo solo acepta valores enteros.';
+    if (!esValorEnteroValido($stock_maximo_raw)) $errores[] = 'El stock maximo solo acepta valores enteros.';
+    if (!$producto_id && !esValorEnteroValido($cantidad_inicial_raw)) {
+        $errores[] = 'La cantidad inicial solo acepta valores enteros.';
+    }
 
     if ($codigo) {
         $stmtCheck = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ? AND producto_id != ?");
@@ -299,6 +314,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Precio de compra</label>
                             <input type="number" name="precio_compra"
                                 value="<?= $_POST['precio_compra'] ?? $editando['precio_compra'] ?? 0 ?>"
+                                class="js-zero-default"
                                 step="0.01" min="0" placeholder="0.00"
                                 oninput="calcularMargen()">
                         </div>
@@ -306,6 +322,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Precio de venta *</label>
                             <input type="number" name="precio_venta"
                                 value="<?= $_POST['precio_venta'] ?? $editando['precio_venta'] ?? '' ?>"
+                                class="js-zero-default"
                                 step="0.01" min="0.01" placeholder="0.00"
                                 oninput="calcularMargen()">
                         </div>
@@ -313,6 +330,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Precio mayoreo</label>
                             <input type="number" name="precio_mayoreo"
                                 value="<?= $_POST['precio_mayoreo'] ?? $editando['precio_mayoreo'] ?? 0 ?>"
+                                class="js-zero-default"
                                 step="0.01" min="0" placeholder="0.00">
                         </div>
                     </div>
@@ -328,6 +346,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Cantidad inicial</label>
                             <input type="number" name="cantidad_inicial"
                                 value="<?= $_POST['cantidad_inicial'] ?? 0 ?>"
+                                class="js-zero-default js-entero"
                                 step="1" min="0" placeholder="0">
                             <div class="hint">Stock con el que arranca.</div>
                         </div>
@@ -336,6 +355,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Stock mínimo</label>
                             <input type="number" name="stock_minimo"
                                 value="<?= $_POST['stock_minimo'] ?? $editando['stock_minimo'] ?? 0 ?>"
+                                class="js-zero-default js-entero"
                                 step="1" min="0" placeholder="0">
                             <div class="hint">Dispara alerta de reabasto.</div>
                         </div>
@@ -343,6 +363,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Stock máximo</label>
                             <input type="number" name="stock_maximo"
                                 value="<?= $_POST['stock_maximo'] ?? $editando['stock_maximo'] ?? 0 ?>"
+                                class="js-zero-default js-entero"
                                 step="1" min="0" placeholder="0">
                         </div>
                     </div>
@@ -592,6 +613,27 @@ function seleccionarTipo(valor) {
 
 // ── Inicializar margen al cargar en modo edición ───────────────────────────
 calcularMargen();
+
+document.querySelectorAll('.js-zero-default').forEach((input) => {
+    input.addEventListener('focus', function() {
+        const valor = String(this.value ?? '').trim();
+        if (valor === '0' || valor === '0.00' || valor === '0,00') {
+            this.value = '';
+        }
+    });
+    input.addEventListener('blur', function() {
+        if (String(this.value ?? '').trim() === '') {
+            this.value = this.step === '1' ? '0' : '0.00';
+            if (typeof this.oninput === 'function') this.oninput();
+        }
+    });
+});
+
+document.querySelectorAll('.js-entero').forEach((input) => {
+    input.addEventListener('input', function() {
+        this.value = this.value.replace(/[^\d]/g, '');
+    });
+});
 </script>
 </body>
 </html>

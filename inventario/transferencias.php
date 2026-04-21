@@ -14,8 +14,14 @@ if (isset($_GET['accion']) && isset($_GET['id'])) {
 
     if ($accion === 'aprobar') {
         // La sucursal ORIGEN aprueba (tiene los productos y acepta enviarlos)
-        $pdo->prepare("UPDATE transferencias SET estado='Aprobada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
-            ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
+        $notaAprobacion = 'Aceptada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Preparar envio a sucursal destino.';
+        $pdo->prepare("
+            UPDATE transferencias
+            SET estado='Aprobada',
+                usuario_aprueba_id=?,
+                notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?))
+            WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?
+        ")->execute([$_SESSION['usuario_id'], $notaAprobacion, $id, $miSucursal]);
     } elseif ($accion === 'rechazar') {
         $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
             ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
@@ -293,7 +299,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs = [
                     'solicitado' => 'Solicitud enviada. La sucursal origen debe aprobarla.',
-                    'aprobar'    => 'Transferencia aprobada. Marca los productos como enviados cuando los despaches.',
+                    'aprobar'    => 'Transferencia aprobada. Se agrego una nota para la sucursal que recibira el pedido.',
                     'rechazar'   => 'Transferencia rechazada.',
                     'enviar'     => 'Productos marcados como enviados. La sucursal destino debe confirmar la recepcion.',
                     'recibir'    => 'Recepcion confirmada. El stock fue actualizado en ambas sucursales.',

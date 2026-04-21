@@ -677,6 +677,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     </div>
                     <button class="btn-quitar-cliente" onclick="quitarCliente()">Quitar</button>
                 </div>
+                <div id="clienteDescuentoConfig" style="display:none;margin-top:10px;padding:10px 12px;background:#f8fbff;border:1px solid #dbeafe;border-radius:6px;">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#444;margin-bottom:8px;">
+                        <input type="checkbox" id="aplicarDescCliente" checked onchange="recalcularTodo()">
+                        Aplicar descuento del cliente
+                    </label>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span style="font-size:12px;color:#666;">Porcentaje a aplicar</span>
+                        <input type="number" id="porcDescCliente" value="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()">
+                        <span id="clienteDescMax" style="font-size:12px;color:#888;"></span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -711,22 +722,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <div class="campos-pago" id="camposTerminal">
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
-                            <input type="number" id="porcComision" placeholder="0" step="0.1" value="0" oninput="recalcularTodo()">
+                            <input type="number" id="porcComision" placeholder="0" step="0.1" value="4.6" class="js-zero-default" oninput="recalcularTodo()">
                         </div>
                     </div>
 
                     <div class="campos-pago" id="camposMixto">
                         <div class="form-group-sm">
                             <label>Monto efectivo</label>
-                            <input type="number" id="mixtoEfectivo" placeholder="0.00" step="0.01" oninput="calcularMixto()">
+                            <input type="number" id="mixtoEfectivo" placeholder="0.00" step="0.01" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                         <div class="form-group-sm">
                             <label>Monto terminal</label>
-                            <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" oninput="calcularMixto()">
+                            <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
-                            <input type="number" id="mixtoComision" placeholder="0" step="0.1" value="0" oninput="calcularMixto()">
+                            <input type="number" id="mixtoComision" placeholder="0" step="0.1" value="4.6" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                     </div>
                 </div>
@@ -1198,6 +1209,11 @@ function seleccionarCliente(id, nombre, telefono, descuento, credito) {
     document.getElementById('clienteTelefono').textContent  = telefono;
     document.getElementById('clienteDescuento').textContent = descuento > 0 ? 'Desc: '+descuento+'%' : '';
     document.getElementById('clienteSeleccionado').style.display = 'flex';
+    document.getElementById('clienteDescuentoConfig').style.display = descuento > 0 ? 'block' : 'none';
+    document.getElementById('aplicarDescCliente').checked = descuento > 0;
+    document.getElementById('porcDescCliente').value = parseFloat(descuento || 0).toFixed(1);
+    document.getElementById('porcDescCliente').max = parseFloat(descuento || 0).toFixed(1);
+    document.getElementById('clienteDescMax').textContent = descuento > 0 ? 'Maximo: ' + parseFloat(descuento).toFixed(1) + '%' : '';
     document.getElementById('inputClienteId').value = id;
     document.getElementById('btnCredito').style.display = credito ? 'block' : 'none';
     recalcularTodo();
@@ -1206,6 +1222,7 @@ function seleccionarCliente(id, nombre, telefono, descuento, credito) {
 function quitarCliente() {
     clienteActual = null;
     document.getElementById('clienteSeleccionado').style.display = 'none';
+    document.getElementById('clienteDescuentoConfig').style.display = 'none';
     document.getElementById('inputClienteId').value = '';
     document.getElementById('btnCredito').style.display = 'none';
     if (metodoPago === 'Credito') {
@@ -1213,6 +1230,17 @@ function quitarCliente() {
         document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
         document.querySelectorAll('.campos-pago').forEach(c => c.classList.remove('visible'));
     }
+    recalcularTodo();
+}
+
+function ajustarDescuentoCliente() {
+    if (!clienteActual) return;
+    const input = document.getElementById('porcDescCliente');
+    const maximo = parseFloat(clienteActual.descuento || 0);
+    let valor = parseFloat(input.value || 0);
+    if (Number.isNaN(valor) || valor < 0) valor = 0;
+    if (valor > maximo) valor = maximo;
+    input.value = valor.toFixed(1);
     recalcularTodo();
 }
 
@@ -1233,7 +1261,9 @@ function seleccionarMetodo(metodo, btn) {
 // ── Cálculos ─────────────────────────────────────────────────────────────────
 function recalcularTodo() {
     let subtotal  = carrito.reduce((a,i) => a + (i.cantidad * i.precio), 0);
-    let descuento = (clienteActual && clienteActual.descuento > 0) ? subtotal*(clienteActual.descuento/100) : 0;
+    const usarDescuentoCliente = clienteActual && clienteActual.descuento > 0 && document.getElementById('aplicarDescCliente').checked;
+    const porcentajeDescuento = usarDescuentoCliente ? (parseFloat(document.getElementById('porcDescCliente').value) || 0) : 0;
+    let descuento = porcentajeDescuento > 0 ? subtotal*(porcentajeDescuento/100) : 0;
     let comision  = 0;
     if (metodoPago === 'Terminal') {
         comision = (subtotal-descuento) * ((parseFloat(document.getElementById('porcComision').value)||0)/100);
@@ -1467,6 +1497,21 @@ document.addEventListener('click', function(e) {
 function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+
+document.querySelectorAll('.js-zero-default').forEach((input) => {
+    input.addEventListener('focus', function() {
+        const valor = String(this.value ?? '').trim();
+        if (valor === '0' || valor === '0.00' || valor === '0.0' || valor === '4.6') {
+            this.value = '';
+        }
+    });
+    input.addEventListener('blur', function() {
+        if (String(this.value ?? '').trim() === '') {
+            this.value = this.id.toLowerCase().includes('comision') ? '4.6' : '0.00';
+            if (typeof this.oninput === 'function') this.oninput();
+        }
+    });
+});
 </script>
 </body>
 </html>

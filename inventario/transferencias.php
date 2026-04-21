@@ -109,9 +109,14 @@ $stmt = $pdo->prepare("SELECT sucursal_id, nombre FROM sucursales WHERE activo =
 $stmt->execute([$_SESSION['sucursal_id']]);
 $sucursalesOrigen = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Productos de OTRAS sucursales agrupados por sucursal (para el buscador en el formulario)
+// Productos de OTRAS sucursales con stock disponible
 $stmt = $pdo->query("SELECT producto_id, codigo, nombre_producto, stock_actual, sucursal_id FROM productos WHERE activo = 1 AND stock_actual > 0 ORDER BY nombre_producto");
 $allProds = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// IDs de productos que existen en MI sucursal (para mostrar solo los comunes)
+$stmt = $pdo->prepare("SELECT producto_id FROM productos WHERE sucursal_id = ? AND activo = 1");
+$stmt->execute([$_SESSION['sucursal_id']]);
+$misProductoIds = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'producto_id'));
 
 // Productos con stock bajo en MI sucursal (para sugerir primero en el buscador)
 $stmt = $pdo->prepare("SELECT producto_id FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
@@ -121,6 +126,8 @@ $lowStockSet = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'produ
 $prodsBySucursal = [];
 foreach ($allProds as $p) {
     if ($p['sucursal_id'] == $_SESSION['sucursal_id']) continue;
+    // Solo productos que también existen en mi sucursal (para poder actualizar el stock al recibir)
+    if (!isset($misProductoIds[$p['producto_id']])) continue;
     $prodsBySucursal[$p['sucursal_id']][] = [
         'id'     => intval($p['producto_id']),
         'codigo' => $p['codigo'],

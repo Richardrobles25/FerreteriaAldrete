@@ -250,7 +250,7 @@
         usuario_solicita_id INT UNSIGNED NOT NULL,
         usuario_aprueba_id INT UNSIGNED,
         cantidad DECIMAL(10,3) NOT NULL,
-        estado ENUM('Pendiente', 'Aprobada', 'Rechazada', 'Entregada') DEFAULT 'Pendiente',
+        estado ENUM('Pendiente', 'Aprobada', 'Rechazada', 'En tránsito', 'Entregada') DEFAULT 'Pendiente',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

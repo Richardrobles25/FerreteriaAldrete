@@ -371,6 +371,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Precio de compra</label>
                             <input type="number" name="precio_compra"
                                 value="<?= $_POST['precio_compra'] ?? $editando['precio_compra'] ?? 0 ?>"
+                                id="inputPrecioCompra"
                                 class="js-zero-default"
                                 step="0.01" min="0" placeholder="0.00"
                                 oninput="calcularMargen()">
@@ -379,6 +380,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Precio de venta *</label>
                             <input type="number" name="precio_venta"
                                 value="<?= $_POST['precio_venta'] ?? $editando['precio_venta'] ?? '' ?>"
+                                id="inputPrecioVenta"
                                 class="js-zero-default"
                                 step="0.01" min="0.01" placeholder="0.00"
                                 oninput="calcularMargen()">
@@ -389,6 +391,16 @@ if ($editando && $editando['categoria_id']) {
                                 value="<?= $_POST['precio_mayoreo'] ?? $editando['precio_mayoreo'] ?? 0 ?>"
                                 class="js-zero-default"
                                 step="0.01" min="0" placeholder="0.00">
+                        </div>
+                    </div>
+                    <div class="form-row-2">
+                        <div class="form-group">
+                            <label>Porcentaje de ganancia</label>
+                            <input type="number" id="inputPorcentajeGanancia"
+                                class="js-zero-default"
+                                step="0.01" min="0" placeholder="0.00"
+                                oninput="actualizarPrecioDesdeGanancia()">
+                            <div class="hint">Al modificarlo se recalcula el precio de venta.</div>
                         </div>
                     </div>
                     <div class="margen-preview" id="margenPreview"></div>
@@ -404,7 +416,7 @@ if ($editando && $editando['categoria_id']) {
                             <input type="number" name="cantidad_inicial"
                                 value="<?= $_POST['cantidad_inicial'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
-                                step="1" min="0" placeholder="0">
+                                step="1" min="0" placeholder="0" inputmode="decimal" lang="en">
                             <div class="hint">Stock con el que arranca.</div>
                         </div>
                         <?php endif; ?>
@@ -413,7 +425,7 @@ if ($editando && $editando['categoria_id']) {
                             <input type="number" name="stock_minimo"
                                 value="<?= $_POST['stock_minimo'] ?? $editando['stock_minimo'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
-                                step="1" min="0" placeholder="0">
+                                step="1" min="0" placeholder="0" inputmode="decimal" lang="en">
                             <div class="hint">Dispara alerta de reabasto.</div>
                         </div>
                         <div class="form-group">
@@ -421,7 +433,8 @@ if ($editando && $editando['categoria_id']) {
                             <input type="number" name="stock_maximo"
                                 value="<?= $_POST['stock_maximo'] ?? $editando['stock_maximo'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
-                                step="1" min="0" placeholder="0">
+                                step="1" min="0" placeholder="0" inputmode="decimal" lang="en">
+                            <div class="hint" id="hintStockDecimales">Si eliges Suelto / Granel puedes usar decimales.</div>
                         </div>
                     </div>
 
@@ -644,13 +657,17 @@ document.addEventListener('click', function(e) {
 
 // ── Margen de ganancia ─────────────────────────────────────────────────────
 function calcularMargen() {
-    const compra  = parseFloat(document.querySelector('[name=precio_compra]').value) || 0;
-    const venta   = parseFloat(document.querySelector('[name=precio_venta]').value) || 0;
+    const compra  = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
+    const venta   = parseFloat(document.getElementById('inputPrecioVenta').value) || 0;
     const preview = document.getElementById('margenPreview');
+    const inputGanancia = document.getElementById('inputPorcentajeGanancia');
 
     if (compra > 0 && venta > 0) {
         const utilidad = venta - compra;
         const margen   = ((utilidad / compra) * 100).toFixed(1);
+        if (document.activeElement !== inputGanancia) {
+            inputGanancia.value = margen;
+        }
         preview.style.display = 'block';
         preview.className = `margen-preview ${utilidad >= 0 ? 'positivo' : 'negativo'}`;
         preview.textContent = utilidad >= 0
@@ -658,10 +675,24 @@ function calcularMargen() {
             : `⚠ Precio de venta menor al costo · Pérdida: $${Math.abs(utilidad).toFixed(2)}`;
     } else {
         preview.style.display = 'none';
+        if (inputGanancia && document.activeElement !== inputGanancia) {
+            inputGanancia.value = '';
+        }
     }
 }
 
 // ── Tipo de venta ──────────────────────────────────────────────────────────
+function actualizarPrecioDesdeGanancia() {
+    const compra = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
+    const porcentaje = parseFloat(document.getElementById('inputPorcentajeGanancia').value) || 0;
+    if (compra <= 0) {
+        calcularMargen();
+        return;
+    }
+    document.getElementById('inputPrecioVenta').value = (compra * (1 + (porcentaje / 100))).toFixed(2);
+    calcularMargen();
+}
+
 function seleccionarTipo(valor) {
     document.querySelectorAll('.tipo-btn').forEach(b => b.classList.remove('selected'));
     const radio = document.querySelector(`input[name="tipo_venta"][value="${valor}"]`);
@@ -674,12 +705,19 @@ function actualizarModoCantidades() {
     const permiteDecimal = tipoVenta === 'Suelto';
     document.querySelectorAll('.js-stock-control').forEach((input) => {
         input.step = permiteDecimal ? '0.001' : '1';
+        input.setAttribute('inputmode', permiteDecimal ? 'decimal' : 'numeric');
         input.dataset.decimales = permiteDecimal ? 'si' : 'no';
         if (!permiteDecimal && String(input.value).includes('.')) {
             const entero = Math.floor(parseFloat(input.value) || 0);
             input.value = String(entero);
         }
     });
+    const hint = document.getElementById('hintStockDecimales');
+    if (hint) {
+        hint.textContent = permiteDecimal
+            ? 'Modo Suelto / Granel activo: puedes usar decimales como 0.25, 1.5 o 2.75.'
+            : 'Modo Unidad activo: aquí solo se aceptan números enteros.';
+    }
 }
 
 // ── Inicializar margen al cargar en modo edición ───────────────────────────
@@ -719,7 +757,14 @@ document.querySelectorAll('.js-stock-control').forEach((input) => {
     });
 });
 
+document.querySelectorAll('input[name="tipo_venta"]').forEach((radio) => {
+    radio.addEventListener('change', function() {
+        seleccionarTipo(this.value);
+    });
+});
+
 actualizarModoCantidades();
+calcularMargen();
 </script>
 </body>
 </html>

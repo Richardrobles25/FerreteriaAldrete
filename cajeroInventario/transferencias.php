@@ -39,17 +39,26 @@ if (isset($_GET['accion']) && isset($_GET['id'])) {
                 $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Transferencia',?,?,?,'Transferencia enviada')")
                     ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
 
-                $stmtDest = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-                $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
+                // Buscar producto destino por codigo (los producto_id difieren entre sucursales)
+                $stmtDest = $pdo->prepare("
+                    SELECT p2.producto_id, p2.stock_actual
+                    FROM productos p1
+                    JOIN productos p2 ON p1.codigo = p2.codigo
+                        AND p2.sucursal_id = ? AND p2.activo = 1
+                    WHERE p1.producto_id = ?
+                    LIMIT 1
+                ");
+                $stmtDest->execute([$transf['sucursal_destino_id'], $transf['producto_id']]);
                 $prodDest = $stmtDest->fetch(PDO::FETCH_ASSOC);
 
                 if ($prodDest) {
+                    $destProdId     = $prodDest['producto_id'];
                     $stockAntDest   = $prodDest['stock_actual'];
                     $stockNuevoDest = $stockAntDest + $transf['cantidad'];
-                    $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-                        ->execute([$stockNuevoDest, $transf['producto_id'], $transf['sucursal_destino_id']]);
+                    $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")
+                        ->execute([$stockNuevoDest, $destProdId]);
                     $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Transferencia',?,?,?,'Transferencia recibida')")
-                        ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
+                        ->execute([$destProdId, $_SESSION['usuario_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
                 }
 
                 $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
@@ -110,27 +119,27 @@ $sucursalesOrigen = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $stmt = $pdo->query("SELECT producto_id, codigo, nombre_producto, stock_actual, sucursal_id FROM productos WHERE activo = 1 AND stock_actual > 0 ORDER BY nombre_producto");
 $allProds = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// IDs de productos que existen en MI sucursal (para mostrar solo los comunes)
-$stmt = $pdo->prepare("SELECT producto_id FROM productos WHERE sucursal_id = ? AND activo = 1");
+// Codigos de productos que existen en MI sucursal (filtro de productos comunes por codigo)
+$stmt = $pdo->prepare("SELECT codigo FROM productos WHERE sucursal_id = ? AND activo = 1 AND codigo IS NOT NULL AND codigo != ''");
 $stmt->execute([$_SESSION['sucursal_id']]);
-$misProductoIds = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'producto_id'));
+$misCodigos = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'codigo'));
 
-// Productos con stock bajo en MI sucursal (para sugerir primero)
-$stmt = $pdo->prepare("SELECT producto_id FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
+// Codigos con stock bajo en MI sucursal (para sugerir primero en el buscador)
+$stmt = $pdo->prepare("SELECT codigo FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo AND codigo IS NOT NULL AND codigo != ''");
 $stmt->execute([$_SESSION['sucursal_id']]);
-$lowStockSet = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'producto_id'));
+$lowStockCodigos = array_flip(array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'codigo'));
 
 $prodsBySucursal = [];
 foreach ($allProds as $p) {
     if ($p['sucursal_id'] == $_SESSION['sucursal_id']) continue;
-    // Solo productos que también existen en mi sucursal (para poder actualizar el stock al recibir)
-    if (!isset($misProductoIds[$p['producto_id']])) continue;
+    // Solo productos cuyo codigo tambien existe en mi sucursal
+    if (!$p['codigo'] || !isset($misCodigos[$p['codigo']])) continue;
     $prodsBySucursal[$p['sucursal_id']][] = [
         'id'     => intval($p['producto_id']),
         'codigo' => $p['codigo'],
         'nombre' => $p['nombre_producto'],
         'stock'  => floatval($p['stock_actual']),
-        'bajo'   => isset($lowStockSet[$p['producto_id']]),
+        'bajo'   => isset($lowStockCodigos[$p['codigo']]),
     ];
 }
 ?>

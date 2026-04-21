@@ -18,6 +18,14 @@ function esValorEnteroValido($valor): bool {
     return preg_match('/^\d+$/', trim((string) $valor)) === 1;
 }
 
+function normalizarNumeroFormulario($valor): string {
+    $valor = trim((string) $valor);
+    if ($valor === '') {
+        return '0';
+    }
+    return str_replace(',', '.', $valor);
+}
+
 if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
     $stmt->execute([intval($_GET['id']), $_SESSION['sucursal_id']]);
@@ -39,16 +47,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nombre_producto  = trim($_POST['nombre_producto'] ?? '');
     $descripcion      = trim($_POST['descripcion'] ?? '');
     $categoria_id     = intval($_POST['categoria_id'] ?? 0) ?: null;
-    $precio_compra    = floatval($_POST['precio_compra'] ?? 0);
-    $precio_venta     = floatval($_POST['precio_venta'] ?? 0);
-    $precio_mayoreo   = floatval($_POST['precio_mayoreo'] ?? 0);
+    $precio_compra    = floatval(normalizarNumeroFormulario($_POST['precio_compra'] ?? 0));
+    $precio_venta     = floatval(normalizarNumeroFormulario($_POST['precio_venta'] ?? 0));
+    $precio_mayoreo   = floatval(normalizarNumeroFormulario($_POST['precio_mayoreo'] ?? 0));
     $stock_minimo_raw = $_POST['stock_minimo'] ?? 0;
     $stock_maximo_raw = $_POST['stock_maximo'] ?? 0;
-    $stock_minimo     = floatval($stock_minimo_raw);
-    $stock_maximo     = floatval($stock_maximo_raw);
+    $stock_minimo     = floatval(normalizarNumeroFormulario($stock_minimo_raw));
+    $stock_maximo     = floatval(normalizarNumeroFormulario($stock_maximo_raw));
     $tipo_venta       = $_POST['tipo_venta'] ?? 'Unidad';
     $cantidad_inicial_raw = $_POST['cantidad_inicial'] ?? 0;
-    $cantidad_inicial = floatval($cantidad_inicial_raw);
+    $cantidad_inicial = floatval(normalizarNumeroFormulario($cantidad_inicial_raw));
     $proveedores_sel  = $_POST['proveedores'] ?? [];
     $codigos_prov     = $_POST['codigos_prov'] ?? [];
     $producto_id      = intval($_POST['producto_id'] ?? 0);
@@ -669,7 +677,8 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
 document.querySelectorAll('.js-stock-control').forEach((input) => {
     input.addEventListener('input', function() {
         if (this.dataset.decimales === 'si') {
-            this.value = this.value.replace(/[^0-9.]/g, '');
+            this.value = this.value.replace(/[^0-9.,]/g, '');
+            this.value = this.value.replace(',', '.');
             const partes = this.value.split('.');
             if (partes.length > 2) {
                 this.value = partes.shift() + '.' + partes.join('');

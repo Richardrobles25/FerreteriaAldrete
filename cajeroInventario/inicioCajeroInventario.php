@@ -35,6 +35,35 @@ $stockBajo = $stmtStock->fetchColumn();
 $stmtCred = $pdo->query("SELECT COUNT(*) FROM creditos WHERE estado = 'Activo'");
 $creditosActivos = $stmtCred->fetchColumn();
 
+// Notificaciones de transferencias
+$mySuc = $_SESSION['sucursal_id'];
+
+$stmt = $pdo->prepare("
+    SELECT t.transferencias_id, t.cantidad,
+           COALESCE(p.nombre_producto,'?') AS nombre_producto,
+           COALESCE(mp.stock_actual,0) AS mi_stock,
+           sd.nombre AS sucursal_destino
+    FROM transferencias t
+    LEFT JOIN productos p ON t.producto_id = p.producto_id AND p.sucursal_id = ?
+    LEFT JOIN productos mp ON t.producto_id = mp.producto_id AND mp.sucursal_id = ?
+    JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
+    WHERE t.sucursal_origen_id = ? AND t.estado = 'Pendiente'
+    ORDER BY t.created_at ASC LIMIT 5
+");
+$stmt->execute([$mySuc, $mySuc, $mySuc]);
+$solicitudesPendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$transfParaAprobar = count($solicitudesPendientes);
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_origen_id = ? AND estado = 'Aprobada'");
+$stmt->execute([$mySuc]);
+$transfParaEnviar = intval($stmt->fetchColumn());
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'En tránsito'");
+$stmt->execute([$mySuc]);
+$transfParaRecibir = intval($stmt->fetchColumn());
+
+$totalTransfAlertas = $transfParaAprobar + $transfParaEnviar + $transfParaRecibir;
+
 // Últimas ventas del turno
 $ultimasVentas = [];
 if ($cajaActual) {
@@ -123,6 +152,12 @@ if ($cajaActual) {
     .badge-terminal { background: #e3f2fd; color: #1565c0; }
     .badge-mixto { background: #f3e5f5; color: #6a1b9a; }
     .badge-credito { background: #e3f2fd; color: #1565c0; }
+    .notif-transf { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; font-size: 13px; color: #1565c0; }
+    .notif-transf a { color: #1565c0; font-weight: 700; text-decoration: none; white-space: nowrap; margin-left: 16px; }
+    .notif-transf-enviar { background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #2e7d32; }
+    .notif-transf-enviar a { color: #2e7d32; font-weight: 700; text-decoration: none; }
+    .notif-transf-recibir { background: #f3e5f5; border: 1px solid #e1bee7; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #6a1b9a; }
+    .notif-transf-recibir a { color: #6a1b9a; font-weight: 700; text-decoration: none; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -168,7 +203,7 @@ if ($cajaActual) {
 
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
-        <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="transferencias.php">Transferencias <?= $totalTransfAlertas>0?"({$totalTransfAlertas})":'' ?></a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -209,6 +244,36 @@ if ($cajaActual) {
                 </div>
                 <a class="btn-caja btn-abrir" href="abrirCaja.php">Abrir caja</a>
             </div>
+        <?php endif; ?>
+
+        <!-- Notificaciones de transferencias -->
+        <?php if ($transfParaAprobar > 0): ?>
+        <div class="notif-transf">
+            <div>
+                <div>&#128230; <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
+                <?php foreach ($solicitudesPendientes as $sp): ?>
+                <div style="font-size:12px;margin-top:5px;padding-left:6px;">
+                    &bull; <strong><?= htmlspecialchars($sp['nombre_producto']) ?></strong>
+                    &times; <?= number_format($sp['cantidad'], 0) ?>
+                    &mdash; Tu stock: <strong style="color:<?= $sp['mi_stock'] < $sp['cantidad'] ? '#c0392b' : '#2e7d32' ?>;"><?= number_format($sp['mi_stock'], 0) ?></strong>
+                    <span style="opacity:.65;">(pide: <?= htmlspecialchars($sp['sucursal_destino']) ?>)</span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <a href="transferencias.php">Ver</a>
+        </div>
+        <?php endif; ?>
+        <?php if ($transfParaEnviar > 0): ?>
+        <div class="notif-transf-enviar">
+            <span>&#9989; Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
+            <a href="transferencias.php">Ver transferencias</a>
+        </div>
+        <?php endif; ?>
+        <?php if ($transfParaRecibir > 0): ?>
+        <div class="notif-transf-recibir">
+            <span>&#128666; Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepcion.</span>
+            <a href="transferencias.php">Ver transferencias</a>
+        </div>
         <?php endif; ?>
 
         <!-- Alerta stock bajo -->
@@ -271,8 +336,8 @@ if ($cajaActual) {
                 <div class="acceso-info"><h4>Créditos</h4><p>Ver saldos pendientes</p></div>
             </a>
             <a class="acceso-card" href="transferencias.php">
-                <div class="acceso-icon icon-inv">🔄</div>
-                <div class="acceso-info"><h4>Transferencias</h4><p>Stock entre sucursales</p></div>
+                <div class="acceso-icon icon-inv">&#128260;</div>
+                <div class="acceso-info"><h4>Transferencias</h4><p><?= $totalTransfAlertas>0?$totalTransfAlertas.' pendiente(s)':'Stock entre sucursales' ?></p></div>
             </a>
         </div>
 

@@ -56,10 +56,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$codigo)           $errores[] = 'El código es obligatorio.';
     if (!$nombre_producto)  $errores[] = 'El nombre del producto es obligatorio.';
     if ($precio_venta <= 0) $errores[] = 'El precio de venta debe ser mayor a 0.';
-    if (!esValorEnteroValido($stock_minimo_raw)) $errores[] = 'El stock minimo solo acepta valores enteros.';
-    if (!esValorEnteroValido($stock_maximo_raw)) $errores[] = 'El stock maximo solo acepta valores enteros.';
-    if (!$producto_id && !esValorEnteroValido($cantidad_inicial_raw)) {
-        $errores[] = 'La cantidad inicial solo acepta valores enteros.';
+    if ($tipo_venta !== 'Suelto') {
+        if (!esValorEnteroValido($stock_minimo_raw)) $errores[] = 'El stock minimo solo acepta valores enteros cuando el tipo de venta es por unidad.';
+        if (!esValorEnteroValido($stock_maximo_raw)) $errores[] = 'El stock maximo solo acepta valores enteros cuando el tipo de venta es por unidad.';
+        if (!$producto_id && !esValorEnteroValido($cantidad_inicial_raw)) {
+            $errores[] = 'La cantidad inicial solo acepta valores enteros cuando el tipo de venta es por unidad.';
+        }
     }
 
     if ($codigo) {
@@ -367,7 +369,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Cantidad inicial</label>
                             <input type="number" name="cantidad_inicial"
                                 value="<?= $_POST['cantidad_inicial'] ?? 0 ?>"
-                                class="js-zero-default js-entero"
+                                class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0">
                             <div class="hint">Stock con el que arranca.</div>
                         </div>
@@ -376,7 +378,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Stock mínimo</label>
                             <input type="number" name="stock_minimo"
                                 value="<?= $_POST['stock_minimo'] ?? $editando['stock_minimo'] ?? 0 ?>"
-                                class="js-zero-default js-entero"
+                                class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0">
                             <div class="hint">Dispara alerta de reabasto.</div>
                         </div>
@@ -384,7 +386,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Stock máximo</label>
                             <input type="number" name="stock_maximo"
                                 value="<?= $_POST['stock_maximo'] ?? $editando['stock_maximo'] ?? 0 ?>"
-                                class="js-zero-default js-entero"
+                                class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0">
                         </div>
                     </div>
@@ -630,6 +632,20 @@ function seleccionarTipo(valor) {
     document.querySelectorAll('.tipo-btn').forEach(b => b.classList.remove('selected'));
     const radio = document.querySelector(`input[name="tipo_venta"][value="${valor}"]`);
     if (radio) { radio.checked = true; radio.closest('.tipo-btn').classList.add('selected'); }
+    actualizarModoCantidades();
+}
+
+function actualizarModoCantidades() {
+    const tipoVenta = document.querySelector('input[name="tipo_venta"]:checked')?.value || 'Unidad';
+    const permiteDecimal = tipoVenta === 'Suelto';
+    document.querySelectorAll('.js-stock-control').forEach((input) => {
+        input.step = permiteDecimal ? '0.001' : '1';
+        input.dataset.decimales = permiteDecimal ? 'si' : 'no';
+        if (!permiteDecimal && String(input.value).includes('.')) {
+            const entero = Math.floor(parseFloat(input.value) || 0);
+            input.value = String(entero);
+        }
+    });
 }
 
 // ── Inicializar margen al cargar en modo edición ───────────────────────────
@@ -650,11 +666,25 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
     });
 });
 
-document.querySelectorAll('.js-entero').forEach((input) => {
+document.querySelectorAll('.js-stock-control').forEach((input) => {
     input.addEventListener('input', function() {
+        if (this.dataset.decimales === 'si') {
+            this.value = this.value.replace(/[^0-9.]/g, '');
+            const partes = this.value.split('.');
+            if (partes.length > 2) {
+                this.value = partes.shift() + '.' + partes.join('');
+            }
+            if (this.value.includes('.')) {
+                const [entera, decimal = ''] = this.value.split('.');
+                this.value = entera + '.' + decimal.slice(0, 3);
+            }
+            return;
+        }
         this.value = this.value.replace(/[^\d]/g, '');
     });
 });
+
+actualizarModoCantidades();
 </script>
 </body>
 </html>

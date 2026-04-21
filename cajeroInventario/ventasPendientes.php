@@ -163,6 +163,8 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     .btn-guardar { width: 100%; background: #14ace7; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-guardar:hover { background: #1196cb; }
     .sin-pendientes { text-align: center; color: #aaa; padding: 40px; font-size: 13px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
+    .busqueda-pend { width: 100%; margin-bottom: 12px; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .busqueda-pend:focus { outline: none; border-color: #14ace7; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -233,10 +235,11 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                 <?php $msgs = ['creado'=>'Venta pendiente registrada.','liquidado'=>'Venta liquidada correctamente.','cancelado'=>'Venta cancelada y stock devuelto.']; ?>
                 <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
             <?php endif; ?>
+            <input type="text" class="busqueda-pend" id="buscarPendientes" placeholder="Buscar cliente, notas o producto..." oninput="filtrarPendientes(this.value)">
 
             <?php if (count($pendientes) > 0): ?>
                 <?php foreach ($pendientes as $p): ?>
-                <div class="pendiente-item">
+                <div class="pendiente-item" data-pendiente-texto="<?= htmlspecialchars(mb_strtolower(($p['cliente'] ?? 'cliente general') . ' ' . ($p['notas'] ?? ''))) ?>">
                     <div class="pendiente-header">
                         <div class="pendiente-info">
                             <h4><?= htmlspecialchars($p['cliente'] ?? 'Cliente general') ?></h4>
@@ -279,10 +282,11 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
 
                 <div class="form-group">
                     <label>Agregar producto</label>
+                    <input type="text" class="busqueda-pend" id="buscarProductoPendiente" placeholder="Buscar producto..." oninput="filtrarProductosPendientes(this.value)">
                     <select id="selectProd" onchange="agregarProd(this)">
                         <option value="">-- Selecciona un producto --</option>
                         <?php foreach ($productos as $p): ?>
-                            <option value="<?= $p['producto_id'] ?>" data-nombre="<?= htmlspecialchars($p['nombre_producto']) ?>" data-precio="<?= $p['precio_venta'] ?>">
+                            <option value="<?= $p['producto_id'] ?>" data-nombre="<?= htmlspecialchars($p['nombre_producto']) ?>" data-precio="<?= $p['precio_venta'] ?>" data-texto="<?= htmlspecialchars(mb_strtolower($p['nombre_producto'])) ?>">
                                 <?= htmlspecialchars($p['nombre_producto']) ?> — $<?= number_format($p['precio_venta'],2) ?>
                             </option>
                         <?php endforeach; ?>
@@ -362,6 +366,24 @@ function renderCarritoMini() {
 }
 
 function quitarProd(i) { carritoP.splice(i,1); renderCarritoMini(); }
+
+function filtrarPendientes(q) {
+    q = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    document.querySelectorAll('.pendiente-item').forEach(function(item) {
+        const texto = (item.dataset.pendienteTexto || item.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        item.style.display = texto.includes(q) ? '' : 'none';
+    });
+}
+
+function filtrarProductosPendientes(q) {
+    q = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const select = document.getElementById('selectProd');
+    Array.from(select.options).forEach(function(opt, index) {
+        if (index === 0) return;
+        const texto = (opt.dataset.texto || opt.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        opt.hidden = q !== '' && !texto.includes(q);
+    });
+}
 
 function prepararPendiente() {
     if (!carritoP.length) { alert('Agrega al menos un producto.'); return false; }

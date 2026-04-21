@@ -146,6 +146,8 @@ if ($editando) {
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .form-group input:focus { outline: none; border-color: #14ace7; }
+    .areas-buscador { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+    .areas-buscador:focus { outline: none; border-color: #14ace7; }
     .cats-check { display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 10px; }
     .cat-check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #555; }
     .btn-guardar { background: #14ace7; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
@@ -311,9 +313,10 @@ if ($editando) {
                     </div>
                     <div class="form-group">
                         <label>Áreas que abastece</label>
+                        <input type="text" id="buscarAreasProveedor" class="areas-buscador" placeholder="Buscar area..." oninput="filtrarAreasProveedor(this.value)">
                         <div class="cats-check">
                             <?php foreach ($categorias as $c): ?>
-                                <label class="cat-check-row">
+                                <label class="cat-check-row" data-area-nombre="<?= htmlspecialchars(mb_strtolower($c['nombre'])) ?>">
                                     <input type="checkbox" name="categorias[]" value="<?= $c['categoria_id'] ?>"
                                         <?= in_array($c['categoria_id'], $catsEditando) ? 'checked' : '' ?>>
                                     <?= htmlspecialchars($c['nombre']) ?>
@@ -339,8 +342,14 @@ function filtrarTabla(q) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
 }
+function filtrarAreasProveedor(q) {
+    q = normalizar(q);
+    document.querySelectorAll('.cat-check-row').forEach(function(row) {
+        const nombre = normalizar(row.dataset.areaNombre || row.textContent);
+        row.style.display = nombre.includes(q) ? 'flex' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
 </body>
 </html>
-

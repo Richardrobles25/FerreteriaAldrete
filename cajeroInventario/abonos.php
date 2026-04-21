@@ -75,7 +75,7 @@ if (!$credito_id) {
         FROM creditos cr
         JOIN clientes c ON cr.cliente_id = c.cliente_id
         WHERE cr.estado = 'Activo'
-        ORDER BY cr.created_at DESC
+        ORDER BY cr.created_at ASC
     ");
     $creditosActivos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }

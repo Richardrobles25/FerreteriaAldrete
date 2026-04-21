@@ -9,6 +9,52 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 $errores = [];
 $exito   = false;
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancelar_devolucion'])) {
+    $movimiento_id = intval($_POST['movimiento_id'] ?? 0);
+    $motivoCancel  = trim($_POST['motivo_cancelacion'] ?? '');
+
+    if (!$movimiento_id || $motivoCancel === '') {
+        header('Location: devoluciones.php?msg=cancelacion_error');
+        exit();
+    }
+
+    $stmtMov = $pdo->prepare("
+        SELECT m.*, p.sucursal_id
+        FROM movimientos_inventario m
+        JOIN productos p ON m.producto_id = p.producto_id
+        WHERE m.movimiento_id = ? AND m.tipo = 'Entrada' AND m.motivo LIKE 'DevoluciÃ³n:%' AND p.sucursal_id = ?
+        LIMIT 1
+    ");
+    $stmtMov->execute([$movimiento_id, $_SESSION['sucursal_id']]);
+    $mov = $stmtMov->fetch(PDO::FETCH_ASSOC);
+
+    if (!$mov || stripos((string) $mov['motivo'], '[CANCELADA]') !== false) {
+        header('Location: devoluciones.php?msg=cancelacion_error');
+        exit();
+    }
+
+    $stmtStock = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
+    $stmtStock->execute([$mov['producto_id']]);
+    $stockAnterior = floatval($stmtStock->fetchColumn());
+    $stockNuevo = max(0, $stockAnterior - floatval($mov['cantidad']));
+
+    $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $mov['producto_id']]);
+    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Salida',?,?,?,?)")
+        ->execute([
+            $mov['producto_id'],
+            $_SESSION['usuario_id'],
+            $mov['cantidad'],
+            $stockAnterior,
+            $stockNuevo,
+            'CancelaciÃ³n devoluciÃ³n #' . $movimiento_id . ': ' . $motivoCancel
+        ]);
+    $pdo->prepare("UPDATE movimientos_inventario SET motivo = CONCAT(motivo, ' [CANCELADA] ', ?) WHERE movimiento_id = ?")
+        ->execute([$motivoCancel, $movimiento_id]);
+
+    header('Location: devoluciones.php?msg=cancelada');
+    exit();
+}
+
 // Buscar venta via AJAX (por folio NNNN + mes + año)
 if (isset($_GET['buscar_venta'])) {
     $folio_num = intval($_GET['buscar_venta']);
@@ -155,12 +201,24 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .prod-dev-row input[type=number] { width: 80px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px; text-align: center; }
     .btn-devolver { width: 100%; background: #c0392b; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-devolver:hover { background: #a93226; }
+    .btn-cancelar-dev { background: #fff3e0; color: #b26a00; border: 1px solid #ffe0b2; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .btn-cancelar-dev:hover { background: #ffe0b2; }
     table { width: 100%; border-collapse: collapse; }
     thead { background: #f9f9f9; }
     th { padding: 10px 13px; text-align: left; font-size: 12px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #eee; }
     td { padding: 10px 13px; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
     tr:last-child td { border-bottom: none; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 999; }
+    .modal-overlay.visible { display: flex; }
+    .modal-card { width: 100%; max-width: 520px; background: white; border-radius: 10px; border: 1px solid #e8e8e8; box-shadow: 0 20px 45px rgba(0,0,0,0.18); padding: 22px; }
+    .modal-card h3 { margin: 0 0 10px; font-size: 18px; color: #222; }
+    .modal-card p { margin: 0 0 12px; font-size: 13px; color: #666; line-height: 1.45; }
+    .modal-card textarea { width: 100%; min-height: 110px; resize: vertical; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 13px; font-family: Arial, sans-serif; }
+    .modal-acciones { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+    .btn-modal-sec { background: white; color: #666; border: 1px solid #ddd; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .btn-modal-main { background: #c0392b; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .modal-error { color: #c0392b; font-size: 12px; margin-top: 8px; display: none; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -230,6 +288,12 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito'): ?>
                 <div class="msg msg-exito">Devolución registrada y stock actualizado.</div>
             <?php endif; ?>
+            <?php if (isset($_GET['msg']) && $_GET['msg'] === 'cancelada'): ?>
+                <div class="msg msg-exito">DevoluciÃ³n cancelada y stock ajustado correctamente.</div>
+            <?php endif; ?>
+            <?php if (isset($_GET['msg']) && $_GET['msg'] === 'cancelacion_error'): ?>
+                <div class="errores">No se pudo cancelar la devoluciÃ³n seleccionada.</div>
+            <?php endif; ?>
             <?php if (!empty($errores)): ?>
                 <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
             <?php endif; ?>
@@ -294,7 +358,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php if (count($historial) > 0): ?>
                 <table>
                     <thead>
-                        <tr><th>Producto</th><th>Cantidad</th><th>Motivo</th><th>Fecha</th></tr>
+                        <tr><th>Producto</th><th>Cantidad</th><th>Motivo</th><th>Fecha</th><th></th></tr>
                     </thead>
                     <tbody>
                         <?php foreach ($historial as $h): ?>
@@ -306,6 +370,13 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td style="color:#2e7d32;font-weight:700;">+<?= number_format($h['cantidad'],2) ?></td>
                             <td style="font-size:12px;color:#888;"><?= htmlspecialchars(str_replace('Devolución: ','',$h['motivo'])) ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($h['created_at'])) ?></td>
+                            <td>
+                                <?php if (stripos((string) $h['motivo'], '[CANCELADA]') === false): ?>
+                                    <button type="button" class="btn-cancelar-dev" onclick="abrirCancelacionDevolucion(<?= $h['movimiento_id'] ?>, <?= json_encode($h['nombre_producto']) ?>)">Cancelar</button>
+                                <?php else: ?>
+                                    <span style="font-size:11px;color:#aaa;">Cancelada</span>
+                                <?php endif; ?>
+                            </td>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -318,8 +389,26 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
+<div class="modal-overlay" id="modalCancelarDevolucion">
+    <div class="modal-card">
+        <h3>Cancelar devolucion</h3>
+        <p id="textoCancelarDevolucion">Se revertira el stock devuelto y se dejara el motivo de cancelacion.</p>
+        <form method="POST" id="formCancelarDevolucion">
+            <input type="hidden" name="cancelar_devolucion" value="1">
+            <input type="hidden" name="movimiento_id" id="inputCancelarMovimientoId">
+            <textarea name="motivo_cancelacion" id="textareaCancelarDevolucion" placeholder="Escribe por que se cancela esta devolucion..."></textarea>
+            <div class="modal-error" id="errorCancelarDevolucion">Debes capturar un motivo para cancelar la devolucion.</div>
+            <div class="modal-acciones">
+                <button type="button" class="btn-modal-sec" onclick="cerrarCancelacionDevolucion()">Volver</button>
+                <button type="button" class="btn-modal-main" onclick="enviarCancelacionDevolucion()">Cancelar devolucion</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 let ventaActual = null;
+let devolucionCancelarActual = null;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
@@ -371,6 +460,128 @@ function prepararDevolucion() {
     document.getElementById('inputProdsDev').value = JSON.stringify(prods);
     return true;
 }
+
+function obtenerMetaVenta(notas) {
+    const texto = String(notas || '');
+    const marker = '__META_VENTA__';
+    const idx = texto.indexOf(marker);
+    if (idx === -1) return { pago: null, paquetes: [] };
+    try {
+        return JSON.parse(decodeURIComponent(escape(atob(texto.slice(idx + marker.length).trim()))));
+    } catch (e) {
+        return { pago: null, paquetes: [] };
+    }
+}
+
+buscarVenta = function() {
+    const num  = document.getElementById('inputFolioNum').value;
+    const mes  = document.getElementById('selectMes').value;
+    const anio = document.getElementById('selectAnio').value;
+    if (!num) { alert('Ingresa el numero de folio.'); return; }
+    fetch(`devoluciones.php?buscar_venta=${encodeURIComponent(num)}&mes=${mes}&anio=${anio}`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data) { alert('Folio no encontrado o la venta no esta completada.'); return; }
+            ventaActual = data;
+            const meta = obtenerMetaVenta(data.notas);
+            document.getElementById('ventaCliente').textContent = data.cliente || 'Publico general';
+            document.getElementById('ventaFecha').textContent = 'Folio: ' + (data.folio || ('#' + data.venta_id));
+            document.getElementById('ventaTotal').textContent = 'Total: $' + parseFloat(data.total).toFixed(2) + ' · ' + ((meta.pago && meta.pago.metodo_real) || data.metodo_pago);
+            document.getElementById('ventaInfo').classList.add('visible');
+            document.getElementById('inputVentaIdHidden').value = data.venta_id;
+
+            const vendidosPorPaquete = {};
+            (meta.paquetes || []).forEach((paq) => {
+                (paq.productos || []).forEach((prod) => {
+                    const key = String(prod.producto_id);
+                    vendidosPorPaquete[key] = (vendidosPorPaquete[key] || 0) + (parseFloat(prod.cantidad_requerida || 0) * parseFloat(paq.cantidad || 1));
+                });
+            });
+
+            let html = (meta.paquetes || []).map((paq, idxPaq) => `
+                <div class="prod-dev-row" style="background:#fffde7;">
+                    <span style="flex:1;"><strong>Paquete:</strong> ${paq.nombre}</span>
+                    <span style="color:#aaa;font-size:11px;">Vendido: ${paq.cantidad}</span>
+                    <input type="number" data-paquete-idx="${idxPaq}" data-tipo="paquete" placeholder="0" step="1" min="0" max="${paq.cantidad}" value="0">
+                </div>
+            `).join('');
+
+            html += (data.productos || []).map(p => {
+                const resto = +(parseFloat(p.cantidad) - (vendidosPorPaquete[String(p.producto_id)] || 0)).toFixed(3);
+                if (resto <= 0) return '';
+                return `
+                    <div class="prod-dev-row">
+                        <span style="flex:1;">${p.nombre_producto}</span>
+                        <span style="color:#aaa;font-size:11px;">Vendido: ${resto}</span>
+                        <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_unitario}" placeholder="0" step="0.001" min="0" max="${resto}" value="0">
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('listaProdsDev').innerHTML = html;
+            document.getElementById('prodDevolver').classList.add('visible');
+            document.getElementById('motivoGroup').style.display = 'block';
+            document.getElementById('btnDevolver').style.display = 'block';
+        });
+};
+
+prepararDevolucion = function() {
+    const inputs = document.querySelectorAll('#listaProdsDev input[type=number]');
+    const prods = [];
+    const meta = obtenerMetaVenta(ventaActual?.notas);
+    inputs.forEach(inp => {
+        const qty = parseFloat(inp.value) || 0;
+        if (qty <= 0) return;
+        if (inp.dataset.tipo === 'paquete') {
+            const paquete = (meta.paquetes || [])[parseInt(inp.dataset.paqueteIdx || '-1', 10)];
+            if (paquete) {
+                const totalPartes = Math.max(1, (paquete.productos || []).reduce((acc, item) => acc + parseFloat(item.cantidad_requerida || 0), 0));
+                (paquete.productos || []).forEach(prod => {
+                    prods.push({
+                        producto_id: prod.producto_id,
+                        cantidad: parseFloat(prod.cantidad_requerida || 0) * qty,
+                        precio_unitario: parseFloat(paquete.precio_paquete || 0) / totalPartes
+                    });
+                });
+            }
+            return;
+        }
+        prods.push({ producto_id: inp.dataset.productoId, cantidad: qty, precio_unitario: inp.dataset.precio });
+    });
+    if (!prods.length) { alert('Ingresa la cantidad a devolver de al menos un producto o paquete.'); return false; }
+    document.getElementById('inputProdsDev').value = JSON.stringify(prods);
+    return true;
+};
+
+function abrirCancelacionDevolucion(id, nombre) {
+    devolucionCancelarActual = id;
+    document.getElementById('textoCancelarDevolucion').textContent = 'Se cancelara la devolucion de "' + nombre + '" y se revertira el stock devuelto.';
+    document.getElementById('inputCancelarMovimientoId').value = id;
+    document.getElementById('textareaCancelarDevolucion').value = '';
+    document.getElementById('errorCancelarDevolucion').style.display = 'none';
+    document.getElementById('modalCancelarDevolucion').classList.add('visible');
+    setTimeout(() => document.getElementById('textareaCancelarDevolucion').focus(), 0);
+}
+
+function cerrarCancelacionDevolucion() {
+    devolucionCancelarActual = null;
+    document.getElementById('modalCancelarDevolucion').classList.remove('visible');
+}
+
+function enviarCancelacionDevolucion() {
+    if (!devolucionCancelarActual) return;
+    const motivo = document.getElementById('textareaCancelarDevolucion').value.trim();
+    if (!motivo) {
+        document.getElementById('errorCancelarDevolucion').style.display = 'block';
+        document.getElementById('textareaCancelarDevolucion').focus();
+        return;
+    }
+    document.getElementById('formCancelarDevolucion').submit();
+}
+
+document.getElementById('modalCancelarDevolucion').addEventListener('click', function(e) {
+    if (e.target === this) cerrarCancelacionDevolucion();
+});
 </script>
 </body>
 </html>

@@ -23,12 +23,18 @@ if ($estado) {
 
 $stmt = $pdo->prepare("
     SELECT cr.*, c.nombre_completo, c.telefono,
-           v.created_at as fecha_venta, v.total as total_venta
+           v.created_at as fecha_venta, v.total as total_venta,
+           GROUP_CONCAT(CONCAT(p.nombre_producto, ' x', TRIM(TRAILING '.000' FROM TRIM(TRAILING '0' FROM CAST(vp.cantidad AS CHAR)))) SEPARATOR ' | ') AS productos_credito
     FROM creditos cr
     JOIN clientes c ON cr.cliente_id = c.cliente_id
     JOIN ventas v ON cr.venta_id = v.venta_id
+    LEFT JOIN venta_productos vp ON cr.venta_id = vp.venta_id
+    LEFT JOIN productos p ON vp.producto_id = p.producto_id
     $where
-    ORDER BY cr.estado = 'Activo' DESC, cr.created_at DESC
+    GROUP BY cr.credito_id
+    ORDER BY cr.estado = 'Activo' DESC,
+             CASE WHEN cr.estado = 'Activo' THEN cr.created_at END ASC,
+             cr.created_at DESC
 ");
 $stmt->execute($params);
 $creditos = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -212,6 +218,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                         <th>#</th>
                         <th>Cliente</th>
                         <th>Fecha</th>
+                        <th>Venta</th>
                         <th>Monto total</th>
                         <th>Saldo pendiente</th>
                         <th>Vencimiento</th>
@@ -228,6 +235,13 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                             <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($cr['telefono']??'') ?></div>
                         </td>
                         <td style="font-size:12px;"><?= date('d/m/Y', strtotime($cr['created_at'])) ?></td>
+                        <td style="font-size:12px;color:#666;">
+                            Venta: $<?= number_format($cr['total_venta'],2) ?>
+                            <div style="color:#aaa;"><?= date('d/m/Y', strtotime($cr['fecha_venta'])) ?></div>
+                            <?php if (!empty($cr['productos_credito'])): ?>
+                                <div style="margin-top:4px;color:#777;max-width:260px;line-height:1.35;"><?= htmlspecialchars($cr['productos_credito']) ?></div>
+                            <?php endif; ?>
+                        </td>
                         <td>$<?= number_format($cr['monto_total'],2) ?></td>
                         <td style="font-weight:700;color:<?= $cr['saldo_pendiente']>0?'#c0392b':'#2e7d32' ?>;">
                             $<?= number_format($cr['saldo_pendiente'],2) ?>

@@ -51,7 +51,7 @@ $stmt = $pdo->prepare("
 $stmt->execute([$_SESSION['sucursal_id']]);
 $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto ASC");
+$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, tipo_venta FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto ASC");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -103,6 +103,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .motivos-rapidos { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
     .motivo-btn { background: #f0f0f0; border: none; padding: 5px 12px; border-radius: 99px; font-size: 12px; cursor: pointer; color: #555; }
     .motivo-btn:hover { background: #bbdefb; color: #1565c0; }
+    .busqueda-producto { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+    .busqueda-producto:focus { outline: none; border-color: #14ace7; }
     .btn-guardar { background: #c0392b; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #a93226; }
     table { width: 100%; border-collapse: collapse; }
@@ -189,10 +191,11 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <form method="POST">
                     <div class="form-group">
                         <label>Producto *</label>
+                        <input type="text" class="busqueda-producto" id="buscarProductoSalida" placeholder="Buscar producto..." oninput="filtrarProductosSalida(this.value)">
                         <select name="producto_id" onchange="mostrarStock(this)">
                             <option value="">-- Selecciona un producto --</option>
                             <?php foreach ($productos as $p): ?>
-                                <option value="<?= $p['producto_id'] ?>" data-stock="<?= $p['stock_actual'] ?>">
+                                <option value="<?= $p['producto_id'] ?>" data-stock="<?= $p['stock_actual'] ?>" data-tipo="<?= htmlspecialchars($p['tipo_venta']) ?>" data-texto="<?= htmlspecialchars(mb_strtolower($p['codigo'].' '.$p['nombre_producto'])) ?>">
                                     <?= htmlspecialchars($p['codigo'].' — '.$p['nombre_producto']) ?> (Stock: <?= number_format($p['stock_actual'],2) ?>)
                                 </option>
                             <?php endforeach; ?>
@@ -205,7 +208,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                     <div class="form-group">
                         <label>Cantidad *</label>
-                        <input type="number" name="cantidad" id="inputCantidad" placeholder="0" step="1" min="1">
+                        <input type="number" name="cantidad" id="inputCantidad" placeholder="0" step="1" min="0.001" inputmode="decimal">
                     </div>
 
                     <div class="form-group">
@@ -261,12 +264,25 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function filtrarProductosSalida(q) {
+    q = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const select = document.querySelector('select[name="producto_id"]');
+    Array.from(select.options).forEach(function(opt, index) {
+        if (index === 0) return;
+        const texto = (opt.dataset.texto || opt.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        opt.hidden = q !== '' && !texto.includes(q);
+    });
+}
 function mostrarStock(sel) {
     const opt = sel.options[sel.selectedIndex];
     const info = document.getElementById('stockInfo');
     if (sel.value) {
         document.getElementById('stockActual').textContent = parseFloat(opt.dataset.stock).toFixed(2);
         document.getElementById('inputCantidad').max = opt.dataset.stock;
+        const esSuelto = (opt.dataset.tipo || 'Unidad') === 'Suelto';
+        const inputCantidad = document.getElementById('inputCantidad');
+        inputCantidad.step = esSuelto ? '0.001' : '1';
+        inputCantidad.value = '';
         info.style.display = 'block';
     } else { info.style.display = 'none'; }
 }

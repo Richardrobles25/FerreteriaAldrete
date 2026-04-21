@@ -274,7 +274,7 @@ if (isset($_GET['ticket_venta'])) {
     }
 
     $stmtP = $pdo->prepare("
-        SELECT vp.cantidad, vp.precio_unitario, vp.subtotal, p.nombre_producto, p.codigo
+        SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.subtotal, p.nombre_producto, p.codigo
         FROM venta_productos vp
         JOIN productos p ON vp.producto_id = p.producto_id
         WHERE vp.venta_id = ?
@@ -293,6 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $items             = json_decode($_POST['items'], true);
     $cliente_id        = intval($_POST['cliente_id'] ?? 0) ?: null;
     $metodo_pago       = $_POST['metodo_pago'] ?? '';
+    $notas_venta       = trim($_POST['notas_venta'] ?? '');
     $monto_efectivo    = floatval($_POST['monto_efectivo'] ?? 0);
     $monto_terminal    = floatval($_POST['monto_terminal'] ?? 0);
     $comision_terminal = floatval($_POST['comision_terminal'] ?? 0);
@@ -304,6 +305,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     if (!empty($items) && $metodo_pago) {
         $pdo->beginTransaction();
         try {
+            $metodo_pago_db = $metodo_pago === 'Transferencia' ? 'Terminal' : $metodo_pago;
+
             // Generar folio mensual: NNNN-MM-YYYY (se reinicia cada 1ro de mes)
             $mesFolio  = date('m');
             $anioFolio = date('Y');
@@ -322,12 +325,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $stmt = $pdo->prepare("
                 INSERT INTO ventas
                 (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
-                 total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada')
+                 total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado,notas)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?)
             ");
             $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
                             $subtotal,$descuento,$comision_terminal,$total,
-                            $metodo_pago,$monto_efectivo,$monto_terminal,$cambio]);
+                            $metodo_pago_db,$monto_efectivo,$monto_terminal,$cambio,$notas_venta]);
             $venta_id = $pdo->lastInsertId();
 
             foreach ($items as $item) {
@@ -706,6 +709,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                         <div class="metodos">
                             <button type="button" class="metodo-btn" onclick="seleccionarMetodo('Efectivo',this)">Efectivo</button>
                             <button type="button" class="metodo-btn" onclick="seleccionarMetodo('Terminal',this)">Terminal</button>
+                            <button type="button" class="metodo-btn" onclick="seleccionarMetodo('Transferencia',this)">Transferencia</button>
                             <button type="button" class="metodo-btn" onclick="seleccionarMetodo('Mixto',this)">Mixto</button>
                             <button type="button" class="metodo-btn" id="btnCredito" onclick="seleccionarMetodo('Credito',this)" style="display:none;">Crédito</button>
                         </div>
@@ -723,6 +727,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
                             <input type="number" id="porcComision" placeholder="0" step="0.1" value="4.6" class="js-zero-default" oninput="recalcularTodo()">
+                        </div>
+                    </div>
+
+                    <div class="campos-pago" id="camposTransferencia">
+                        <div class="form-group-sm">
+                            <label>Referencia bancaria *</label>
+                            <input type="text" id="transferReferencia" placeholder="Folio o referencia de la transferencia" oninput="verificarCobrar()">
+                        </div>
+                        <div class="form-group-sm">
+                            <label>Banco de origen</label>
+                            <input type="text" id="transferBancoOrigen" placeholder="Banco o cuenta origen (opcional)">
+                        </div>
+                        <div class="form-group-sm">
+                            <label>Datos para transferencia</label>
+                            <div style="font-size:12px;color:#666;line-height:1.45;background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:10px 12px;">
+                                <?= nl2br(htmlspecialchars(trim($sucursalTicket['datos_ticket'] ?? 'Solicita o actualiza aqui los datos bancarios de la empresa para compartirlos al cliente.'))) ?>
+                            </div>
                         </div>
                     </div>
 
@@ -754,6 +775,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <input type="hidden" name="subtotal" id="inputSubtotal">
                     <input type="hidden" name="total" id="inputTotal">
                     <input type="hidden" name="cambio" id="inputCambio">
+                    <input type="hidden" name="notas_venta" id="inputNotasVenta">
                     <button type="submit" class="btn-cobrar" id="btnCobrar" disabled onclick="return prepararVenta()">
                         Cobrar
                     </button>
@@ -1254,6 +1276,7 @@ function seleccionarMetodo(metodo, btn) {
     document.querySelectorAll('.campos-pago').forEach(c => c.classList.remove('visible'));
     if (metodo==='Efectivo') document.getElementById('camposEfectivo').classList.add('visible');
     if (metodo==='Terminal') document.getElementById('camposTerminal').classList.add('visible');
+    if (metodo==='Transferencia') document.getElementById('camposTransferencia').classList.add('visible');
     if (metodo==='Mixto')    document.getElementById('camposMixto').classList.add('visible');
     recalcularTodo(); verificarCobrar();
 }
@@ -1282,6 +1305,12 @@ function recalcularTodo() {
     if (metodoPago === 'Terminal') {
         document.getElementById('inputMontoTerminal').value = total.toFixed(2);
         document.getElementById('inputMontoEfectivo').value = '0.00';
+    }
+    if (metodoPago === 'Transferencia') {
+        document.getElementById('inputMontoTerminal').value = total.toFixed(2);
+        document.getElementById('inputMontoEfectivo').value = '0.00';
+        document.getElementById('inputCambio').value = '0.00';
+        document.getElementById('resCambio').textContent = '$0.00';
     }
     verificarCobrar();
 }
@@ -1314,7 +1343,8 @@ function calcularMixto() {
 }
 
 function verificarCobrar() {
-    document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago);
+    const referenciaOk = metodoPago !== 'Transferencia' || String(document.getElementById('transferReferencia')?.value || '').trim() !== '';
+    document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago && referenciaOk);
 }
 
 // ── Preparar y enviar venta ──────────────────────────────────────────────────
@@ -1339,6 +1369,41 @@ function prepararVenta() {
             });
         }
     });
+    if (metodoPago === 'Transferencia' && String(document.getElementById('transferReferencia').value || '').trim() === '') {
+        alert('Captura la referencia bancaria de la transferencia.');
+        document.getElementById('transferReferencia').focus();
+        return false;
+    }
+    const paquetesVendidos = carrito
+        .filter(item => item.tipo === 'paquete')
+        .map(item => ({
+            paquete_id: item.paquete_id,
+            nombre: item.nombre.replace(/^📦\s*/, ''),
+            cantidad: item.cantidad,
+            precio_paquete: item.precio,
+            productos: item.productos_paquete.map(prod => ({
+                producto_id: prod.producto_id,
+                nombre_producto: prod.nombre_producto,
+                cantidad_requerida: prod.cantidad_requerida
+            }))
+        }));
+    const metaVenta = {
+        pago: metodoPago === 'Transferencia' ? {
+            metodo_real: 'Transferencia',
+            referencia: String(document.getElementById('transferReferencia').value || '').trim(),
+            banco_origen: String(document.getElementById('transferBancoOrigen').value || '').trim()
+        } : null,
+        paquetes: paquetesVendidos
+    };
+    const resumenNotas = [];
+    if (metaVenta.pago) {
+        resumenNotas.push('Pago por transferencia. Referencia: ' + metaVenta.pago.referencia + (metaVenta.pago.banco_origen ? ' · Banco origen: ' + metaVenta.pago.banco_origen : ''));
+    }
+    if (paquetesVendidos.length) {
+        resumenNotas.push('Paquetes vendidos: ' + paquetesVendidos.map(p => p.nombre + ' x' + p.cantidad).join(', '));
+    }
+    const metaEncoded = btoa(unescape(encodeURIComponent(JSON.stringify(metaVenta))));
+    document.getElementById('inputNotasVenta').value = (resumenNotas.join('\n') + (resumenNotas.length ? '\n' : '') + '__META_VENTA__' + metaEncoded).trim();
     document.getElementById('inputItems').value = JSON.stringify(itemsExpandidos);
     return true;
 }
@@ -1359,6 +1424,7 @@ function generarTicketHTML(venta) {
     const linea = '--------------------------------';
     // Usar fecha ya formateada en servidor (evita desfase de zona horaria en el navegador)
     const fecha = venta.fecha_formateada || venta.created_at;
+    const meta = obtenerMetaVenta(venta.notas);
 
     let html = `
         <div class="t-centro t-bold t-grande">${datosTicket.nombre}</div>`;
@@ -1385,12 +1451,32 @@ function generarTicketHTML(venta) {
         <div class="t-fila t-bold"><span>Producto</span><span>Importe</span></div>
         <div class="t-linea"></div>`;
 
-    venta.productos.forEach(p => {
+    const consumidosPaquete = {};
+    (meta.paquetes || []).forEach((paq) => {
+        html += `
+            <div>${esc('Paquete: ' + paq.nombre)}</div>
+            <div class="t-fila">
+                <span>${paq.cantidad} x $${parseFloat(paq.precio_paquete).toFixed(2)}</span>
+                <span>$${(parseFloat(paq.cantidad) * parseFloat(paq.precio_paquete)).toFixed(2)}</span>
+            </div>`;
+        (paq.productos || []).forEach((prod) => {
+            const key = String(prod.producto_id);
+            consumidosPaquete[key] = (consumidosPaquete[key] || 0) + (parseFloat(prod.cantidad_requerida || 0) * parseFloat(paq.cantidad || 1));
+        });
+    });
+
+    (venta.productos || []).forEach((p) => {
+        const key = String(p.producto_id || '');
+        let cantidadRestante = parseFloat(p.cantidad);
+        if (key && consumidosPaquete[key]) {
+            cantidadRestante = +(cantidadRestante - consumidosPaquete[key]).toFixed(3);
+        }
+        if (cantidadRestante <= 0) return;
         html += `
             <div>${esc(p.nombre_producto)}</div>
             <div class="t-fila">
-                <span>${p.cantidad} x $${parseFloat(p.precio_unitario).toFixed(2)}</span>
-                <span>$${parseFloat(p.subtotal).toFixed(2)}</span>
+                <span>${cantidadRestante} x $${parseFloat(p.precio_unitario).toFixed(2)}</span>
+                <span>$${(cantidadRestante * parseFloat(p.precio_unitario)).toFixed(2)}</span>
             </div>`;
     });
 
@@ -1411,6 +1497,15 @@ function generarTicketHTML(venta) {
         <div class="t-linea"></div>
         <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
 
+    if (meta.pago && meta.pago.metodo_real === 'Transferencia') {
+        html += `
+        <div class="t-fila"><span>Pago real</span><span>Transferencia</span></div>
+        <div class="t-fila"><span>Referencia</span><span>${esc(meta.pago.referencia || '—')}</span></div>`;
+        if (meta.pago.banco_origen) {
+            html += `<div class="t-fila"><span>Banco origen</span><span>${esc(meta.pago.banco_origen)}</span></div>`;
+        }
+    }
+
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
         html += `
         <div class="t-fila"><span>Recibido</span><span>$${parseFloat(venta.monto_efectivo).toFixed(2)}</span></div>
@@ -1430,6 +1525,18 @@ function generarTicketHTML(venta) {
 }
 
 // ── Modal inventario ─────────────────────────────────────────────────────────
+function obtenerMetaVenta(notas) {
+    const texto = String(notas || '');
+    const marker = '__META_VENTA__';
+    const idx = texto.indexOf(marker);
+    if (idx === -1) return { pago: null, paquetes: [] };
+    try {
+        return JSON.parse(decodeURIComponent(escape(atob(texto.slice(idx + marker.length).trim()))));
+    } catch (e) {
+        return { pago: null, paquetes: [] };
+    }
+}
+
 function abrirInventario() {
     document.getElementById('modalInventario').classList.add('visible');
     buscarInventario();

@@ -413,7 +413,7 @@ if ($editando && $editando['categoria_id']) {
                         <?php if (!$editando): ?>
                         <div class="form-group">
                             <label>Cantidad inicial</label>
-                            <input type="number" name="cantidad_inicial"
+                            <input type="text" name="cantidad_inicial"
                                 value="<?= $_POST['cantidad_inicial'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0" inputmode="decimal" lang="en">
@@ -422,7 +422,7 @@ if ($editando && $editando['categoria_id']) {
                         <?php endif; ?>
                         <div class="form-group">
                             <label>Stock mínimo</label>
-                            <input type="number" name="stock_minimo"
+                            <input type="text" name="stock_minimo"
                                 value="<?= $_POST['stock_minimo'] ?? $editando['stock_minimo'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0" inputmode="decimal" lang="en">
@@ -430,7 +430,7 @@ if ($editando && $editando['categoria_id']) {
                         </div>
                         <div class="form-group">
                             <label>Stock máximo</label>
-                            <input type="number" name="stock_maximo"
+                            <input type="text" name="stock_maximo"
                                 value="<?= $_POST['stock_maximo'] ?? $editando['stock_maximo'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0" inputmode="decimal" lang="en">

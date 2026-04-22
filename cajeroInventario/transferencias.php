@@ -501,8 +501,8 @@ function renderSug(prods) {
                 ${p.bajo ? '<span class="badge-bajo">Stock bajo</span>' : ''}
             </div>
             <div class="sug-stocks">
-                <span class="sug-stock-row sug-stock-orig">Origen: ${parseFloat(p.stock).toFixed(0)}</span>
-                <span class="sug-stock-row sug-stock-dest">Destino: ${parseFloat(p.mi_stock).toFixed(0)}</span>
+                <span class="sug-stock-row sug-stock-orig">Mi Sucursal: ${parseFloat(p.stock).toFixed(0)}</span>
+                <span class="sug-stock-row sug-stock-dest">Sucursal Externa: ${parseFloat(p.mi_stock).toFixed(0)}</span>
             </div>
         </div>
     `).join('');

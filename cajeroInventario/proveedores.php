@@ -146,10 +146,16 @@ if ($editando) {
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .form-group input:focus { outline: none; border-color: #14ace7; }
-    .areas-buscador { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+    .areas-buscador { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .areas-buscador:focus { outline: none; border-color: #14ace7; }
-    .cats-check { display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 10px; }
-    .cat-check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #555; }
+    .areas-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 10px; }
+    .area-tag { background: #e3f2fd; color: #1565c0; font-size: 12px; padding: 3px 8px 3px 10px; border-radius: 99px; font-weight: 600; display: flex; align-items: center; gap: 5px; }
+    .area-tag button { background: none; border: none; cursor: pointer; color: #1565c0; font-size: 14px; line-height: 1; padding: 0; }
+    .areas-dropdown { border: 1px solid #e8e8e8; border-radius: 6px; max-height: 180px; overflow-y: auto; background: #fff; display: none; margin-top: 4px; }
+    .area-opcion { padding: 9px 12px; cursor: pointer; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
+    .area-opcion:last-child { border-bottom: none; }
+    .area-opcion:hover { background: #f0f9ff; }
+    .area-opcion.seleccionada { color: #aaa; pointer-events: none; }
     .btn-guardar { background: #14ace7; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar-edit { background: white; color: #666; border: 1px solid #ddd; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 8px; text-decoration: none; display: block; text-align: center; }
@@ -313,16 +319,15 @@ if ($editando) {
                     </div>
                     <div class="form-group">
                         <label>Áreas que abastece</label>
-                        <input type="text" id="buscarAreasProveedor" class="areas-buscador" placeholder="Buscar area..." oninput="filtrarAreasProveedor(this.value)">
-                        <div class="cats-check">
-                            <?php foreach ($categorias as $c): ?>
-                                <label class="cat-check-row" data-area-nombre="<?= htmlspecialchars(mb_strtolower($c['nombre'])) ?>">
-                                    <input type="checkbox" name="categorias[]" value="<?= $c['categoria_id'] ?>"
-                                        <?= in_array($c['categoria_id'], $catsEditando) ? 'checked' : '' ?>>
-                                    <?= htmlspecialchars($c['nombre']) ?>
-                                </label>
-                            <?php endforeach; ?>
-                        </div>
+                        <div class="areas-tags" id="areasTags"></div>
+                        <input type="text" id="buscarAreasProveedor" class="areas-buscador"
+                            placeholder="Buscar y agregar área..."
+                            autocomplete="off"
+                            oninput="filtrarAreasDropdown(this.value)"
+                            onfocus="filtrarAreasDropdown(this.value)"
+                            onblur="setTimeout(()=>document.getElementById('areasDropdown').style.display='none',200)">
+                        <div class="areas-dropdown" id="areasDropdown"></div>
+                        <div id="areasHiddenInputs"></div>
                     </div>
                     <button class="btn-guardar" type="submit"><?= $editando ? 'Guardar cambios' : 'Agregar proveedor' ?></button>
                     <?php if ($editando): ?><a class="btn-cancelar-edit" href="proveedores.php">Cancelar</a><?php endif; ?>
@@ -342,14 +347,61 @@ function filtrarTabla(q) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
 }
-function filtrarAreasProveedor(q) {
-    q = normalizar(q);
-    document.querySelectorAll('.cat-check-row').forEach(function(row) {
-        const nombre = normalizar(row.dataset.areaNombre || row.textContent);
-        row.style.display = nombre.includes(q) ? 'flex' : 'none';
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+// ── Sistema de tags para áreas ──────────────────────────────────────────────
+const todasLasAreas = <?= json_encode(array_values(array_map(fn($c) => ['id' => $c['categoria_id'], 'nombre' => $c['nombre']], $categorias))) ?>;
+let areasSeleccionadas = <?= json_encode(array_values(array_map(fn($id) => intval($id), $catsEditando))) ?>;
+
+function renderAreasTags() {
+    const tags = document.getElementById('areasTags');
+    const hidden = document.getElementById('areasHiddenInputs');
+    tags.innerHTML = '';
+    hidden.innerHTML = '';
+    areasSeleccionadas.forEach(function(id) {
+        const area = todasLasAreas.find(a => a.id == id);
+        if (!area) return;
+        const tag = document.createElement('span');
+        tag.className = 'area-tag';
+        tag.innerHTML = area.nombre + '<button type="button" onclick="quitarArea(' + id + ')">×</button>';
+        tags.appendChild(tag);
+        const inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = 'categorias[]';
+        inp.value = id;
+        hidden.appendChild(inp);
     });
 }
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+function quitarArea(id) {
+    areasSeleccionadas = areasSeleccionadas.filter(i => i != id);
+    renderAreasTags();
+    filtrarAreasDropdown(document.getElementById('buscarAreasProveedor').value);
+}
+
+function filtrarAreasDropdown(q) {
+    const qn = normalizar(q);
+    const drop = document.getElementById('areasDropdown');
+    const disponibles = todasLasAreas.filter(a => !areasSeleccionadas.includes(a.id) && (qn === '' || normalizar(a.nombre).includes(qn)));
+    if (!disponibles.length) {
+        drop.innerHTML = '<div style="padding:10px;text-align:center;color:#aaa;font-size:12px;">Sin resultados</div>';
+    } else {
+        drop.innerHTML = disponibles.map(a =>
+            '<div class="area-opcion" onclick="agregarArea(' + a.id + ')">' + a.nombre + '</div>'
+        ).join('');
+    }
+    drop.style.display = 'block';
+}
+
+function agregarArea(id) {
+    if (!areasSeleccionadas.includes(id)) areasSeleccionadas.push(id);
+    document.getElementById('buscarAreasProveedor').value = '';
+    document.getElementById('areasDropdown').style.display = 'none';
+    renderAreasTags();
+}
+
+// Inicializar tags al cargar
+document.addEventListener('DOMContentLoaded', renderAreasTags);
 </script>
 </body>
 </html>

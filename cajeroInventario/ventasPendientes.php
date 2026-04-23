@@ -9,7 +9,21 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 // Liquidar venta pendiente
 if (isset($_GET['liquidar'])) {
     $venta_id = intval($_GET['liquidar']);
-    $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
+    // Asignar folio si aún no tiene
+    $stmtChk = $pdo->prepare("SELECT folio FROM ventas WHERE venta_id = ? AND estado = 'Pendiente'");
+    $stmtChk->execute([$venta_id]);
+    $ventaLiq = $stmtChk->fetch(PDO::FETCH_ASSOC);
+    if ($ventaLiq && empty($ventaLiq['folio'])) {
+        $mesFolio  = date('m');
+        $anioFolio = date('Y');
+        $stmtFolio = $pdo->prepare("SELECT COUNT(*)+1 FROM ventas WHERE MONTH(created_at)=? AND YEAR(created_at)=?");
+        $stmtFolio->execute([$mesFolio, $anioFolio]);
+        $numFolio = intval($stmtFolio->fetchColumn());
+        $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT) . '-' . $mesFolio . '-' . $anioFolio;
+        $pdo->prepare("UPDATE ventas SET estado = 'Completada', folio = ? WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$folio, $venta_id]);
+    } else {
+        $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
+    }
     header('Location: ventasPendientes.php?msg=liquidado');
     exit();
 }
@@ -282,15 +296,16 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
 
                 <div class="form-group">
                     <label>Agregar producto</label>
-                    <input type="text" class="busqueda-pend" id="buscarProductoPendiente" placeholder="Buscar producto..." oninput="filtrarProductosPendientes(this.value)">
-                    <select id="selectProd" onchange="agregarProd(this)">
-                        <option value="">-- Selecciona un producto --</option>
-                        <?php foreach ($productos as $p): ?>
-                            <option value="<?= $p['producto_id'] ?>" data-nombre="<?= htmlspecialchars($p['nombre_producto']) ?>" data-precio="<?= $p['precio_venta'] ?>" data-texto="<?= htmlspecialchars(mb_strtolower($p['nombre_producto'])) ?>">
-                                <?= htmlspecialchars($p['nombre_producto']) ?> — $<?= number_format($p['precio_venta'],2) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <div style="position:relative;">
+                        <input type="text" id="buscarProductoPendiente" placeholder="Buscar producto por nombre o código..."
+                            autocomplete="off"
+                            oninput="filtrarProductosPendientes(this.value)"
+                            onfocus="filtrarProductosPendientes(this.value)"
+                            onblur="setTimeout(ocultarDropPend, 200)"
+                            style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                        <div id="dropdownProdsPend"
+                            style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e0e0e0;border-radius:6px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px;"></div>
+                    </div>
                 </div>
 
                 <div class="carrito-mini" id="carritoMini">
@@ -329,19 +344,48 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
 
 <script>
 let carritoP = [];
+const prodsPend = <?= json_encode(array_values(array_map(fn($p) => [
+    'producto_id'  => $p['producto_id'],
+    'nombre'       => $p['nombre_producto'],
+    'codigo'       => $p['codigo'],
+    'precio'       => floatval($p['precio_venta']),
+    'texto'        => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
+], $productos))) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
-function agregarProd(sel) {
-    const opt = sel.options[sel.selectedIndex];
-    if (!sel.value) return;
-    const id     = parseInt(sel.value);
-    const nombre = opt.dataset.nombre;
-    const precio = parseFloat(opt.dataset.precio);
+function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+
+function filtrarProductosPendientes(q) {
+    const drop = document.getElementById('dropdownProdsPend');
+    const qn = normalizar(q);
+    const resultados = qn ? prodsPend.filter(p => normalizar(p.texto).includes(qn)) : prodsPend.slice(0, 40);
+    if (!resultados.length) {
+        drop.innerHTML = '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
+    } else {
+        drop.innerHTML = resultados.map(p => `
+            <div onclick="seleccionarProdPend(${p.producto_id},'${p.nombre.replace(/'/g,"\\'")}',${p.precio})"
+                style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;font-size:13px;"
+                onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
+                <strong>${p.nombre}</strong>
+                <span style="color:#aaa;font-size:11px;margin-left:6px;">${p.codigo}</span>
+                <span style="float:right;color:#14ace7;font-weight:600;">$${p.precio.toFixed(2)}</span>
+            </div>
+        `).join('');
+    }
+    drop.style.display = 'block';
+}
+
+function ocultarDropPend() {
+    document.getElementById('dropdownProdsPend').style.display = 'none';
+}
+
+function seleccionarProdPend(id, nombre, precio) {
     const existe = carritoP.find(i => i.producto_id === id);
     if (existe) { existe.cantidad++; }
     else { carritoP.push({ producto_id: id, nombre, precio, cantidad: 1 }); }
-    sel.value = '';
+    document.getElementById('buscarProductoPendiente').value = '';
+    document.getElementById('dropdownProdsPend').style.display = 'none';
     renderCarritoMini();
 }
 
@@ -368,20 +412,10 @@ function renderCarritoMini() {
 function quitarProd(i) { carritoP.splice(i,1); renderCarritoMini(); }
 
 function filtrarPendientes(q) {
-    q = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    q = normalizar(q);
     document.querySelectorAll('.pendiente-item').forEach(function(item) {
-        const texto = (item.dataset.pendienteTexto || item.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const texto = normalizar(item.dataset.pendienteTexto || item.textContent);
         item.style.display = texto.includes(q) ? '' : 'none';
-    });
-}
-
-function filtrarProductosPendientes(q) {
-    q = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const select = document.getElementById('selectProd');
-    Array.from(select.options).forEach(function(opt, index) {
-        if (index === 0) return;
-        const texto = (opt.dataset.texto || opt.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        opt.hidden = q !== '' && !texto.includes(q);
     });
 }
 

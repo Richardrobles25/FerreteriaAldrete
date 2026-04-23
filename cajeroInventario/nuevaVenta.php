@@ -687,7 +687,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     </label>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <span style="font-size:12px;color:#666;">Porcentaje a aplicar</span>
-                        <input type="number" id="porcDescCliente" value="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()">
+                        <input type="number" id="porcDescCliente" value="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()" onblur="clampearDescuentoCliente()">
                         <span id="clienteDescMax" style="font-size:12px;color:#888;"></span>
                     </div>
                 </div>
@@ -1256,17 +1256,18 @@ function quitarCliente() {
 }
 
 function ajustarDescuentoCliente() {
+    // Solo recalcula sin sobrescribir el valor (permite borrar con backspace)
+    if (!clienteActual) return;
+    recalcularTodo();
+}
+function clampearDescuentoCliente() {
     if (!clienteActual) return;
     const input = document.getElementById('porcDescCliente');
     const maximo = parseFloat(clienteActual.descuento || 0);
-    if (String(input.value).trim() === '') {
-        recalcularTodo();
-        return;
-    }
     let valor = parseFloat(input.value || 0);
     if (Number.isNaN(valor) || valor < 0) valor = 0;
     if (valor > maximo) valor = maximo;
-    input.value = String(valor);
+    input.value = valor.toFixed(1);
     recalcularTodo();
 }
 

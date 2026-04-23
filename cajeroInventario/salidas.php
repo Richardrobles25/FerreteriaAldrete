@@ -51,7 +51,7 @@ $stmt = $pdo->prepare("
 $stmt->execute([$_SESSION['sucursal_id']]);
 $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, tipo_venta FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto ASC");
+$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, tipo_venta FROM productos WHERE sucursal_id = ? AND activo = 1 ORDER BY nombre_producto ASC");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -60,7 +60,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Salidas y Mermas â€” FerreterÃ­a Aldrete</title>
+    <title>Salidas y mermas — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -123,7 +123,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p>Cajero / Inventario</p>
     </div>
     <div class="sidebar-menu">
@@ -145,13 +145,13 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
+        <a class="menu-item" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">CategorÃ­as</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item active" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -162,7 +162,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <a class="menu-item" href="compras.php">Compras</a>
         <div class="divider"></div>
 
-        <div class="menu-label">MÃ¡s</div>
+        <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
         <a class="menu-item" href="masVendidos.php">MÃ¡s vendidos</a>
@@ -177,8 +177,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2>Salidas y mermas</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style=”opacity:.75;font-size:12px;”>— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method=”POST” action=”/logout.php”><button class=”logout-btn” type=”submit”>Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -197,8 +197,11 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <form method="POST">
                     <div class="form-group">
                         <label>Producto *</label>
-                        <input type="text" class="busqueda-producto" id="buscarProductoSalida" placeholder="Buscar producto..." oninput="filtrarProductosSalida(this.value)">
-                        <div class="busqueda-resultados" id="resultadosProductoSalida">
+                        <input type="text" class="busqueda-producto" id="buscarProductoSalida" placeholder="Buscar producto..."
+                            oninput="filtrarProductosSalida(this.value)"
+                            onfocus="filtrarProductosSalida(this.value)"
+                            onblur="setTimeout(()=>document.getElementById('resultadosProductoSalida').style.display='none', 200)">
+                        <div class="busqueda-resultados" id="resultadosProductoSalida" style="display:none;">
                             <?php foreach ($productos as $p): ?>
                                 <div class="resultado-prod" data-texto="<?= htmlspecialchars(mb_strtolower($p['codigo'].' '.$p['nombre_producto'])) ?>" data-stock="<?= htmlspecialchars($p['stock_actual']) ?>" data-tipo="<?= htmlspecialchars($p['tipo_venta']) ?>" onclick="seleccionarProductoSalida(<?= (int) $p['producto_id'] ?>, <?= json_encode($p['codigo']) ?>, <?= json_encode($p['nombre_producto']) ?>, <?= json_encode((float) $p['stock_actual']) ?>, <?= json_encode($p['tipo_venta']) ?>)">
                                     <div>
@@ -224,10 +227,10 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-group">
                         <label>Motivo *</label>
                         <div class="motivos-rapidos">
-                            <button type="button" class="motivo-btn" onclick="setMotivo('Merma por daÃ±o')">DaÃ±o</button>
+                            <button type="button" class="motivo-btn" onclick="setMotivo('Merma por daño')">Daño</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Producto vencido')">Vencido</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Error de inventario')">Error inventario</button>
-                            <button type="button" class="motivo-btn" onclick="setMotivo('Robo o extravÃ­o')">Robo/ExtravÃ­o</button>
+                            <button type="button" class="motivo-btn" onclick="setMotivo('Robo o extravío')">Robo/Extravío</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Muestra o regalo')">Muestra</button>
                         </div>
                         <input type="text" name="motivo" id="inputMotivo" placeholder="Describe el motivo de la salida...">
@@ -258,7 +261,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td style="color:#c0392b;font-weight:700;">-<?= number_format($h['cantidad'],2) ?></td>
                             <td><?= number_format($h['stock_anterior'],2) ?></td>
                             <td><?= number_format($h['stock_nuevo'],2) ?></td>
-                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'â€”') ?></td>
+                            <td style=”font-size:12px;color:#888;”><?= htmlspecialchars($h['motivo']??'—') ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($h['created_at'])) ?></td>
                         </tr>
                         <?php endforeach; ?>
@@ -274,28 +277,37 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function filtrarProductosSalida(q) {
-    q = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    document.querySelectorAll('#resultadosProductoSalida .resultado-prod').forEach(function(item) {
-        const texto = (item.dataset.texto || item.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        item.style.display = q !== '' && !texto.includes(q) ? 'none' : '';
+    const qn = normalizar(q);
+    const contenedor = document.getElementById('resultadosProductoSalida');
+    const items = Array.from(contenedor.querySelectorAll('.resultado-prod'));
+    let alguno = false;
+    items.forEach(function(item) {
+        const texto = normalizar(item.dataset.texto || item.textContent);
+        const visible = qn === '' || texto.includes(qn);
+        item.style.display = visible ? '' : 'none';
+        if (visible) alguno = true;
     });
-    const visibles = Array.from(document.querySelectorAll('#resultadosProductoSalida .resultado-prod')).some(item => item.style.display !== 'none');
     let vacio = document.getElementById('sinResultadosSalida');
-    if (!vacio && !visibles) {
-        vacio = document.createElement('div');
-        vacio.id = 'sinResultadosSalida';
-        vacio.className = 'sin-resultados-mini';
-        vacio.textContent = 'No se encontraron productos.';
-        document.getElementById('resultadosProductoSalida').appendChild(vacio);
+    if (!alguno) {
+        if (!vacio) {
+            vacio = document.createElement('div');
+            vacio.id = 'sinResultadosSalida';
+            vacio.className = 'sin-resultados-mini';
+            vacio.textContent = 'No se encontraron productos.';
+            contenedor.appendChild(vacio);
+        }
+        vacio.style.display = 'block';
+    } else if (vacio) {
+        vacio.style.display = 'none';
     }
-    if (vacio) {
-        vacio.style.display = visibles ? 'none' : 'block';
-    }
+    contenedor.style.display = 'block';
 }
 function seleccionarProductoSalida(id, codigo, nombre, stock, tipo) {
     document.getElementById('inputProductoSalidaId').value = id;
     document.getElementById('buscarProductoSalida').value = codigo + ' - ' + nombre;
+    document.getElementById('resultadosProductoSalida').style.display = 'none';
     const info = document.getElementById('stockInfo');
     document.getElementById('stockActual').textContent = parseFloat(stock).toFixed(2);
     document.getElementById('inputCantidad').max = stock;

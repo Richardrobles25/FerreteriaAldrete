@@ -147,6 +147,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$producto_id, $_SESSION['usuario_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo]);
         }
 
+        // Actualizar total de la venta al descontar lo devuelto
+        if (empty($errores)) {
+            $totalDevuelto = array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_unitario'], $productos_dev));
+            $pdo->prepare("UPDATE ventas SET subtotal = GREATEST(0, subtotal - ?), total = GREATEST(0, total - ?) WHERE venta_id = ?")
+                ->execute([$totalDevuelto, $totalDevuelto, $venta_id]);
+        }
+
         // Si era crédito, actualizar el crédito
         if (empty($errores) && $ventaInfo['metodo_pago'] === 'Credito' && $ventaInfo['cliente_id']) {
             $totalDevuelto = array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_unitario'], $productos_dev));
@@ -428,16 +435,19 @@ function buscarVenta() {
             document.getElementById('ventaInfo').classList.add('visible');
             document.getElementById('inputVentaIdHidden').value = data.venta_id;
 
-            // Renderizar productos
+            // Renderizar productos (solo los que aún tienen cantidad pendiente de devolver)
             const lista = document.getElementById('listaProdsDev');
-            lista.innerHTML = data.productos.map(p => `
-                <div class="prod-dev-row">
-                    <span style="flex:1;">${p.nombre_producto}</span>
-                    <span style="color:#aaa;font-size:11px;">Vendido: ${p.cantidad}</span>
-                    <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_unitario}"
-                        placeholder="0" step="1" min="0" max="${p.cantidad}" value="0">
-                </div>
-            `).join('');
+            const prodsDevolvibles = data.productos.filter(p => parseFloat(p.cantidad_restante) > 0);
+            lista.innerHTML = prodsDevolvibles.length
+                ? prodsDevolvibles.map(p => `
+                    <div class="prod-dev-row">
+                        <span style="flex:1;">${p.nombre_producto}</span>
+                        <span style="color:#aaa;font-size:11px;">Restante: ${parseFloat(p.cantidad_restante).toFixed(0)}</span>
+                        <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_unitario}"
+                            placeholder="0" step="1" min="0" max="${parseFloat(p.cantidad_restante).toFixed(0)}" value="0">
+                    </div>
+                `).join('')
+                : '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Todos los productos de esta venta ya fueron devueltos.</div>';
             document.getElementById('prodDevolver').classList.add('visible');
             document.getElementById('motivoGroup').style.display = 'block';
             document.getElementById('btnDevolver').style.display = 'block';

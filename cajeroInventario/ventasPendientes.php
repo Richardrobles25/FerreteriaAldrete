@@ -1,4 +1,6 @@
 ﻿<?php
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -113,7 +115,12 @@ $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Clientes
-$clientes = $pdo->query("SELECT cliente_id, nombre_completo, COALESCE(descuento,0) as descuento FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+try {
+    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, COALESCE(descuento_fijo,0) as descuento FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    // Si la columna descuento_fijo no existe en este entorno, cargamos sin descuento
+    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, 0 as descuento FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">

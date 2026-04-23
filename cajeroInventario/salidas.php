@@ -98,19 +98,21 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: Arial, sans-serif; }
     .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
-    .stock-info { background: #fdecea; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #c0392b; margin-bottom: 14px; display: none; }
-    .stock-info strong { color: #c0392b; }
     .motivos-rapidos { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
     .motivo-btn { background: #f0f0f0; border: none; padding: 5px 12px; border-radius: 99px; font-size: 12px; cursor: pointer; color: #555; }
     .motivo-btn:hover { background: #bbdefb; color: #1565c0; }
-    .busqueda-producto { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
-    .busqueda-producto:focus { outline: none; border-color: #14ace7; }
-    .busqueda-resultados { border: 1px solid #e8e8e8; border-radius: 6px; max-height: 240px; overflow-y: auto; background: #fff; }
-    .resultado-prod { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 0.5px solid #f0f0f0; cursor: pointer; }
-    .resultado-prod:last-child { border-bottom: none; }
-    .resultado-prod:hover { background: #f7fbff; }
-    .resultado-prod small { color: #999; display: block; font-size: 11px; }
-    .sin-resultados-mini { padding: 14px; text-align: center; color: #aaa; font-size: 12px; }
+    .prod-busq-wrap { position: relative; }
+    .prod-drop { display:none; position:absolute; top:calc(100% + 2px); left:0; right:0; background:#fff; border:1px solid #e0e0e0; border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,0.10); z-index:999; max-height:240px; overflow-y:auto; }
+    .prod-drop-item { display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer; border-bottom:0.5px solid #f5f5f5; min-width:0; }
+    .prod-drop-item:hover { background:#eef8ff; }
+    .prod-drop-item:last-child { border-bottom:none; }
+    .prod-sel-panel { background:#f0f9ff; border:1px solid #dbeafe; border-radius:6px; padding:12px 14px; margin-bottom:14px; }
+    .prod-sel-nombre { font-size:13px; font-weight:700; color:#1e3a5f; margin-bottom:10px; }
+    .prod-sel-fila { display:flex; align-items:center; gap:10px; }
+    .prod-sel-fila input[type=number] { width:90px; padding:8px 10px; border:1px solid #bcd6f7; border-radius:6px; font-size:14px; font-weight:600; text-align:center; }
+    .prod-sel-stock { font-size:12px; color:#555; flex:1; }
+    .prod-sel-cancelar { background:none; border:none; color:#aaa; font-size:18px; cursor:pointer; line-height:1; padding:2px 6px; border-radius:4px; }
+    .prod-sel-cancelar:hover { color:#c0392b; }
     .btn-guardar { background: #c0392b; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #a93226; }
     table { width: 100%; border-collapse: collapse; }
@@ -165,7 +167,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
-        <a class="menu-item" href="masVendidos.php">MÃ¡s vendidos</a>
+        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -197,31 +199,25 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <form method="POST">
                     <div class="form-group">
                         <label>Producto *</label>
-                        <input type="text" class="busqueda-producto" id="buscarProductoSalida" placeholder="Buscar producto..."
-                            oninput="filtrarProductosSalida(this.value)"
-                            onfocus="filtrarProductosSalida(this.value)"
-                            onblur="setTimeout(()=>document.getElementById('resultadosProductoSalida').style.display='none', 200)">
-                        <div class="busqueda-resultados" id="resultadosProductoSalida" style="display:none;">
-                            <?php foreach ($productos as $p): ?>
-                                <div class="resultado-prod" data-texto="<?= htmlspecialchars(mb_strtolower($p['codigo'].' '.$p['nombre_producto'])) ?>" data-stock="<?= htmlspecialchars($p['stock_actual']) ?>" data-tipo="<?= htmlspecialchars($p['tipo_venta']) ?>" onclick="seleccionarProductoSalida(<?= (int) $p['producto_id'] ?>, <?= json_encode($p['codigo']) ?>, <?= json_encode($p['nombre_producto']) ?>, <?= json_encode((float) $p['stock_actual']) ?>, <?= json_encode($p['tipo_venta']) ?>)">
-                                    <div>
-                                        <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
-                                        <small><?= htmlspecialchars($p['codigo']) ?> · Stock: <?= number_format($p['stock_actual'],2) ?></small>
-                                    </div>
-                                    <span><?= htmlspecialchars($p['tipo_venta']) ?></span>
-                                </div>
-                            <?php endforeach; ?>
+                        <div class="prod-busq-wrap">
+                            <input type="text" id="buscarProductoSalida" placeholder="Buscar por nombre o código..."
+                                autocomplete="off"
+                                oninput="filtrarDropSalida(this.value)"
+                                onfocus="filtrarDropSalida(this.value)"
+                                onblur="setTimeout(ocultarDropSalida, 200)"
+                                style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <div id="dropProductosSalida" class="prod-drop"></div>
                         </div>
                         <input type="hidden" name="producto_id" id="inputProductoSalidaId">
                     </div>
 
-                    <div class="stock-info" id="stockInfo">
-                        Stock disponible: <strong id="stockActual"></strong>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Cantidad *</label>
-                        <input type="number" name="cantidad" id="inputCantidad" placeholder="0" step="1" min="0.001" inputmode="decimal">
+                    <div class="prod-sel-panel" id="panelSelSalida" style="display:none;">
+                        <div class="prod-sel-nombre" id="panelSelSalidaNombre"></div>
+                        <div class="prod-sel-fila">
+                            <input type="number" name="cantidad" id="inputCantidad" min="0.001" step="1" value="" placeholder="0" inputmode="decimal">
+                            <span class="prod-sel-stock">Stock: <strong id="stockActual"></strong></span>
+                            <button type="button" class="prod-sel-cancelar" onclick="cancelarSelSalida()" title="Quitar selección">✕</button>
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -276,47 +272,69 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+const prodsSalida = <?= json_encode(array_values(array_map(fn($p) => [
+    'id'    => (int)$p['producto_id'],
+    'nombre'=> $p['nombre_producto'],
+    'codigo'=> $p['codigo'],
+    'stock' => (float)$p['stock_actual'],
+    'tipo'  => $p['tipo_venta'],
+    'texto' => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
+], $productos))) ?>;
+
+let prodSelSalida = null;
+
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
-function filtrarProductosSalida(q) {
+
+function filtrarDropSalida(q) {
     const qn = normalizar(q);
-    const contenedor = document.getElementById('resultadosProductoSalida');
-    const items = Array.from(contenedor.querySelectorAll('.resultado-prod'));
-    let alguno = false;
-    items.forEach(function(item) {
-        const texto = normalizar(item.dataset.texto || item.textContent);
-        const visible = qn === '' || texto.includes(qn);
-        item.style.display = visible ? '' : 'none';
-        if (visible) alguno = true;
-    });
-    let vacio = document.getElementById('sinResultadosSalida');
-    if (!alguno) {
-        if (!vacio) {
-            vacio = document.createElement('div');
-            vacio.id = 'sinResultadosSalida';
-            vacio.className = 'sin-resultados-mini';
-            vacio.textContent = 'No se encontraron productos.';
-            contenedor.appendChild(vacio);
-        }
-        vacio.style.display = 'block';
-    } else if (vacio) {
-        vacio.style.display = 'none';
+    const drop = document.getElementById('dropProductosSalida');
+    const resultados = qn.length < 1
+        ? prodsSalida.slice(0, 30)
+        : prodsSalida.filter(p => normalizar(p.texto).includes(qn)).slice(0, 50);
+    if (!resultados.length) {
+        drop.innerHTML = '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Sin resultados.</div>';
+    } else {
+        drop.innerHTML = resultados.map(p => `
+            <div class="prod-drop-item" onclick="seleccionarProdSalida(${p.id})">
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${p.nombre}</span>
+                <span style="font-size:11px;color:#aaa;white-space:nowrap;flex-shrink:0;">${p.codigo}</span>
+                <span style="font-size:12px;color:#c0392b;font-weight:600;white-space:nowrap;flex-shrink:0;">${p.stock % 1 === 0 ? p.stock : p.stock.toFixed(2)}</span>
+            </div>
+        `).join('');
     }
-    contenedor.style.display = 'block';
+    drop.style.display = 'block';
 }
-function seleccionarProductoSalida(id, codigo, nombre, stock, tipo) {
-    document.getElementById('inputProductoSalidaId').value = id;
-    document.getElementById('buscarProductoSalida').value = codigo + ' - ' + nombre;
-    document.getElementById('resultadosProductoSalida').style.display = 'none';
-    const info = document.getElementById('stockInfo');
-    document.getElementById('stockActual').textContent = parseFloat(stock).toFixed(2);
-    document.getElementById('inputCantidad').max = stock;
-    const esSuelto = (tipo || 'Unidad') === 'Suelto';
-    const inputCantidad = document.getElementById('inputCantidad');
-    inputCantidad.step = esSuelto ? '0.001' : '1';
-    inputCantidad.value = '';
-    info.style.display = 'block';
+
+function ocultarDropSalida() {
+    document.getElementById('dropProductosSalida').style.display = 'none';
 }
+
+function seleccionarProdSalida(id) {
+    prodSelSalida = prodsSalida.find(p => p.id === id);
+    if (!prodSelSalida) return;
+    ocultarDropSalida();
+    document.getElementById('buscarProductoSalida').value = '';
+    document.getElementById('inputProductoSalidaId').value = prodSelSalida.id;
+    document.getElementById('panelSelSalidaNombre').textContent = prodSelSalida.nombre + ' · ' + prodSelSalida.codigo;
+    document.getElementById('stockActual').textContent = prodSelSalida.stock % 1 === 0 ? prodSelSalida.stock : prodSelSalida.stock.toFixed(2);
+    const input = document.getElementById('inputCantidad');
+    input.max = prodSelSalida.stock;
+    input.step = prodSelSalida.tipo === 'Suelto' ? '0.001' : '1';
+    input.value = '';
+    document.getElementById('panelSelSalida').style.display = 'block';
+    setTimeout(() => input.focus(), 50);
+}
+
+function cancelarSelSalida() {
+    prodSelSalida = null;
+    document.getElementById('panelSelSalida').style.display = 'none';
+    document.getElementById('inputProductoSalidaId').value = '';
+    document.getElementById('inputCantidad').value = '';
+    document.getElementById('buscarProductoSalida').value = '';
+    document.getElementById('buscarProductoSalida').focus();
+}
+
 function setMotivo(texto) { document.getElementById('inputMotivo').value = texto; }
 </script>
 </body>

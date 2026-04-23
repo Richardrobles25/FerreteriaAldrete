@@ -553,23 +553,10 @@ function filtrarTabla(q) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
 }
-function confirmarEliminacion(id, nombre) {
-    const seguro = confirm('Se va a desactivar "' + nombre + '". Este movimiento se guardara en historial. ¿Deseas continuar?');
-    if (!seguro) return;
-    const motivo = prompt('Escribe el motivo de la eliminacion del producto:');
-    if (motivo === null) return;
-    if (!motivo.trim()) {
-        alert('Necesitas capturar un motivo para eliminar el producto.');
-        return;
-    }
-    document.getElementById('inputEliminarProductoId').value = id;
-    document.getElementById('inputEliminarProductoMotivo').value = motivo.trim();
-    document.getElementById('formEliminarProducto').submit();
-}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleImport() { document.getElementById('importCard').classList.toggle('visible'); }
 let productoEliminarActual = null;
-confirmarEliminacion = function(id, nombre) {
+function confirmarEliminacion(id, nombre) {
     productoEliminarActual = { id, nombre };
     document.getElementById('textoEliminarProducto').textContent = 'Se desactivará "' + nombre + '" y se registrará el motivo en el historial de movimientos.';
     document.getElementById('textareaEliminarProducto').value = '';
@@ -577,7 +564,7 @@ confirmarEliminacion = function(id, nombre) {
     document.getElementById('modalEliminarProducto').classList.add('visible');
     document.getElementById('modalEliminarProducto').setAttribute('aria-hidden', 'false');
     setTimeout(() => document.getElementById('textareaEliminarProducto').focus(), 0);
-};
+}
 function cerrarModalEliminacion() {
     productoEliminarActual = null;
     document.getElementById('modalEliminarProducto').classList.remove('visible');

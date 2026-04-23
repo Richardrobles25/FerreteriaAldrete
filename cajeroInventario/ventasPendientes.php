@@ -107,7 +107,7 @@ $stmt->execute([$_SESSION['usuario_id']]);
 $pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos para agregar
-$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, precio_venta, stock_actual FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto");
+$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, precio_venta, stock_actual, tipo_venta FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -170,7 +170,7 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     .form-group input:focus, .form-group select:focus { outline: none; border-color: #14ace7; }
     .carrito-mini { border: 0.5px solid #eee; border-radius: 6px; padding: 10px; margin-bottom: 12px; min-height: 60px; }
     .carrito-vacio-mini { text-align: center; color: #aaa; font-size: 12px; padding: 14px; }
-    .item-mini { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 0.5px solid #f5f5f5; font-size: 12px; }
+    .item-mini { display: flex; align-items: center; gap: 4px; padding: 6px 0; border-bottom: 0.5px solid #f5f5f5; font-size: 12px; min-width: 0; }
     .item-mini:last-child { border-bottom: none; }
     .btn-quitar-mini { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 14px; }
     .total-mini { display: flex; justify-content: space-between; font-size: 14px; font-weight: 700; color: #222; padding-top: 8px; border-top: 1px solid #eee; margin-top: 4px; }
@@ -297,7 +297,7 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                 <div class="form-group">
                     <label>Agregar producto</label>
                     <div style="position:relative;">
-                        <input type="text" id="buscarProductoPendiente" placeholder="Buscar producto por nombre o código..."
+                        <input type="text" id="buscarProductoPendiente" placeholder="Buscar por nombre o código..."
                             autocomplete="off"
                             oninput="filtrarProductosPendientes(this.value)"
                             onfocus="filtrarProductosPendientes(this.value)"
@@ -305,6 +305,21 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                             style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
                         <div id="dropdownProdsPend"
                             style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e0e0e0;border-radius:6px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px;"></div>
+                    </div>
+                    <!-- Panel cantidad tras seleccionar producto -->
+                    <div id="prodSelPend" style="display:none;background:#f0f9ff;border:1px solid #dbeafe;border-radius:6px;padding:10px 12px;margin-top:8px;">
+                        <div style="font-size:13px;font-weight:600;color:#1565c0;margin-bottom:6px;" id="prodSelPendNombre"></div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <label style="font-size:12px;color:#555;white-space:nowrap;">Cantidad:</label>
+                            <input type="number" id="inputCantPend" min="0.001" step="1" value="1"
+                                style="width:80px;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarAgregarProdPend();}">
+                            <span id="prodSelPendPrecio" style="font-size:12px;color:#14ace7;font-weight:600;"></span>
+                            <button type="button" onclick="confirmarAgregarProdPend()"
+                                style="flex:1;background:#14ace7;color:white;border:none;padding:8px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Agregar</button>
+                            <button type="button" onclick="cancelarSelPend()"
+                                style="background:white;color:#666;border:1px solid #ddd;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;">✕</button>
+                        </div>
                     </div>
                 </div>
 
@@ -349,12 +364,15 @@ const prodsPend = <?= json_encode(array_values(array_map(fn($p) => [
     'nombre'       => $p['nombre_producto'],
     'codigo'       => $p['codigo'],
     'precio'       => floatval($p['precio_venta']),
+    'tipo'         => $p['tipo_venta'],
     'texto'        => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
 ], $productos))) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
 function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+
+let prodSelPendActual = null;
 
 function filtrarProductosPendientes(q) {
     const drop = document.getElementById('dropdownProdsPend');
@@ -364,12 +382,12 @@ function filtrarProductosPendientes(q) {
         drop.innerHTML = '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
     } else {
         drop.innerHTML = resultados.map(p => `
-            <div onclick="seleccionarProdPend(${p.producto_id},'${p.nombre.replace(/'/g,"\\'")}',${p.precio})"
-                style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;font-size:13px;"
+            <div onclick="seleccionarProdPend(${p.producto_id})"
+                style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;display:flex;align-items:center;gap:8px;min-width:0;"
                 onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
-                <strong>${p.nombre}</strong>
-                <span style="color:#aaa;font-size:11px;margin-left:6px;">${p.codigo}</span>
-                <span style="float:right;color:#14ace7;font-weight:600;">$${p.precio.toFixed(2)}</span>
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${p.nombre}</span>
+                <span style="font-size:11px;color:#aaa;white-space:nowrap;flex-shrink:0;">${p.codigo}</span>
+                <span style="font-size:13px;color:#14ace7;font-weight:600;white-space:nowrap;flex-shrink:0;">$${p.precio.toFixed(2)}</span>
             </div>
         `).join('');
     }
@@ -380,13 +398,39 @@ function ocultarDropPend() {
     document.getElementById('dropdownProdsPend').style.display = 'none';
 }
 
-function seleccionarProdPend(id, nombre, precio) {
-    const existe = carritoP.find(i => i.producto_id === id);
-    if (existe) { existe.cantidad++; }
-    else { carritoP.push({ producto_id: id, nombre, precio, cantidad: 1 }); }
+function seleccionarProdPend(id) {
+    const prod = prodsPend.find(p => p.producto_id === id);
+    if (!prod) return;
+    prodSelPendActual = prod;
     document.getElementById('buscarProductoPendiente').value = '';
     document.getElementById('dropdownProdsPend').style.display = 'none';
+    document.getElementById('prodSelPendNombre').textContent = prod.nombre + ' — ' + prod.codigo;
+    document.getElementById('prodSelPendPrecio').textContent = '$' + prod.precio.toFixed(2) + ' c/u';
+    const inp = document.getElementById('inputCantPend');
+    inp.step = prod.tipo === 'Suelto' ? '0.001' : '1';
+    inp.value = 1;
+    document.getElementById('prodSelPend').style.display = 'block';
+    setTimeout(() => inp.select(), 50);
+}
+
+function confirmarAgregarProdPend() {
+    if (!prodSelPendActual) return;
+    const cantidad = parseFloat(document.getElementById('inputCantPend').value) || 0;
+    if (cantidad <= 0) { alert('Ingresa una cantidad válida.'); return; }
+    const { producto_id, nombre, precio } = prodSelPendActual;
+    const existe = carritoP.find(i => i.producto_id === producto_id);
+    if (existe) { existe.cantidad += cantidad; }
+    else { carritoP.push({ producto_id, nombre, precio, cantidad }); }
+    cancelarSelPend();
     renderCarritoMini();
+}
+
+function cancelarSelPend() {
+    prodSelPendActual = null;
+    document.getElementById('prodSelPend').style.display = 'none';
+    document.getElementById('inputCantPend').value = 1;
+    document.getElementById('buscarProductoPendiente').value = '';
+    document.getElementById('buscarProductoPendiente').focus();
 }
 
 function renderCarritoMini() {
@@ -400,8 +444,11 @@ function renderCarritoMini() {
     let total = 0;
     div.innerHTML = carritoP.map((i,idx) => {
         total += i.cantidad * i.precio;
+        const cantStr = Number.isInteger(i.cantidad) ? i.cantidad : i.cantidad.toFixed(3).replace(/\.?0+$/,'');
         return `<div class="item-mini">
-            <span>${i.nombre} × ${i.cantidad} = $${(i.cantidad*i.precio).toFixed(2)}</span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${i.nombre}</span>
+            <span style="white-space:nowrap;color:#555;font-size:12px;margin:0 6px;">×${cantStr}</span>
+            <span style="white-space:nowrap;color:#14ace7;font-weight:600;font-size:12px;">$${(i.cantidad*i.precio).toFixed(2)}</span>
             <button class="btn-quitar-mini" onclick="quitarProd(${idx})">×</button>
         </div>`;
     }).join('');

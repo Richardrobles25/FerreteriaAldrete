@@ -511,7 +511,10 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                             <div class="acciones">
                                 <a class="btn-accion btn-editar" href="formProducto.php?id=<?= $p['producto_id'] ?>">Editar</a>
                                 <a class="btn-accion btn-entrada" href="entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
-                                <button class="btn-accion btn-eliminar" type="button" onclick="confirmarEliminacion(<?= $p['producto_id'] ?>, <?= json_encode($p['nombre_producto']) ?>)">Eliminar</button>
+                                <button class="btn-accion btn-eliminar" type="button"
+                                    data-id="<?= $p['producto_id'] ?>"
+                                    data-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES) ?>"
+                                    onclick="confirmarEliminacion(parseInt(this.dataset.id), this.dataset.nombre)">Eliminar</button>
                             </div>
                         </td>
                     </tr>

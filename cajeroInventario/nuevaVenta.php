@@ -307,12 +307,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         try {
             $metodo_pago_db = $metodo_pago === 'Transferencia' ? 'Terminal' : $metodo_pago;
 
-            // Generar folio mensual: NNNN-MM-YYYY (se reinicia cada 1ro de mes)
+            // Generar folio secuencial mensual: NNNN (reinicia cada mes)
             $mesFolio  = date('m');
             $anioFolio = date('Y');
-            // SELECT con FOR UPDATE para evitar folios duplicados en ventas simultáneas
             $stmtFolio = $pdo->prepare("
-                SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(folio,'-',1) AS UNSIGNED)),0)+1
+                SELECT COALESCE(MAX(CAST(folio AS UNSIGNED)), 0) + 1
                 FROM ventas
                 WHERE folio IS NOT NULL
                   AND MONTH(created_at) = ? AND YEAR(created_at) = ?
@@ -320,7 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             ");
             $stmtFolio->execute([$mesFolio, $anioFolio]);
             $numFolio = intval($stmtFolio->fetchColumn());
-            $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT) . '-' . $mesFolio . '-' . $anioFolio;
+            $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
 
             $stmt = $pdo->prepare("
                 INSERT INTO ventas

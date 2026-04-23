@@ -19,7 +19,7 @@ if (isset($_GET['liquidar'])) {
         $stmtFolio = $pdo->prepare("SELECT COUNT(*)+1 FROM ventas WHERE MONTH(created_at)=? AND YEAR(created_at)=?");
         $stmtFolio->execute([$mesFolio, $anioFolio]);
         $numFolio = intval($stmtFolio->fetchColumn());
-        $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT) . '-' . $mesFolio . '-' . $anioFolio;
+        $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
         $pdo->prepare("UPDATE ventas SET estado = 'Completada', folio = ? WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$folio, $venta_id]);
     } else {
         $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
@@ -67,11 +67,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $cliente_id = intval($_POST['cliente_id'] ?? 0) ?: null;
         $notas      = trim($_POST['notas'] ?? '');
         $subtotal   = floatval($_POST['subtotal'] ?? 0);
+        $descuento  = floatval($_POST['descuento'] ?? 0);
         $total      = floatval($_POST['total'] ?? 0);
 
         if (!empty($items)) {
-            $pdo->prepare("INSERT INTO ventas (caja_id, cliente_id, usuario_id, subtotal, total, metodo_pago, estado, notas) VALUES (?,?,?,?,?,'Efectivo','Pendiente',?)")
-                ->execute([$caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $total, $notas]);
+            $pdo->prepare("INSERT INTO ventas (caja_id, cliente_id, usuario_id, subtotal, descuento, total, metodo_pago, estado, notas) VALUES (?,?,?,?,?,?,'Efectivo','Pendiente',?)")
+                ->execute([$caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $total, $notas]);
             $venta_id = $pdo->lastInsertId();
 
             foreach ($items as $item) {
@@ -112,7 +113,7 @@ $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Clientes
-$clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+$clientes = $pdo->query("SELECT cliente_id, nombre_completo, COALESCE(descuento,0) as descuento FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -326,23 +327,45 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                 <div class="carrito-mini" id="carritoMini">
                     <div class="carrito-vacio-mini">Sin productos</div>
                 </div>
-                <div class="total-mini" id="totalMini" style="display:none;">
-                    <span>Total</span><span id="totalValor">$0.00</span>
+                <div class="total-mini" id="totalMini" style="display:none;flex-direction:column;gap:2px;">
+                    <div id="descuentoLinea" style="display:none;justify-content:space-between;font-size:12px;color:#2e7d32;font-weight:500;">
+                        <span>Descuento</span><span id="descuentoValor">-$0.00</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#222;">
+                        <span>Total</span><span id="totalValor">$0.00</span>
+                    </div>
                 </div>
 
                 <form method="POST" id="formPendiente">
-                    <input type="hidden" name="items" id="inputItemsPend">
-                    <input type="hidden" name="subtotal" id="inputSubtotalPend">
-                    <input type="hidden" name="total" id="inputTotalPend">
+                    <input type="hidden" name="items"     id="inputItemsPend">
+                    <input type="hidden" name="subtotal"  id="inputSubtotalPend">
+                    <input type="hidden" name="descuento" id="inputDescuentoPend">
+                    <input type="hidden" name="total"     id="inputTotalPend">
+                    <input type="hidden" name="cliente_id" id="inputClienteIdPend">
 
                     <div class="form-group" style="margin-top:14px;">
                         <label>Cliente (opcional)</label>
-                        <select name="cliente_id">
-                            <option value="">Sin cliente</option>
-                            <?php foreach ($clientes as $c): ?>
-                                <option value="<?= $c['cliente_id'] ?>"><?= htmlspecialchars($c['nombre_completo']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
+                        <div style="position:relative;">
+                            <input type="text" id="buscarClientePend" placeholder="Buscar cliente..."
+                                autocomplete="off"
+                                oninput="filtrarClientesPend(this.value)"
+                                onfocus="filtrarClientesPend(this.value)"
+                                onblur="setTimeout(ocultarDropClientes, 200)"
+                                style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <div id="dropClientesPend" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e0e0e0;border-radius:6px;max-height:180px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px;"></div>
+                        </div>
+                        <div id="clienteSelPend" style="display:none;background:#f0f9ff;border:1px solid #dbeafe;border-radius:6px;padding:8px 12px;margin-top:6px;align-items:center;gap:8px;">
+                            <span id="clienteSelNombrePend" style="flex:1;font-size:13px;font-weight:600;color:#1565c0;"></span>
+                            <button type="button" onclick="quitarClientePend()" style="background:none;border:none;color:#aaa;font-size:16px;cursor:pointer;margin-left:auto;line-height:1;">✕</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="descClientePendGrupo" style="display:none;">
+                        <label>Descuento del cliente (<span id="descMaxPend">0</span>% máx.)</label>
+                        <input type="number" id="inputDescClientePend" min="0" step="0.1" value="0"
+                            oninput="recalcularTotalPend()"
+                            onblur="clampearDescClientePend()"
+                            style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
                     </div>
 
                     <div class="form-group">
@@ -359,8 +382,11 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
 
 <script>
 let carritoP = [];
+let prodSelPendActual = null;
+let clientePendActual = null;
+
 const prodsPend = <?= json_encode(array_values(array_map(fn($p) => [
-    'producto_id'  => $p['producto_id'],
+    'producto_id'  => (int)$p['producto_id'],
     'nombre'       => $p['nombre_producto'],
     'codigo'       => $p['codigo'],
     'precio'       => floatval($p['precio_venta']),
@@ -368,12 +394,17 @@ const prodsPend = <?= json_encode(array_values(array_map(fn($p) => [
     'texto'        => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
 ], $productos))) ?>;
 
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+const clientesPend = <?= json_encode(array_values(array_map(fn($c) => [
+    'id'        => (int)$c['cliente_id'],
+    'nombre'    => $c['nombre_completo'],
+    'descuento' => floatval($c['descuento']),
+    'texto'     => mb_strtolower($c['nombre_completo']),
+], $clientes))) ?>;
 
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 
-let prodSelPendActual = null;
-
+/* ── Búsqueda de productos ── */
 function filtrarProductosPendientes(q) {
     const drop = document.getElementById('dropdownProdsPend');
     const qn = normalizar(q);
@@ -407,7 +438,8 @@ function seleccionarProdPend(id) {
     document.getElementById('prodSelPendNombre').textContent = prod.nombre + ' — ' + prod.codigo;
     document.getElementById('prodSelPendPrecio').textContent = '$' + prod.precio.toFixed(2) + ' c/u';
     const inp = document.getElementById('inputCantPend');
-    inp.step = prod.tipo === 'Suelto' ? '0.001' : '1';
+    inp.step  = prod.tipo === 'Suelto' ? '0.001' : '1';
+    inp.min   = prod.tipo === 'Suelto' ? '0.001' : '1';
     inp.value = 1;
     document.getElementById('prodSelPend').style.display = 'block';
     setTimeout(() => inp.select(), 50);
@@ -421,7 +453,11 @@ function confirmarAgregarProdPend() {
     const existe = carritoP.find(i => i.producto_id === producto_id);
     if (existe) { existe.cantidad += cantidad; }
     else { carritoP.push({ producto_id, nombre, precio, cantidad }); }
-    cancelarSelPend();
+    // Ocultar panel sin reabrir el dropdown (no hacer focus al input de búsqueda)
+    prodSelPendActual = null;
+    document.getElementById('prodSelPend').style.display = 'none';
+    document.getElementById('inputCantPend').value = 1;
+    document.getElementById('buscarProductoPendiente').value = '';
     renderCarritoMini();
 }
 
@@ -433,6 +469,7 @@ function cancelarSelPend() {
     document.getElementById('buscarProductoPendiente').focus();
 }
 
+/* ── Carrito ── */
 function renderCarritoMini() {
     const div = document.getElementById('carritoMini');
     const tot = document.getElementById('totalMini');
@@ -441,9 +478,7 @@ function renderCarritoMini() {
         tot.style.display = 'none';
         return;
     }
-    let total = 0;
     div.innerHTML = carritoP.map((i,idx) => {
-        total += i.cantidad * i.precio;
         const cantStr = Number.isInteger(i.cantidad) ? i.cantidad : i.cantidad.toFixed(3).replace(/\.?0+$/,'');
         return `<div class="item-mini">
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${i.nombre}</span>
@@ -452,12 +487,90 @@ function renderCarritoMini() {
             <button class="btn-quitar-mini" onclick="quitarProd(${idx})">×</button>
         </div>`;
     }).join('');
-    document.getElementById('totalValor').textContent = '$'+total.toFixed(2);
     tot.style.display = 'flex';
+    recalcularTotalPend();
 }
 
 function quitarProd(i) { carritoP.splice(i,1); renderCarritoMini(); }
 
+function recalcularTotalPend() {
+    const subtotal = carritoP.reduce((a, i) => a + (i.cantidad * i.precio), 0);
+    const descPorc = (clientePendActual && clientePendActual.descuento > 0)
+        ? Math.min(parseFloat(document.getElementById('inputDescClientePend').value || 0), clientePendActual.descuento)
+        : 0;
+    const descVal = subtotal * (descPorc / 100);
+    const total   = subtotal - descVal;
+    document.getElementById('totalValor').textContent = '$' + total.toFixed(2);
+    const linea = document.getElementById('descuentoLinea');
+    linea.style.display = (descPorc > 0 && carritoP.length) ? 'flex' : 'none';
+    document.getElementById('descuentoValor').textContent = '-$' + descVal.toFixed(2);
+}
+
+/* ── Búsqueda de clientes ── */
+function filtrarClientesPend(q) {
+    const qn = normalizar(q);
+    const drop = document.getElementById('dropClientesPend');
+    const resultados = qn ? clientesPend.filter(c => normalizar(c.texto).includes(qn)) : clientesPend.slice(0, 30);
+    if (!resultados.length) {
+        drop.innerHTML = '<div style="padding:10px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
+    } else {
+        drop.innerHTML = resultados.map(c => `
+            <div onclick="seleccionarClientePend(${c.id})"
+                style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;font-size:13px;"
+                onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
+                ${c.nombre}${c.descuento > 0 ? ' <span style="font-size:11px;color:#2e7d32;font-weight:600;">('+c.descuento+'% desc.)</span>' : ''}
+            </div>
+        `).join('');
+    }
+    drop.style.display = 'block';
+}
+
+function ocultarDropClientes() {
+    document.getElementById('dropClientesPend').style.display = 'none';
+}
+
+function seleccionarClientePend(id) {
+    clientePendActual = clientesPend.find(c => c.id === id);
+    if (!clientePendActual) return;
+    ocultarDropClientes();
+    document.getElementById('buscarClientePend').value = '';
+    document.getElementById('inputClienteIdPend').value = clientePendActual.id;
+    document.getElementById('clienteSelNombrePend').textContent = clientePendActual.nombre;
+    document.getElementById('clienteSelPend').style.display = 'flex';
+    const descGrupo = document.getElementById('descClientePendGrupo');
+    if (clientePendActual.descuento > 0) {
+        document.getElementById('descMaxPend').textContent = clientePendActual.descuento;
+        document.getElementById('inputDescClientePend').value = clientePendActual.descuento.toFixed(1);
+        document.getElementById('inputDescClientePend').max  = clientePendActual.descuento;
+        descGrupo.style.display = 'block';
+    } else {
+        descGrupo.style.display = 'none';
+    }
+    recalcularTotalPend();
+}
+
+function quitarClientePend() {
+    clientePendActual = null;
+    document.getElementById('inputClienteIdPend').value = '';
+    document.getElementById('buscarClientePend').value  = '';
+    document.getElementById('clienteSelPend').style.display = 'none';
+    document.getElementById('descClientePendGrupo').style.display = 'none';
+    document.getElementById('inputDescClientePend').value = 0;
+    recalcularTotalPend();
+}
+
+function clampearDescClientePend() {
+    if (!clientePendActual) return;
+    const input  = document.getElementById('inputDescClientePend');
+    const maximo = clientePendActual.descuento;
+    let valor = parseFloat(input.value || 0);
+    if (isNaN(valor) || valor < 0) valor = 0;
+    if (valor > maximo) valor = maximo;
+    input.value = valor.toFixed(1);
+    recalcularTotalPend();
+}
+
+/* ── Filtro lista pendientes ── */
 function filtrarPendientes(q) {
     q = normalizar(q);
     document.querySelectorAll('.pendiente-item').forEach(function(item) {
@@ -466,11 +579,18 @@ function filtrarPendientes(q) {
     });
 }
 
+/* ── Submit ── */
 function prepararPendiente() {
     if (!carritoP.length) { alert('Agrega al menos un producto.'); return false; }
-    const total = carritoP.reduce((a,i) => a+(i.cantidad*i.precio),0);
+    const subtotal = carritoP.reduce((a, i) => a + (i.cantidad * i.precio), 0);
+    const descPorc = (clientePendActual && clientePendActual.descuento > 0)
+        ? Math.min(parseFloat(document.getElementById('inputDescClientePend').value || 0), clientePendActual.descuento)
+        : 0;
+    const descVal = subtotal * (descPorc / 100);
+    const total   = subtotal - descVal;
     document.getElementById('inputItemsPend').value    = JSON.stringify(carritoP.map(i=>({producto_id:i.producto_id,cantidad:i.cantidad,precio:i.precio})));
-    document.getElementById('inputSubtotalPend').value = total.toFixed(2);
+    document.getElementById('inputSubtotalPend').value = subtotal.toFixed(2);
+    document.getElementById('inputDescuentoPend').value = descVal.toFixed(2);
     document.getElementById('inputTotalPend').value    = total.toFixed(2);
     return true;
 }

@@ -633,7 +633,7 @@ function generarTicketHTML(venta) {
 
     html += `
         <div class="t-linea"></div>
-        <div class="t-fila"><span>Folio:</span><span>${venta.folio ? parseInt(venta.folio.split('-')[0]) : ('#'+venta.venta_id)}</span></div>
+        <div class="t-fila"><span>Folio:</span><span>${venta.folio || ('#'+venta.venta_id)}</span></div>
         <div class="t-fila"><span>Fecha:</span><span>${esc(fecha)}</span></div>
         <div class="t-fila"><span>Cajero:</span><span>${esc(venta.cajero || '—')}</span></div>`;
 

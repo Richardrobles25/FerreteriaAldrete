@@ -1259,10 +1259,14 @@ function ajustarDescuentoCliente() {
     if (!clienteActual) return;
     const input = document.getElementById('porcDescCliente');
     const maximo = parseFloat(clienteActual.descuento || 0);
+    if (String(input.value).trim() === '') {
+        recalcularTodo();
+        return;
+    }
     let valor = parseFloat(input.value || 0);
     if (Number.isNaN(valor) || valor < 0) valor = 0;
     if (valor > maximo) valor = maximo;
-    input.value = valor.toFixed(1);
+    input.value = String(valor);
     recalcularTodo();
 }
 
@@ -1439,7 +1443,7 @@ function generarTicketHTML(venta) {
 
     html += `
         <div class="t-linea"></div>
-        <div class="t-fila"><span>Folio:</span><span>${venta.folio ? parseInt(venta.folio.split('-')[0]) : ('#'+venta.venta_id)}</span></div>
+        <div class="t-fila"><span>Folio:</span><span>${venta.folio || ('#'+venta.venta_id)}</span></div>
         <div class="t-fila"><span>Fecha:</span><span>${fecha}</span></div>
         <div class="t-fila"><span>Cajero:</span><span>${esc(cajeroNombre)}</span></div>`;
 

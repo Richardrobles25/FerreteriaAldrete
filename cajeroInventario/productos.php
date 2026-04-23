@@ -172,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
             $pdo->prepare("
                 INSERT INTO movimientos_inventario
                 (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-                VALUES (?, ?, 'Ajuste', 0, ?, ?, ?)
+                VALUES (?, ?, 'Ajuste', ?, ?, 0, ?)
             ")->execute([
                 $id,
                 $_SESSION['usuario_id'],

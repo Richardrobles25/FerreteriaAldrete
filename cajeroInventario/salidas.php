@@ -214,7 +214,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="prod-sel-panel" id="panelSelSalida" style="display:none;">
                         <div class="prod-sel-nombre" id="panelSelSalidaNombre"></div>
                         <div class="prod-sel-fila">
-                            <input type="number" name="cantidad" id="inputCantidad" min="0.001" step="1" value="" placeholder="0" inputmode="decimal">
+                            <input type="number" name="cantidad" id="inputCantidad" min="1" step="1" value="" placeholder="0" inputmode="numeric" oninput="sanitizarCantidadSalida()">
                             <span class="prod-sel-stock">Stock: <strong id="stockActual"></strong></span>
                             <button type="button" class="prod-sel-cancelar" onclick="cancelarSelSalida()" title="Quitar selección">✕</button>
                         </div>
@@ -320,10 +320,28 @@ function seleccionarProdSalida(id) {
     document.getElementById('stockActual').textContent = prodSelSalida.stock % 1 === 0 ? prodSelSalida.stock : prodSelSalida.stock.toFixed(2);
     const input = document.getElementById('inputCantidad');
     input.max = prodSelSalida.stock;
-    input.step = prodSelSalida.tipo === 'Suelto' ? '0.001' : '1';
+    if (prodSelSalida.tipo === 'Suelto') {
+        input.step = '0.001';
+        input.min = '0.001';
+        input.setAttribute('inputmode', 'decimal');
+    } else {
+        input.step = '1';
+        input.min = '1';
+        input.setAttribute('inputmode', 'numeric');
+    }
     input.value = '';
     document.getElementById('panelSelSalida').style.display = 'block';
     setTimeout(() => input.focus(), 50);
+}
+
+function sanitizarCantidadSalida() {
+    if (!prodSelSalida || prodSelSalida.tipo === 'Suelto') return;
+    const input = document.getElementById('inputCantidad');
+    const val = input.value;
+    if (val !== '' && val.includes('.')) {
+        const n = parseFloat(val);
+        if (!isNaN(n)) input.value = Math.floor(n) || '';
+    }
 }
 
 function cancelarSelSalida() {

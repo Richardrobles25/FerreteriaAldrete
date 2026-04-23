@@ -9,30 +9,7 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 // Liquidar venta pendiente
 if (isset($_GET['liquidar'])) {
     $venta_id = intval($_GET['liquidar']);
-    $stmtVenta = $pdo->prepare("SELECT folio FROM ventas WHERE venta_id = ? AND estado = 'Pendiente' LIMIT 1");
-    $stmtVenta->execute([$venta_id]);
-    $folioActual = $stmtVenta->fetchColumn();
-
-    if ($folioActual === false) {
-        header('Location: ventasPendientes.php');
-        exit();
-    }
-
-    if (!$folioActual) {
-        $mesFolio  = date('m');
-        $anioFolio = date('Y');
-        $stmtFolio = $pdo->prepare("
-            SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(folio,'-',1) AS UNSIGNED)),0)+1
-            FROM ventas
-            WHERE folio IS NOT NULL
-              AND MONTH(created_at) = ? AND YEAR(created_at) = ?
-        ");
-        $stmtFolio->execute([$mesFolio, $anioFolio]);
-        $numFolio = intval($stmtFolio->fetchColumn());
-        $folioActual = str_pad($numFolio, 4, '0', STR_PAD_LEFT) . '-' . $mesFolio . '-' . $anioFolio;
-    }
-
-    $pdo->prepare("UPDATE ventas SET estado = 'Completada', folio = ? WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$folioActual, $venta_id]);
+    $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
     header('Location: ventasPendientes.php?msg=liquidado');
     exit();
 }
@@ -53,7 +30,7 @@ if (isset($_GET['cancelar'])) {
         $stockNuevo = $stockAnterior + $p['cantidad'];
 
         $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $p['producto_id']]);
-        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,?,?,'CancelaciÃ³n venta pendiente')")
+        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,?,?,'Cancelación venta pendiente')")
             ->execute([$p['producto_id'], $_SESSION['usuario_id'], $p['cantidad'], $stockAnterior, $stockNuevo]);
     }
 
@@ -128,7 +105,7 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ventas Pendientes â€” FerreterÃ­a Aldrete</title>
+    <title>Ventas Pendientes — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -188,17 +165,11 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     .sin-pendientes { text-align: center; color: #aaa; padding: 40px; font-size: 13px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
     .busqueda-pend { width: 100%; margin-bottom: 12px; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .busqueda-pend:focus { outline: none; border-color: #14ace7; }
-    .busqueda-resultados { border: 1px solid #e8e8e8; border-radius: 6px; max-height: 220px; overflow-y: auto; background: #fff; }
-    .resultado-prod { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 0.5px solid #f0f0f0; cursor: pointer; }
-    .resultado-prod:last-child { border-bottom: none; }
-    .resultado-prod:hover { background: #f7fbff; }
-    .resultado-prod small { color: #999; display: block; font-size: 11px; }
-    .sin-resultados-mini { padding: 14px; text-align: center; color: #aaa; font-size: 12px; }
 </style>
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>FerreterÃ­a Aldrete</h3>
+        <h3>Ferretería Aldrete</h3>
         <p>Cajero / Inventario</p>
     </div>
     <div class="sidebar-menu">
@@ -220,13 +191,13 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
 
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">CrÃ©ditos</a>
+        <a class="menu-item" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">CategorÃ­as</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -237,10 +208,10 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
         <a class="menu-item" href="compras.php">Compras</a>
         <div class="divider"></div>
 
-        <div class="menu-label">MÃ¡s</div>
+        <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
-        <a class="menu-item" href="masVendidos.php">MÃ¡s vendidos</a>
+        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -252,8 +223,8 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
             <h2>Ventas pendientes</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
 
@@ -272,12 +243,12 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                     <div class="pendiente-header">
                         <div class="pendiente-info">
                             <h4><?= htmlspecialchars($p['cliente'] ?? 'Cliente general') ?></h4>
-                            <p><?= date('d/m/Y H:i', strtotime($p['created_at'])) ?> Â· Total: <strong>$<?= number_format($p['total'],2) ?></strong></p>
+                            <p><?= date('d/m/Y H:i', strtotime($p['created_at'])) ?> · Total: <strong>$<?= number_format($p['total'],2) ?></strong></p>
                             <?php if ($p['notas']): ?><p style="color:#14ace7;"><?= htmlspecialchars($p['notas']) ?></p><?php endif; ?>
                         </div>
                         <div class="pendiente-acciones">
-                            <a class="btn-accion btn-liquidar" href="ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>" onclick="return confirm('Â¿Liquidar esta venta?')">Liquidar</a>
-                            <a class="btn-accion btn-cancelar" href="ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>" onclick="return confirm('Â¿Cancelar y devolver stock?')">Cancelar</a>
+                            <a class="btn-accion btn-liquidar" href="ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Liquidar esta venta?')">Liquidar</a>
+                            <a class="btn-accion btn-cancelar" href="ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Cancelar y devolver stock?')">Cancelar</a>
                         </div>
                     </div>
                     <?php
@@ -288,7 +259,7 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                     <div class="pendiente-productos">
                         <?php foreach ($prods as $prod): ?>
                         <div class="prod-row">
-                            <span><?= htmlspecialchars($prod['nombre_producto']) ?> Ã— <?= $prod['cantidad'] ?></span>
+                            <span><?= htmlspecialchars($prod['nombre_producto']) ?> × <?= $prod['cantidad'] ?></span>
                             <span>$<?= number_format($prod['precio_unitario'] * $prod['cantidad'],2) ?></span>
                         </div>
                         <?php endforeach; ?>
@@ -312,17 +283,14 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                 <div class="form-group">
                     <label>Agregar producto</label>
                     <input type="text" class="busqueda-pend" id="buscarProductoPendiente" placeholder="Buscar producto..." oninput="filtrarProductosPendientes(this.value)">
-                    <div class="busqueda-resultados" id="resultadosProductoPendiente">
+                    <select id="selectProd" onchange="agregarProd(this)">
+                        <option value="">-- Selecciona un producto --</option>
                         <?php foreach ($productos as $p): ?>
-                            <div class="resultado-prod" data-texto="<?= htmlspecialchars(mb_strtolower($p['codigo'].' '.$p['nombre_producto'])) ?>" onclick="agregarProductoPendiente(<?= (int) $p['producto_id'] ?>, <?= json_encode($p['nombre_producto']) ?>, <?= json_encode((float) $p['precio_venta']) ?>)">
-                                <div>
-                                    <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
-                                    <small><?= htmlspecialchars($p['codigo']) ?> · Stock: <?= number_format($p['stock_actual'], 2) ?></small>
-                                </div>
-                                <span>$<?= number_format($p['precio_venta'],2) ?></span>
-                            </div>
+                            <option value="<?= $p['producto_id'] ?>" data-nombre="<?= htmlspecialchars($p['nombre_producto']) ?>" data-precio="<?= $p['precio_venta'] ?>" data-texto="<?= htmlspecialchars(mb_strtolower($p['nombre_producto'])) ?>">
+                                <?= htmlspecialchars($p['nombre_producto']) ?> — $<?= number_format($p['precio_venta'],2) ?>
+                            </option>
                         <?php endforeach; ?>
-                    </div>
+                    </select>
                 </div>
 
                 <div class="carrito-mini" id="carritoMini">
@@ -348,7 +316,7 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                     </div>
 
                     <div class="form-group">
-                        <label>DirecciÃ³n / Notas de entrega</label>
+                        <label>Dirección / Notas de entrega</label>
                         <input type="text" name="notas" placeholder="Ej. Calle Morelos #45, Col. Centro">
                     </div>
 
@@ -364,12 +332,16 @@ let carritoP = [];
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
-function agregarProductoPendiente(id, nombre, precio) {
+function agregarProd(sel) {
+    const opt = sel.options[sel.selectedIndex];
+    if (!sel.value) return;
+    const id     = parseInt(sel.value);
+    const nombre = opt.dataset.nombre;
+    const precio = parseFloat(opt.dataset.precio);
     const existe = carritoP.find(i => i.producto_id === id);
     if (existe) { existe.cantidad++; }
     else { carritoP.push({ producto_id: id, nombre, precio, cantidad: 1 }); }
-    document.getElementById('buscarProductoPendiente').value = '';
-    filtrarProductosPendientes('');
+    sel.value = '';
     renderCarritoMini();
 }
 
@@ -385,8 +357,8 @@ function renderCarritoMini() {
     div.innerHTML = carritoP.map((i,idx) => {
         total += i.cantidad * i.precio;
         return `<div class="item-mini">
-            <span>${i.nombre} Ã— ${i.cantidad} = $${(i.cantidad*i.precio).toFixed(2)}</span>
-            <button class="btn-quitar-mini" onclick="quitarProd(${idx})">Ã—</button>
+            <span>${i.nombre} × ${i.cantidad} = $${(i.cantidad*i.precio).toFixed(2)}</span>
+            <button class="btn-quitar-mini" onclick="quitarProd(${idx})">×</button>
         </div>`;
     }).join('');
     document.getElementById('totalValor').textContent = '$'+total.toFixed(2);
@@ -405,22 +377,12 @@ function filtrarPendientes(q) {
 
 function filtrarProductosPendientes(q) {
     q = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    document.querySelectorAll('#resultadosProductoPendiente .resultado-prod').forEach(function(item) {
-        const texto = (item.dataset.texto || item.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        item.style.display = q !== '' && !texto.includes(q) ? 'none' : '';
+    const select = document.getElementById('selectProd');
+    Array.from(select.options).forEach(function(opt, index) {
+        if (index === 0) return;
+        const texto = (opt.dataset.texto || opt.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        opt.hidden = q !== '' && !texto.includes(q);
     });
-    const visibles = Array.from(document.querySelectorAll('#resultadosProductoPendiente .resultado-prod')).some(item => item.style.display !== 'none');
-    let vacio = document.getElementById('sinResultadosPendiente');
-    if (!vacio && !visibles) {
-        vacio = document.createElement('div');
-        vacio.id = 'sinResultadosPendiente';
-        vacio.className = 'sin-resultados-mini';
-        vacio.textContent = 'No se encontraron productos.';
-        document.getElementById('resultadosProductoPendiente').appendChild(vacio);
-    }
-    if (vacio) {
-        vacio.style.display = visibles ? 'none' : 'block';
-    }
 }
 
 function prepararPendiente() {
@@ -434,6 +396,3 @@ function prepararPendiente() {
 </script>
 </body>
 </html>
-
-
-

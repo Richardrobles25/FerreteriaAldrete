@@ -1,6 +1,4 @@
 ﻿<?php
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -8,24 +6,10 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-// Liquidar venta pendiente
+// Liquidar venta pendiente (el folio ya fue asignado al crear)
 if (isset($_GET['liquidar'])) {
     $venta_id = intval($_GET['liquidar']);
-    // Asignar folio si aún no tiene
-    $stmtChk = $pdo->prepare("SELECT folio FROM ventas WHERE venta_id = ? AND estado = 'Pendiente'");
-    $stmtChk->execute([$venta_id]);
-    $ventaLiq = $stmtChk->fetch(PDO::FETCH_ASSOC);
-    if ($ventaLiq && empty($ventaLiq['folio'])) {
-        $mesFolio  = date('m');
-        $anioFolio = date('Y');
-        $stmtFolio = $pdo->prepare("SELECT COUNT(*)+1 FROM ventas WHERE MONTH(created_at)=? AND YEAR(created_at)=?");
-        $stmtFolio->execute([$mesFolio, $anioFolio]);
-        $numFolio = intval($stmtFolio->fetchColumn());
-        $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
-        $pdo->prepare("UPDATE ventas SET estado = 'Completada', folio = ? WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$folio, $venta_id]);
-    } else {
-        $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
-    }
+    $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
     header('Location: ventasPendientes.php?msg=liquidado');
     exit();
 }
@@ -65,34 +49,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$caja) {
         $errores[] = 'Debes tener una caja abierta para registrar ventas.';
     } else {
-        $items      = json_decode($_POST['items'] ?? '[]', true);
-        $cliente_id = intval($_POST['cliente_id'] ?? 0) ?: null;
-        $notas      = trim($_POST['notas'] ?? '');
-        $subtotal   = floatval($_POST['subtotal'] ?? 0);
-        $descuento  = floatval($_POST['descuento'] ?? 0);
-        $total      = floatval($_POST['total'] ?? 0);
+        $items        = json_decode($_POST['items'] ?? '[]', true);
+        $cliente_id   = intval($_POST['cliente_id'] ?? 0) ?: null;
+        $notas        = trim($_POST['notas'] ?? '');
+        $subtotal     = floatval($_POST['subtotal'] ?? 0);
+        $descuento    = floatval($_POST['descuento'] ?? 0);
+        $total        = floatval($_POST['total'] ?? 0);
+        $metodo_pago  = in_array($_POST['metodo_pago'] ?? '', ['Efectivo', 'Crédito', 'Terminal']) ? $_POST['metodo_pago'] : 'Efectivo';
 
         if (!empty($items)) {
-            $pdo->prepare("INSERT INTO ventas (caja_id, cliente_id, usuario_id, subtotal, descuento, total, metodo_pago, estado, notas) VALUES (?,?,?,?,?,?,'Efectivo','Pendiente',?)")
-                ->execute([$caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $total, $notas]);
-            $venta_id = $pdo->lastInsertId();
+            $pdo->beginTransaction();
+            try {
+                // Generar folio secuencial mensual (mismo criterio que nuevaVenta.php)
+                $mesFolio  = date('m');
+                $anioFolio = date('Y');
+                $stmtFolio = $pdo->prepare("
+                    SELECT COALESCE(MAX(CAST(folio AS UNSIGNED)), 0) + 1
+                    FROM ventas
+                    WHERE folio IS NOT NULL AND MONTH(created_at) = ? AND YEAR(created_at) = ?
+                    FOR UPDATE
+                ");
+                $stmtFolio->execute([$mesFolio, $anioFolio]);
+                $numFolio = intval($stmtFolio->fetchColumn());
+                $folio    = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
 
-            foreach ($items as $item) {
-                $subtotalItem = $item['cantidad'] * $item['precio'];
-                $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
-                    ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $item['precio'], $subtotalItem]);
+                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, total, metodo_pago, estado, notas) VALUES (?,?,?,?,?,?,?,?,'Pendiente',?)")
+                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $total, $metodo_pago, $notas]);
+                $venta_id = $pdo->lastInsertId();
 
-                $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-                $stmtS->execute([$item['producto_id']]);
-                $stockAnterior = $stmtS->fetchColumn();
-                $stockNuevo = $stockAnterior - $item['cantidad'];
-                $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
-                    ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
+                foreach ($items as $item) {
+                    // Validar stock antes de descontar
+                    $stmtChk = $pdo->prepare("SELECT stock_actual, nombre_producto FROM productos WHERE producto_id = ? FOR UPDATE");
+                    $stmtChk->execute([$item['producto_id']]);
+                    $prodChk = $stmtChk->fetch(PDO::FETCH_ASSOC);
+                    if (!$prodChk || floatval($prodChk['stock_actual']) < $item['cantidad']) {
+                        $disponible = $prodChk ? floatval($prodChk['stock_actual']) : 0;
+                        $nombre     = $prodChk['nombre_producto'] ?? 'Producto';
+                        throw new Exception("Stock insuficiente para \"$nombre\". Disponible: $disponible.");
+                    }
+
+                    $subtotalItem  = $item['cantidad'] * $item['precio'];
+                    $stockAnterior = floatval($prodChk['stock_actual']);
+                    $stockNuevo    = $stockAnterior - $item['cantidad'];
+
+                    $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
+                        ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $item['precio'], $subtotalItem]);
+                    $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
+                        ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
+                }
+
+                $pdo->commit();
+                header('Location: ventasPendientes.php?msg=creado');
+                exit();
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $errores[] = $e->getMessage();
             }
-
-            header('Location: ventasPendientes.php?msg=creado');
-            exit();
         }
     }
 }
@@ -316,11 +329,15 @@ try {
                     </div>
                     <!-- Panel cantidad tras seleccionar producto -->
                     <div id="prodSelPend" style="display:none;background:#f0f9ff;border:1px solid #dbeafe;border-radius:6px;padding:10px 12px;margin-top:8px;">
-                        <div style="font-size:13px;font-weight:600;color:#1565c0;margin-bottom:6px;" id="prodSelPendNombre"></div>
+                        <div style="font-size:13px;font-weight:600;color:#1565c0;margin-bottom:4px;" id="prodSelPendNombre"></div>
+                        <div style="font-size:12px;color:#555;margin-bottom:6px;">
+                            Disponible: <span id="prodSelPendStock" style="font-weight:600;color:#2e7d32;"></span>
+                        </div>
                         <div style="display:flex;gap:8px;align-items:center;">
                             <label style="font-size:12px;color:#555;white-space:nowrap;">Cantidad:</label>
-                            <input type="number" id="inputCantPend" min="0.001" step="1" value="1"
+                            <input type="number" id="inputCantPend" min="1" step="1" value="1" inputmode="numeric"
                                 style="width:80px;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                oninput="sanitizarCantPend()"
                                 onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarAgregarProdPend();}">
                             <span id="prodSelPendPrecio" style="font-size:12px;color:#14ace7;font-weight:600;"></span>
                             <button type="button" onclick="confirmarAgregarProdPend()"
@@ -376,6 +393,18 @@ try {
                     </div>
 
                     <div class="form-group">
+                        <label>Método de pago</label>
+                        <div style="display:flex;gap:8px;">
+                            <label style="flex:1;display:flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;" id="labelEfectivoPend">
+                                <input type="radio" name="metodo_pago" value="Efectivo" checked onchange="actualizarMetodoPend(this)"> Efectivo
+                            </label>
+                            <label style="flex:1;display:flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;" id="labelCreditoPend">
+                                <input type="radio" name="metodo_pago" value="Crédito" onchange="actualizarMetodoPend(this)"> Crédito
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
                         <label>Dirección / Notas de entrega</label>
                         <input type="text" name="notas" placeholder="Ej. Calle Morelos #45, Col. Centro">
                     </div>
@@ -397,6 +426,7 @@ const prodsPend = <?= json_encode(array_values(array_map(fn($p) => [
     'nombre'       => $p['nombre_producto'],
     'codigo'       => $p['codigo'],
     'precio'       => floatval($p['precio_venta']),
+    'stock'        => floatval($p['stock_actual']),
     'tipo'         => $p['tipo_venta'],
     'texto'        => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
 ], $productos))) ?>;
@@ -419,15 +449,20 @@ function filtrarProductosPendientes(q) {
     if (!resultados.length) {
         drop.innerHTML = '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
     } else {
-        drop.innerHTML = resultados.map(p => `
-            <div onclick="seleccionarProdPend(${p.producto_id})"
+        drop.innerHTML = resultados.map(p => {
+            const stockStr = p.tipo === 'Suelto'
+                ? p.stock.toFixed(3).replace(/\.?0+$/, '')
+                : Math.floor(p.stock);
+            const stockColor = p.stock <= 0 ? '#c0392b' : (p.stock <= 5 ? '#e67e22' : '#2e7d32');
+            return `<div onclick="seleccionarProdPend(${p.producto_id})"
                 style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;display:flex;align-items:center;gap:8px;min-width:0;"
                 onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
                 <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${p.nombre}</span>
                 <span style="font-size:11px;color:#aaa;white-space:nowrap;flex-shrink:0;">${p.codigo}</span>
+                <span style="font-size:11px;color:${stockColor};font-weight:600;white-space:nowrap;flex-shrink:0;">Stock: ${stockStr}</span>
                 <span style="font-size:13px;color:#14ace7;font-weight:600;white-space:nowrap;flex-shrink:0;">$${p.precio.toFixed(2)}</span>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     }
     drop.style.display = 'block';
 }
@@ -444,23 +479,60 @@ function seleccionarProdPend(id) {
     document.getElementById('dropdownProdsPend').style.display = 'none';
     document.getElementById('prodSelPendNombre').textContent = prod.nombre + ' — ' + prod.codigo;
     document.getElementById('prodSelPendPrecio').textContent = '$' + prod.precio.toFixed(2) + ' c/u';
+
+    // Stock disponible (descontando lo que ya está en el carrito)
+    const enCarrito = carritoP.filter(i => i.producto_id === prod.producto_id).reduce((a, i) => a + i.cantidad, 0);
+    const disponible = Math.max(0, prod.stock - enCarrito);
+    const stockSpan = document.getElementById('prodSelPendStock');
+    const stockStr = prod.tipo === 'Suelto'
+        ? disponible.toFixed(3).replace(/\.?0+$/, '')
+        : Math.floor(disponible);
+    stockSpan.textContent = stockStr;
+    stockSpan.style.color = disponible <= 0 ? '#c0392b' : (disponible <= 5 ? '#e67e22' : '#2e7d32');
+
     const inp = document.getElementById('inputCantPend');
-    inp.step  = prod.tipo === 'Suelto' ? '0.001' : '1';
-    inp.min   = prod.tipo === 'Suelto' ? '0.001' : '1';
-    inp.value = 1;
+    if (prod.tipo === 'Suelto') {
+        inp.step = '0.001'; inp.min = '0.001'; inp.setAttribute('inputmode','decimal');
+    } else {
+        inp.step = '1'; inp.min = '1'; inp.setAttribute('inputmode','numeric');
+    }
+    inp.max = disponible > 0 ? disponible : 0;
+    inp.value = disponible > 0 ? (prod.tipo === 'Suelto' ? Math.min(1, disponible) : 1) : '';
     document.getElementById('prodSelPend').style.display = 'block';
     setTimeout(() => inp.select(), 50);
+}
+
+function sanitizarCantPend() {
+    if (!prodSelPendActual || prodSelPendActual.tipo === 'Suelto') return;
+    const inp = document.getElementById('inputCantPend');
+    if (inp.value !== '' && inp.value.includes('.')) {
+        const n = parseFloat(inp.value);
+        if (!isNaN(n)) inp.value = Math.floor(n) || '';
+    }
 }
 
 function confirmarAgregarProdPend() {
     if (!prodSelPendActual) return;
     const cantidad = parseFloat(document.getElementById('inputCantPend').value) || 0;
     if (cantidad <= 0) { alert('Ingresa una cantidad válida.'); return; }
+
+    // Validar que no supere el stock disponible
+    const enCarrito = carritoP.filter(i => i.producto_id === prodSelPendActual.producto_id).reduce((a, i) => a + i.cantidad, 0);
+    const disponible = Math.max(0, prodSelPendActual.stock - enCarrito);
+    if (cantidad > disponible + 0.0001) {
+        const disp = prodSelPendActual.tipo === 'Suelto'
+            ? disponible.toFixed(3).replace(/\.?0+$/, '')
+            : Math.floor(disponible);
+        alert('Stock insuficiente. Disponible: ' + disp);
+        return;
+    }
+
     const { producto_id, nombre, precio } = prodSelPendActual;
     const existe = carritoP.find(i => i.producto_id === producto_id);
     if (existe) { existe.cantidad += cantidad; }
     else { carritoP.push({ producto_id, nombre, precio, cantidad }); }
-    // Ocultar panel sin reabrir el dropdown (no hacer focus al input de búsqueda)
+
+    // Ocultar panel sin reabrir el dropdown
     prodSelPendActual = null;
     document.getElementById('prodSelPend').style.display = 'none';
     document.getElementById('inputCantPend').value = 1;
@@ -587,6 +659,16 @@ function filtrarPendientes(q) {
 }
 
 /* ── Submit ── */
+function actualizarMetodoPend(radio) {
+    document.getElementById('labelEfectivoPend').style.borderColor = '#ddd';
+    document.getElementById('labelEfectivoPend').style.background  = '';
+    document.getElementById('labelCreditoPend').style.borderColor  = '#ddd';
+    document.getElementById('labelCreditoPend').style.background   = '';
+    const lbl = radio.value === 'Efectivo' ? 'labelEfectivoPend' : 'labelCreditoPend';
+    document.getElementById(lbl).style.borderColor = '#14ace7';
+    document.getElementById(lbl).style.background  = '#eef8ff';
+}
+
 function prepararPendiente() {
     if (!carritoP.length) { alert('Agrega al menos un producto.'); return false; }
     const subtotal = carritoP.reduce((a, i) => a + (i.cantidad * i.precio), 0);

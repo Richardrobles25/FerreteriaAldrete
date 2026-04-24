@@ -13,7 +13,12 @@
         datos_ticket TEXT,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        banco              VARCHAR(100)  NULL DEFAULT NULL,
+        titular_cuenta     VARCHAR(150)  NULL DEFAULT NULL,
+        numero_cuenta      VARCHAR(30)   NULL DEFAULT NULL,
+        clabe_interbancaria CHAR(18)     NULL DEFAULT NULL,
+        alias_tarjeta      VARCHAR(60)   NULL DEFAULT NULL
     );
 
     -- 2. USUARIOS
@@ -171,13 +176,14 @@
         descuento DECIMAL(10,2) DEFAULT 0,
         comision_terminal DECIMAL(10,2) DEFAULT 0,
         total DECIMAL(10,2) NOT NULL DEFAULT 0,
-        metodo_pago ENUM('Efectivo', 'Terminal', 'Credito', 'Mixto') NOT NULL,
+        metodo_pago ENUM('Efectivo', 'Terminal', 'Credito', 'Mixto', 'Transferencia') NOT NULL,
         monto_efectivo DECIMAL(10,2) DEFAULT 0,
         monto_terminal DECIMAL(10,2) DEFAULT 0,
         cambio DECIMAL(10,2) DEFAULT 0,
-        estado ENUM('Completada', 'Cancelada', 'Pendiente') DEFAULT 'Completada',
+        estado ENUM('Completada', 'Cancelada', 'Pendiente', 'Devuelto', 'Modificado') DEFAULT 'Completada',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        referencia_transferencia VARCHAR(100) NULL DEFAULT NULL,
         INDEX idx_folio (folio),
         INDEX idx_ventas_mes (created_at),
         FOREIGN KEY (caja_id) REFERENCES cajas(caja_id),
@@ -237,6 +243,7 @@
         stock_nuevo DECIMAL(10,3) NOT NULL,
         motivo VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        devolucion_id INT UNSIGNED NULL DEFAULT NULL,
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
         FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
     );
@@ -286,6 +293,21 @@
         FOREIGN KEY (compra_id) REFERENCES compras_proveedor(compras_proveedor_id),
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
     );
+
+    CREATE TABLE devoluciones (
+    devolucion_id   INT AUTO_INCREMENT PRIMARY KEY,
+    venta_id        INT NOT NULL,
+    usuario_id      INT NOT NULL,
+    procesada_en    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cancelada_en    DATETIME NULL DEFAULT NULL,
+    cancelada_por   INT NULL DEFAULT NULL,
+    nota_cancelacion TEXT NULL DEFAULT NULL,
+    FOREIGN KEY (venta_id)   REFERENCES ventas(venta_id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+);
+
+
+
 
     -- ============================================
     -- DATOS INICIALES

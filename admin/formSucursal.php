@@ -19,23 +19,46 @@ if ($esEdicion) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nombre       = trim($_POST['nombre'] ?? '');
-    $rfc          = strtoupper(trim($_POST['rfc'] ?? ''));
-    $direccion    = trim($_POST['direccion'] ?? '');
-    $telefono     = trim($_POST['telefono'] ?? '');
-    $datos_ticket = trim($_POST['datos_ticket'] ?? '');
-    $sucursal_id  = intval($_POST['sucursal_id'] ?? 0);
+    $nombre                = trim($_POST['nombre']                ?? '');
+    $rfc                   = strtoupper(trim($_POST['rfc']        ?? ''));
+    $direccion             = trim($_POST['direccion']             ?? '');
+    $telefono              = trim($_POST['telefono']              ?? '');
+    $datos_ticket          = trim($_POST['datos_ticket']          ?? '');
+    $banco                 = trim($_POST['banco']                 ?? '');
+    $titular_cuenta        = trim($_POST['titular_cuenta']        ?? '');
+    $numero_cuenta         = trim($_POST['numero_cuenta']         ?? '');
+    $clabe_interbancaria   = trim($_POST['clabe_interbancaria']   ?? '');
+    $alias_tarjeta         = trim($_POST['alias_tarjeta']         ?? '');
+    $sucursal_id           = intval($_POST['sucursal_id']         ?? 0);
 
     if (!$nombre) $errores[] = 'El nombre de la sucursal es obligatorio.';
+    if ($clabe_interbancaria && strlen($clabe_interbancaria) !== 18)
+        $errores[] = 'La CLABE interbancaria debe tener exactamente 18 dígitos.';
 
     if (empty($errores)) {
+        $campos = [
+            'nombre'              => $nombre,
+            'rfc'                 => $rfc,
+            'direccion'           => $direccion,
+            'telefono'            => $telefono,
+            'datos_ticket'        => $datos_ticket,
+            'banco'               => $banco ?: null,
+            'titular_cuenta'      => $titular_cuenta ?: null,
+            'numero_cuenta'       => $numero_cuenta ?: null,
+            'clabe_interbancaria' => $clabe_interbancaria ?: null,
+            'alias_tarjeta'       => $alias_tarjeta ?: null,
+        ];
+
         if ($sucursal_id) {
-            $pdo->prepare("UPDATE sucursales SET nombre=?,rfc=?,direccion=?,telefono=?,datos_ticket=? WHERE sucursal_id=?")
-                ->execute([$nombre,$rfc,$direccion,$telefono,$datos_ticket,$sucursal_id]);
+            $sets = implode(', ', array_map(fn($k) => "$k = ?", array_keys($campos)));
+            $pdo->prepare("UPDATE sucursales SET $sets WHERE sucursal_id = ?")
+                ->execute([...array_values($campos), $sucursal_id]);
             header('Location: sucursales.php?msg=editado');
         } else {
-            $pdo->prepare("INSERT INTO sucursales (nombre,rfc,direccion,telefono,datos_ticket,activo) VALUES (?,?,?,?,?,1)")
-                ->execute([$nombre,$rfc,$direccion,$telefono,$datos_ticket]);
+            $cols = implode(', ', array_keys($campos));
+            $vals = implode(', ', array_fill(0, count($campos), '?'));
+            $pdo->prepare("INSERT INTO sucursales ($cols, activo) VALUES ($vals, 1)")
+                ->execute(array_values($campos));
             header('Location: sucursales.php?msg=creado');
         }
         exit();
@@ -162,6 +185,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="ticket-preview-box" id="ticketPreview"><?= htmlspecialchars($_POST['datos_ticket'] ?? $editando['datos_ticket'] ?? 'Vista previa del ticket...') ?></div>
                 </div>
 
+                <!-- Sección: Datos bancarios para transferencias -->
+                <div style="border-top:1px solid #eee;margin:20px 0 18px;padding-top:18px;">
+                    <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px;">Datos bancarios</div>
+                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">Se muestran al cliente cuando paga por transferencia bancaria.</div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Banco</label>
+                            <input type="text" name="banco"
+                                value="<?= htmlspecialchars($_POST['banco'] ?? $editando['banco'] ?? '') ?>"
+                                placeholder="Ej. BBVA, Banorte">
+                        </div>
+                        <div class="form-group">
+                            <label>Titular de la cuenta</label>
+                            <input type="text" name="titular_cuenta"
+                                value="<?= htmlspecialchars($_POST['titular_cuenta'] ?? $editando['titular_cuenta'] ?? '') ?>"
+                                placeholder="Nombre del titular">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Número de cuenta</label>
+                            <input type="text" name="numero_cuenta"
+                                value="<?= htmlspecialchars($_POST['numero_cuenta'] ?? $editando['numero_cuenta'] ?? '') ?>"
+                                placeholder="10 dígitos"
+                                maxlength="20">
+                        </div>
+                        <div class="form-group">
+                            <label>CLABE interbancaria</label>
+                            <input type="text" name="clabe_interbancaria"
+                                value="<?= htmlspecialchars($_POST['clabe_interbancaria'] ?? $editando['clabe_interbancaria'] ?? '') ?>"
+                                placeholder="18 dígitos"
+                                maxlength="18"
+                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,18)"
+                                id="inputClabe">
+                            <div class="hint" id="hintClabe"><?= strlen($_POST['clabe_interbancaria'] ?? $editando['clabe_interbancaria'] ?? '') ?>/18 dígitos</div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Alias / nombre de la tarjeta <span style="font-weight:400;color:#aaa;">(opcional)</span></label>
+                        <input type="text" name="alias_tarjeta"
+                            value="<?= htmlspecialchars($_POST['alias_tarjeta'] ?? $editando['alias_tarjeta'] ?? '') ?>"
+                            placeholder="Ej. Débito Nómina BBVA">
+                    </div>
+                </div>
+
                 <div class="acciones-form">
                     <a class="btn-cancelar" href="sucursales.php">Cancelar</a>
                     <button class="btn-guardar" type="submit">
@@ -178,6 +249,12 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 function actualizarPreview(val) {
     document.getElementById('ticketPreview').textContent = val || 'Vista previa del ticket...';
 }
+document.getElementById('inputClabe').addEventListener('input', function() {
+    const n = this.value.length;
+    const hint = document.getElementById('hintClabe');
+    hint.textContent = n + '/18 dígitos';
+    hint.style.color = n === 18 ? '#2e7d32' : n > 0 ? '#e65100' : '#aaa';
+});
 </script>
 </body>
 </html>

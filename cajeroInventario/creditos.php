@@ -6,52 +6,87 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-$busqueda = trim($_GET['buscar'] ?? '');
-$estado   = $_GET['estado'] ?? '';
-
-$where  = "WHERE 1=1";
-$params = [];
-
-if ($busqueda) {
-    $where .= " AND c.nombre_completo LIKE ?";
-    $params[] = '%'.$busqueda.'%';
+// AJAX: créditos activos de un cliente (para modal de detalles y panel abonar)
+if (isset($_GET['get_creditos_cliente'])) {
+    header('Content-Type: application/json');
+    try {
+        $cliente_id = intval($_GET['get_creditos_cliente']);
+        $stmt = $pdo->prepare("
+            SELECT cr.credito_id, cr.monto_total, cr.saldo_pendiente, cr.estado,
+                   cr.created_at, cr.fecha_limite,
+                   v.folio, v.total AS total_venta, v.created_at AS fecha_venta,
+                   GROUP_CONCAT(
+                       CONCAT(p.nombre_producto, '||', CAST(vp.cantidad AS CHAR), '||', CAST(vp.precio_unitario AS CHAR))
+                       ORDER BY p.nombre_producto SEPARATOR ';;'
+                   ) AS prods_raw
+            FROM creditos cr
+            JOIN ventas v ON cr.venta_id = v.venta_id
+            LEFT JOIN venta_productos vp ON cr.venta_id = vp.venta_id
+            LEFT JOIN productos p ON vp.producto_id = p.producto_id
+            WHERE cr.cliente_id = ? AND cr.estado IN ('Activo', 'Vencido')
+            GROUP BY cr.credito_id
+            ORDER BY cr.created_at ASC
+        ");
+        $stmt->execute([$cliente_id]);
+        $creditos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($creditos as &$cr) {
+            $cr['productos'] = [];
+            if (!empty($cr['prods_raw'])) {
+                foreach (explode(';;', $cr['prods_raw']) as $prod) {
+                    $parts = explode('||', $prod, 3);
+                    if (count($parts) === 3) {
+                        $cr['productos'][] = [
+                            'nombre'   => $parts[0],
+                            'cantidad' => floatval($parts[1]),
+                            'precio'   => floatval($parts[2]),
+                        ];
+                    }
+                }
+            }
+            unset($cr['prods_raw']);
+        }
+        echo json_encode($creditos);
+    } catch (\Throwable $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit();
 }
-if ($estado) {
-    $where .= " AND cr.estado = ?";
-    $params[] = $estado;
-}
 
+// Clientes con deuda activa
 $stmt = $pdo->prepare("
-    SELECT cr.*, c.nombre_completo, c.telefono,
-           v.created_at as fecha_venta, v.total as total_venta,
-           GROUP_CONCAT(CONCAT(p.nombre_producto, ' x', TRIM(TRAILING '.000' FROM TRIM(TRAILING '0' FROM CAST(vp.cantidad AS CHAR)))) SEPARATOR ' | ') AS productos_credito
+    SELECT c.cliente_id, c.nombre_completo, c.telefono,
+           COUNT(cr.credito_id)                                      AS num_creditos,
+           SUM(cr.saldo_pendiente)                                   AS total_pendiente,
+           MIN(cr.created_at)                                        AS primer_credito,
+           MAX(CASE WHEN cr.estado = 'Vencido' THEN 1 ELSE 0 END)   AS tiene_vencido
     FROM creditos cr
     JOIN clientes c ON cr.cliente_id = c.cliente_id
-    JOIN ventas v ON cr.venta_id = v.venta_id
-    LEFT JOIN venta_productos vp ON cr.venta_id = vp.venta_id
-    LEFT JOIN productos p ON vp.producto_id = p.producto_id
-    $where
-    GROUP BY cr.credito_id
-    ORDER BY cr.estado = 'Activo' DESC,
-             CASE WHEN cr.estado = 'Activo' THEN cr.created_at END ASC,
-             cr.created_at DESC
+    WHERE cr.estado IN ('Activo', 'Vencido')
+    GROUP BY c.cliente_id
+    ORDER BY total_pendiente DESC
 ");
-$stmt->execute($params);
-$creditos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt->execute();
+$clientesDeuda = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Totales
-$stmtTot = $pdo->prepare("
+// Estadísticas globales
+$totales = $pdo->query("
     SELECT
-        COUNT(*) as total,
-        COALESCE(SUM(saldo_pendiente),0) as total_pendiente,
-        COUNT(CASE WHEN estado='Activo' THEN 1 END) as activos,
-        COUNT(CASE WHEN estado='Vencido' THEN 1 END) as vencidos
+        COUNT(DISTINCT cr.cliente_id)                           AS clientes_con_deuda,
+        COALESCE(SUM(cr.saldo_pendiente), 0)                    AS total_pendiente,
+        COUNT(CASE WHEN cr.estado = 'Vencido' THEN 1 END)       AS creditos_vencidos,
+        COUNT(cr.credito_id)                                    AS total_creditos
+    FROM creditos cr
+    WHERE cr.estado IN ('Activo', 'Vencido')
+")->fetch(PDO::FETCH_ASSOC);
+
+// Lista de clientes para el panel abonar (dropdown JSON)
+$clientesAbonar = $pdo->query("
+    SELECT DISTINCT c.cliente_id, c.nombre_completo
     FROM creditos cr
     JOIN clientes c ON cr.cliente_id = c.cliente_id
-    WHERE 1=1
-");
-$stmtTot->execute([]);
-$totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
+    WHERE cr.estado IN ('Activo', 'Vencido')
+    ORDER BY c.nombre_completo
+")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -85,38 +120,93 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
-    .content { flex: 1; padding: 24px; overflow-y: auto; }
-    .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .content-header h1 { font-size: 20px; color: #222; font-weight: 600; }
-    .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; margin-bottom: 16px; }
-    .stat { background: white; border-radius: 8px; padding: 14px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
-    .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; }
+    .content { flex: 1; padding: 20px; overflow-y: auto; display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-content: start; }
+
+    /* Stats */
+    .stats { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 4px; }
+    .stat { background: white; border-radius: 8px; padding: 14px 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
+    .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.4px; }
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
-    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
-    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
-    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
-    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
-    .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
-    .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
-    .tabla-wrapper { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
-    table { width: 100%; border-collapse: collapse; }
-    thead { background: #f9f9f9; }
-    th { padding: 11px 14px; text-align: left; font-size: 12px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #eee; }
-    td { padding: 11px 14px; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #fafafa; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+
+    /* Lista de clientes */
+    .col-lista { display: flex; flex-direction: column; gap: 0; }
+    .buscar-clientes { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; margin-bottom: 12px; background: white; }
+    .buscar-clientes:focus { outline: none; border-color: #14ace7; }
+    .cliente-card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; transition: box-shadow 0.15s; }
+    .cliente-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+    .cliente-card.vencido { border-left: 3px solid #c0392b; }
+    .cliente-info { flex: 1; min-width: 0; }
+    .cliente-nombre { font-size: 14px; font-weight: 700; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cliente-tel { font-size: 11px; color: #aaa; margin-top: 2px; }
+    .cliente-meta { font-size: 12px; color: #888; margin-top: 4px; }
+    .cliente-saldo { text-align: right; flex-shrink: 0; }
+    .cliente-saldo .monto { font-size: 17px; font-weight: 700; color: #c0392b; }
+    .cliente-saldo .etiq { font-size: 11px; color: #aaa; }
+    .cliente-acciones { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }
+    .btn-detalles { background: #e3f2fd; color: #1565c0; border: none; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .btn-detalles:hover { background: #bbdefb; }
+    .badge-vencido { display: inline-block; background: #fdecea; color: #c0392b; border-radius: 99px; padding: 1px 7px; font-size: 10px; font-weight: 700; margin-left: 6px; }
+    .sin-resultados { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
+
+    /* Panel Abonar */
+    .col-abonar { position: sticky; top: 0; }
+    .card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 18px; }
+    .card h3 { font-size: 14px; font-weight: 700; color: #333; margin: 0 0 14px; }
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 12px; color: #666; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .drop-wrap { position: relative; }
+    .drop-wrap input { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .drop-wrap input:focus { outline: none; border-color: #14ace7; }
+    .drop-list { display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e0e0e0; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-top: 2px; }
+    .drop-list.visible { display: block; }
+    .drop-item { padding: 9px 12px; cursor: pointer; font-size: 13px; border-bottom: 0.5px solid #f5f5f5; }
+    .drop-item:hover { background: #eef8ff; color: #14ace7; }
+    .drop-item:last-child { border-bottom: none; }
+    .cliente-sel-panel { display: none; background: #f0f9ff; border: 1px solid #dbeafe; border-radius: 6px; padding: 8px 12px; margin-top: 6px; align-items: center; gap: 8px; }
+    .cliente-sel-panel.visible { display: flex; }
+    .cliente-sel-nombre { flex: 1; font-size: 13px; font-weight: 700; color: #1565c0; }
+    .btn-quitar-cliente { background: none; border: none; color: #aaa; font-size: 16px; cursor: pointer; line-height: 1; }
+    .creditos-abonar { margin-top: 10px; display: none; }
+    .creditos-abonar.visible { display: block; }
+    .credito-abonar-item { border: 0.5px solid #eee; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
+    .credito-abonar-item:last-child { margin-bottom: 0; }
+    .cred-folio { font-size: 12px; font-weight: 700; color: #333; margin-bottom: 2px; }
+    .cred-fecha { font-size: 11px; color: #aaa; }
+    .cred-saldo { font-size: 15px; font-weight: 700; color: #c0392b; margin-top: 4px; }
+    .btn-ir-abonar { display: block; width: 100%; background: #2e7d32; color: white; border: none; padding: 8px; border-radius: 5px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; text-decoration: none; margin-top: 8px; }
+    .btn-ir-abonar:hover { background: #1b5e20; }
+    .abonar-cargando { text-align: center; color: #aaa; font-size: 13px; padding: 16px 0; }
+
+    /* Modal detalles */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; align-items: center; justify-content: center; }
+    .modal-overlay.visible { display: flex; }
+    .modal { background: white; border-radius: 10px; width: 560px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; }
+    .modal-header { padding: 18px 20px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; }
+    .modal-header h3 { font-size: 16px; font-weight: 700; color: #222; margin: 0; }
+    .modal-header .modal-subtitulo { font-size: 12px; color: #888; margin-top: 2px; }
+    .modal-close { background: none; border: none; font-size: 22px; color: #aaa; cursor: pointer; line-height: 1; }
+    .modal-close:hover { color: #555; }
+    .modal-body { flex: 1; overflow-y: auto; padding: 18px 20px; }
+    .credito-det { border: 0.5px solid #eee; border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+    .credito-det:last-child { margin-bottom: 0; }
+    .credito-det-header { background: #f9f9f9; padding: 10px 14px; border-bottom: 0.5px solid #eee; display: flex; align-items: center; gap: 10px; }
+    .credito-det-folio { font-size: 13px; font-weight: 700; color: #333; }
+    .credito-det-fecha { font-size: 11px; color: #aaa; flex: 1; }
+    .credito-det-saldo { font-size: 14px; font-weight: 700; color: #c0392b; }
+    .credito-det-badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; }
     .badge-activo { background: #e8f5e9; color: #2e7d32; }
-    .badge-liquidado { background: #f0f0f0; color: #666; }
-    .badge-vencido { background: #fdecea; color: #c0392b; }
-    .acciones { display: flex; gap: 6px; }
-    .btn-accion { padding: 5px 11px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-block; }
-    .btn-abonar { background: #e8f5e9; color: #2e7d32; }
-    .btn-abonar:hover { background: #c8e6c9; }
-    .btn-ver { background: #e3f2fd; color: #1565c0; }
-    .btn-ver:hover { background: #bbdefb; }
-    .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
+    .badge-vencido2 { background: #fdecea; color: #c0392b; }
+    .credito-det-prods { padding: 10px 14px; }
+    .prod-det-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #444; }
+    .prod-det-row:last-child { border-bottom: none; }
+    .prod-det-nombre { flex: 1; color: #333; }
+    .prod-det-cant { color: #888; font-size: 12px; margin: 0 10px; white-space: nowrap; }
+    .prod-det-precio { font-weight: 600; color: #14ace7; white-space: nowrap; }
+    .credito-det-footer { padding: 8px 14px; border-top: 0.5px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+    .btn-abonar-modal { background: #2e7d32; color: white; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn-abonar-modal:hover { background: #1b5e20; }
+    .modal-sin-creditos { text-align: center; color: #aaa; padding: 32px; font-size: 13px; }
+    .det-cargando { text-align: center; color: #aaa; padding: 40px; font-size: 13px; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -127,26 +217,22 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     <div class="sidebar-menu">
         <a class="menu-item" href="inicioCajeroInventario.php">Inicio</a>
         <div class="divider"></div>
-
         <div class="menu-label">Ventas</div>
         <a class="menu-item" href="nuevaVenta.php">Nueva venta</a>
         <a class="menu-item" href="historialVentas.php">Historial de ventas</a>
         <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
         <a class="menu-item" href="devoluciones.php">Devoluciones</a>
         <div class="divider"></div>
-
         <div class="menu-label">Caja</div>
         <a class="menu-item" href="abrirCaja.php">Abrir caja</a>
         <a class="menu-item" href="corteCaja.php">Corte de caja</a>
         <a class="menu-item" href="historialCortes.php">Historial de cortes</a>
         <div class="divider"></div>
-
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
         <a class="menu-item active" href="creditos.php">Créditos</a>
         <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
-
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
         <a class="menu-item" href="categorias.php">Categorías</a>
@@ -154,12 +240,10 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
         <div class="divider"></div>
-
         <div class="menu-label">Proveedores</div>
         <a class="menu-item" href="proveedores.php">Proveedores</a>
         <a class="menu-item" href="compras.php">Compras</a>
         <div class="divider"></div>
-
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
@@ -181,105 +265,272 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
-        <div class="content-header"><h1>Créditos</h1></div>
 
+        <!-- Stats -->
         <div class="stats">
-            <div class="stat"><p>Total créditos</p><h3><?= $totales['total'] ?></h3></div>
-            <div class="stat"><p>Activos</p><h3><?= $totales['activos'] ?></h3></div>
-            <div class="stat"><p>Vencidos</p><h3><?= $totales['vencidos'] ?></h3></div>
-            <div class="stat"><p>Total pendiente</p><h3>$<?= number_format($totales['total_pendiente'],2) ?></h3></div>
+            <div class="stat">
+                <p>Clientes con deuda</p>
+                <h3><?= intval($totales['clientes_con_deuda']) ?></h3>
+            </div>
+            <div class="stat">
+                <p>Créditos activos</p>
+                <h3><?= intval($totales['total_creditos']) ?></h3>
+            </div>
+            <div class="stat" style="border-top-color:#c0392b;">
+                <p>Créditos vencidos</p>
+                <h3 style="color:<?= $totales['creditos_vencidos'] > 0 ? '#c0392b' : '#222' ?>;"><?= intval($totales['creditos_vencidos']) ?></h3>
+            </div>
+            <div class="stat" style="border-top-color:#e67e22;">
+                <p>Total pendiente</p>
+                <h3 style="color:#e67e22;">$<?= number_format($totales['total_pendiente'], 2) ?></h3>
+            </div>
         </div>
 
-        <form method="GET">
-            <div class="filtros">
-                <div class="filtro-group">
-                    <label>Buscar cliente</label>
-                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
-                </div>
-                <div class="filtro-group">
-                    <label>Estado</label>
-                    <select name="estado">
-                        <option value="">Todos</option>
-                        <option value="Activo" <?= $estado==='Activo'?'selected':'' ?>>Activo</option>
-                        <option value="Liquidado" <?= $estado==='Liquidado'?'selected':'' ?>>Liquidado</option>
-                        <option value="Vencido" <?= $estado==='Vencido'?'selected':'' ?>>Vencido</option>
-                    </select>
-                </div>
-                <button class="btn-filtrar" type="submit">Filtrar</button>
-                <?php if ($busqueda || $estado): ?><a class="btn-limpiar" href="creditos.php">Limpiar</a><?php endif; ?>
-            </div>
-        </form>
+        <!-- Lista de clientes -->
+        <div class="col-lista">
+            <input type="text" class="buscar-clientes" placeholder="Buscar cliente..." oninput="filtrarClientes(this.value)" autocomplete="off">
 
-        <div class="tabla-wrapper">
-            <?php if (count($creditos) > 0): ?>
-            <table>
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Cliente</th>
-                        <th>Fecha</th>
-                        <th>Venta</th>
-                        <th>Monto total</th>
-                        <th>Saldo pendiente</th>
-                        <th>Vencimiento</th>
-                        <th>Estado</th>
-                        <th>Acciones</th>
-                    </tr>
-                </thead>
-                <tbody id="tablaFiltrable">
-                    <?php foreach ($creditos as $cr): ?>
-                    <tr>
-                        <td style="color:#aaa;"><?= $cr['credito_id'] ?></td>
-                        <td>
-                            <strong><?= htmlspecialchars($cr['nombre_completo']) ?></strong>
-                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($cr['telefono']??'') ?></div>
-                        </td>
-                        <td style="font-size:12px;"><?= date('d/m/Y', strtotime($cr['created_at'])) ?></td>
-                        <td style="font-size:12px;color:#666;">
-                            Venta: $<?= number_format($cr['total_venta'],2) ?>
-                            <div style="color:#aaa;"><?= date('d/m/Y', strtotime($cr['fecha_venta'])) ?></div>
-                            <?php if (!empty($cr['productos_credito'])): ?>
-                                <div style="margin-top:4px;color:#777;max-width:260px;line-height:1.35;"><?= htmlspecialchars($cr['productos_credito']) ?></div>
+            <?php if (count($clientesDeuda) > 0): ?>
+                <?php foreach ($clientesDeuda as $cl): ?>
+                <div class="cliente-card <?= $cl['tiene_vencido'] ? 'vencido' : '' ?>"
+                     data-texto="<?= htmlspecialchars(mb_strtolower($cl['nombre_completo'] . ' ' . ($cl['telefono'] ?? ''))) ?>">
+                    <div class="cliente-info">
+                        <div class="cliente-nombre">
+                            <?= htmlspecialchars($cl['nombre_completo']) ?>
+                            <?php if ($cl['tiene_vencido']): ?>
+                                <span class="badge-vencido">Vencido</span>
                             <?php endif; ?>
-                        </td>
-                        <td>$<?= number_format($cr['monto_total'],2) ?></td>
-                        <td style="font-weight:700;color:<?= $cr['saldo_pendiente']>0?'#c0392b':'#2e7d32' ?>;">
-                            $<?= number_format($cr['saldo_pendiente'],2) ?>
-                        </td>
-                        <td style="font-size:12px;">
-                            <?= $cr['fecha_limite'] ? date('d/m/Y', strtotime($cr['fecha_limite'])) : '—' ?>
-                        </td>
-                        <td><span class="badge badge-<?= strtolower($cr['estado']) ?>"><?= $cr['estado'] ?></span></td>
-                        <td>
-                            <div class="acciones">
-                                <?php if ($cr['estado'] === 'Activo'): ?>
-                                    <a class="btn-accion btn-abonar" href="abonos.php?credito_id=<?= $cr['credito_id'] ?>">Abonar</a>
-                                <?php endif; ?>
-                                <a class="btn-accion btn-ver" href="abonos.php?ver=<?= $cr['credito_id'] ?>">Ver abonos</a>
-                            </div>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
+                        </div>
+                        <?php if ($cl['telefono']): ?>
+                            <div class="cliente-tel"><?= htmlspecialchars($cl['telefono']) ?></div>
+                        <?php endif; ?>
+                        <div class="cliente-meta">
+                            <?= intval($cl['num_creditos']) ?> crédito<?= $cl['num_creditos'] != 1 ? 's' : '' ?> activo<?= $cl['num_creditos'] != 1 ? 's' : '' ?>
+                            · desde <?= date('d/m/Y', strtotime($cl['primer_credito'])) ?>
+                        </div>
+                    </div>
+                    <div class="cliente-saldo">
+                        <div class="monto">$<?= number_format($cl['total_pendiente'], 2) ?></div>
+                        <div class="etiq">pendiente</div>
+                    </div>
+                    <div class="cliente-acciones">
+                        <button class="btn-detalles" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">
+                            Detalles
+                        </button>
+                    </div>
+                </div>
+                <?php endforeach; ?>
             <?php else: ?>
-                <div class="sin-resultados">No hay créditos registrados.</div>
+                <div class="sin-resultados">No hay clientes con crédito pendiente.</div>
             <?php endif; ?>
+        </div>
+
+        <!-- Panel Abonar -->
+        <div class="col-abonar">
+            <div class="card">
+                <h3>Registrar abono</h3>
+
+                <div class="form-group">
+                    <label>Buscar cliente</label>
+                    <div class="drop-wrap">
+                        <input type="text" id="buscarClienteAbonar" placeholder="Nombre del cliente..."
+                            autocomplete="off"
+                            oninput="filtrarDropAbonar(this.value)"
+                            onfocus="filtrarDropAbonar(this.value)"
+                            onblur="setTimeout(ocultarDropAbonar, 200)">
+                        <div class="drop-list" id="dropAbonar"></div>
+                    </div>
+                    <div class="cliente-sel-panel" id="clienteSelAbonar">
+                        <span class="cliente-sel-nombre" id="clienteSelNombreAbonar"></span>
+                        <button class="btn-quitar-cliente" onclick="quitarClienteAbonar()">✕</button>
+                    </div>
+                </div>
+
+                <div class="creditos-abonar" id="creditosAbonarPanel">
+                    <div style="font-size:12px;color:#888;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:8px;">Créditos activos</div>
+                    <div id="creditosAbonarLista"><div class="abonar-cargando">Cargando...</div></div>
+                </div>
+
+                <div id="abonarVacio" style="display:none;text-align:center;color:#aaa;font-size:13px;padding:20px 0;">
+                    Selecciona un cliente para ver sus créditos.
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Modal detalles -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)cerrarModal()">
+    <div class="modal">
+        <div class="modal-header">
+            <div>
+                <h3 id="modalTitulo">Créditos</h3>
+                <div class="modal-subtitulo" id="modalSubtitulo"></div>
+            </div>
+            <button class="modal-close" onclick="cerrarModal()">✕</button>
+        </div>
+        <div class="modal-body" id="modalBody">
+            <div class="det-cargando">Cargando...</div>
         </div>
     </div>
 </div>
 
 <script>
-function normalizar(str) {
-    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-function filtrarTabla(q) {
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+
+/* ── Filtro lista clientes ── */
+function filtrarClientes(q) {
     q = normalizar(q);
-    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
-        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    document.querySelectorAll('.cliente-card').forEach(card => {
+        card.style.display = normalizar(card.dataset.texto || '').includes(q) ? '' : 'none';
     });
 }
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+/* ── Modal detalles ── */
+function abrirDetalles(clienteId, nombre) {
+    document.getElementById('modalTitulo').textContent = nombre;
+    document.getElementById('modalSubtitulo').textContent = 'Créditos y productos pendientes de pago';
+    document.getElementById('modalBody').innerHTML = '<div class="det-cargando">Cargando...</div>';
+    document.getElementById('modalOverlay').classList.add('visible');
+
+    fetch('creditos.php?get_creditos_cliente=' + clienteId)
+        .then(r => r.json())
+        .then(creditos => {
+            if (!creditos || !creditos.length) {
+                document.getElementById('modalBody').innerHTML = '<div class="modal-sin-creditos">No hay créditos activos para este cliente.</div>';
+                return;
+            }
+            let html = '';
+            creditos.forEach(cr => {
+                const badgeClass = cr.estado === 'Vencido' ? 'badge-vencido2' : 'badge-activo';
+                const folio = cr.folio ? 'Folio ' + cr.folio : 'Venta #' + cr.credito_id;
+                html += `<div class="credito-det">
+                    <div class="credito-det-header">
+                        <div>
+                            <div class="credito-det-folio">${folio}</div>
+                            <div class="credito-det-fecha">${formatFecha(cr.fecha_venta)}</div>
+                        </div>
+                        <span class="credito-det-badge ${badgeClass}">${cr.estado}</span>
+                        <div class="credito-det-saldo">$${parseFloat(cr.saldo_pendiente).toFixed(2)}</div>
+                    </div>`;
+
+                if (cr.productos && cr.productos.length) {
+                    html += '<div class="credito-det-prods">';
+                    cr.productos.forEach(p => {
+                        const cant = Number.isInteger(p.cantidad) ? p.cantidad : parseFloat(p.cantidad).toFixed(2).replace(/\.?0+$/,'');
+                        html += `<div class="prod-det-row">
+                            <span class="prod-det-nombre">${p.nombre}</span>
+                            <span class="prod-det-cant">× ${cant}</span>
+                            <span class="prod-det-precio">$${(p.cantidad * p.precio).toFixed(2)}</span>
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+
+                html += `<div class="credito-det-footer">
+                    <span style="font-size:12px;color:#888;">Monto original: $${parseFloat(cr.monto_total).toFixed(2)}</span>
+                    <a class="btn-abonar-modal" href="abonos.php?credito_id=${cr.credito_id}">Abonar</a>
+                </div></div>`;
+            });
+            document.getElementById('modalBody').innerHTML = html;
+        })
+        .catch(() => {
+            document.getElementById('modalBody').innerHTML = '<div class="modal-sin-creditos">Error al cargar los créditos.</div>';
+        });
+}
+
+function cerrarModal() {
+    document.getElementById('modalOverlay').classList.remove('visible');
+}
+
+function formatFecha(str) {
+    if (!str) return '';
+    const d = new Date(str);
+    return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/* ── Panel Abonar: buscador de clientes ── */
+const clientesAbonar = <?= json_encode(array_values(array_map(fn($c) => [
+    'id'     => (int)$c['cliente_id'],
+    'nombre' => $c['nombre_completo'],
+    'texto'  => mb_strtolower($c['nombre_completo']),
+], $clientesAbonar))) ?>;
+
+let clienteAbonarActual = null;
+
+function filtrarDropAbonar(q) {
+    const drop = document.getElementById('dropAbonar');
+    const qn = normalizar(q);
+    const res = qn ? clientesAbonar.filter(c => normalizar(c.texto).includes(qn)) : clientesAbonar.slice(0, 30);
+    if (!res.length) {
+        drop.innerHTML = '<div style="padding:10px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
+    } else {
+        drop.innerHTML = res.map(c => `
+            <div class="drop-item" onclick="seleccionarClienteAbonar(${c.id})">${c.nombre}</div>
+        `).join('');
+    }
+    drop.classList.add('visible');
+}
+
+function ocultarDropAbonar() {
+    document.getElementById('dropAbonar').classList.remove('visible');
+}
+
+function seleccionarClienteAbonar(id) {
+    clienteAbonarActual = clientesAbonar.find(c => c.id === id);
+    if (!clienteAbonarActual) return;
+    ocultarDropAbonar();
+    document.getElementById('buscarClienteAbonar').value = '';
+    document.getElementById('clienteSelNombreAbonar').textContent = clienteAbonarActual.nombre;
+    document.getElementById('clienteSelAbonar').classList.add('visible');
+    document.getElementById('abonarVacio').style.display = 'none';
+    cargarCreditosAbonar(id);
+}
+
+function quitarClienteAbonar() {
+    clienteAbonarActual = null;
+    document.getElementById('clienteSelAbonar').classList.remove('visible');
+    document.getElementById('buscarClienteAbonar').value = '';
+    document.getElementById('creditosAbonarPanel').classList.remove('visible');
+    document.getElementById('abonarVacio').style.display = 'none';
+}
+
+function cargarCreditosAbonar(clienteId) {
+    const panel = document.getElementById('creditosAbonarPanel');
+    const lista = document.getElementById('creditosAbonarLista');
+    panel.classList.add('visible');
+    lista.innerHTML = '<div class="abonar-cargando">Cargando...</div>';
+
+    fetch('creditos.php?get_creditos_cliente=' + clienteId)
+        .then(r => r.json())
+        .then(creditos => {
+            if (!creditos || !creditos.length) {
+                lista.innerHTML = '<div style="text-align:center;color:#aaa;font-size:13px;padding:12px 0;">Sin créditos activos.</div>';
+                return;
+            }
+            lista.innerHTML = creditos.map(cr => {
+                const folio = cr.folio ? 'Folio ' + cr.folio : 'Crédito #' + cr.credito_id;
+                const badgeColor = cr.estado === 'Vencido' ? '#c0392b' : '#2e7d32';
+                return `<div class="credito-abonar-item">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <div class="cred-folio">${folio}</div>
+                        <span style="font-size:10px;font-weight:700;color:${badgeColor};">${cr.estado}</span>
+                    </div>
+                    <div class="cred-fecha">${formatFecha(cr.fecha_venta)}</div>
+                    <div class="cred-saldo">$${parseFloat(cr.saldo_pendiente).toFixed(2)} pendiente</div>
+                    <a class="btn-ir-abonar" href="abonos.php?credito_id=${cr.credito_id}">Registrar abono →</a>
+                </div>`;
+            }).join('');
+        })
+        .catch(() => {
+            lista.innerHTML = '<div style="text-align:center;color:#c0392b;font-size:13px;padding:12px 0;">Error al cargar.</div>';
+        });
+}
+
+/* Cerrar modal con Escape */
+document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarModal(); });
 </script>
 </body>
 </html>

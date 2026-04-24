@@ -96,11 +96,11 @@ $ventas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $stmtTot = $pdo->prepare("
     SELECT
         COUNT(*) as total_ventas,
-        COALESCE(SUM(CASE WHEN v.estado='Completada' THEN v.total ELSE 0 END),0) as total_cobrado,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'  AND v.estado='Completada' THEN v.total ELSE 0 END),0) as ef,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'  AND v.estado='Completada' THEN v.total ELSE 0 END),0) as term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Credito'   AND v.estado='Completada' THEN v.total ELSE 0 END),0) as cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'     AND v.estado='Completada' THEN v.total ELSE 0 END),0) as mixto,
+        COALESCE(SUM(CASE WHEN v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as total_cobrado,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'  AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as ef,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'  AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as term,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Credito'   AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as cred,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'     AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as mixto,
         COUNT(CASE WHEN v.estado='Cancelada' THEN 1 END) as canceladas
     FROM ventas v
     LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
@@ -186,6 +186,8 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     .badge-completada { background: #e8f5e9; color: #2e7d32; }
     .badge-cancelada  { background: #fdecea; color: #c0392b; }
     .badge-pendiente  { background: #e3f2fd; color: #1565c0; }
+    .badge-devuelto   { background: #f3e5f5; color: #6a1b9a; }
+    .badge-modificado { background: #fff8e1; color: #e65100; }
     .sin-resultados { padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
     .btn-accion { border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .btn-detalle { background: #e3f2fd; color: #1565c0; }
@@ -345,6 +347,8 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                         <option value="Completada" <?= $estado==='Completada'?'selected':'' ?>>Completada</option>
                         <option value="Cancelada"  <?= $estado==='Cancelada' ?'selected':'' ?>>Cancelada</option>
                         <option value="Pendiente"  <?= $estado==='Pendiente' ?'selected':'' ?>>Pendiente</option>
+                        <option value="Devuelto"   <?= $estado==='Devuelto'  ?'selected':'' ?>>Devuelto</option>
+                        <option value="Modificado" <?= $estado==='Modificado'?'selected':'' ?>>Modificado</option>
                     </select>
                 </div>
                 <div class="filtro-group">
@@ -423,7 +427,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                 </thead>
                 <tbody>
                     <?php foreach ($ventas as $v): ?>
-                    <tr class="<?= $v['estado']==='Cancelada'?'cancelada':'' ?>">
+                    <tr class="<?= in_array($v['estado'], ['Cancelada','Devuelto']) ? 'cancelada' : '' ?>">
                         <td style="color:#aaa;font-size:12px;font-family:monospace;">
                             <?= htmlspecialchars($v['folio'] ?? ('#'.$v['venta_id'])) ?>
                         </td>

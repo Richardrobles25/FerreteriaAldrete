@@ -302,11 +302,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $total             = floatval($_POST['total'] ?? 0);
     $cambio            = floatval($_POST['cambio'] ?? 0);
 
+    $referencia_transferencia = ($metodo_pago === 'Transferencia') ? trim($_POST['referencia_transferencia'] ?? '') : null;
+
     if (!empty($items) && $metodo_pago) {
         $pdo->beginTransaction();
         try {
-            $metodo_pago_db = $metodo_pago === 'Transferencia' ? 'Terminal' : $metodo_pago;
-
             // Generar folio secuencial mensual: NNNN (reinicia cada mes)
             $mesFolio  = date('m');
             $anioFolio = date('Y');
@@ -324,18 +324,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $stmt = $pdo->prepare("
                 INSERT INTO ventas
                 (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
-                 total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado,notas)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?)
+                 total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado,notas,referencia_transferencia)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?,?)
             ");
             $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
                             $subtotal,$descuento,$comision_terminal,$total,
-                            $metodo_pago_db,$monto_efectivo,$monto_terminal,$cambio,$notas_venta]);
+                            $metodo_pago,$monto_efectivo,$monto_terminal,$cambio,$notas_venta,
+                            $referencia_transferencia]);
             $venta_id = $pdo->lastInsertId();
 
             foreach ($items as $item) {
                 $subtotalItem = $item['cantidad'] * $item['precio'];
-                $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,descuento,subtotal) VALUES (?,?,?,?,0,?)")
-                    ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$item['precio'],$subtotalItem]);
+                $paqId = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
+                $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,descuento,subtotal,paquete_id) VALUES (?,?,?,?,0,?,?)")
+                    ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$item['precio'],$subtotalItem,$paqId]);
 
                 // Bloquear la fila del producto para evitar condición de carrera
                 $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? FOR UPDATE");
@@ -686,7 +688,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     </label>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <span style="font-size:12px;color:#666;">Porcentaje a aplicar</span>
-                        <input type="number" id="porcDescCliente" value="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()" onblur="clampearDescuentoCliente()">
+                        <input type="number" id="porcDescCliente" value="" placeholder="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()" onblur="clampearDescuentoCliente()">
                         <span id="clienteDescMax" style="font-size:12px;color:#888;"></span>
                     </div>
                 </div>
@@ -732,16 +734,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <div class="campos-pago" id="camposTransferencia">
                         <div class="form-group-sm">
                             <label>Referencia bancaria *</label>
-                            <input type="text" id="transferReferencia" placeholder="Folio o referencia de la transferencia" oninput="verificarCobrar()">
+                            <input type="text" id="transferReferencia" placeholder="Folio o número de referencia" oninput="verificarCobrar()">
                         </div>
                         <div class="form-group-sm">
-                            <label>Banco de origen</label>
-                            <input type="text" id="transferBancoOrigen" placeholder="Banco o cuenta origen (opcional)">
-                        </div>
-                        <div class="form-group-sm">
-                            <label>Datos para transferencia</label>
-                            <div style="font-size:12px;color:#666;line-height:1.45;background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:10px 12px;">
-                                <?= nl2br(htmlspecialchars(trim($sucursalTicket['datos_ticket'] ?? 'Solicita o actualiza aqui los datos bancarios de la empresa para compartirlos al cliente.'))) ?>
+                            <label>Datos para la transferencia</label>
+                            <?php
+                            $tb = trim($sucursalTicket['banco']               ?? '');
+                            $tt = trim($sucursalTicket['titular_cuenta']      ?? '');
+                            $tc = trim($sucursalTicket['numero_cuenta']       ?? '');
+                            $tl = trim($sucursalTicket['clabe_interbancaria'] ?? '');
+                            $ta = trim($sucursalTicket['alias_tarjeta']       ?? '');
+                            ?>
+                            <div style="font-size:12px;line-height:1.8;background:#f0f8ff;border:1px solid #b3e0f7;border-radius:6px;padding:10px 12px;color:#333;">
+                                <?php if ($tb || $tt || $tc || $tl): ?>
+                                    <?php if ($tb): ?><div><strong>Banco:</strong> <?= htmlspecialchars($tb) ?></div><?php endif; ?>
+                                    <?php if ($tt): ?><div><strong>Titular:</strong> <?= htmlspecialchars($tt) ?></div><?php endif; ?>
+                                    <?php if ($tc): ?><div><strong>No. cuenta:</strong> <?= htmlspecialchars($tc) ?></div><?php endif; ?>
+                                    <?php if ($tl): ?><div><strong>CLABE:</strong> <?= htmlspecialchars($tl) ?></div><?php endif; ?>
+                                    <?php if ($ta): ?><div><strong>Alias:</strong> <?= htmlspecialchars($ta) ?></div><?php endif; ?>
+                                <?php else: ?>
+                                    <span style="color:#aaa;">Sin datos bancarios configurados.<br>Agrégalos en Configuración → Sucursal.</span>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -770,6 +783,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <input type="hidden" name="monto_efectivo" id="inputMontoEfectivo">
                     <input type="hidden" name="monto_terminal" id="inputMontoTerminal">
                     <input type="hidden" name="comision_terminal" id="inputComisionTerminal">
+                    <input type="hidden" name="referencia_transferencia" id="inputReferenciaTransferencia">
                     <input type="hidden" name="descuento" id="inputDescuento">
                     <input type="hidden" name="subtotal" id="inputSubtotal">
                     <input type="hidden" name="total" id="inputTotal">
@@ -959,10 +973,11 @@ document.getElementById('inputProducto').addEventListener('input', function() {
         const paquetes = paquetesGlobales
             .filter(paq => normalizar(paq.codigo).includes(q) || normalizar(paq.nombre).includes(q))
             .map(paq => {
-                const disponible = paq.productos.every(pp => pp.stock_actual >= pp.cantidad_requerida);
+                const maxCombos = calcularStockCombo(paq.productos);
                 return {
                     ...paq,
-                    disponible,
+                    disponible: maxCombos > 0,
+                    maxCombos,
                     productos: paq.productos.map(pp => ({ ...pp, cantidad_req: pp.cantidad_requerida }))
                 };
             });
@@ -977,7 +992,9 @@ function mostrarResultadosCombinados(productos, paquetes) {
 
     paquetes.forEach(paq => {
         const cls   = paq.disponible ? 'stock-ok' : 'stock-bajo';
-        const label = paq.disponible ? 'Disponible' : 'Stock insuf.';
+        const label = paq.disponible
+            ? `${paq.maxCombos} combo${paq.maxCombos !== 1 ? 's' : ''} disponible${paq.maxCombos !== 1 ? 's' : ''}`
+            : 'Sin stock';
         html += `<div class="resultado-item" style="background:#fffde7;"
             onclick="${paq.disponible
                 ? `agregarPaquete(${JSON.stringify(paq).replace(/"/g,"'")})`
@@ -1033,10 +1050,25 @@ function agregarProducto(id, nombre, precio, stock, tipo) {
     verificarRecomendaciones();
 }
 
+// ── Stock disponible para un paquete (mínimo de floor(stock/qty_req) por producto) ──
+function calcularStockCombo(productos) {
+    if (!productos || !productos.length) return 0;
+    return Math.floor(Math.min(...productos.map(p => {
+        const req   = parseFloat(p.cantidad_requerida || p.cantidad_req || 1);
+        const stock = parseFloat(p.stock_actual ?? p.stock ?? 0);
+        return req > 0 ? stock / req : 0;
+    })));
+}
+
 // ── Agregar paquete ──────────────────────────────────────────────────────────
 function agregarPaquete(paq) {
     if (typeof paq === 'string') {
         try { paq = JSON.parse(paq.replace(/'/g, '"')); } catch(e) { return; }
+    }
+    const maxCombos = calcularStockCombo(paq.productos);
+    if (maxCombos < 1) {
+        alert('No hay stock suficiente para armar ni un combo de "' + paq.nombre + '".');
+        return;
     }
     const ids = paq.productos.map(p => parseInt(p.producto_id));
     carrito   = carrito.filter(i => i.tipo === 'paquete' || !ids.includes(parseInt(i.producto_id)));
@@ -1046,7 +1078,7 @@ function agregarPaquete(paq) {
         nombre:            '📦 ' + paq.nombre,
         precio:            parseFloat(paq.precio_paquete),
         cantidad:          1,
-        stock:             99,
+        stock:             maxCombos,
         tipo:              'paquete',
         productos_paquete: paq.productos.map(p => ({
             producto_id:        parseInt(p.producto_id),
@@ -1073,39 +1105,69 @@ function renderCarrito() {
 
     body.innerHTML = carrito.map((item, i) => {
         if (item.tipo === 'paquete') {
-            const subNames = item.productos_paquete.map(p => `${p.nombre_producto}×${p.cantidad_requerida}`).join(', ');
+            const subNames  = item.productos_paquete.map(p => `${p.nombre_producto}×${p.cantidad_requerida}`).join(', ');
+            const stockBadgeClass = item.cantidad >= item.stock ? 'stock-bajo' : 'stock-ok';
             return `<tr class="paq-row">
                 <td>
                     <strong>${esc(item.nombre)}</strong>
                     <div style="font-size:11px;color:#aaa;">${esc(subNames)}</div>
                 </td>
                 <td>$${item.precio.toFixed(2)}</td>
-                <td><input class="qty-input" type="number" value="1" min="1" max="1" disabled style="width:55px;"></td>
-                <td>—</td>
-                <td>$${item.precio.toFixed(2)}</td>
+                <td>
+                    <input class="qty-input" type="number" value="${item.cantidad}"
+                        min="1" step="1" max="${item.stock}" inputmode="numeric"
+                        oninput="sanitizarCantCarrito(${i},this)"
+                        onchange="cambiarCantidad(${i},this.value)">
+                </td>
+                <td><span class="stock-badge ${stockBadgeClass}">${item.stock} combo${item.stock !== 1 ? 's' : ''}</span></td>
+                <td>$${(item.precio * item.cantidad).toFixed(2)}</td>
                 <td><button class="btn-eliminar-item" onclick="eliminarItem(${i})">Quitar</button></td>
             </tr>`;
         }
+        const esSuelto  = item.tipo === 'Suelto';
+        const qtyStep   = esSuelto ? '0.001' : '1';
+        const qtyMin    = esSuelto ? '0.001' : '1';
+        const qtyMode   = esSuelto ? 'decimal' : 'numeric';
+        const stockDisp = esSuelto ? parseFloat(item.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(item.stock);
+        const cantDisp  = esSuelto ? parseFloat(item.cantidad).toFixed(3).replace(/\.?0+$/,'') : item.cantidad;
         return `<tr>
             <td>${esc(item.nombre)}</td>
             <td>$${parseFloat(item.precio).toFixed(2)}</td>
             <td>
-                <input class="qty-input" type="number" value="${item.cantidad}"
-                    min="1" step="1" max="${item.stock}"
+                <input class="qty-input" type="number" value="${cantDisp}"
+                    min="${qtyMin}" step="${qtyStep}" max="${item.stock}" inputmode="${qtyMode}"
+                    oninput="sanitizarCantCarrito(${i},this)"
                     onchange="cambiarCantidad(${i},this.value)">
             </td>
-            <td><span class="stock-badge ${item.cantidad>=item.stock?'stock-bajo':'stock-ok'}">${item.stock}</span></td>
+            <td><span class="stock-badge ${item.cantidad>=item.stock?'stock-bajo':'stock-ok'}">${stockDisp}</span></td>
             <td>$${(item.cantidad*item.precio).toFixed(2)}</td>
             <td><button class="btn-eliminar-item" onclick="eliminarItem(${i})">Quitar</button></td>
         </tr>`;
     }).join('');
 }
 
+function sanitizarCantCarrito(i, inp) {
+    if (carrito[i] && carrito[i].tipo !== 'Suelto') {
+        if (inp.value.includes('.')) {
+            const n = parseFloat(inp.value);
+            inp.value = !isNaN(n) ? Math.floor(n) || '' : '';
+        }
+    }
+}
+
 function cambiarCantidad(i, val) {
-    const qty = parseInt(val);
-    if (qty < 1) carrito[i].cantidad = 1;
-    else if (qty > carrito[i].stock) { alert(`Stock máximo: ${carrito[i].stock}`); carrito[i].cantidad = carrito[i].stock; }
-    else carrito[i].cantidad = qty;
+    const item    = carrito[i];
+    const esSuelto = item.tipo === 'Suelto';
+    let qty = esSuelto ? parseFloat(val) : parseInt(val);
+    const minQty = esSuelto ? 0.001 : 1;
+    const maxQty = esSuelto ? item.stock : Math.floor(item.stock);
+    if (isNaN(qty) || qty < minQty) qty = minQty;
+    if (qty > maxQty) {
+        const dispMax = esSuelto ? maxQty.toFixed(3).replace(/\.?0+$/,'') : maxQty;
+        alert('Stock máximo disponible: ' + dispMax);
+        qty = maxQty;
+    }
+    carrito[i].cantidad = qty;
     renderCarrito(); recalcularTodo();
 }
 
@@ -1361,8 +1423,9 @@ function prepararVenta() {
                 const precioProp = totalCant > 0 ? (item.precio * prod.cantidad_requerida) / totalCant : 0;
                 itemsExpandidos.push({
                     producto_id: prod.producto_id,
-                    cantidad:    prod.cantidad_requerida,
-                    precio:      parseFloat((precioProp / prod.cantidad_requerida).toFixed(4))
+                    cantidad:    prod.cantidad_requerida * item.cantidad,
+                    precio:      parseFloat((precioProp / prod.cantidad_requerida).toFixed(4)),
+                    paquete_id:  item.paquete_id
                 });
             });
         } else {
@@ -1391,17 +1454,19 @@ function prepararVenta() {
                 cantidad_requerida: prod.cantidad_requerida
             }))
         }));
+    if (metodoPago === 'Transferencia') {
+        document.getElementById('inputReferenciaTransferencia').value =
+            String(document.getElementById('transferReferencia').value || '').trim();
+    }
     const metaVenta = {
         pago: metodoPago === 'Transferencia' ? {
-            metodo_real: 'Transferencia',
-            referencia: String(document.getElementById('transferReferencia').value || '').trim(),
-            banco_origen: String(document.getElementById('transferBancoOrigen').value || '').trim()
+            referencia: String(document.getElementById('transferReferencia').value || '').trim()
         } : null,
         paquetes: paquetesVendidos
     };
     const resumenNotas = [];
     if (metaVenta.pago) {
-        resumenNotas.push('Pago por transferencia. Referencia: ' + metaVenta.pago.referencia + (metaVenta.pago.banco_origen ? ' · Banco origen: ' + metaVenta.pago.banco_origen : ''));
+        resumenNotas.push('Pago por transferencia. Referencia: ' + metaVenta.pago.referencia);
     }
     if (paquetesVendidos.length) {
         resumenNotas.push('Paquetes vendidos: ' + paquetesVendidos.map(p => p.nombre + ' x' + p.cantidad).join(', '));

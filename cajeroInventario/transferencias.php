@@ -6,6 +6,42 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
+// Ticket transferencia (JSON para modal)
+if (isset($_GET['get_ticket_transf'])) {
+    $id = intval($_GET['get_ticket_transf']);
+    $stmt = $pdo->prepare("
+        SELECT t.*, p.nombre_producto, p.codigo,
+               so.nombre AS sucursal_origen, sd.nombre AS sucursal_destino,
+               us.nombre_completo AS solicitante, ua.nombre_completo AS aprobador
+        FROM transferencias t
+        JOIN productos p   ON t.producto_id         = p.producto_id
+        JOIN sucursales so ON t.sucursal_origen_id   = so.sucursal_id
+        JOIN sucursales sd ON t.sucursal_destino_id  = sd.sucursal_id
+        JOIN usuarios us   ON t.usuario_solicita_id  = us.usuario_id
+        LEFT JOIN usuarios ua ON t.usuario_aprueba_id = ua.usuario_id
+        WHERE t.transferencias_id = ?
+    ");
+    $stmt->execute([$id]);
+    $t = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$t) { http_response_code(404); header('Content-Type: application/json'); echo json_encode(['error'=>'No encontrado']); exit(); }
+    header('Content-Type: application/json');
+    echo json_encode([
+        'id'       => $t['transferencias_id'],
+        'producto' => $t['nombre_producto'],
+        'codigo'   => $t['codigo'],
+        'cantidad' => number_format((float)$t['cantidad'], 2),
+        'origen'   => $t['sucursal_origen'],
+        'destino'  => $t['sucursal_destino'],
+        'estado'   => $t['estado'],
+        'solicitante' => $t['solicitante'],
+        'aprobador'   => $t['aprobador'] ?? null,
+        'notas'       => $t['notas'] ?? null,
+        'fecha'       => date('d/m/Y H:i', strtotime($t['created_at'])),
+        'generado'    => date('d/m/Y H:i'),
+    ]);
+    exit();
+}
+
 // Acciones sobre transferencia existente
 if (isset($_GET['accion']) && isset($_GET['id'])) {
     $id         = intval($_GET['id']);
@@ -95,6 +131,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Filtro de fechas para el historial
+$filtroDesde = $_GET['desde'] ?? date('Y-m-01');
+$filtroHasta = $_GET['hasta'] ?? date('Y-m-d');
+$filtroEstado = trim($_GET['estado_f'] ?? '');
+
+$whereExtra = '';
+$paramsExtra = [];
+if ($filtroDesde) { $whereExtra .= ' AND DATE(t.created_at) >= ?'; $paramsExtra[] = $filtroDesde; }
+if ($filtroHasta) { $whereExtra .= ' AND DATE(t.created_at) <= ?'; $paramsExtra[] = $filtroHasta; }
+if ($filtroEstado) { $whereExtra .= ' AND t.estado = ?'; $paramsExtra[] = $filtroEstado; }
+
 // Transferencias de esta sucursal (como origen o destino)
 $stmt = $pdo->prepare("
     SELECT t.*,
@@ -109,11 +156,12 @@ $stmt = $pdo->prepare("
     JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
     JOIN usuarios us ON t.usuario_solicita_id = us.usuario_id
     LEFT JOIN usuarios ua ON t.usuario_aprueba_id = ua.usuario_id
-    WHERE t.sucursal_origen_id = ? OR t.sucursal_destino_id = ?
+    WHERE (t.sucursal_origen_id = ? OR t.sucursal_destino_id = ?)
+    $whereExtra
     ORDER BY t.created_at DESC
-    LIMIT 50
+    LIMIT 100
 ");
-$stmt->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
+$stmt->execute(array_merge([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']], $paramsExtra));
 $transferencias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Sucursales origen disponibles
@@ -329,6 +377,33 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                 <div class="msg msg-exito"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>
 
+            <!-- Filtro de fechas -->
+            <div class="card" style="margin-bottom:10px;">
+                <form method="GET" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+                    <div>
+                        <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Desde</label>
+                        <input type="date" name="desde" value="<?= htmlspecialchars($filtroDesde) ?>"
+                               style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Hasta</label>
+                        <input type="date" name="hasta" value="<?= htmlspecialchars($filtroHasta) ?>"
+                               style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Estado</label>
+                        <select name="estado_f" style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <option value="">Todos</option>
+                            <?php foreach (['Pendiente','Aprobada','En tránsito','Entregada','Rechazada'] as $est): ?>
+                            <option value="<?= $est ?>" <?= $filtroEstado === $est ? 'selected' : '' ?>><?= $est ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <button type="submit" style="background:#14ace7;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Filtrar</button>
+                    <a href="transferencias.php" style="font-size:12px;color:#aaa;align-self:center;text-decoration:none;">Limpiar</a>
+                </form>
+            </div>
+
             <div class="card" style="padding:0;">
                 <?php if (count($transferencias) > 0): ?>
                 <table>
@@ -374,6 +449,11 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     <?php else: ?>
                                         <span style="color:#aaa;font-size:11px;">—</span>
                                     <?php endif; ?>
+                                    <button class="btn-accion" type="button"
+                                            style="background:#f3e5f5;color:#6a1b9a;border:none;cursor:pointer;"
+                                            onclick="abrirTicket(<?= $t['transferencias_id'] ?>)">
+                                        Ticket
+                                    </button>
                                 </div>
                             </td>
                         </tr>
@@ -576,6 +656,136 @@ function prepararEnvio() {
 document.getElementById('busquedaProd').addEventListener('blur', function() {
     setTimeout(hideSug, 200);
 });
+
+// ── Modal ticket transferencia ──────────────────────────────────────────────
+function abrirTicket(id) {
+    fetch('transferencias.php?get_ticket_transf=' + id)
+        .then(r => r.json())
+        .then(function(t) {
+            if (t.error) { alert('No se pudo cargar el ticket.'); return; }
+
+            var sep  = '--------------------------------';
+            var sep2 = '================================';
+
+            var lines = [];
+            lines.push(sep2);
+            lines.push(centrar('TRANSFERENCIA', 32));
+            lines.push(centrar('DE INVENTARIO', 32));
+            lines.push(sep2);
+            lines.push('');
+            lines.push('Folio:    #' + t.id);
+            lines.push('Fecha:    ' + t.fecha);
+            lines.push('');
+            lines.push(sep);
+            lines.push('PRODUCTO');
+            lines.push(sep);
+            lines.push(wraps(t.producto, 32));
+            lines.push('Codigo:   ' + t.codigo);
+            lines.push('Cantidad: ' + t.cantidad);
+            lines.push('');
+            lines.push(sep);
+            lines.push('RUTA');
+            lines.push(sep);
+            lines.push('Origen:   ' + wraps(t.origen, 32));
+            lines.push('Destino:  ' + wraps(t.destino, 32));
+            lines.push('Estado:   ' + t.estado);
+            lines.push('');
+            lines.push(sep);
+            lines.push('RESPONSABLES');
+            lines.push(sep);
+            lines.push('Solicita: ' + wraps(t.solicitante, 32));
+            if (t.aprobador) {
+                lines.push('Aprueba:  ' + wraps(t.aprobador, 32));
+            }
+            if (t.notas) {
+                lines.push('');
+                lines.push(sep);
+                lines.push('NOTAS');
+                lines.push(sep);
+                lines.push(wraps(t.notas, 32));
+            }
+            lines.push('');
+            lines.push(sep2);
+            lines.push(centrar('Ferreteria Aldrete', 32));
+            lines.push(centrar(t.generado, 32));
+            lines.push(sep2);
+
+            document.getElementById('ticketContenido').textContent = lines.join('\n');
+            document.getElementById('modalTicket').style.display = 'flex';
+        })
+        .catch(function() { alert('Error de conexión al cargar el ticket.'); });
+}
+
+function centrar(texto, ancho) {
+    if (texto.length >= ancho) return texto;
+    var pad = Math.floor((ancho - texto.length) / 2);
+    return ' '.repeat(pad) + texto;
+}
+
+function wraps(texto, ancho) {
+    if (!texto || texto.length <= ancho) return texto || '';
+    var out = '';
+    while (texto.length > ancho) {
+        out += texto.slice(0, ancho) + '\n          ';
+        texto = texto.slice(ancho);
+    }
+    return out + texto;
+}
+
+function cerrarModalTicket() {
+    document.getElementById('modalTicket').style.display = 'none';
+}
+
+function imprimirTicket() {
+    window.print();
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') cerrarModalTicket();
+});
 </script>
+
+<!-- Modal ticket -->
+<div id="modalTicket" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:8px;padding:20px;width:320px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.3);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <span style="font-size:13px;font-weight:700;color:#333;">Ticket de transferencia</span>
+            <button onclick="cerrarModalTicket()" style="background:none;border:none;font-size:18px;cursor:pointer;color:#888;line-height:1;">×</button>
+        </div>
+        <div id="ticketContenido" style="font-family:'Courier New',Courier,monospace;font-size:11.5px;line-height:1.55;white-space:pre;background:#fafafa;border:1px solid #e0e0e0;border-radius:4px;padding:12px;overflow-x:auto;"></div>
+        <div style="display:flex;gap:8px;margin-top:14px;" id="botonesTicket">
+            <button onclick="imprimirTicket()" style="flex:1;background:#14ace7;color:#fff;border:none;padding:10px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">🖨 Imprimir</button>
+            <button onclick="cerrarModalTicket()" style="background:#f0f0f0;color:#555;border:none;padding:10px 16px;border-radius:6px;font-size:13px;cursor:pointer;">Cerrar</button>
+        </div>
+    </div>
+</div>
+
+<style>
+@media print {
+    body > *:not(#modalTicket) { display: none !important; }
+    #modalTicket {
+        position: static !important;
+        background: none !important;
+        display: block !important;
+    }
+    #modalTicket > div {
+        box-shadow: none !important;
+        border: none !important;
+        width: 72mm !important;
+        max-height: none !important;
+        padding: 0 !important;
+    }
+    #botonesTicket { display: none !important; }
+    #modalTicket > div > div:first-child { display: none !important; }
+    #ticketContenido {
+        border: none !important;
+        background: none !important;
+        padding: 0 !important;
+        font-size: 10px !important;
+        line-height: 1.4 !important;
+    }
+}
+</style>
+
 </body>
 </html>

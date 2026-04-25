@@ -1,15 +1,15 @@
 <?php
-//$host     = 'ballast.proxy.rlwy.net';
-//$port     = '36521';
-//$db       = 'railway';
-//$user     = 'root';
-//$password = 'cdDWuuEzVHyPphUwuIzfXidamVFwLTRJ';
-
-$host     = 'metro.proxy.rlwy.net';
-$port     = '38728';
+$host     = 'ballast.proxy.rlwy.net';
+$port     = '36521';
 $db       = 'railway';
 $user     = 'root';
-$password = 'LsRfHVEwkzhUwDYcyOkdfZPXwlYqrnYI';
+$password = 'cdDWuuEzVHyPphUwuIzfXidamVFwLTRJ';
+
+//$host     = 'metro.proxy.rlwy.net';
+//$port     = '38728';
+//$db       = 'railway';
+//$user     = 'root';
+//$password = 'LsRfHVEwkzhUwDYcyOkdfZPXwlYqrnYI';
 
 
 

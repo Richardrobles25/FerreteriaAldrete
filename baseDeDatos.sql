@@ -71,7 +71,7 @@
         producto_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         sucursal_id INT UNSIGNED NOT NULL,
         categoria_id INT UNSIGNED,
-        codigo VARCHAR(50) NOT NULL, UNIQUE (sucursal_id, codigo)
+        codigo VARCHAR(50) NOT NULL, UNIQUE (sucursal_id, codigo),
         nombre_producto VARCHAR(150) NOT NULL,
         descripcion TEXT,
         precio_compra DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -103,13 +103,13 @@
     CREATE TABLE paquetes (
         paquete_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         sucursal_id INT UNSIGNED NOT NULL,
+        codigo VARCHAR(50) NOT NULL DEFAULT '',
         nombre VARCHAR(150) NOT NULL,
         descripcion TEXT,
         precio_paquete DECIMAL(10,2) NOT NULL DEFAULT 0,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        codigo VARCHAR(50) NOT NULL DEFAULT '' AFTER paquete_id,
         FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id)
     );
 
@@ -295,12 +295,12 @@
     );
 
     CREATE TABLE devoluciones (
-    devolucion_id   INT AUTO_INCREMENT PRIMARY KEY,
-    venta_id        INT NOT NULL,
-    usuario_id      INT NOT NULL,
+    devolucion_id   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    venta_id        INT UNSIGNED NOT NULL,
+    usuario_id      INT UNSIGNED NOT NULL,
     procesada_en    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     cancelada_en    DATETIME NULL DEFAULT NULL,
-    cancelada_por   INT NULL DEFAULT NULL,
+    cancelada_por   INT UNSIGNED NULL DEFAULT NULL,
     nota_cancelacion TEXT NULL DEFAULT NULL,
     FOREIGN KEY (venta_id)   REFERENCES ventas(venta_id),
     FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)

@@ -55,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stock_minimo     = floatval(normalizarNumeroFormulario($stock_minimo_raw));
     $stock_maximo     = floatval(normalizarNumeroFormulario($stock_maximo_raw));
     $tipo_venta       = $_POST['tipo_venta'] ?? 'Unidad';
+    $unidad_medida    = trim($_POST['unidad_medida'] ?? '');
     $cantidad_inicial_raw = $_POST['cantidad_inicial'] ?? 0;
     $cantidad_inicial = floatval(normalizarNumeroFormulario($cantidad_inicial_raw));
     $proveedores_sel  = $_POST['proveedores'] ?? [];
@@ -82,22 +83,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($producto_id) {
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
-                precio_compra=?,precio_venta=?,precio_mayoreo=?,stock_minimo=?,stock_maximo=?,tipo_venta=?
+                precio_compra=?,precio_venta=?,precio_mayoreo=?,stock_minimo=?,stock_maximo=?,tipo_venta=?,unidad_medida=?
                 WHERE producto_id=? AND sucursal_id=?
             ")->execute([$codigo,$nombre_producto,$descripcion,$categoria_id,
                          $precio_compra,$precio_venta,$precio_mayoreo,
-                         $stock_minimo,$stock_maximo,$tipo_venta,
+                         $stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null,
                          $producto_id,$_SESSION['sucursal_id']]);
         } else {
             $pdo->prepare("
                 INSERT INTO productos
                 (sucursal_id,categoria_id,codigo,nombre_producto,descripcion,
                  precio_compra,precio_venta,precio_mayoreo,stock_actual,
-                 stock_minimo,stock_maximo,tipo_venta,activo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)
+                 stock_minimo,stock_maximo,tipo_venta,unidad_medida,activo)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ")->execute([$_SESSION['sucursal_id'],$categoria_id,$codigo,$nombre_producto,
                          $descripcion,$precio_compra,$precio_venta,$precio_mayoreo,
-                         $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta]);
+                         $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null]);
             $producto_id = $pdo->lastInsertId();
 
             if ($cantidad_inicial > 0) {
@@ -125,6 +126,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $categorias  = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
+$stmtUnd = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE sucursal_id = ? ORDER BY nombre ASC");
+$stmtUnd->execute([$_SESSION['sucursal_id']]);
+$unidadesMedida = $stmtUnd->fetchAll(PDO::FETCH_COLUMN);
 
 // Categoría actual para pre-llenar el autocomplete
 $categoriaNombreActual = '';
@@ -266,7 +270,7 @@ if ($editando && $editando['categoria_id']) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item active" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -452,6 +456,30 @@ if ($editando && $editando['categoria_id']) {
                                 <div class="tipo-btn-titulo">Suelto / Granel</div>
                                 <div class="tipo-btn-desc">Se vende por metros, kg, litros...</div>
                             </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Unidad de medida</label>
+                        <?php
+                        $unidadActual = $_POST['unidad_medida'] ?? $editando['unidad_medida'] ?? '';
+                        $enLista = in_array($unidadActual, $unidadesMedida, true);
+                        ?>
+                        <select name="unidad_medida" id="selectUnidadMedida" onchange="toggleUnidadPersonalizada(this.value)">
+                            <option value="">— Sin unidad —</option>
+                            <?php foreach ($unidadesMedida as $u): ?>
+                                <option value="<?= htmlspecialchars($u) ?>" <?= $unidadActual === $u ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($u) ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <option value="__otra__" <?= ($unidadActual && !$enLista) ? 'selected' : '' ?>>— Escribir otra —</option>
+                        </select>
+                        <input type="text" id="inputUnidadPersonalizada" name="unidad_medida_custom"
+                            value="<?= ($unidadActual && !$enLista) ? htmlspecialchars($unidadActual) : '' ?>"
+                            placeholder="Escribe la unidad..."
+                            style="margin-top:8px;display:<?= ($unidadActual && !$enLista) ? 'block' : 'none' ?>;">
+                        <div class="hint">Aparece en el punto de venta junto a la cantidad.
+                            <a href="unidades.php" style="color:#14ace7;">Administrar unidades</a>
                         </div>
                     </div>
                 </div>
@@ -719,6 +747,27 @@ function actualizarModoCantidades() {
             : 'Modo Unidad activo: aquí solo se aceptan números enteros.';
     }
 }
+
+// ── Unidad de medida: toggle campo personalizado ───────────────────────────
+function toggleUnidadPersonalizada(val) {
+    const inp = document.getElementById('inputUnidadPersonalizada');
+    inp.style.display = (val === '__otra__') ? 'block' : 'none';
+    if (val !== '__otra__') inp.value = '';
+}
+
+document.getElementById('formProducto').addEventListener('submit', function() {
+    const sel = document.getElementById('selectUnidadMedida');
+    const inp = document.getElementById('inputUnidadPersonalizada');
+    if (sel && sel.value === '__otra__') {
+        const h = document.createElement('input');
+        h.type  = 'hidden';
+        h.name  = 'unidad_medida';
+        h.value = inp.value.trim();
+        this.appendChild(h);
+        sel.name = '';
+    }
+    if (inp) inp.name = '';
+});
 
 // ── Inicializar margen al cargar en modo edición ───────────────────────────
 calcularMargen();

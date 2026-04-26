@@ -6,36 +6,41 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
-// Eliminar categoría
+$sucursalId = intval($_SESSION['sucursal_id']);
+
+// Eliminar unidad
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
-    // Verificar que no tenga productos asociados
-    $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE categoria_id = ? AND activo = 1");
-    $check->execute([$id]);
-    if ($check->fetchColumn() > 0) {
-        header('Location: categorias.php?msg=error_productos');
-        exit();
+    $u = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?");
+    $u->execute([$id, $sucursalId]);
+    $row = $u->fetch(PDO::FETCH_ASSOC);
+    if ($row) {
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND sucursal_id = ? AND activo = 1");
+        $check->execute([$row['nombre'], $sucursalId]);
+        if ($check->fetchColumn() > 0) {
+            header('Location: unidades.php?msg=error_productos');
+            exit();
+        }
     }
-    $stmt = $pdo->prepare("DELETE FROM categorias WHERE categoria_id = ?");
-    $stmt->execute([$id]);
-    header('Location: categorias.php?msg=eliminado');
+    $pdo->prepare("DELETE FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?")->execute([$id, $sucursalId]);
+    header('Location: unidades.php?msg=eliminado');
     exit();
 }
 
-// Guardar categoría (crear o editar)
+// Guardar unidad (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nombre = trim($_POST['nombre'] ?? '');
-    $id     = intval($_POST['categoria_id'] ?? 0);
+    $id     = intval($_POST['unidad_id'] ?? 0);
 
     if ($nombre) {
         if ($id) {
-            $stmt = $pdo->prepare("UPDATE categorias SET nombre = ? WHERE categoria_id = ?");
-            $stmt->execute([$nombre, $id]);
-            header('Location: categorias.php?msg=editado');
+            $pdo->prepare("UPDATE unidades_medida SET nombre = ? WHERE unidad_id = ? AND sucursal_id = ?")
+                ->execute([$nombre, $id, $sucursalId]);
+            header('Location: unidades.php?msg=editado');
         } else {
-            $stmt = $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)");
-            $stmt->execute([$nombre]);
-            header('Location: categorias.php?msg=creado');
+            $pdo->prepare("INSERT INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
+                ->execute([$nombre, $sucursalId]);
+            header('Location: unidades.php?msg=creado');
         }
         exit();
     }
@@ -43,19 +48,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $busqueda = trim($_GET['buscar'] ?? '');
 if ($busqueda) {
-    $stmt = $pdo->prepare("SELECT c.*, COUNT(p.producto_id) as total_productos FROM categorias c LEFT JOIN productos p ON c.categoria_id = p.categoria_id AND p.activo = 1 WHERE c.nombre LIKE ? GROUP BY c.categoria_id ORDER BY c.categoria_id ASC");
-    $stmt->execute(['%' . $busqueda . '%']);
+    $stmt = $pdo->prepare("
+        SELECT u.*, COUNT(p.producto_id) AS total_productos
+        FROM unidades_medida u
+        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+        WHERE u.sucursal_id = ? AND u.nombre LIKE ?
+        GROUP BY u.unidad_id
+        ORDER BY u.nombre ASC
+    ");
+    $stmt->execute([$sucursalId, '%'.$busqueda.'%']);
 } else {
-    $stmt = $pdo->query("SELECT c.*, COUNT(p.producto_id) as total_productos FROM categorias c LEFT JOIN productos p ON c.categoria_id = p.categoria_id AND p.activo = 1 GROUP BY c.categoria_id ORDER BY c.categoria_id ASC");
+    $stmt = $pdo->prepare("
+        SELECT u.*, COUNT(p.producto_id) AS total_productos
+        FROM unidades_medida u
+        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+        WHERE u.sucursal_id = ?
+        GROUP BY u.unidad_id
+        ORDER BY u.nombre ASC
+    ");
+    $stmt->execute([$sucursalId]);
 }
-$categorias = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$unidades = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Categoría a editar
 $editando = null;
 if (isset($_GET['editar'])) {
-    $stmt = $pdo->prepare("SELECT * FROM categorias WHERE categoria_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
-    $editando = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt2 = $pdo->prepare("SELECT * FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?");
+    $stmt2->execute([intval($_GET['editar']), $sucursalId]);
+    $editando = $stmt2->fetch(PDO::FETCH_ASSOC);
 }
 ?>
 <!DOCTYPE html>
@@ -63,7 +82,7 @@ if (isset($_GET['editar'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Categorías — Ferretería Aldrete</title>
+    <title>Unidades de medida — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -93,8 +112,6 @@ if (isset($_GET['editar'])) {
     .content { flex: 1; padding: 28px; overflow-y: auto; display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
     .card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 20px; }
     .card h3 { font-size: 15px; font-weight: 600; color: #333; margin: 0 0 16px; }
-    .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-    .content-header h1 { font-size: 20px; color: #222; font-weight: 600; }
     .barra-busqueda { display: flex; gap: 10px; margin-bottom: 16px; }
     .barra-busqueda input { flex: 1; padding: 9px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .barra-busqueda input:focus { outline: none; border-color: #14ace7; }
@@ -121,6 +138,7 @@ if (isset($_GET['editar'])) {
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .form-group input:focus { outline: none; border-color: #14ace7; }
+    .hint { font-size: 11px; color: #aaa; margin-top: 4px; }
     .btn-guardar { background: #14ace7; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar-edit { background: white; color: #666; border: 1px solid #ddd; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 8px; text-decoration: none; display: block; text-align: center; }
@@ -157,8 +175,8 @@ if (isset($_GET['editar'])) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item active" href="categorias.php">Categorías</a>
-        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item active" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -181,7 +199,7 @@ if (isset($_GET['editar'])) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Categorías</h2>
+            <h2>Unidades de medida</h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
@@ -196,28 +214,28 @@ if (isset($_GET['editar'])) {
         <div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php if ($_GET['msg'] === 'creado'): ?>
-                    <div class="msg msg-exito">Categoría creada correctamente.</div>
+                    <div class="msg msg-exito">Unidad creada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'editado'): ?>
-                    <div class="msg msg-exito">Categoría actualizada correctamente.</div>
+                    <div class="msg msg-exito">Unidad actualizada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'eliminado'): ?>
-                    <div class="msg msg-exito">Categoría eliminada correctamente.</div>
+                    <div class="msg msg-exito">Unidad eliminada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
-                    <div class="msg msg-error">No puedes eliminar esta categoría porque tiene productos asociados.</div>
+                    <div class="msg msg-error">No puedes eliminar esta unidad porque tiene productos asociados.</div>
                 <?php endif; ?>
             <?php endif; ?>
 
-            <form method="GET" action="categorias.php">
+            <form method="GET" action="unidades.php">
                 <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar categoría..." value="<?= htmlspecialchars($busqueda) ?>">
+                    <input type="text" name="buscar" placeholder="Buscar unidad..." value="<?= htmlspecialchars($busqueda) ?>">
                     <button class="btn-buscar" type="submit">Buscar</button>
                     <?php if ($busqueda): ?>
-                        <a class="btn-limpiar" href="categorias.php">Limpiar</a>
+                        <a class="btn-limpiar" href="unidades.php">Limpiar</a>
                     <?php endif; ?>
                 </div>
             </form>
 
             <div class="card" style="padding:0;">
-                <?php if (count($categorias) > 0): ?>
+                <?php if (count($unidades) > 0): ?>
                 <table>
                     <thead>
                         <tr>
@@ -227,16 +245,16 @@ if (isset($_GET['editar'])) {
                             <th>Acciones</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <?php foreach ($categorias as $c): ?>
+                    <tbody id="tablaFiltrable">
+                        <?php foreach ($unidades as $u): ?>
                         <tr>
-                            <td style="color:#aaa;"><?= $c['categoria_id'] ?></td>
-                            <td><strong><?= htmlspecialchars($c['nombre']) ?></strong></td>
-                            <td><span class="badge-count"><?= $c['total_productos'] ?> productos</span></td>
+                            <td style="color:#aaa;"><?= $u['unidad_id'] ?></td>
+                            <td><strong><?= htmlspecialchars($u['nombre']) ?></strong></td>
+                            <td><span class="badge-count"><?= $u['total_productos'] ?> productos</span></td>
                             <td>
                                 <div class="acciones">
-                                    <a class="btn-accion btn-editar" href="categorias.php?editar=<?= $c['categoria_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="categorias.php?eliminar=<?= $c['categoria_id'] ?>" onclick="return confirm('¿Eliminar esta categoría?')">Eliminar</a>
+                                    <a class="btn-accion btn-editar" href="unidades.php?editar=<?= $u['unidad_id'] ?>">Editar</a>
+                                    <a class="btn-accion btn-eliminar" href="unidades.php?eliminar=<?= $u['unidad_id'] ?>" onclick="return confirm('¿Eliminar esta unidad?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -244,7 +262,7 @@ if (isset($_GET['editar'])) {
                     </tbody>
                 </table>
                 <?php else: ?>
-                    <div class="sin-resultados">No hay categorías registradas.</div>
+                    <div class="sin-resultados">No hay unidades registradas<?= $busqueda ? ' con esa búsqueda' : '' ?>.</div>
                 <?php endif; ?>
             </div>
         </div>
@@ -252,21 +270,38 @@ if (isset($_GET['editar'])) {
         <!-- Formulario lateral -->
         <div>
             <div class="card">
-                <h3><?= $editando ? 'Editar categoría' : 'Nueva categoría' ?></h3>
+                <h3><?= $editando ? 'Editar unidad' : 'Nueva unidad' ?></h3>
                 <form method="POST">
-                    <input type="hidden" name="categoria_id" value="<?= $editando['categoria_id'] ?? 0 ?>">
+                    <input type="hidden" name="unidad_id" value="<?= $editando['unidad_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>
-                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Ej. Plomería" autofocus>
+                        <input type="text" name="nombre"
+                            value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>"
+                            placeholder="Ej. pieza, kg, metro, litro" autofocus>
+                        <div class="hint">Aparecerá en el punto de venta junto a la cantidad.</div>
                     </div>
                     <button class="btn-guardar" type="submit">
-                        <?= $editando ? 'Guardar cambios' : 'Agregar categoría' ?>
+                        <?= $editando ? 'Guardar cambios' : 'Agregar unidad' ?>
                     </button>
                     <?php if ($editando): ?>
-                        <a class="btn-cancelar-edit" href="categorias.php">Cancelar</a>
+                        <a class="btn-cancelar-edit" href="unidades.php">Cancelar</a>
                     <?php endif; ?>
                 </form>
             </div>
+
+            <?php if (!$editando): ?>
+            <div class="card" style="margin-top:14px;">
+                <h3 style="margin-bottom:10px;">Unidades comunes</h3>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                    <?php foreach (['pieza','kg','gramo','litro','metro','cm','caja','bolsa','rollo','par','juego','lb','tonelada','ml','m²'] as $sug): ?>
+                        <button type="button" onclick="usarSugerida('<?= $sug ?>')"
+                            style="background:#f0f9ff;border:1px solid #b3e0f7;color:#0077a8;padding:5px 12px;border-radius:99px;font-size:12px;cursor:pointer;">
+                            <?= $sug ?>
+                        </button>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
@@ -274,6 +309,10 @@ if (isset($_GET['editar'])) {
 <script>
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
+}
+function usarSugerida(nombre) {
+    const inp = document.querySelector('input[name="nombre"]');
+    if (inp) { inp.value = nombre; inp.focus(); }
 }
 </script>
 </body>

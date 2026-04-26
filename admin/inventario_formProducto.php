@@ -56,6 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stock_minimo     = floatval(normalizarNumeroFormulario($stock_minimo_raw));
     $stock_maximo     = floatval(normalizarNumeroFormulario($stock_maximo_raw));
     $tipo_venta       = $_POST['tipo_venta'] ?? 'Unidad';
+    $unidad_medida    = trim($_POST['unidad_medida'] ?? '');
     $cantidad_inicial_raw = $_POST['cantidad_inicial'] ?? 0;
     $cantidad_inicial = floatval(normalizarNumeroFormulario($cantidad_inicial_raw));
     $proveedores_sel  = $_POST['proveedores'] ?? [];
@@ -83,22 +84,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($producto_id) {
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
-                precio_compra=?,precio_venta=?,precio_mayoreo=?,stock_minimo=?,stock_maximo=?,tipo_venta=?
+                precio_compra=?,precio_venta=?,precio_mayoreo=?,stock_minimo=?,stock_maximo=?,tipo_venta=?,unidad_medida=?
                 WHERE producto_id=? AND sucursal_id=?
             ")->execute([$codigo,$nombre_producto,$descripcion,$categoria_id,
                          $precio_compra,$precio_venta,$precio_mayoreo,
-                         $stock_minimo,$stock_maximo,$tipo_venta,
+                         $stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null,
                          $producto_id,$_SESSION['sucursal_id']]);
         } else {
             $pdo->prepare("
                 INSERT INTO productos
                 (sucursal_id,categoria_id,codigo,nombre_producto,descripcion,
                  precio_compra,precio_venta,precio_mayoreo,stock_actual,
-                 stock_minimo,stock_maximo,tipo_venta,activo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)
+                 stock_minimo,stock_maximo,tipo_venta,unidad_medida,activo)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ")->execute([$_SESSION['sucursal_id'],$categoria_id,$codigo,$nombre_producto,
                          $descripcion,$precio_compra,$precio_venta,$precio_mayoreo,
-                         $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta]);
+                         $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null]);
             $producto_id = $pdo->lastInsertId();
 
             if ($cantidad_inicial > 0) {
@@ -126,6 +127,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $categorias  = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
+$stmtUnd = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE sucursal_id = ? ORDER BY nombre ASC");
+$stmtUnd->execute([$_SESSION['sucursal_id']]);
+$unidadesMedida = $stmtUnd->fetchAll(PDO::FETCH_COLUMN);
 
 // Categoría actual para pre-llenar el autocomplete
 $categoriaNombreActual = '';
@@ -322,7 +326,7 @@ if ($editando && $editando['categoria_id']) {
                     <div class="form-row-3">
                         <div class="form-group">
                             <label>Precio de compra</label>
-                            <input type="number" name="precio_compra"
+                            <input type="number" name="precio_compra" id="inputPrecioCompra"
                                 value="<?= $_POST['precio_compra'] ?? $editando['precio_compra'] ?? 0 ?>"
                                 class="js-zero-default"
                                 step="0.01" min="0" placeholder="0.00"
@@ -330,21 +334,25 @@ if ($editando && $editando['categoria_id']) {
                         </div>
                         <div class="form-group">
                             <label>Precio de venta *</label>
-                            <input type="number" name="precio_venta"
+                            <input type="number" name="precio_venta" id="inputPrecioVenta"
                                 value="<?= $_POST['precio_venta'] ?? $editando['precio_venta'] ?? '' ?>"
                                 class="js-zero-default"
                                 step="0.01" min="0.01" placeholder="0.00"
                                 oninput="calcularMargen()">
                         </div>
                         <div class="form-group">
-                            <label>Precio mayoreo</label>
-                            <input type="number" name="precio_mayoreo"
-                                value="<?= $_POST['precio_mayoreo'] ?? $editando['precio_mayoreo'] ?? 0 ?>"
-                                class="js-zero-default"
-                                step="0.01" min="0" placeholder="0.00">
+                            <label>Margen ganancia (%)</label>
+                            <input type="number" name="margen_ganancia" id="inputMargenGanancia"
+                                value=""
+                                step="0.1" min="0" placeholder="0.0"
+                                oninput="calcularPrecioDesdeMargen()">
+                            <div class="hint">Ingresa % para calcular precio automáticamente.</div>
                         </div>
                     </div>
-                    <div class="margen-preview" id="margenPreview"></div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                        <div class="margen-preview" id="margenPreview"></div>
+                        <div class="margen-preview" id="margenInfo" style="display:none;"></div>
+                    </div>
                 </div>
 
                 <!-- ── STOCK ── -->
@@ -392,6 +400,31 @@ if ($editando && $editando['categoria_id']) {
                                 <div class="tipo-btn-titulo">Suelto / Granel</div>
                                 <div class="tipo-btn-desc">Se vende por metros, kg, litros...</div>
                             </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Unidad de medida</label>
+                        <?php
+                        $unidadActual = $_POST['unidad_medida'] ?? $editando['unidad_medida'] ?? '';
+                        $enLista = in_array($unidadActual, $unidadesMedida, true);
+                        ?>
+                        <select name="unidad_medida" id="selectUnidadMedida" onchange="toggleUnidadPersonalizada(this.value)">
+                            <option value="">— Sin unidad —</option>
+                            <?php foreach ($unidadesMedida as $u): ?>
+                                <option value="<?= htmlspecialchars($u) ?>" <?= $unidadActual === $u ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($u) ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <option value="__otra__" <?= ($unidadActual && !$enLista) ? 'selected' : '' ?>>— Escribir otra —</option>
+                        </select>
+                        <input type="text" id="inputUnidadPersonalizada" name="unidad_medida_custom"
+                            value="<?= ($unidadActual && !$enLista) ? htmlspecialchars($unidadActual) : '' ?>"
+                            placeholder="Escribe la unidad..."
+                            style="margin-top:8px;display:<?= ($unidadActual && !$enLista) ? 'block' : 'none' ?>;">
+                        <div style="font-size:11px;color:#aaa;margin-top:4px;">
+                            Se muestra en el punto de venta junto a la cantidad. Administra unidades en
+                            <a href="inventario_unidades.php" style="color:#14ace7;">Unidades de medida</a>.
                         </div>
                     </div>
                 </div>
@@ -597,8 +630,8 @@ document.addEventListener('click', function(e) {
 
 // ── Margen de ganancia ─────────────────────────────────────────────────────
 function calcularMargen() {
-    const compra  = parseFloat(document.querySelector('[name=precio_compra]').value) || 0;
-    const venta   = parseFloat(document.querySelector('[name=precio_venta]').value) || 0;
+    const compra  = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
+    const venta   = parseFloat(document.getElementById('inputPrecioVenta').value) || 0;
     const preview = document.getElementById('margenPreview');
 
     if (compra > 0 && venta > 0) {
@@ -611,6 +644,24 @@ function calcularMargen() {
             : `⚠ Precio de venta menor al costo · Pérdida: $${Math.abs(utilidad).toFixed(2)}`;
     } else {
         preview.style.display = 'none';
+    }
+}
+
+function calcularPrecioDesdeMargen() {
+    const margenInput = document.getElementById('inputMargenGanancia');
+    const margenPct = parseFloat(margenInput.value) || 0;
+    const compra = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
+    const margenInfo = document.getElementById('margenInfo');
+
+    if (margenPct > 0 && compra > 0) {
+        const precioVentaNuevo = (compra * (1 + margenPct / 100)).toFixed(2);
+        document.getElementById('inputPrecioVenta').value = precioVentaNuevo;
+        margenInfo.style.display = 'block';
+        margenInfo.className = 'margen-preview positivo';
+        margenInfo.textContent = `💡 Precio calculado: $${precioVentaNuevo}`;
+        calcularMargen();
+    } else if (margenPct <= 0) {
+        margenInfo.style.display = 'none';
     }
 }
 
@@ -634,6 +685,29 @@ function actualizarModoCantidades() {
         }
     });
 }
+
+// ── Unidad de medida: toggle campo personalizado ───────────────────────────
+function toggleUnidadPersonalizada(val) {
+    const inp = document.getElementById('inputUnidadPersonalizada');
+    inp.style.display = (val === '__otra__') ? 'block' : 'none';
+    if (val !== '__otra__') inp.value = '';
+}
+
+// Al enviar el form, si eligió "Escribir otra", copiar el valor al select
+document.getElementById('formProducto').addEventListener('submit', function() {
+    const sel = document.getElementById('selectUnidadMedida');
+    const inp = document.getElementById('inputUnidadPersonalizada');
+    if (sel.value === '__otra__') {
+        // Crear un input hidden con name="unidad_medida" para sobreescribir
+        const h = document.createElement('input');
+        h.type  = 'hidden';
+        h.name  = 'unidad_medida';
+        h.value = inp.value.trim();
+        this.appendChild(h);
+        sel.name = ''; // Deshabilitar el select para que no envíe "__otra__"
+    }
+    inp.name = ''; // Evitar duplicar
+});
 
 // ── Inicializar margen al cargar en modo edición ───────────────────────────
 calcularMargen();

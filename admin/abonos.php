@@ -203,6 +203,7 @@ if (!$credito_id) {
                                 <option value="">-- Selecciona --</option>
                                 <option value="Efectivo">Efectivo</option>
                                 <option value="Terminal">Terminal</option>
+                                <option value="Transferencia">Transferencia</option>
                                 <option value="Mixto">Mixto</option>
                             </select>
                         </div>

@@ -35,15 +35,6 @@ if ($verDetalle) {
     }
 }
 
-// ── Migración: asegurar columna proveedor_id en movimientos_inventario ────────
-$colExiste = $pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME   = 'movimientos_inventario'
-      AND COLUMN_NAME  = 'proveedor_id'")->fetchColumn();
-if (!$colExiste) {
-    $pdo->exec("ALTER TABLE movimientos_inventario ADD COLUMN proveedor_id INT NULL DEFAULT NULL");
-}
-
 // Procesar nueva compra
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
@@ -72,6 +63,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             $stockNuevo    = $stockAnterior + $item['cantidad'];
 
             $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
+
+            // Actualizar precio de compra si el usuario lo solicitó
+            if (!empty($item['actualizar_precio'])) {
+                $pdo->prepare("UPDATE productos SET precio_compra = ? WHERE producto_id = ?")
+                    ->execute([$item['precio_unitario'], $item['producto_id']]);
+            }
+
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
                 ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
         }
@@ -226,7 +224,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -475,8 +473,8 @@ function agregarProdCompra() {
     if (!id || cant <= 0 || precio <= 0) { alert('Completa producto, cantidad y precio.'); return; }
 
     const existe = itemsCompra.find(i => i.producto_id == id);
-    if (existe) { existe.cantidad += cant; }
-    else { itemsCompra.push({ producto_id: parseInt(id), nombre, cantidad: cant, precio_unitario: precio }); }
+    if (existe) { existe.cantidad += cant; existe.precio_unitario = precio; }
+    else { itemsCompra.push({ producto_id: parseInt(id), nombre, cantidad: cant, precio_unitario: precio, actualizar_precio: false }); }
 
     document.getElementById('prodCompraId').value     = '';
     document.getElementById('prodCompraNombre').value = '';
@@ -499,8 +497,14 @@ function renderListaCompra() {
         const sub = i.cantidad * i.precio_unitario;
         total += sub;
         return '<div class="compra-item">'
-            + '<div><div style="font-size:13px;">' + i.nombre + '</div>'
-            + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2) + '</div></div>'
+            + '<div style="flex:1;">'
+            + '<div style="font-size:13px;">' + i.nombre + '</div>'
+            + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2) + '</div>'
+            + '<label style="font-size:11px;color:#e65100;display:flex;align-items:center;gap:4px;margin-top:3px;cursor:pointer;">'
+            + '<input type="checkbox" ' + (i.actualizar_precio ? 'checked' : '') + ' onchange="toggleActualizarPrecio(' + idx + ',this.checked)" style="width:auto;margin:0;">'
+            + 'Actualizar precio de compra en inventario'
+            + '</label>'
+            + '</div>'
             + '<div style="display:flex;align-items:center;gap:10px;">'
             + '<span style="font-weight:700;">$' + sub.toFixed(2) + '</span>'
             + '<button class="btn-quitar" onclick="quitarProdCompra(' + idx + ')">×</button>'
@@ -511,6 +515,7 @@ function renderListaCompra() {
 }
 
 function quitarProdCompra(i) { itemsCompra.splice(i, 1); renderListaCompra(); }
+function toggleActualizarPrecio(idx, val) { itemsCompra[idx].actualizar_precio = val; }
 
 function prepararCompra() {
     const prov = document.getElementById('proveedorIdCompra').value;

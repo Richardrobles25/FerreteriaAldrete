@@ -219,10 +219,10 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         </form>
 
         <div class="stats">
-            <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'],2) ?></h3></div>
-            <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'],2) ?></h3></div>
-            <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?></h3></div>
-            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transf'] ?></h3></div>
+            <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'] ?? 0, 2) ?></h3></div>
+            <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'] ?? 0, 2) ?></h3></div>
+            <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?? 0 ?></h3></div>
+            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transf'] ?? 0 ?></h3></div>
         </div>
 
         <div class="tabla-wrapper">

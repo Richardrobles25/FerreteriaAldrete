@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -171,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                 <form method="POST">
                     <div class="form-group">
                         <label>Monto inicial en caja</label>
-                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0" value="0" autofocus>
+                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0" autofocus>
                     </div>
                     <div class="form-group">
                         <label>Observaciones (opcional)</label>

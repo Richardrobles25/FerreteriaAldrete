@@ -22,7 +22,7 @@ if (isset($_GET['detalle_venta'])) {
     if ($venta) {
         $venta['fecha_formateada'] = date('d/m/Y H:i', strtotime($venta['created_at']));
         $stmtP = $pdo->prepare("
-            SELECT vp.cantidad, vp.precio_unitario, vp.descuento, vp.subtotal,
+            SELECT vp.cantidad, vp.precio_unitario, vp.precio_final, vp.descuento, vp.subtotal, vp.nota_ajuste,
                    p.nombre_producto, p.codigo
             FROM venta_productos vp
             JOIN productos p ON vp.producto_id = p.producto_id
@@ -276,7 +276,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -573,15 +573,25 @@ function renderDetalle(v) {
     `;
 
     // Productos
-    document.getElementById('detProductos').innerHTML = v.productos.map(p => `
+    document.getElementById('detProductos').innerHTML = v.productos.map(p => {
+        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
+        const precioMostrar = (p.precio_final && parseFloat(p.precio_final) !== parseFloat(p.precio_unitario))
+            ? parseFloat(p.precio_final) : parseFloat(p.precio_unitario);
+        const precioHTML = tieneAjuste
+            ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${fmt(p.precio_unitario)}</span> <span style="color:#c0392b;font-weight:700;">$${fmt(precioMostrar)}</span>`
+            : `$${fmt(p.precio_unitario)}`;
+        return `
         <tr>
             <td style="color:#aaa;font-size:12px;font-family:monospace;">${esc(p.codigo)}</td>
-            <td>${esc(p.nombre_producto)}</td>
+            <td>
+                ${esc(p.nombre_producto)}
+                ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño: ${esc(p.nota_ajuste)}</div>` : ''}
+            </td>
             <td style="text-align:right;">${parseFloat(p.cantidad).toFixed(2)}</td>
-            <td style="text-align:right;">$${fmt(p.precio_unitario)}</td>
+            <td style="text-align:right;">${precioHTML}</td>
             <td style="text-align:right;font-weight:600;">$${fmt(p.subtotal)}</td>
-        </tr>
-    `).join('') || '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">Sin productos registrados</td></tr>';
+        </tr>`;
+    }).join('') || '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">Sin productos registrados</td></tr>';
 
     // Totales
     let html = '';
@@ -651,12 +661,18 @@ function generarTicketHTML(venta) {
         <div class="t-linea"></div>`;
 
     (venta.productos || []).forEach(p => {
+        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
+        const precioUsado = (p.precio_final && parseFloat(p.precio_final) !== parseFloat(p.precio_unitario))
+            ? parseFloat(p.precio_final) : parseFloat(p.precio_unitario);
         html += `
             <div>${esc(p.nombre_producto)}</div>
             <div class="t-fila">
-                <span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(p.precio_unitario)}</span>
+                <span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span>
                 <span>$${fmt(p.subtotal)}</span>
             </div>`;
+        if (tieneAjuste) {
+            html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
+        }
     });
 
     html += `<div class="t-linea"></div>`;

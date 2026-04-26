@@ -24,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $direccion             = trim($_POST['direccion']             ?? '');
     $telefono              = trim($_POST['telefono']              ?? '');
     $datos_ticket          = trim($_POST['datos_ticket']          ?? '');
+    $logo_url              = trim($_POST['logo_url']              ?? '');
     $banco                 = trim($_POST['banco']                 ?? '');
     $titular_cuenta        = trim($_POST['titular_cuenta']        ?? '');
     $numero_cuenta         = trim($_POST['numero_cuenta']         ?? '');
@@ -42,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'direccion'           => $direccion,
             'telefono'            => $telefono,
             'datos_ticket'        => $datos_ticket,
+            'logo_url'            => $logo_url ?: null,
             'banco'               => $banco ?: null,
             'titular_cuenta'      => $titular_cuenta ?: null,
             'numero_cuenta'       => $numero_cuenta ?: null,
@@ -109,7 +111,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .form-group textarea { min-height: 100px; resize: vertical; font-size: 13px; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .hint { font-size: 11px; color: #aaa; margin-top: 4px; }
-    .ticket-preview-box { background: #f5f5f5; border-radius: 6px; padding: 12px; margin-top: 8px; font-family: monospace; font-size: 12px; color: #555; line-height: 1.7; min-height: 60px; white-space: pre-wrap; }
     .acciones-form { display: flex; gap: 10px; margin-top: 4px; }
     .btn-guardar { flex: 1; background: #14ace7; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-guardar:hover { background: #1196cb; }
@@ -179,10 +180,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <label>Datos del ticket</label>
                     <textarea name="datos_ticket"
                         id="datosTicket"
-                        placeholder="Texto que aparecerá en los tickets de venta&#10;Ej:&#10;Ferretería Aldrete S.A. de C.V.&#10;RFC: AAAA000000AAA&#10;Calle Morelos #45, Col. Centro&#10;Tel: 8711234567"
-                        oninput="actualizarPreview(this.value)"><?= htmlspecialchars($_POST['datos_ticket'] ?? $editando['datos_ticket'] ?? '') ?></textarea>
+                        placeholder="Texto que aparecerá en los tickets de venta&#10;Ej:&#10;Ferretería Aldrete S.A. de C.V.&#10;RFC: AAAA000000AAA&#10;Calle Morelos #45, Col. Centro&#10;Tel: 8711234567"><?= htmlspecialchars($_POST['datos_ticket'] ?? $editando['datos_ticket'] ?? '') ?></textarea>
                     <div class="hint">Este texto aparece en todos los tickets de venta de esta sucursal.</div>
-                    <div class="ticket-preview-box" id="ticketPreview"><?= htmlspecialchars($_POST['datos_ticket'] ?? $editando['datos_ticket'] ?? 'Vista previa del ticket...') ?></div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Logo/Imagen para ticket</label>
+                        <input type="text" name="logo_url"
+                            id="inputLogoUrl"
+                            value="<?= htmlspecialchars($_POST['logo_url'] ?? $editando['logo_url'] ?? '') ?>"
+                            placeholder="https://ejemplo.com/logo.png">
+                        <div class="hint">URL completa (JPG, PNG). Recomendado: 200x100px</div>
+                    </div>
+                    <div class="form-group" style="display:flex;flex-direction:column;justify-content:flex-end;">
+                        <button type="button" class="btn-guardar" onclick="abrirPreviewTicket()" style="background:#9c27b0;margin-bottom:0;">👁️ Vista previa</button>
+                    </div>
                 </div>
 
                 <!-- Sección: Datos bancarios para transferencias -->
@@ -244,11 +257,115 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 </div>
 
+<!-- Modal: Ticket preview -->
+<div class="modal-overlay" id="modalPreviewTicket" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;padding:20px;z-index:999;" aria-hidden="true">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:90mm;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e8e8e8;">
+            <h3 style="margin:0;font-size:16px;color:#333;">Vista previa del ticket</h3>
+            <button type="button" onclick="cerrarPreviewTicket()" style="background:none;border:none;font-size:24px;color:#aaa;cursor:pointer;padding:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">×</button>
+        </div>
+        <div id="previewTicketContent" style="margin-bottom:16px;"></div>
+        <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:16px;">
+            <button type="button" onclick="window.print()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
+            <button type="button" onclick="cerrarPreviewTicket()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal-overlay.visible { display: flex !important; }
+@media print {
+    body > * { display: none !important; }
+    .modal-overlay.visible { display: flex !important; background: none; position: relative; inset: auto; }
+    .modal-overlay.visible > div { max-width: 100%; box-shadow: none; padding: 0; }
+    .modal-overlay.visible button { display: none !important; }
+    .modal-overlay.visible h3 { display: none !important; }
+    .modal-overlay.visible > div > div:first-of-type { display: none !important; }
+}
+</style>
+
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-function actualizarPreview(val) {
-    document.getElementById('ticketPreview').textContent = val || 'Vista previa del ticket...';
+
+/* Modal de vista previa del ticket */
+function abrirPreviewTicket() {
+    const nombre = document.querySelector('input[name="nombre"]').value || 'FERRETERIA ALDRETE';
+    const datosTicket = document.querySelector('textarea[name="datos_ticket"]').value || '';
+    const logoUrl = document.querySelector('input[name="logo_url"]').value || '';
+    const banco = document.querySelector('input[name="banco"]').value || '';
+    const titular = document.querySelector('input[name="titular_cuenta"]').value || '';
+    const cuenta = document.querySelector('input[name="numero_cuenta"]').value || '';
+    const clabe = document.querySelector('input[name="clabe_interbancaria"]').value || '';
+
+    const html = `
+<div style="font-family:'Courier New',monospace;width:72mm;font-size:10px;line-height:1.3;white-space:pre-wrap;">
+${logoUrl ? `<div style="text-align:center;margin-bottom:8px;">
+  <img src="${logoUrl}" alt="Logo" style="max-width:60mm;max-height:35mm;display:block;margin:0 auto;border-radius:2px;">
+</div>` : ''}
+<div style="text-align:center;font-weight:bold;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;">
+${nombre.toUpperCase()}
+${datosTicket.trim() ? '\n' + datosTicket : ''}
+</div>
+
+<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:9px;">
+Folio: 0042 | Turno: 1
+${new Date().toLocaleString('es-MX', {year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+Juan Pérez López
+</div>
+
+<table style="width:100%;border-collapse:collapse;">
+<tr style="border-bottom:0.5px solid #333;font-weight:bold;">
+ <th style="text-align:left;padding:3px 0;padding-right:4px;">Producto</th>
+ <th style="text-align:right;padding:3px 0;width:35px;">Cant</th>
+ <th style="text-align:right;padding:3px 0;width:40px;">Total</th>
+</tr>
+<tr style="border-bottom:0.5px solid #ddd;">
+ <td style="padding:2px 0;padding-right:4px;">Cemento saco 50kg</td>
+ <td style="text-align:right;padding:2px 0;">2</td>
+ <td style="text-align:right;padding:2px 0;">$17.00</td>
+</tr>
+<tr style="border-bottom:0.5px solid #ddd;">
+ <td style="padding:2px 0;padding-right:4px;">Tubo PVC 1/2"</td>
+ <td style="text-align:right;padding:2px 0;">5</td>
+ <td style="text-align:right;padding:2px 0;">$60.00</td>
+</tr>
+</table>
+
+<div style="border-bottom:1px dashed #000;border-top:1px dashed #000;padding:6px 0;margin:6px 0;text-align:right;font-weight:bold;font-size:11px;">
+Subtotal: $77.00
+TOTAL: $77.00
+</div>
+
+<div style="padding:4px 0;font-size:9px;border-bottom:1px dashed #000;margin-bottom:6px;padding-bottom:6px;">
+Pago: Efectivo
+</div>
+
+${banco || titular || cuenta || clabe ? `
+<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:8px;background:#f9f9f9;padding:4px;">
+DATOS BANCARIOS:
+${banco ? `Banco: ${banco}` : ''}
+${titular ? `\nTitular: ${titular}` : ''}
+${cuenta ? `\nCuenta: ${cuenta}` : ''}
+${clabe ? `\nCLABE: ${clabe}` : ''}
+</div>
+` : ''}
+
+<div style="text-align:center;padding-top:6px;font-size:8px;color:#999;">
+Gracias por su compra
+www.ferreterialdrete.com
+</div>
+</div>`;
+
+    document.getElementById('previewTicketContent').innerHTML = html;
+    document.getElementById('modalPreviewTicket').classList.add('visible');
+    document.getElementById('modalPreviewTicket').setAttribute('aria-hidden', 'false');
 }
+
+function cerrarPreviewTicket() {
+    document.getElementById('modalPreviewTicket').classList.remove('visible');
+    document.getElementById('modalPreviewTicket').setAttribute('aria-hidden', 'true');
+}
+
 document.getElementById('inputClabe').addEventListener('input', function() {
     const n = this.value.length;
     const hint = document.getElementById('hintClabe');

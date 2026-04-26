@@ -35,6 +35,7 @@ function renderAdminSidebar(string $activeKey): void
                 <a class="menu-item<?= $isActive('inventario_inicio') ?>" href="inventario_inicio.php" style="padding-left:28px;">Inicio inventario</a>
                 <a class="menu-item<?= $isActive('inventario_productos') . $isActive('inventario_form_producto') ?>" href="inventario_productos.php" style="padding-left:28px;">Productos</a>
                 <a class="menu-item<?= $isActive('inventario_categorias') ?>" href="inventario_categorias.php" style="padding-left:28px;">Categorias</a>
+                <a class="menu-item<?= $isActive('inventario_unidades') ?>" href="inventario_unidades.php" style="padding-left:28px;">Unidades de medida</a>
                 <a class="menu-item<?= $isActive('inventario_entradas') ?>" href="inventario_entradas.php" style="padding-left:28px;">Entradas</a>
                 <a class="menu-item<?= $isActive('inventario_salidas') ?>" href="inventario_salidas.php" style="padding-left:28px;">Salidas</a>
                 <a class="menu-item<?= $isActive('inventario_historial') ?>" href="inventario_historial.php" style="padding-left:28px;">Historial</a>

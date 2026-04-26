@@ -27,7 +27,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 if (isset($_GET['get_productos_all'])) {
     $stmt = $pdo->prepare("
         SELECT producto_id, codigo, nombre_producto, precio_venta,
-               precio_mayoreo, stock_actual, tipo_venta
+               precio_mayoreo, precio_compra, stock_actual, tipo_venta, unidad_medida
         FROM productos
         WHERE sucursal_id = ? AND activo = 1
         ORDER BY nombre_producto ASC
@@ -126,7 +126,7 @@ if (isset($_GET['buscar_combo'])) {
     // Productos
     $stmtP = $pdo->prepare("
         SELECT producto_id, codigo, nombre_producto, precio_venta,
-               precio_mayoreo, stock_actual, tipo_venta
+               precio_mayoreo, precio_compra, stock_actual, tipo_venta, unidad_medida
         FROM productos
         WHERE sucursal_id = ? AND activo = 1
           AND (codigo LIKE ? OR nombre_producto LIKE ?)
@@ -184,7 +184,7 @@ if (isset($_GET['buscar_producto'])) {
     $sucursal_id = intval($_GET['sucursal_id'] ?? $_SESSION['sucursal_id']);
     $stmt = $pdo->prepare("
         SELECT producto_id, codigo, nombre_producto, precio_venta,
-               precio_mayoreo, stock_actual, tipo_venta
+               precio_mayoreo, precio_compra, stock_actual, tipo_venta, unidad_medida
         FROM productos
         WHERE sucursal_id = ? AND activo = 1
           AND (codigo LIKE ? OR nombre_producto LIKE ?)
@@ -221,7 +221,7 @@ if (isset($_GET['inventario_sucursal'])) {
     $where       = "WHERE sucursal_id = ? AND activo = 1";
     $params      = [$sucursal_id];
     if ($buscar) { $where .= " AND (nombre_producto LIKE ? OR codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
-    $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_venta, tipo_venta FROM productos $where ORDER BY nombre_producto ASC LIMIT 50");
+    $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_venta, precio_compra, tipo_venta, unidad_medida FROM productos $where ORDER BY nombre_producto ASC LIMIT 50");
     $stmt->execute($params);
     header('Content-Type: application/json');
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
@@ -274,7 +274,7 @@ if (isset($_GET['ticket_venta'])) {
     }
 
     $stmtP = $pdo->prepare("
-        SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.subtotal, p.nombre_producto, p.codigo
+        SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.precio_final, vp.subtotal, vp.nota_ajuste, p.nombre_producto, p.codigo
         FROM venta_productos vp
         JOIN productos p ON vp.producto_id = p.producto_id
         WHERE vp.venta_id = ?
@@ -334,10 +334,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $venta_id = $pdo->lastInsertId();
 
             foreach ($items as $item) {
-                $subtotalItem = $item['cantidad'] * $item['precio'];
-                $paqId = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
-                $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,descuento,subtotal,paquete_id) VALUES (?,?,?,?,0,?,?)")
-                    ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$item['precio'],$subtotalItem,$paqId]);
+                $precioFinal  = floatval($item['precio']);
+                $precioOrig   = floatval($item['precio_orig'] ?? $precioFinal);
+                $subtotalItem = $item['cantidad'] * $precioFinal;
+                $notaAjuste   = trim($item['nota_ajuste'] ?? '');
+                $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
+
+                $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,precio_final,descuento,subtotal,paquete_id,nota_ajuste) VALUES (?,?,?,?,?,0,?,?,?)")
+                    ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$precioOrig,$precioFinal,$subtotalItem,$paqId,$notaAjuste ?: null]);
 
                 // Bloquear la fila del producto para evitar condición de carrera
                 $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? FOR UPDATE");
@@ -351,8 +355,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
                 $stockNuevo = $stockAnterior - $item['cantidad'];
                 $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo,$item['producto_id']]);
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Salida',?,?,?,'Venta')")
-                    ->execute([$item['producto_id'],$_SESSION['usuario_id'],$item['cantidad'],$stockAnterior,$stockNuevo]);
+
+                $motivoMovimiento = 'Venta';
+                if ($notaAjuste) {
+                    $motivoMovimiento = 'Venta - Ajuste por daño: ' . mb_substr($notaAjuste, 0, 120);
+                }
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Salida',?,?,?,?)")
+                    ->execute([$item['producto_id'],$_SESSION['usuario_id'],$item['cantidad'],$stockAnterior,$stockNuevo,$motivoMovimiento]);
             }
 
             if ($metodo_pago === 'Credito' && $cliente_id) {
@@ -545,7 +554,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -794,6 +803,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     </button>
                 </form>
                 <button class="btn-cancelar-venta" onclick="limpiarVenta()">Cancelar venta</button>
+
+                <!-- Panel: Ajuste por daño -->
+                <div style="border-top:1px solid #eee;margin-top:10px;padding-top:10px;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#555;font-weight:600;user-select:none;">
+                        <input type="checkbox" id="chkAjusteDano" onchange="togglePanelAjuste(this.checked)"
+                            style="width:15px;height:15px;accent-color:#e65100;cursor:pointer;">
+                        ⚠ Ajuste de precio por daño
+                    </label>
+                    <div id="panelAjusteDano" style="display:none;margin-top:10px;padding:12px;background:#fff8f0;border:1px solid #f0c080;border-radius:8px;">
+                        <div style="font-size:12px;color:#888;margin-bottom:8px;">Selecciona el producto del carrito al que deseas aplicar el ajuste:</div>
+                        <select id="selProductoAjuste" onchange="seleccionarProductoAjuste()"
+                            style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:10px;">
+                            <option value="">— Elige un producto —</option>
+                        </select>
+                        <div id="panelCamposAjuste" style="display:none;">
+                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;align-items:end;">
+                                <div>
+                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">% DESCUENTO</label>
+                                    <input type="number" id="inputPctAjuste" min="0" max="100" step="0.1"
+                                        placeholder="Ej. 20"
+                                        style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                        oninput="ajustePctCambia(this.value)">
+                                </div>
+                                <div>
+                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">PRECIO AJUSTADO</label>
+                                    <input type="number" id="inputPrecioAjuste" min="0" step="0.01"
+                                        placeholder="Ej. 80.00"
+                                        style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                        oninput="ajustePrecioCambia(this.value)">
+                                </div>
+                                <div>
+                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">CANT. DAÑADA</label>
+                                    <input type="number" id="inputCantAjuste" min="1" step="1"
+                                        placeholder="Ej. 2"
+                                        style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                                </div>
+                            </div>
+                            <div id="infoMinPrecio" style="font-size:11px;color:#888;margin-bottom:8px;"></div>
+                            <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">NOTA OBLIGATORIA</label>
+                            <textarea id="textareaNotaAjuste" rows="2"
+                                placeholder="¿Por qué se ajusta el precio? Ej: Producto golpeado, caja dañada..."
+                                style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;resize:none;"
+                                oninput="actualizarNotaAjuste(this.value)"></textarea>
+                            <button type="button" onclick="aplicarAjuste()"
+                                style="width:100%;margin-top:8px;background:#e65100;color:white;border:none;padding:9px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
+                                Aplicar ajuste
+                            </button>
+                            <button type="button" onclick="quitarAjusteProducto()"
+                                style="width:100%;margin-top:4px;background:white;color:#888;border:1px solid #ddd;padding:7px;border-radius:6px;font-size:12px;cursor:pointer;">
+                                Quitar ajuste de este producto
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -854,35 +917,53 @@ function normalizar(str) {
 }
 
 // ── Cargar productos, paquetes y clientes en paralelo al iniciar ─────────────
-Promise.all([
-    fetch('nuevaVenta.php?get_productos_all=1').then(r => r.json()),
-    fetch('nuevaVenta.php?get_paquetes=1').then(r => r.json()),
-    fetch('nuevaVenta.php?get_clientes_all=1').then(r => r.json())
-]).then(([prods, paqs, clis]) => {
-    productosGlobales = prods.map(p => ({
-        ...p,
-        producto_id:  parseInt(p.producto_id),
-        precio_venta: parseFloat(p.precio_venta),
-        stock_actual: parseFloat(p.stock_actual)
-    }));
-    paquetesGlobales = paqs.map(paq => ({
-        ...paq,
-        paquete_id:     parseInt(paq.paquete_id),
-        precio_paquete: parseFloat(paq.precio_paquete),
-        productos: paq.productos.map(p => ({
+(function() {
+    const inputProd = document.getElementById('inputProducto');
+    const placeholderOrig = inputProd.placeholder;
+    inputProd.disabled = true;
+    inputProd.placeholder = 'Cargando catálogo...';
+
+    Promise.all([
+        fetch('nuevaVenta.php?get_productos_all=1').then(r => r.json()),
+        fetch('nuevaVenta.php?get_paquetes=1').then(r => r.json()),
+        fetch('nuevaVenta.php?get_clientes_all=1').then(r => r.json())
+    ]).then(([prods, paqs, clis]) => {
+        productosGlobales = prods.map(p => ({
             ...p,
-            producto_id:        parseInt(p.producto_id),
-            cantidad_requerida: parseFloat(p.cantidad_requerida),
-            stock_actual:       parseFloat(p.stock_actual)
-        }))
-    }));
-    clientesGlobales = clis.map(c => ({
-        ...c,
-        cliente_id:         parseInt(c.cliente_id),
-        descuento_fijo:     parseFloat(c.descuento_fijo),
-        credito_autorizado: parseInt(c.credito_autorizado)
-    }));
-}).catch(() => {});
+            producto_id:   parseInt(p.producto_id),
+            precio_venta:  parseFloat(p.precio_venta),
+            precio_compra: parseFloat(p.precio_compra || 0),
+            stock_actual:  parseFloat(p.stock_actual)
+        }));
+        paquetesGlobales = paqs.map(paq => ({
+            ...paq,
+            paquete_id:     parseInt(paq.paquete_id),
+            precio_paquete: parseFloat(paq.precio_paquete),
+            productos: paq.productos.map(p => ({
+                ...p,
+                producto_id:        parseInt(p.producto_id),
+                cantidad_requerida: parseFloat(p.cantidad_requerida),
+                stock_actual:       parseFloat(p.stock_actual)
+            }))
+        }));
+        clientesGlobales = clis.map(c => ({
+            ...c,
+            cliente_id:         parseInt(c.cliente_id),
+            descuento_fijo:     parseFloat(c.descuento_fijo),
+            credito_autorizado: parseInt(c.credito_autorizado)
+        }));
+
+        // Habilitar input y re-disparar búsqueda si el usuario ya escribió algo
+        inputProd.disabled = false;
+        inputProd.placeholder = placeholderOrig;
+        if (inputProd.value.trim()) {
+            inputProd.dispatchEvent(new Event('input'));
+        }
+    }).catch(() => {
+        inputProd.disabled = false;
+        inputProd.placeholder = placeholderOrig;
+    });
+})();
 
 // ── Modo scanner ─────────────────────────────────────────────────────────────
 function toggleModoScanner() {
@@ -1014,7 +1095,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
         const cls   = p.stock_actual > 0 ? 'stock-ok' : 'stock-bajo';
         const label = p.stock_actual > 0 ? `Stock: ${parseFloat(p.stock_actual).toFixed(p.tipo_venta==='Suelto'?3:0)}` : 'Sin stock';
         html += `<div class="resultado-item"
-            onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}')">
+            onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${esc(p.unidad_medida||'')}')">
             <div>
                 <div class="resultado-nombre">${esc(p.nombre_producto)}</div>
                 <div class="resultado-codigo">${esc(p.codigo)}</div>
@@ -1032,7 +1113,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
 }
 
 // ── Agregar producto ─────────────────────────────────────────────────────────
-function agregarProducto(id, nombre, precio, stock, tipo) {
+function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad) {
     id    = parseInt(id);
     stock = parseFloat(stock);
     if (stock <= 0) { alert('Sin stock disponible.'); return; }
@@ -1041,13 +1122,14 @@ function agregarProducto(id, nombre, precio, stock, tipo) {
         if (existe.cantidad < stock) existe.cantidad++;
         else { alert(`Stock máximo: ${stock}`); return; }
     } else {
-        carrito.push({ producto_id: id, nombre, precio: parseFloat(precio), cantidad: 1, stock, tipo });
+        carrito.push({ producto_id: id, nombre, precio: parseFloat(precio), precio_compra: parseFloat(precioCompra||0), ajuste_activo: false, precio_ajuste: null, nota_ajuste: '', cantidad: 1, stock, tipo, unidad: unidad||'' });
     }
     document.getElementById('inputProducto').value = '';
     document.getElementById('dropdownProductos').classList.remove('visible');
     renderCarrito();
     recalcularTodo();
     verificarRecomendaciones();
+    if (document.getElementById('chkAjusteDano').checked) actualizarSelectProductos();
 }
 
 // ── Stock disponible para un paquete (mínimo de floor(stock/qty_req) por producto) ──
@@ -1130,20 +1212,214 @@ function renderCarrito() {
         const qtyMode   = esSuelto ? 'decimal' : 'numeric';
         const stockDisp = esSuelto ? parseFloat(item.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(item.stock);
         const cantDisp  = esSuelto ? parseFloat(item.cantidad).toFixed(3).replace(/\.?0+$/,'') : item.cantidad;
+        const tieneAjuste = item.ajuste_activo === true && item.precio_ajuste !== null;
+        const precioFinal = tieneAjuste ? item.precio_ajuste : item.precio;
         return `<tr>
-            <td>${esc(item.nombre)}</td>
-            <td>$${parseFloat(item.precio).toFixed(2)}</td>
             <td>
-                <input class="qty-input" type="number" value="${cantDisp}"
-                    min="${qtyMin}" step="${qtyStep}" max="${item.stock}" inputmode="${qtyMode}"
-                    oninput="sanitizarCantCarrito(${i},this)"
-                    onchange="cambiarCantidad(${i},this.value)">
+                ${esc(item.nombre)}
+                ${tieneAjuste ? (() => {
+                    const pctDesc = ((1 - item.precio_ajuste / item.precio) * 100).toFixed(1);
+                    const montoDesc = (item.precio - item.precio_ajuste).toFixed(2);
+                    return `<div style="font-size:10px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño &nbsp;·&nbsp; -${pctDesc}% (-$${montoDesc})</div>`;
+                })() : ''}
+            </td>
+            <td>
+                <span style="${tieneAjuste?'text-decoration:line-through;color:#aaa;font-size:11px;display:block;':''}">$${parseFloat(item.precio).toFixed(2)}</span>
+                ${tieneAjuste ? `<span style="color:#c0392b;font-weight:700;">$${parseFloat(precioFinal).toFixed(2)}</span>` : ''}
+            </td>
+            <td>
+                <div style="display:flex;align-items:center;gap:5px;">
+                    <input class="qty-input" type="number" value="${cantDisp}"
+                        min="${qtyMin}" step="${qtyStep}" max="${item.stock}" inputmode="${qtyMode}"
+                        oninput="sanitizarCantCarrito(${i},this)"
+                        onchange="cambiarCantidad(${i},this.value)">
+                    ${item.unidad ? `<span style="font-size:11px;color:#888;white-space:nowrap;">${esc(item.unidad)}</span>` : ''}
+                </div>
             </td>
             <td><span class="stock-badge ${item.cantidad>=item.stock?'stock-bajo':'stock-ok'}">${stockDisp}</span></td>
-            <td>$${(item.cantidad*item.precio).toFixed(2)}</td>
+            <td>$${(item.cantidad*precioFinal).toFixed(2)}</td>
             <td><button class="btn-eliminar-item" onclick="eliminarItem(${i})">Quitar</button></td>
         </tr>`;
     }).join('');
+}
+
+// ── Ajuste de precio por daño ────────────────────────────────────────────────
+let idxAjusteActual = -1;
+
+function togglePanelAjuste(activo) {
+    document.getElementById('panelAjusteDano').style.display = activo ? 'block' : 'none';
+    if (!activo) {
+        // Si se desactiva el checkbox, quitar ajustes de todos los productos
+        carrito.forEach(item => { item.ajuste_activo = false; item.precio_ajuste = null; item.nota_ajuste = ''; });
+        renderCarrito(); recalcularTodo();
+    } else {
+        actualizarSelectProductos();
+    }
+}
+
+function actualizarSelectProductos() {
+    const sel = document.getElementById('selProductoAjuste');
+    const idx = idxAjusteActual;
+    sel.innerHTML = '<option value="">— Elige un producto —</option>' +
+        carrito.map((item, i) => item.tipo !== 'paquete'
+            ? `<option value="${i}" ${i===idx?'selected':''}>${esc(item.nombre)} — $${item.precio.toFixed(2)}</option>`
+            : '').join('');
+    if (idx >= 0) seleccionarProductoAjuste();
+}
+
+function seleccionarProductoAjuste() {
+    const sel = document.getElementById('selProductoAjuste');
+    const i   = parseInt(sel.value);
+    const panel = document.getElementById('panelCamposAjuste');
+    if (isNaN(i) || i < 0) { panel.style.display = 'none'; idxAjusteActual = -1; return; }
+    idxAjusteActual = i;
+    const item      = carrito[i];
+    const esSuelto  = item.tipo === 'Suelto';
+    panel.style.display = 'block';
+
+    // Info de precios
+    const minPrecio = item.precio_compra > 0 ? parseFloat(item.precio_compra) : 0;
+    document.getElementById('infoMinPrecio').textContent =
+        `Precio original: $${item.precio.toFixed(2)}${minPrecio > 0 ? ' · Mín. (precio compra): $' + minPrecio.toFixed(2) : ''}`;
+
+    // Configurar input de cantidad
+    const inpCant = document.getElementById('inputCantAjuste');
+    inpCant.step  = esSuelto ? '0.001' : '1';
+    inpCant.min   = esSuelto ? '0.001' : '1';
+    inpCant.max   = item.cantidad;
+
+    // Cargar valores existentes si ya tiene ajuste
+    if (item.ajuste_activo && item.precio_ajuste !== null) {
+        document.getElementById('inputPrecioAjuste').value = item.precio_ajuste.toFixed(2);
+        const pct = ((1 - item.precio_ajuste / item.precio) * 100).toFixed(1);
+        document.getElementById('inputPctAjuste').value    = pct;
+        inpCant.value = item.cant_danada !== undefined ? item.cant_danada : item.cantidad;
+    } else {
+        document.getElementById('inputPrecioAjuste').value = '';
+        document.getElementById('inputPctAjuste').value    = '';
+        inpCant.value = item.cantidad;
+    }
+    document.getElementById('textareaNotaAjuste').value = item.nota_ajuste || '';
+}
+
+function ajustePctCambia(val) {
+    if (idxAjusteActual < 0) return;
+    const item = carrito[idxAjusteActual];
+    let pct = parseFloat(val);
+    if (isNaN(pct) || val === '') { document.getElementById('inputPrecioAjuste').value = ''; return; }
+    pct = Math.max(0, Math.min(100, pct));
+    const nuevo = parseFloat((item.precio * (1 - pct / 100)).toFixed(2));
+    document.getElementById('inputPrecioAjuste').value = nuevo.toFixed(2);
+    validarMinPrecio(nuevo, item);
+}
+
+function ajustePrecioCambia(val) {
+    if (idxAjusteActual < 0) return;
+    const item = carrito[idxAjusteActual];
+    const nuevo = parseFloat(val);
+    if (isNaN(nuevo) || val === '') { document.getElementById('inputPctAjuste').value = ''; return; }
+    const pct = Math.max(0, ((1 - nuevo / item.precio) * 100));
+    document.getElementById('inputPctAjuste').value = pct.toFixed(1);
+    validarMinPrecio(nuevo, item);
+}
+
+function validarMinPrecio(nuevo, item) {
+    const minPrecio = item.precio_compra > 0 ? parseFloat(item.precio_compra) : 0;
+    const inp = document.getElementById('inputPrecioAjuste');
+    inp.style.borderColor = (minPrecio > 0 && nuevo < minPrecio) ? '#c0392b' : '#ddd';
+}
+
+function actualizarNotaAjuste(val) {
+    if (idxAjusteActual < 0) return;
+    carrito[idxAjusteActual].nota_ajuste = val.trim();
+}
+
+function aplicarAjuste() {
+    if (idxAjusteActual < 0) { alert('Selecciona un producto primero.'); return; }
+    const item      = carrito[idxAjusteActual];
+    const nuevo     = parseFloat(document.getElementById('inputPrecioAjuste').value);
+    const nota      = document.getElementById('textareaNotaAjuste').value.trim();
+    const minPrecio = item.precio_compra > 0 ? parseFloat(item.precio_compra) : 0;
+    const esSuelto  = item.tipo === 'Suelto';
+    let cantDanada  = esSuelto
+        ? parseFloat(document.getElementById('inputCantAjuste').value)
+        : parseInt(document.getElementById('inputCantAjuste').value);
+
+    if (isNaN(nuevo) || nuevo <= 0)       { alert('Ingresa un precio válido.'); return; }
+    if (nuevo > item.precio)               { alert(`El precio ajustado no puede ser mayor al precio original ($${item.precio.toFixed(2)}).`); return; }
+    if (minPrecio > 0 && nuevo < minPrecio){ alert(`El precio ajustado ($${nuevo.toFixed(2)}) no puede ser menor al precio de compra ($${minPrecio.toFixed(2)}).`); return; }
+    if (!nota)                             { alert('La nota es obligatoria. Escribe el motivo del ajuste.'); document.getElementById('textareaNotaAjuste').focus(); return; }
+    if (isNaN(cantDanada) || cantDanada <= 0) { alert('Ingresa una cantidad dañada válida.'); return; }
+    if (cantDanada > item.cantidad)        { alert(`La cantidad dañada (${cantDanada}) no puede ser mayor a la cantidad en el carrito (${item.cantidad}).`); return; }
+
+    const cantRestante = parseFloat((item.cantidad - cantDanada).toFixed(3));
+
+    if (cantRestante > 0.0001) {
+        // Dividir en dos items: dañados (con ajuste) + originales (sin ajuste)
+        // Item original queda con cantidad restante, sin ajuste
+        carrito[idxAjusteActual] = {
+            ...item,
+            cantidad:      cantRestante,
+            ajuste_activo: false,
+            precio_ajuste: null,
+            nota_ajuste:   '',
+            cant_danada:   undefined
+        };
+        // Insertar nuevo item con la cantidad dañada justo después
+        const itemDanado = {
+            ...item,
+            cantidad:      cantDanada,
+            ajuste_activo: true,
+            precio_ajuste: nuevo,
+            nota_ajuste:   nota,
+            cant_danada:   cantDanada
+        };
+        carrito.splice(idxAjusteActual + 1, 0, itemDanado);
+        idxAjusteActual = idxAjusteActual + 1;
+    } else {
+        // Toda la cantidad está dañada
+        item.ajuste_activo = true;
+        item.precio_ajuste = nuevo;
+        item.nota_ajuste   = nota;
+        item.cant_danada   = cantDanada;
+    }
+
+    renderCarrito(); recalcularTodo();
+    actualizarSelectProductos();
+    alert(`✅ Ajuste aplicado: ${item.nombre} × ${cantDanada} → $${nuevo.toFixed(2)}`);
+}
+
+function quitarAjusteProducto() {
+    if (idxAjusteActual < 0) return;
+    const item = carrito[idxAjusteActual];
+    item.ajuste_activo = false;
+    item.precio_ajuste = null;
+    item.nota_ajuste   = '';
+    item.cant_danada   = undefined;
+    document.getElementById('inputPrecioAjuste').value  = '';
+    document.getElementById('inputPctAjuste').value     = '';
+    document.getElementById('inputCantAjuste').value    = '';
+    document.getElementById('textareaNotaAjuste').value = '';
+    renderCarrito(); recalcularTodo();
+    actualizarSelectProductos();
+}
+
+function toggleAjustePrecio(i, activo) {
+    const item = carrito[i];
+    if (!item) return;
+    item.ajuste_activo = activo;
+    if (!activo) { item.precio_ajuste = null; item.nota_ajuste = ''; }
+    renderCarrito(); recalcularTodo();
+}
+
+function actualizarPrecioAjuste(i, valor) {
+    // Mantenido por compatibilidad (ya no se usa en UI pero puede llamarse internamente)
+    const item = carrito[i];
+    if (!item) return;
+    const nuevo = parseFloat(valor);
+    if (isNaN(nuevo) || nuevo <= 0) { item.precio_ajuste = null; recalcularTodo(); return; }
+    item.precio_ajuste = nuevo;
+    recalcularTodo();
 }
 
 function sanitizarCantCarrito(i, inp) {
@@ -1172,18 +1448,24 @@ function cambiarCantidad(i, val) {
 }
 
 function eliminarItem(i) {
+    if (idxAjusteActual === i) { idxAjusteActual = -1; document.getElementById('panelCamposAjuste').style.display='none'; }
+    else if (idxAjusteActual > i) { idxAjusteActual--; }
     carrito.splice(i, 1);
     renderCarrito(); recalcularTodo();
     verificarRecomendaciones();
+    if (document.getElementById('chkAjusteDano').checked) actualizarSelectProductos();
 }
 
 function limpiarVenta() {
     if (carrito.length > 0 && !confirm('¿Cancelar la venta?')) return;
-    carrito = []; clienteActual = null; metodoPago = null;
+    carrito = []; clienteActual = null; metodoPago = null; idxAjusteActual = -1;
     renderCarrito(); recalcularTodo(); quitarCliente();
     document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
     document.querySelectorAll('.campos-pago').forEach(c => c.classList.remove('visible'));
     document.getElementById('recPaquetes').style.display = 'none';
+    document.getElementById('chkAjusteDano').checked = false;
+    document.getElementById('panelAjusteDano').style.display = 'none';
+    document.getElementById('panelCamposAjuste').style.display = 'none';
 }
 
 // ── Motor de recomendación de paquetes ───────────────────────────────────────
@@ -1349,13 +1631,33 @@ function seleccionarMetodo(metodo, btn) {
 
 // ── Cálculos ─────────────────────────────────────────────────────────────────
 function recalcularTodo() {
-    let subtotal  = carrito.reduce((a,i) => a + (i.cantidad * i.precio), 0);
+    // Subtotal bruto: precios originales × cantidades (sin ningún descuento)
+    const subtotalBruto = carrito.reduce((a,i) => a + (i.cantidad * i.precio), 0);
+
+    // Ahorro por ajustes de daño
+    const ahorroAjustes = carrito.reduce((a,i) => {
+        if (i.ajuste_activo && i.precio_ajuste !== null) {
+            return a + (i.cantidad * (i.precio - i.precio_ajuste));
+        }
+        return a;
+    }, 0);
+
+    // Subtotal efectivo (después de ajustes) sobre el que se aplica descuento de cliente
+    const subtotalEfectivo = subtotalBruto - ahorroAjustes;
+
     const usarDescuentoCliente = clienteActual && clienteActual.descuento > 0 && document.getElementById('aplicarDescCliente').checked;
     const porcentajeDescuento = usarDescuentoCliente ? (parseFloat(document.getElementById('porcDescCliente').value) || 0) : 0;
-    let descuento = porcentajeDescuento > 0 ? subtotal*(porcentajeDescuento/100) : 0;
-    let comision  = 0;
+    const descuentoCliente = porcentajeDescuento > 0 ? subtotalEfectivo * (porcentajeDescuento / 100) : 0;
+
+    // Descuento total = ahorro por daño + descuento de cliente
+    const descuento = ahorroAjustes + descuentoCliente;
+
+    // Subtotal que se muestra y guarda es el bruto (sin descuentos)
+    const subtotal = subtotalBruto;
+
+    let comision = 0;
     if (metodoPago === 'Terminal') {
-        comision = (subtotal-descuento) * ((parseFloat(document.getElementById('porcComision').value)||0)/100);
+        comision = (subtotal - descuento) * ((parseFloat(document.getElementById('porcComision').value) || 0) / 100);
     }
     const total = subtotal - descuento + comision;
     document.getElementById('resSubtotal').textContent  = '$'+subtotal.toFixed(2);
@@ -1416,10 +1718,10 @@ function verificarCobrar() {
 // ── Preparar y enviar venta ──────────────────────────────────────────────────
 function prepararVenta() {
     const itemsExpandidos = [];
-    carrito.forEach(item => {
+    for (const item of carrito) {
         if (item.tipo === 'paquete') {
             const totalCant = item.productos_paquete.reduce((s,p) => s+p.cantidad_requerida, 0);
-            item.productos_paquete.forEach(prod => {
+            for (const prod of item.productos_paquete) {
                 const precioProp = totalCant > 0 ? (item.precio * prod.cantidad_requerida) / totalCant : 0;
                 itemsExpandidos.push({
                     producto_id: prod.producto_id,
@@ -1427,15 +1729,22 @@ function prepararVenta() {
                     precio:      parseFloat((precioProp / prod.cantidad_requerida).toFixed(4)),
                     paquete_id:  item.paquete_id
                 });
-            });
+            }
         } else {
+            const tieneAjuste = item.ajuste_activo === true && item.precio_ajuste !== null;
+            if (tieneAjuste && !item.nota_ajuste) {
+                alert(`"${item.nombre}": la nota del ajuste de precio es obligatoria.`);
+                return false;
+            }
             itemsExpandidos.push({
-                producto_id: item.producto_id,
-                cantidad:    item.cantidad,
-                precio:      item.precio
+                producto_id:  item.producto_id,
+                cantidad:     item.cantidad,
+                precio:       tieneAjuste ? item.precio_ajuste : item.precio,
+                precio_orig:  item.precio,
+                nota_ajuste:  tieneAjuste ? (item.nota_ajuste || '') : ''
             });
         }
-    });
+    }
     if (metodoPago === 'Transferencia' && String(document.getElementById('transferReferencia').value || '').trim() === '') {
         alert('Captura la referencia bancaria de la transferencia.');
         document.getElementById('transferReferencia').focus();
@@ -1541,12 +1850,30 @@ function generarTicketHTML(venta) {
             cantidadRestante = +(cantidadRestante - consumidosPaquete[key]).toFixed(3);
         }
         if (cantidadRestante <= 0) return;
-        html += `
-            <div>${esc(p.nombre_producto)}</div>
+        const precioOrig   = parseFloat(p.precio_unitario);
+        const precioFinal  = p.precio_final ? parseFloat(p.precio_final) : precioOrig;
+        const tieneAjuste  = p.nota_ajuste && p.nota_ajuste.trim() !== '' && precioFinal < precioOrig;
+        const precioLinea  = tieneAjuste ? precioFinal : precioOrig;
+        html += `<div>${esc(p.nombre_producto)}</div>`;
+        if (tieneAjuste) {
+            const pctDesc   = ((1 - precioFinal / precioOrig) * 100).toFixed(1);
+            const montoDesc = (precioOrig - precioFinal).toFixed(2);
+            html += `
+            <div class="t-fila" style="text-decoration:line-through;color:#aaa;font-size:10px;">
+                <span>${cantidadRestante} x $${precioOrig.toFixed(2)}</span>
+                <span>$${(cantidadRestante * precioOrig).toFixed(2)}</span>
+            </div>
             <div class="t-fila">
-                <span>${cantidadRestante} x $${parseFloat(p.precio_unitario).toFixed(2)}</span>
-                <span>$${(cantidadRestante * parseFloat(p.precio_unitario)).toFixed(2)}</span>
+                <span>${cantidadRestante} x $${precioFinal.toFixed(2)} <span style="font-size:10px;">(-${pctDesc}% / -$${montoDesc})</span></span>
+                <span>$${(cantidadRestante * precioFinal).toFixed(2)}</span>
             </div>`;
+        } else {
+            html += `
+            <div class="t-fila">
+                <span>${cantidadRestante} x $${precioOrig.toFixed(2)}</span>
+                <span>$${(cantidadRestante * precioOrig).toFixed(2)}</span>
+            </div>`;
+        }
     });
 
     html += `<div class="t-linea"></div>`;

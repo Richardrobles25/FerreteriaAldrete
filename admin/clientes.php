@@ -86,6 +86,38 @@ if ($sucursal) {
     $params[] = $sucursal;
 }
 
+// ── Exportar deudores ─────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && $_GET['exportar'] === 'deudores') {
+    require_once __DIR__ . '/export_helper.php';
+    $stmtD = $pdo->query("
+        SELECT c.nombre_completo, c.telefono, c.correo,
+               COUNT(cr.credito_id)              AS creditos_abiertos,
+               COALESCE(SUM(cr.saldo_pendiente),0) AS total_por_cobrar,
+               MAX(cr.fecha_limite)               AS proximo_vencimiento
+        FROM clientes c
+        JOIN creditos cr ON cr.cliente_id = c.cliente_id
+        WHERE cr.estado IN ('Activo','Vencido') AND c.activo = 1
+        GROUP BY c.cliente_id, c.nombre_completo, c.telefono, c.correo
+        ORDER BY total_por_cobrar DESC
+    ");
+    $deudores = $stmtD->fetchAll(PDO::FETCH_ASSOC);
+    $columnas = ['Cliente','Teléfono','Correo','Créditos abiertos','Total por cobrar','Próx. vencimiento'];
+    $filas = array_map(fn($r) => [
+        $r['nombre_completo'],
+        $r['telefono']  ?: '—',
+        $r['correo']    ?: '—',
+        $r['creditos_abiertos'],
+        '$' . number_format($r['total_por_cobrar'], 2),
+        $r['proximo_vencimiento'] ? date('d/m/Y', strtotime($r['proximo_vencimiento'])) : '—',
+    ], $deudores);
+    $totalDeuda = array_sum(array_column($deudores, 'total_por_cobrar'));
+    $resumen = [
+        ['label' => 'Clientes con deuda', 'valor' => count($deudores)],
+        ['label' => 'Total por cobrar',   'valor' => '$' . number_format($totalDeuda, 2)],
+    ];
+    exportarPDF('Clientes con Saldo Pendiente', 'Generado el ' . date('d/m/Y H:i'), $columnas, $filas, $resumen, 'L');
+}
+
 // ── Exportar ─────────────────────────────────────────────────────────
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
@@ -281,9 +313,10 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         <div>
             <div class="content-header">
                 <h1>Administracion de clientes</h1>
-                <div style="display:flex;gap:8px;">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
                     <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
                     <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                    <a href="?exportar=deudores" style="background:#6a1b9a;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">💰 Deudores</a>
                 </div>
             </div>
             <?php if (isset($_GET['msg'])): $mensajes = ['creado' => 'Cliente registrado correctamente.', 'editado' => 'Cliente actualizado correctamente.']; ?>
@@ -301,7 +334,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <div class="filtros">
                     <div class="filtro-group"><label>Buscar</label><input type="text" name="buscar" placeholder="Nombre, telefono o correo..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;" oninput="filtrarTabla(this.value)"></div>
                     <div class="filtro-group">
-                        <label>Sucursal</label>
+                        <label>Compró en sucursal</label>
                         <select name="sucursal">
                             <option value="0">Todas</option>
                             <?php foreach ($sucursales as $s): ?><option value="<?= $s['sucursal_id'] ?>" <?= $sucursal === intval($s['sucursal_id']) ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre']) ?></option><?php endforeach; ?>

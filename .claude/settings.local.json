@@ -42,7 +42,9 @@
       "Bash(awk '{print $1}')",
       "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\")",
       "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\\\\historial.php\")",
-      "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\\\\\")"
+      "Bash(dir \"C:\\\\FerreteriaAldrete\\\\cajeroInventario\\\\\")",
+      "Bash(xargs -I {} grep -l \"nombreSucursal\" {})",
+      "Bash(php --version)"
     ]
   }
 }

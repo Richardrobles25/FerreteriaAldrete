@@ -6,6 +6,11 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
+// Datos de la sucursal para el ticket
+$stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
+$stmtSuc->execute([$_SESSION['sucursal_id']]);
+$sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
+
 // Liquidar venta pendiente (el folio ya fue asignado al crear)
 if (isset($_GET['liquidar'])) {
     $venta_id = intval($_GET['liquidar']);
@@ -36,6 +41,71 @@ if (isset($_GET['cancelar'])) {
 
     $pdo->prepare("UPDATE ventas SET estado = 'Cancelada' WHERE venta_id = ?")->execute([$venta_id]);
     header('Location: ventasPendientes.php?msg=cancelado');
+    exit();
+}
+
+// Endpoint: obtener ticket JSON
+if (isset($_GET['get_ticket_venta'])) {
+    $venta_id = intval($_GET['get_ticket_venta']);
+    $stmt = $pdo->prepare("SELECT * FROM ventas WHERE venta_id = ?");
+    $stmt->execute([$venta_id]);
+    $venta = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$venta) {
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Venta no encontrada']);
+        exit();
+    }
+
+    $stmtProds = $pdo->prepare("
+        SELECT vp.*, p.nombre_producto, p.codigo
+        FROM venta_productos vp
+        JOIN productos p ON vp.producto_id = p.producto_id
+        WHERE vp.venta_id = ?
+    ");
+    $stmtProds->execute([$venta_id]);
+    $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtCaja = $pdo->prepare("SELECT numero_turno FROM cajas WHERE caja_id = ?");
+    $stmtCaja->execute([$venta['caja_id']]);
+    $numTurno = $stmtCaja->fetchColumn() ?: 1;
+
+    $stmtCliente = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE cliente_id = ?");
+    $stmtCliente->execute([$venta['cliente_id']]);
+    $cliente = $stmtCliente->fetchColumn() ?: 'Consumidor final';
+
+    // Obtener datos de sucursal
+    $stmtSucVenta = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = (SELECT caja_id FROM cajas WHERE caja_id = ?) OR sucursal_id = ?");
+    $stmtSucVenta->execute([$venta['caja_id'], $_SESSION['sucursal_id']]);
+    $sucData = $pdo->prepare("SELECT s.* FROM sucursales s JOIN cajas c ON c.sucursal_id = s.sucursal_id WHERE c.caja_id = ?");
+    $sucData->execute([$venta['caja_id']]);
+    $sucursal = $sucData->fetch(PDO::FETCH_ASSOC) ?: $sucursalTicket;
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'venta_id' => $venta['venta_id'],
+        'folio' => $venta['folio'],
+        'fecha' => $venta['created_at'],
+        'turno' => $numTurno,
+        'cliente' => $cliente,
+        'productos' => $productos,
+        'subtotal' => $venta['subtotal'],
+        'descuento' => $venta['descuento'],
+        'total' => $venta['total'],
+        'metodo_pago' => $venta['metodo_pago'],
+        'referencia_transferencia' => $venta['referencia_transferencia'],
+        'estado' => $venta['estado'],
+        'sucursal' => [
+            'nombre' => $sucursal['nombre'] ?? 'FERRETERIA ALDRETE',
+            'datos_ticket' => $sucursal['datos_ticket'] ?? '',
+            'logo_url' => $sucursal['logo_url'] ?? '',
+            'banco' => $sucursal['banco'] ?? '',
+            'titular_cuenta' => $sucursal['titular_cuenta'] ?? '',
+            'numero_cuenta' => $sucursal['numero_cuenta'] ?? '',
+            'clabe_interbancaria' => $sucursal['clabe_interbancaria'] ?? '',
+            'alias_tarjeta' => $sucursal['alias_tarjeta'] ?? ''
+        ]
+    ]);
     exit();
 }
 
@@ -216,6 +286,7 @@ try {
         <a class="menu-item" href="historialVentas.php">Historial de ventas</a>
         <a class="menu-item active" href="ventasPendientes.php">Ventas pendientes</a>
         <a class="menu-item" href="devoluciones.php">Devoluciones</a>
+        <button class="menu-item" type="button" onclick="mostrarEjemploTicket()" style="border:none;background:none;width:100%;text-align:left;">🎨 Ejemplo de ticket</button>
         <div class="divider"></div>
 
         <div class="menu-label">Caja</div>
@@ -232,7 +303,7 @@ try {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -282,6 +353,7 @@ try {
                             <?php if ($p['notas']): ?><p style="color:#14ace7;"><?= htmlspecialchars($p['notas']) ?></p><?php endif; ?>
                         </div>
                         <div class="pendiente-acciones">
+                            <button class="btn-accion" type="button" style="background:#e3f2fd;color:#1565c0;" onclick="abrirTicketVenta(<?= $p['venta_id'] ?>)">🖨️ Ticket</button>
                             <a class="btn-accion btn-liquidar" href="ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Liquidar esta venta?')">Liquidar</a>
                             <a class="btn-accion btn-cancelar" href="ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Cancelar y devolver stock?')">Cancelar</a>
                         </div>
@@ -386,7 +458,7 @@ try {
 
                     <div class="form-group" id="descClientePendGrupo" style="display:none;">
                         <label>Descuento del cliente (<span id="descMaxPend">0</span>% máx.)</label>
-                        <input type="number" id="inputDescClientePend" min="0" step="0.1" value="0"
+                        <input type="number" id="inputDescClientePend" min="0" step="0.1"
                             oninput="recalcularTotalPend()"
                             onblur="clampearDescClientePend()"
                             style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
@@ -415,6 +487,33 @@ try {
         </div>
     </div>
 </div>
+
+<!-- Modal: Ticket venta pendiente -->
+<div class="modal-overlay" id="modalTicketVentaPend" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;padding:20px;z-index:999;" aria-hidden="true">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:90mm;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e8e8e8;">
+            <h3 style="margin:0;font-size:16px;color:#333;">Ticket de venta</h3>
+            <button type="button" onclick="cerrarTicketVenta()" style="background:none;border:none;font-size:24px;color:#aaa;cursor:pointer;padding:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">×</button>
+        </div>
+        <div id="ticketContenidoVentaPend" style="margin-bottom:16px;"></div>
+        <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:16px;">
+            <button type="button" onclick="window.print()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
+            <button type="button" onclick="cerrarTicketVenta()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal-overlay.visible { display: flex !important; }
+@media print {
+    body > * { display: none !important; }
+    .modal-overlay.visible { display: flex !important; background: none; position: relative; inset: auto; }
+    .modal-overlay.visible > div { max-width: 100%; box-shadow: none; padding: 0; }
+    .modal-overlay.visible button { display: none !important; }
+    .modal-overlay.visible h3 { display: none !important; }
+    .modal-overlay.visible > div > div:first-of-type { display: none !important; }
+}
+</style>
 
 <script>
 let carritoP = [];
@@ -683,6 +782,194 @@ function prepararPendiente() {
     document.getElementById('inputTotalPend').value    = total.toFixed(2);
     return true;
 }
+
+/* ── Mostrar ejemplo/preview del ticket ── */
+function mostrarEjemploTicket() {
+    const t = {
+        folio: '0001',
+        turno: 1,
+        fecha: new Date().toISOString(),
+        cliente: 'Juan Pérez López',
+        productos: [
+            { nombre_producto: 'Cemento saco 50kg', cantidad: 2, precio_unitario: 8.50 },
+            { nombre_producto: 'Ladrillo rojo común', cantidad: 1000, precio_unitario: 0.95 },
+            { nombre_producto: 'Tubo PVC 1/2"', cantidad: 5, precio_unitario: 12.00 }
+        ],
+        subtotal: 1086.50,
+        descuento: 0,
+        total: 1086.50,
+        metodo_pago: 'Transferencia',
+        referencia_transferencia: 'REF-123456',
+        sucursal: {
+            nombre: '<?= htmlspecialchars($sucursalTicket['nombre'] ?? 'FERRETERIA ALDRETE') ?>',
+            datos_ticket: '<?= htmlspecialchars($sucursalTicket['datos_ticket'] ?? '') ?>',
+            logo_url: '<?= htmlspecialchars($sucursalTicket['logo_url'] ?? '') ?>',
+            banco: '<?= htmlspecialchars($sucursalTicket['banco'] ?? '') ?>',
+            titular_cuenta: '<?= htmlspecialchars($sucursalTicket['titular_cuenta'] ?? '') ?>',
+            numero_cuenta: '<?= htmlspecialchars($sucursalTicket['numero_cuenta'] ?? '') ?>',
+            clabe_interbancaria: '<?= htmlspecialchars($sucursalTicket['clabe_interbancaria'] ?? '') ?>'
+        }
+    };
+
+    const suc = t.sucursal || {};
+    const banco = (suc.banco || '').trim();
+    const titular = (suc.titular_cuenta || '').trim();
+    const cuenta = (suc.numero_cuenta || '').trim();
+    const clabe = (suc.clabe_interbancaria || '').trim();
+    const logo = (suc.logo_url || '').trim();
+
+    const html = `
+<div style="font-family:'Courier New',monospace;width:72mm;font-size:10px;line-height:1.3;white-space:pre-wrap;">
+${logo ? `<div style="text-align:center;margin-bottom:8px;">
+  <img src="${logo}" alt="Logo" style="max-width:60mm;max-height:35mm;display:block;margin:0 auto;border-radius:2px;">
+</div>` : ''}
+<div style="text-align:center;font-weight:bold;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;">
+${(suc.nombre || 'FERRETERIA ALDRETE').toUpperCase()}
+${(suc.datos_ticket || '').trim() ? '\n' + suc.datos_ticket : ''}
+</div>
+
+<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:9px;">
+Folio: ${t.folio || '—'} | Turno: ${t.turno}
+${new Date(t.fecha).toLocaleString('es-MX', {year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+${t.cliente}
+</div>
+
+<table style="width:100%;border-collapse:collapse;">
+<tr style="border-bottom:0.5px solid #333;font-weight:bold;">
+ <th style="text-align:left;padding:3px 0;padding-right:4px;">Producto</th>
+ <th style="text-align:right;padding:3px 0;width:35px;">Cant</th>
+ <th style="text-align:right;padding:3px 0;width:40px;">Total</th>
+</tr>
+${t.productos.map(p => {
+    const total = (parseFloat(p.precio_unitario) * parseFloat(p.cantidad)).toFixed(2);
+    const nombre = p.nombre_producto.substring(0, 20);
+    return `<tr style="border-bottom:0.5px solid #ddd;">
+ <td style="padding:2px 0;padding-right:4px;overflow:hidden;text-overflow:ellipsis;">${nombre}</td>
+ <td style="text-align:right;padding:2px 0;">${parseFloat(p.cantidad).toFixed(p.cantidad%1?2:0)}</td>
+ <td style="text-align:right;padding:2px 0;">$${total}</td>
+</tr>`;
+}).join('')}
+</table>
+
+<div style="border-bottom:1px dashed #000;border-top:1px dashed #000;padding:6px 0;margin:6px 0;text-align:right;font-weight:bold;font-size:11px;">
+Subtotal: $${parseFloat(t.subtotal).toFixed(2)}
+${parseFloat(t.descuento) > 0 ? `
+Descuento: -$${parseFloat(t.descuento).toFixed(2)}` : ''}
+TOTAL: $${parseFloat(t.total).toFixed(2)}
+</div>
+
+<div style="padding:4px 0;font-size:9px;${t.metodo_pago === 'Transferencia' ? 'border-bottom:1px dashed #000;margin-bottom:6px;padding-bottom:6px;' : ''}">
+Pago: ${t.metodo_pago}
+${t.referencia_transferencia ? `Ref: ${t.referencia_transferencia}` : ''}
+</div>
+
+${banco || titular || cuenta || clabe ? `
+<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:8px;background:#f9f9f9;padding:4px;">
+DATOS BANCARIOS:
+${banco ? `Banco: ${banco}` : ''}
+${titular ? `\nTitular: ${titular}` : ''}
+${cuenta ? `\nCuenta: ${cuenta}` : ''}
+${clabe ? `CLABE: ${clabe}` : ''}
+</div>
+` : ''}
+
+<div style="text-align:center;padding-top:6px;font-size:8px;color:#999;">
+Gracias por su compra
+www.ferreterialdrete.com
+</div>
+</div>`;
+
+    document.getElementById('ticketContenidoVentaPend').innerHTML = html;
+    document.getElementById('modalTicketVentaPend').classList.add('visible');
+    document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'false');
+}
+
+/* ── Ticket de venta pendiente ── */
+function abrirTicketVenta(ventaId) {
+    fetch('ventasPendientes.php?get_ticket_venta=' + ventaId)
+        .then(r => r.json())
+        .then(function(t) {
+            if (t.error) { alert('No se pudo cargar el ticket.'); return; }
+            const suc = t.sucursal || {};
+            const banco = (suc.banco || '').trim();
+            const titular = (suc.titular_cuenta || '').trim();
+            const cuenta = (suc.numero_cuenta || '').trim();
+            const clabe = (suc.clabe_interbancaria || '').trim();
+
+            const logo = (suc.logo_url || '').trim();
+
+            const html = `
+<div style="font-family:'Courier New',monospace;width:72mm;font-size:10px;line-height:1.3;white-space:pre-wrap;">
+${logo ? `<div style="text-align:center;margin-bottom:8px;">
+  <img src="${logo}" alt="Logo" style="max-width:60mm;max-height:35mm;display:block;margin:0 auto;border-radius:2px;">
+</div>` : ''}
+<div style="text-align:center;font-weight:bold;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;">
+${(suc.nombre || 'FERRETERIA ALDRETE').toUpperCase()}
+${(suc.datos_ticket || '').trim() ? '\n' + suc.datos_ticket : ''}
+</div>
+
+<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:9px;">
+Folio: ${t.folio || '—'} | Turno: ${t.turno}
+${new Date(t.fecha).toLocaleString('es-MX', {year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+${t.cliente}
+</div>
+
+<table style="width:100%;border-collapse:collapse;">
+<tr style="border-bottom:0.5px solid #333;font-weight:bold;">
+ <th style="text-align:left;padding:3px 0;padding-right:4px;">Producto</th>
+ <th style="text-align:right;padding:3px 0;width:35px;">Cant</th>
+ <th style="text-align:right;padding:3px 0;width:40px;">Total</th>
+</tr>
+${t.productos.map(p => {
+    const total = (parseFloat(p.precio_unitario) * parseFloat(p.cantidad)).toFixed(2);
+    const nombre = p.nombre_producto.substring(0, 20);
+    return `<tr style="border-bottom:0.5px solid #ddd;">
+ <td style="padding:2px 0;padding-right:4px;overflow:hidden;text-overflow:ellipsis;">${nombre}</td>
+ <td style="text-align:right;padding:2px 0;">${parseFloat(p.cantidad).toFixed(p.cantidad%1?2:0)}</td>
+ <td style="text-align:right;padding:2px 0;">$${total}</td>
+</tr>`;
+}).join('')}
+</table>
+
+<div style="border-bottom:1px dashed #000;border-top:1px dashed #000;padding:6px 0;margin:6px 0;text-align:right;font-weight:bold;font-size:11px;">
+Subtotal: $${parseFloat(t.subtotal).toFixed(2)}
+${parseFloat(t.descuento) > 0 ? `
+Descuento: -$${parseFloat(t.descuento).toFixed(2)}` : ''}
+TOTAL: $${parseFloat(t.total).toFixed(2)}
+</div>
+
+<div style="padding:4px 0;font-size:9px;${t.metodo_pago === 'Transferencia' ? 'border-bottom:1px dashed #000;margin-bottom:6px;padding-bottom:6px;' : ''}">
+Pago: ${t.metodo_pago}
+${t.referencia_transferencia ? `Ref: ${t.referencia_transferencia}` : ''}
+</div>
+
+${banco || titular || cuenta || clabe ? `
+<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:8px;background:#f9f9f9;padding:4px;">
+DATOS BANCARIOS:
+${banco ? `Banco: ${banco}` : ''}
+${titular ? `\nTitular: ${titular}` : ''}
+${cuenta ? `\nCuenta: ${cuenta}` : ''}
+${clabe ? `CLABE: ${clabe}` : ''}
+</div>
+` : ''}
+
+<div style="text-align:center;padding-top:6px;font-size:8px;color:#999;">
+Gracias por su compra
+www.ferreterialdrete.com
+</div>
+</div>`;
+            document.getElementById('ticketContenidoVentaPend').innerHTML = html;
+            document.getElementById('modalTicketVentaPend').classList.add('visible');
+            document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'false');
+        })
+        .catch(e => alert('Error: ' + e.message));
+}
+
+function cerrarTicketVenta() {
+    document.getElementById('modalTicketVentaPend').classList.remove('visible');
+    document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'true');
+}
+
 </script>
 </body>
 </html>

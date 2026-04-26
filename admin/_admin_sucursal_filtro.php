@@ -13,16 +13,16 @@ $_suc_stmt->execute();
 $_todasSucursales = $_suc_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Si llega ?sucursal= y el usuario es Administrador, guardar en sesión
+// sucursal=0 → "Todas las sucursales" (vista global)
 if (isset($_GET['sucursal']) && $_SESSION['rol'] === 'Administrador') {
     $sucursalGet = intval($_GET['sucursal']);
-    // Validar que la sucursal exista en la lista
     $ids = array_column($_todasSucursales, 'sucursal_id');
-    if (in_array($sucursalGet, $ids)) {
+    if ($sucursalGet === 0 || in_array($sucursalGet, $ids)) {
         $_SESSION['admin_sucursal_filtro'] = $sucursalGet;
     }
 }
 
-// Definir $sucursalVista
+// Definir $sucursalVista  (0 = todas las sucursales, solo Administrador)
 if ($_SESSION['rol'] === 'Administrador' && isset($_SESSION['admin_sucursal_filtro'])) {
     $sucursalVista = intval($_SESSION['admin_sucursal_filtro']);
 } else {
@@ -55,6 +55,7 @@ function renderSucursalSwitcher(): void {
 <div class="filtro-group">
     <label>Sucursal</label>
     <select onchange="cambiarSucursal(this.value)">
+        <option value="0"<?= $sucursalVista === 0 ? ' selected' : '' ?>>Todas las sucursales</option>
         <?php foreach ($_todasSucursales as $_s): ?>
             <option value="<?= intval($_s['sucursal_id']) ?>"<?= intval($_s['sucursal_id']) === intval($sucursalVista) ? ' selected' : '' ?>><?= htmlspecialchars($_s['nombre']) ?></option>
         <?php endforeach; ?>

@@ -17,47 +17,93 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 // Exportar PDF
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     require_once __DIR__ . '/export_helper.php';
+    $esAdmin   = $_SESSION['rol'] === 'Administrador';
+    $vistaGlobal = $esAdmin && $sucursalVista === 0;
+
+    $sqlWhere  = $vistaGlobal ? "WHERE p.activo = 1"                        : "WHERE p.sucursal_id = ? AND p.activo = 1";
+    $sqlJoinS  = $vistaGlobal ? "JOIN sucursales s ON s.sucursal_id = p.sucursal_id" : "";
+    $sqlSelS   = $vistaGlobal ? ", s.nombre AS sucursal_nombre"              : "";
+    $sqlSelC   = $esAdmin     ? ", p.precio_compra"                          : "";
+    $paramsPdf = $vistaGlobal ? [] : [$sucursalVista];
+
     $stmt = $pdo->prepare("
-        SELECT p.codigo, p.nombre_producto, c.nombre as categoria, p.precio_compra,
-               p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.tipo_venta
+        SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
+               p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.tipo_venta{$sqlSelS}
         FROM productos p
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        WHERE p.sucursal_id = ? AND p.activo = 1
-        ORDER BY p.nombre_producto ASC
+        {$sqlJoinS}
+        {$sqlWhere}
+        ORDER BY " . ($vistaGlobal ? "s.nombre ASC, " : "") . "p.nombre_producto ASC
     ");
-    $stmt->execute([$sucursalVista]);
+    $stmt->execute($paramsPdf);
     $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Stock','Mín.','Tipo'];
-    $filas = array_map(fn($p) => [
-        $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
-        '$' . number_format($p['precio_compra'], 2),
-        '$' . number_format($p['precio_venta'], 2),
-        '$' . number_format($p['precio_mayoreo'], 2),
-        $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'],
-    ], $datos);
-    $resumen = [['label' => 'Total Productos', 'valor' => count($datos)]];
-    exportarPDF('Inventario de Productos', 'Todos los productos activos — ' . $nombreSucursalVista, $columnas, $filas, $resumen, 'L');
+
+    if ($esAdmin) {
+        $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Stock','Mín.','Tipo'];
+        if ($vistaGlobal) $columnas[] = 'Sucursal';
+        $filas = array_map(function($p) use ($vistaGlobal) {
+            $row = [
+                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
+                '$' . number_format($p['precio_compra'], 2),
+                '$' . number_format($p['precio_venta'], 2),
+                '$' . number_format($p['precio_mayoreo'], 2),
+                $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'],
+            ];
+            if ($vistaGlobal) $row[] = $p['sucursal_nombre'] ?? '—';
+            return $row;
+        }, $datos);
+    } else {
+        $columnas = ['Código','Nombre','Categoría','P. Venta','P. Mayoreo','Stock','Mín.','Tipo'];
+        $filas = array_map(fn($p) => [
+            $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
+            '$' . number_format($p['precio_venta'], 2),
+            '$' . number_format($p['precio_mayoreo'], 2),
+            $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'],
+        ], $datos);
+    }
+
+    $titulo    = $vistaGlobal ? 'Inventario Global de Productos' : 'Inventario de Productos';
+    $subtitulo = $vistaGlobal ? 'Todas las sucursales' : 'Productos activos — ' . $nombreSucursalVista;
+    $resumen   = [['label' => 'Total Productos', 'valor' => count($datos)]];
+    exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
 }
 
 // Exportar a Excel (formato limpio para reimportación)
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
+    $esAdmin     = $_SESSION['rol'] === 'Administrador';
+    $vistaGlobal = $esAdmin && $sucursalVista === 0;
+
+    $sqlWhere   = $vistaGlobal ? "WHERE p.activo = 1"                          : "WHERE p.sucursal_id = ? AND p.activo = 1";
+    $sqlJoinS   = $vistaGlobal ? "JOIN sucursales s ON s.sucursal_id = p.sucursal_id" : "";
+    $sqlSelS    = $vistaGlobal ? ", s.nombre AS sucursal_nombre"                : "";
+    $sqlSelC    = $esAdmin     ? ", p.precio_compra"                            : "";
+    $paramsXls  = $vistaGlobal ? [] : [$sucursalVista];
+
     $stmt = $pdo->prepare("
-        SELECT p.codigo, p.nombre_producto, c.nombre as categoria, p.precio_compra,
+        SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
                p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo,
-               p.stock_maximo, p.tipo_venta, p.descripcion
+               p.stock_maximo, p.tipo_venta, p.descripcion{$sqlSelS}
         FROM productos p
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        WHERE p.sucursal_id = ? AND p.activo = 1
-        ORDER BY p.nombre_producto ASC
+        {$sqlJoinS}
+        {$sqlWhere}
+        ORDER BY " . ($vistaGlobal ? "s.nombre ASC, " : "") . "p.nombre_producto ASC
     ");
-    $stmt->execute([$sucursalVista]);
+    $stmt->execute($paramsXls);
     $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Productos');
 
-    $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción'];
+    // Cabeceras según rol y vista
+    if ($esAdmin) {
+        $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción'];
+    } else {
+        $headers = ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción'];
+    }
+    if ($vistaGlobal) $headers[] = 'Sucursal';
+
     foreach ($headers as $i => $h) {
         $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
         $sheet->setCellValue("{$col}1", $h);
@@ -69,14 +115,20 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
 
     foreach ($datos as $r => $p) {
         $fila = $r + 2;
-        $vals = [$p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '', $p['precio_compra'], $p['precio_venta'], $p['precio_mayoreo'], $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'], $p['tipo_venta'], $p['descripcion'] ?? ''];
+        if ($esAdmin) {
+            $vals = [$p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '', $p['precio_compra'], $p['precio_venta'], $p['precio_mayoreo'], $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'], $p['tipo_venta'], $p['descripcion'] ?? ''];
+        } else {
+            $vals = [$p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '', $p['precio_venta'], $p['precio_mayoreo'], $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'], $p['tipo_venta'], $p['descripcion'] ?? ''];
+        }
+        if ($vistaGlobal) $vals[] = $p['sucursal_nombre'] ?? '';
         foreach ($vals as $i => $v) {
             $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
             $sheet->setCellValue("{$col}{$fila}", $v);
         }
     }
 
-    foreach (range('A', 'K') as $col) {
+    $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($headers));
+    foreach (range('A', $lastCol) as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
 
@@ -187,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $tipo_venta = str_contains($tv, 'suelto') || str_contains($tv, 'granel') || str_contains($tv, 'kg') || str_contains($tv, 'gr') ? 'Suelto' : 'Unidad';
                 $descripcion    = trim($row[$colMap['descripcion']        ?? -1] ?? '');
 
-                // Categoría: buscar o crear por nombre
+                // Categoría: buscar en caché, luego en BD, luego crear si no existe
                 $categoria_id = null;
                 $nombreCat = isset($colMap['categoria']) ? trim($row[$colMap['categoria']] ?? '') : '';
                 if ($nombreCat !== '') {
@@ -200,31 +252,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         if ($cat) {
                             $categoria_id = (int)$cat;
                         } else {
+                            // Crear categoría nueva automáticamente
                             $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)")->execute([$nombreCat]);
-                            $stmtCat2 = $pdo->prepare("SELECT categoria_id FROM categorias WHERE nombre = ? LIMIT 1");
-                            $stmtCat2->execute([$nombreCat]);
-                            $categoria_id = (int)($stmtCat2->fetchColumn() ?: 0) ?: null;
+                            $categoria_id = (int)$pdo->lastInsertId();
                             if ($categoria_id) $categoriasCreadas[] = $nombreCat;
                         }
                         if ($categoria_id) $categoriasCache[$nombreCat] = $categoria_id;
                     }
                 }
 
+                // Importar siempre a la sucursal que el admin tiene seleccionada
+                // (si está en vista global, se usa la sucursal propia del usuario)
+                $sucursalImport = ($sucursalVista > 0) ? $sucursalVista : intval($_SESSION['sucursal_id']);
+
                 $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ?");
-                $check->execute([$codigo, $_SESSION['sucursal_id']]);
+                $check->execute([$codigo, $sucursalImport]);
 
                 if ($check->fetch()) {
                     if ($categoria_id !== null) {
                         $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
-                            ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                            ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $sucursalImport]);
                     } else {
                         $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
-                            ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                            ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $sucursalImport]);
                     }
                     $omitidos++;
                 } else {
                     $pdo->prepare("INSERT INTO productos (sucursal_id, categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, tipo_venta, activo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)")
-                        ->execute([$_SESSION['sucursal_id'], $categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta]);
+                        ->execute([$sucursalImport, $categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta]);
                     $importados++;
                 }
             }
@@ -300,26 +355,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
 }
 
 // Filtros
-$busqueda   = trim($_GET['buscar'] ?? '');
-$categoria  = intval($_GET['categoria'] ?? 0);
-$stock_bajo = isset($_GET['stock_bajo']);
+$busqueda    = trim($_GET['buscar'] ?? '');
+$categoria   = intval($_GET['categoria'] ?? 0);
+$stock_bajo  = isset($_GET['stock_bajo']);
+$esAdmin     = $_SESSION['rol'] === 'Administrador';
+$vistaGlobal = $esAdmin && $sucursalVista === 0;
 
-$where  = "WHERE p.sucursal_id = ? AND p.activo = 1";
-$params = [$sucursalVista];
+if ($vistaGlobal) {
+    $where  = "WHERE p.activo = 1";
+    $params = [];
+} else {
+    $where  = "WHERE p.sucursal_id = ? AND p.activo = 1";
+    $params = [$sucursalVista];
+}
 
 if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
 if ($stock_bajo) { $where .= " AND p.stock_actual <= p.stock_minimo"; }
 
-$stmt = $pdo->prepare("SELECT p.*, c.nombre as nombre_categoria FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.categoria_id $where ORDER BY p.stock_actual <= p.stock_minimo DESC, p.nombre_producto ASC");
+$joinSucursal = $vistaGlobal ? "JOIN sucursales s ON s.sucursal_id = p.sucursal_id" : "";
+$selectSuc    = $vistaGlobal ? ", s.nombre AS nombre_sucursal" : "";
+$orderBy      = $vistaGlobal ? "p.stock_actual <= p.stock_minimo DESC, s.nombre ASC, p.nombre_producto ASC"
+                              : "p.stock_actual <= p.stock_minimo DESC, p.nombre_producto ASC";
+
+$stmt = $pdo->prepare("SELECT p.*, c.nombre as nombre_categoria{$selectSuc} FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.categoria_id {$joinSucursal} {$where} ORDER BY {$orderBy}");
 $stmt->execute($params);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-$stmtBajo = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
-$stmtBajo->execute([$sucursalVista]);
-$totalStockBajo = $stmtBajo->fetchColumn();
+if ($vistaGlobal) {
+    $totalStockBajo = $pdo->query("SELECT COUNT(*) FROM productos WHERE activo = 1 AND stock_actual <= stock_minimo")->fetchColumn();
+} else {
+    $stmtBajo = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
+    $stmtBajo->execute([$sucursalVista]);
+    $totalStockBajo = $stmtBajo->fetchColumn();
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -453,6 +524,11 @@ $totalStockBajo = $stmtBajo->fetchColumn();
         <!-- Panel de importación -->
         <div class="import-card" id="importCard">
             <h3>Importar productos desde Excel</h3>
+            <?php if ($vistaGlobal): ?>
+                <div class="msg" style="background:#fff8e1;color:#e65100;border-left:3px solid #e65100;margin-bottom:10px;">
+                    Estás en vista global. La importación se realizará a tu sucursal propia. Selecciona una sucursal específica para importar a otra.
+                </div>
+            <?php endif; ?>
             <?php if (!empty($erroresImport)): ?>
                 <div class="msg msg-error"><?= htmlspecialchars($erroresImport[0]) ?></div>
             <?php endif; ?>
@@ -465,7 +541,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                     <button class="btn-subir" type="submit">Importar</button>
                 </div>
                 <p style="font-size:12px;color:#aaa;margin-top:8px;">
-                    Usa la plantilla para asegurarte del formato correcto. Los productos existentes (mismo código) se actualizarán.
+                    Usa la plantilla para asegurarte del formato correcto. Los productos existentes (mismo código) se actualizarán. Si la categoría no existe, se creará automáticamente.
                 </p>
             </form>
         </div>
@@ -521,6 +597,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                         <th>Código</th>
                         <th>Nombre</th>
                         <th>Categoría</th>
+                        <?php if ($vistaGlobal): ?><th>Sucursal</th><?php endif; ?>
                         <th>Tipo</th>
                         <th>Stock</th>
                         <th>P. Venta</th>
@@ -541,6 +618,9 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                             <?php endif; ?>
                         </td>
                         <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
+                        <?php if ($vistaGlobal): ?>
+                        <td style="font-size:12px;color:#1565c0;"><?= htmlspecialchars($p['nombre_sucursal']??'—') ?></td>
+                        <?php endif; ?>
                         <td>
                             <span class="badge-tipo <?= $p['tipo_venta']==='Unidad'?'tipo-unidad':'tipo-suelto' ?>">
                                 <?= $p['tipo_venta'] ?>

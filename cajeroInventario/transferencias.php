@@ -43,12 +43,21 @@ if (isset($_GET['get_ticket_transf'])) {
 }
 
 // Acciones sobre transferencia existente
-if (isset($_GET['accion']) && isset($_GET['id'])) {
-    $id         = intval($_GET['id']);
-    $accion     = $_GET['accion'];
+$_accionData = $_POST + $_GET;
+if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['id']))) {
+    $id         = intval($_accionData['id'] ?? $_GET['id'] ?? 0);
+    $accion     = $_accionData['accion'];
     $miSucursal = $_SESSION['sucursal_id'];
 
-    if ($accion === 'aprobar') {
+    if ($accion === 'editar_cantidad') {
+        $nuevaCantidad = floatval($_POST['nueva_cantidad'] ?? 0);
+        if ($nuevaCantidad > 0) {
+            $pdo->prepare("UPDATE transferencias SET cantidad = ? WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?")
+                ->execute([$nuevaCantidad, $id, $miSucursal]);
+        }
+        header('Location: transferencias.php?msg=cantidad_editada'); exit();
+
+    } elseif ($accion === 'aprobar') {
         $notaAprobacion = 'Aceptada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Preparar envio a sucursal destino.';
         $pdo->prepare("
             UPDATE transferencias
@@ -332,7 +341,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -368,11 +377,12 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
         <div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs = [
-                    'solicitado' => 'Solicitud enviada. La sucursal origen debe aprobarla.',
-                    'aprobar'    => 'Transferencia aprobada. Se agrego una nota para la sucursal que recibira el pedido.',
-                    'rechazar'   => 'Transferencia rechazada.',
-                    'enviar'     => 'Productos marcados como enviados. La sucursal destino debe confirmar la recepcion.',
-                    'recibir'    => 'Recepcion confirmada. El stock fue actualizado en ambas sucursales.',
+                    'solicitado'      => 'Solicitud enviada. La sucursal origen debe aprobarla.',
+                    'aprobar'         => 'Transferencia aprobada. Se agrego una nota para la sucursal que recibira el pedido.',
+                    'rechazar'        => 'Transferencia rechazada.',
+                    'enviar'          => 'Productos marcados como enviados. La sucursal destino debe confirmar la recepcion.',
+                    'recibir'         => 'Recepcion confirmada. El stock fue actualizado en ambas sucursales.',
+                    'cantidad_editada'=> 'Cantidad actualizada correctamente.',
                 ]; ?>
                 <div class="msg msg-exito"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>
@@ -442,7 +452,9 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     <?php if ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
                                         <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</a>
                                         <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Rechazar esta solicitud de transferencia?')">Rechazar</a>
+                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="editarCantidadTransf(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>)">Editar cantidad</button>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
+                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="editarCantidadTransf(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>)">Editar cantidad</button>
                                         <a class="btn-accion btn-enviar" href="transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Confirmar que ya enviaste los productos?')">Marcar enviado</a>
                                     <?php elseif ($t['estado'] === 'En tránsito' && !$esMiOrigen): ?>
                                         <a class="btn-accion btn-recibir" href="transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</a>
@@ -657,6 +669,18 @@ document.getElementById('busquedaProd').addEventListener('blur', function() {
     setTimeout(hideSug, 200);
 });
 
+// ── Editar cantidad transferencia ────────────────────────────────────────────
+function editarCantidadTransf(id, cantActual) {
+    const nueva = prompt('Ingresa la nueva cantidad a transferir (actual: ' + cantActual + '):', cantActual);
+    if (nueva === null) return;
+    const val = parseFloat(nueva);
+    if (!val || val <= 0) { alert('Ingresa una cantidad válida mayor a 0.'); return; }
+    const form = document.getElementById('formEditarCantidadTransf');
+    document.getElementById('inputEditarTransfId').value       = id;
+    document.getElementById('inputEditarNuevaCantidad').value  = val;
+    form.submit();
+}
+
 // ── Modal ticket transferencia ──────────────────────────────────────────────
 function abrirTicket(id) {
     fetch('transferencias.php?get_ticket_transf=' + id)
@@ -744,6 +768,13 @@ document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') cerrarModalTicket();
 });
 </script>
+
+<!-- Form editar cantidad -->
+<form id="formEditarCantidadTransf" method="POST" action="transferencias.php" style="display:none;">
+    <input type="hidden" name="accion" value="editar_cantidad">
+    <input type="hidden" id="inputEditarTransfId" name="id">
+    <input type="hidden" id="inputEditarNuevaCantidad" name="nueva_cantidad">
+</form>
 
 <!-- Modal ticket -->
 <div id="modalTicket" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;">

@@ -11,6 +11,7 @@
         direccion VARCHAR(255),
         telefono VARCHAR(20),
         datos_ticket TEXT,
+        logo_url VARCHAR(255) NULL DEFAULT NULL,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -81,6 +82,7 @@
         stock_minimo DECIMAL(10,3) DEFAULT 0,
         stock_maximo DECIMAL(10,3) DEFAULT 0,
         tipo_venta ENUM('Unidad', 'Suelto') DEFAULT 'Unidad',
+        unidad_medida VARCHAR(30) NULL DEFAULT NULL,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -177,10 +179,11 @@
         comision_terminal DECIMAL(10,2) DEFAULT 0,
         total DECIMAL(10,2) NOT NULL DEFAULT 0,
         metodo_pago ENUM('Efectivo', 'Terminal', 'Credito', 'Mixto', 'Transferencia') NOT NULL,
+        referencia_transferencia VARCHAR(100) NULL DEFAULT NULL,
         monto_efectivo DECIMAL(10,2) DEFAULT 0,
         monto_terminal DECIMAL(10,2) DEFAULT 0,
         cambio DECIMAL(10,2) DEFAULT 0,
-        estado ENUM('Completada', 'Cancelada', 'Pendiente', 'Devuelto', 'Modificado') DEFAULT 'Completada',
+        estado ENUM('Pendiente','Completada','Cancelada','Devuelto','Modificado') NOT NULL DEFAULT 'Pendiente',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         referencia_transferencia VARCHAR(100) NULL DEFAULT NULL,
@@ -196,10 +199,14 @@
         venta_productos_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         venta_id INT UNSIGNED NOT NULL,
         producto_id INT UNSIGNED NOT NULL,
+        paquete_id INT NULL DEFAULT NULL,
         cantidad DECIMAL(10,3) NOT NULL,
         precio_unitario DECIMAL(10,2) NOT NULL,
+        precio_final DECIMAL(10,2) NULL DEFAULT NULL,
+        precio_final DECIMAL(10,2) NULL DEFAULT NULL,
         descuento DECIMAL(10,2) DEFAULT 0,
         subtotal DECIMAL(10,2) NOT NULL,
+        nota_ajuste VARCHAR(255) NULL DEFAULT NULL,
         FOREIGN KEY (venta_id) REFERENCES ventas(venta_id),
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
     );
@@ -225,7 +232,7 @@
         credito_id INT UNSIGNED NOT NULL,
         usuario_id INT UNSIGNED NOT NULL,
         monto DECIMAL(10,2) NOT NULL,
-        metodo_pago ENUM('Efectivo', 'Terminal', 'Mixto') NOT NULL,
+        metodo_pago ENUM('Efectivo','Terminal','Credito','Mixto','Transferencia') NOT NULL,
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
@@ -242,6 +249,7 @@
         stock_anterior DECIMAL(10,3) NOT NULL,
         stock_nuevo DECIMAL(10,3) NOT NULL,
         motivo VARCHAR(255),
+        proveedor_id INT NULL DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         devolucion_id INT UNSIGNED NULL DEFAULT NULL,
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
@@ -302,12 +310,25 @@
     cancelada_en    DATETIME NULL DEFAULT NULL,
     cancelada_por   INT UNSIGNED NULL DEFAULT NULL,
     nota_cancelacion TEXT NULL DEFAULT NULL,
+    total_devuelto DECIMAL(10,2) NOT NULL DEFAULT 0,
     FOREIGN KEY (venta_id)   REFERENCES ventas(venta_id),
     FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
 );
 
 
 
+
+    -- ============================================
+    -- UNIDADES DE MEDIDA
+    -- ============================================
+
+    CREATE TABLE unidades_medida (
+        unidad_id   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        sucursal_id INT UNSIGNED NOT NULL,
+        nombre      VARCHAR(50) NOT NULL,
+        UNIQUE KEY uq_sucursal_nombre (sucursal_id, nombre),
+        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id) ON DELETE CASCADE
+    );
 
     -- ============================================
     -- DATOS INICIALES

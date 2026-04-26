@@ -171,7 +171,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -291,7 +291,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                         <div class="form-group">
                             <label>Descuento fijo (%)</label>
-                            <input type="number" name="descuento_fijo" value="<?= $_POST['descuento_fijo'] ?? $editando['descuento_fijo'] ?? 0 ?>" step="0.01" min="0" max="100" placeholder="0">
+                            <input type="number" name="descuento_fijo" value="<?= $_POST['descuento_fijo'] ?? $editando['descuento_fijo'] ?? '' ?>" step="0.01" min="0" max="100" placeholder="0">
                         </div>
                     </div>
 
@@ -320,7 +320,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="credito-campos <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '' ?>" id="creditoCampos">
                         <div class="form-group">
                             <label>Límite de crédito</label>
-                            <input type="number" name="limite_credito" value="<?= $_POST['limite_credito'] ?? $editando['limite_credito'] ?? 0 ?>" step="0.01" min="0" placeholder="0.00">
+                            <input type="number" name="limite_credito" value="<?= $_POST['limite_credito'] ?? $editando['limite_credito'] ?? '' ?>" step="0.01" min="0" placeholder="0.00">
                         </div>
                     </div>
 

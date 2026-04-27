@@ -17,6 +17,37 @@ if (!$caja) {
 
 $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
 
+// ── Movimiento de caja (retiro / ingreso) ────────────────────────────────────
+// SQL para crear la tabla si no existe:
+// CREATE TABLE movimientos_caja (
+//   movimiento_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+//   caja_id       INT UNSIGNED NOT NULL,
+//   usuario_id    INT UNSIGNED NOT NULL,
+//   sucursal_id   INT UNSIGNED NOT NULL,
+//   tipo          ENUM('Retiro','Ingreso') NOT NULL,
+//   monto         DECIMAL(10,2) NOT NULL,
+//   nota          TEXT NOT NULL,
+//   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+//   KEY idx_caja (caja_id), KEY idx_suc (sucursal_id), KEY idx_fecha (created_at)
+// ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+$msgMovCaja = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['movimiento_caja'])) {
+    $tipoMov  = in_array($_POST['tipo_mov'] ?? '', ['Retiro','Ingreso']) ? $_POST['tipo_mov'] : null;
+    $montoMov = floatval($_POST['monto_mov'] ?? 0);
+    $notaMov  = trim($_POST['nota_mov'] ?? '');
+    if ($tipoMov && $montoMov > 0.004 && $notaMov !== '') {
+        $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,?,?,?)")
+            ->execute([$caja['caja_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $tipoMov, $montoMov, $notaMov]);
+        header('Location: nuevaVenta.php?msg_mov=' . $tipoMov);
+        exit();
+    } else {
+        $msgMovCaja = 'error';
+    }
+}
+if (isset($_GET['msg_mov'])) {
+    $msgMovCaja = $_GET['msg_mov'] === 'Retiro' ? 'retiro_ok' : 'ingreso_ok';
+}
+
 // Datos de la sucursal para el ticket
 $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
 $stmtSuc->execute([$_SESSION['sucursal_id']]);
@@ -502,6 +533,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .btn-cobrar:hover { background: #1196cb; }
     .btn-cobrar:disabled { background: #ddd; cursor: not-allowed; }
     .btn-cancelar-venta { width: 100%; background: white; color: #888; border: 1px solid #ddd; padding: 9px; border-radius: 8px; font-size: 13px; cursor: pointer; margin-top: 6px; }
+    .btn-mov-caja { width: 100%; background: white; color: #555; border: 1px solid #ddd; padding: 8px; border-radius: 8px; font-size: 12px; cursor: pointer; margin-top: 5px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .btn-mov-caja:hover { background: #f5f5f5; border-color: #bbb; color: #333; }
+    /* Modal movimiento de caja */
+    .modal-mov-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500; align-items: center; justify-content: center; }
+    .modal-mov-overlay.visible { display: flex; }
+    .modal-mov { background: white; border-radius: 10px; width: 92%; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); overflow: hidden; }
+    .modal-mov-header { padding: 16px 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+    .modal-mov-header h3 { font-size: 15px; font-weight: 700; color: #222; margin: 0; }
+    .modal-mov-header button { background: none; border: none; font-size: 20px; cursor: pointer; color: #aaa; line-height: 1; }
+    .modal-mov-header button:hover { color: #333; }
+    .modal-mov-body { padding: 20px; }
+    .tipo-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tipo-btn { flex: 1; padding: 10px; border-radius: 8px; border: 2px solid #ddd; font-size: 14px; font-weight: 700; cursor: pointer; background: white; color: #888; transition: all 0.15s; }
+    .tipo-btn.ingreso.selected { border-color: #2e7d32; background: #e8f5e9; color: #2e7d32; }
+    .tipo-btn.retiro.selected  { border-color: #c0392b; background: #fdecea; color: #c0392b; }
+    .tipo-btn:not(.selected):hover { background: #f5f5f5; }
+    .mov-field { margin-bottom: 14px; }
+    .mov-field label { display: block; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 5px; }
+    .mov-field input, .mov-field textarea { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; font-family: Arial, sans-serif; resize: vertical; }
+    .mov-field input:focus, .mov-field textarea:focus { outline: none; border-color: #14ace7; }
+    .mov-field textarea { min-height: 70px; }
+    .modal-mov-footer { display: flex; gap: 8px; margin-top: 4px; }
+    .modal-mov-footer .btn-cancel-mov { flex: 1; background: white; color: #666; border: 1px solid #ddd; padding: 10px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .modal-mov-footer .btn-confirm-mov { flex: 2; padding: 10px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; border: none; color: white; transition: background 0.15s; }
+    .btn-confirm-mov.ingreso { background: #2e7d32; }
+    .btn-confirm-mov.ingreso:hover { background: #256128; }
+    .btn-confirm-mov.retiro  { background: #c0392b; }
+    .btn-confirm-mov.retiro:hover  { background: #a93226; }
+    .msg-mov-ok { background: #e8f5e9; color: #2e7d32; padding: 9px 14px; border-radius: 6px; font-size: 12px; border-left: 3px solid #2e7d32; margin-bottom: 10px; }
+    .msg-mov-ok.retiro { background: #fdecea; color: #c0392b; border-left-color: #c0392b; }
+    .msg-mov-err { background: #fdecea; color: #c0392b; padding: 9px 14px; border-radius: 6px; font-size: 12px; border-left: 3px solid #c0392b; margin-bottom: 10px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; padding: 12px 16px; border-radius: 6px; font-size: 13px; border-left: 3px solid #2e7d32; grid-column: span 2; display: flex; justify-content: space-between; align-items: center; }
     .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 7px 16px; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; align-items: center; justify-content: center; }
@@ -545,6 +607,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
 <!-- Ticket oculto para impresión -->
 <div id="ticketImprimir"></div>
+
+<!-- Modal: Movimiento de caja -->
+<div class="modal-mov-overlay" id="modalMovCaja">
+    <div class="modal-mov">
+        <div class="modal-mov-header">
+            <h3 id="modalMovTitulo">Movimiento de caja</h3>
+            <button onclick="cerrarModalMovCaja()">&#x2715;</button>
+        </div>
+        <div class="modal-mov-body">
+            <form method="POST" onsubmit="return validarMovCaja()">
+                <input type="hidden" name="movimiento_caja" value="1">
+                <input type="hidden" name="tipo_mov" id="inputTipoMov" value="Ingreso">
+
+                <div class="tipo-toggle">
+                    <button type="button" id="btnTipoIngreso" class="tipo-btn ingreso selected" onclick="seleccionarTipoMov('Ingreso')">
+                        &#8593; Ingreso
+                    </button>
+                    <button type="button" id="btnTipoRetiro" class="tipo-btn retiro" onclick="seleccionarTipoMov('Retiro')">
+                        &#8595; Retiro
+                    </button>
+                </div>
+
+                <div class="mov-field">
+                    <label>Monto *</label>
+                    <input type="number" name="monto_mov" id="montoMov" step="0.01" min="0.01" placeholder="0.00" required>
+                </div>
+                <div class="mov-field">
+                    <label>Nota / Motivo * <span style="font-weight:400;color:#aaa;font-size:10px;">(obligatorio)</span></label>
+                    <textarea name="nota_mov" id="notaMov" placeholder="Describe el motivo del movimiento..." required></textarea>
+                </div>
+                <div id="errMovCaja" style="display:none;color:#c0392b;font-size:12px;margin-bottom:10px;"></div>
+                <div class="modal-mov-footer">
+                    <button type="button" class="btn-cancel-mov" onclick="cerrarModalMovCaja()">Cancelar</button>
+                    <button type="submit" class="btn-confirm-mov ingreso" id="btnConfirmarMov">Confirmar ingreso</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
@@ -734,7 +835,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 <h3>Resumen</h3>
                 <div class="resumen-fila"><span>Subtotal</span><span id="resSubtotal">$0.00</span></div>
                 <div class="resumen-fila" id="resAhorroRow" style="display:none;">
-                    <span style="color:#2e7d32;">🏷 Ahorro en promociones</span>
+                    <span style="color:#2e7d32;">Ahorro en promociones</span>
                     <span id="resAhorroPromo" style="color:#2e7d32;">-$0.00</span>
                 </div>
                 <div class="resumen-fila"><span>Descuento</span><span id="resDescuento" style="color:#2e7d32;">-$0.00</span></div>
@@ -835,6 +936,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     </button>
                 </form>
                 <button class="btn-cancelar-venta" onclick="limpiarVenta()">Cancelar venta</button>
+                <button class="btn-mov-caja" type="button" onclick="abrirModalMovCaja()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+                    Movimiento de caja
+                </button>
+
+                <?php if ($msgMovCaja === 'ingreso_ok'): ?>
+                    <div class="msg-mov-ok" id="msgMovBanner">Ingreso registrado correctamente.</div>
+                <?php elseif ($msgMovCaja === 'retiro_ok'): ?>
+                    <div class="msg-mov-ok retiro" id="msgMovBanner">Retiro registrado correctamente.</div>
+                <?php elseif ($msgMovCaja === 'error'): ?>
+                    <div class="msg-mov-err" id="msgMovBanner">Completa todos los campos correctamente.</div>
+                <?php endif; ?>
 
                 <!-- Panel: Ajuste por daño -->
                 <div style="border-top:1px solid #eee;margin-top:10px;padding-top:10px;">
@@ -942,6 +1055,55 @@ const datosTicket  = <?= json_encode([
 const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+// ── Movimiento de caja ────────────────────────────────────────────────────────
+function abrirModalMovCaja() {
+    seleccionarTipoMov('Ingreso');
+    document.getElementById('montoMov').value = '';
+    document.getElementById('notaMov').value  = '';
+    document.getElementById('errMovCaja').style.display = 'none';
+    document.getElementById('modalMovCaja').classList.add('visible');
+    setTimeout(() => document.getElementById('montoMov').focus(), 100);
+}
+function cerrarModalMovCaja() {
+    document.getElementById('modalMovCaja').classList.remove('visible');
+}
+function seleccionarTipoMov(tipo) {
+    document.getElementById('inputTipoMov').value = tipo;
+    const btnI = document.getElementById('btnTipoIngreso');
+    const btnR = document.getElementById('btnTipoRetiro');
+    const btnC = document.getElementById('btnConfirmarMov');
+    btnI.classList.toggle('selected', tipo === 'Ingreso');
+    btnR.classList.toggle('selected', tipo === 'Retiro');
+    btnC.className = 'btn-confirm-mov ' + (tipo === 'Ingreso' ? 'ingreso' : 'retiro');
+    btnC.textContent = tipo === 'Ingreso' ? 'Confirmar ingreso' : 'Confirmar retiro';
+    document.getElementById('modalMovTitulo').textContent =
+        tipo === 'Ingreso' ? 'Ingreso a caja' : 'Retiro de caja';
+}
+function validarMovCaja() {
+    const monto = parseFloat(document.getElementById('montoMov').value || 0);
+    const nota  = document.getElementById('notaMov').value.trim();
+    const err   = document.getElementById('errMovCaja');
+    if (!monto || monto <= 0) {
+        err.textContent = 'Ingresa un monto válido mayor a cero.';
+        err.style.display = 'block';
+        return false;
+    }
+    if (!nota) {
+        err.textContent = 'La nota es obligatoria. Describe el motivo del movimiento.';
+        err.style.display = 'block';
+        return false;
+    }
+    return true;
+}
+document.getElementById('modalMovCaja').addEventListener('click', function(e) {
+    if (e.target === this) cerrarModalMovCaja();
+});
+// Auto-ocultar mensaje de resultado tras 5 segundos
+window.addEventListener('DOMContentLoaded', () => {
+    const banner = document.getElementById('msgMovBanner');
+    if (banner) setTimeout(() => { banner.style.transition='opacity .5s'; banner.style.opacity='0'; setTimeout(()=>banner.remove(),500); }, 5000);
+});
 
 // ── Normalizar texto: minúsculas + sin acentos (ñ→n, é→e, etc.) ─────────────
 function normalizar(str) {
@@ -1737,24 +1899,21 @@ function recalcularTodo() {
     const total       = subtotal - descuento + comision;
     const ahorroTotal = ahorroPromos + ahorroAjustes + descuentoCliente;
 
-    document.getElementById('resSubtotal').textContent  = '$'+subtotal.toFixed(2);
-    document.getElementById('resDescuento').textContent = '-$'+descuento.toFixed(2);
+    const descuentoTotal = ahorroPromos + descuento;
+    document.getElementById('resSubtotal').textContent  = '$'+subtotalBruto.toFixed(2);
+    document.getElementById('resDescuento').textContent = '-$'+descuentoTotal.toFixed(2);
     document.getElementById('resComision').textContent  = '$'+comision.toFixed(2);
     document.getElementById('resTotal').textContent     = '$'+total.toFixed(2);
     // Guardar subtotal como precio original (antes de promos) y descuento incluyendo ahorro por promos
     document.getElementById('inputSubtotal').value         = subtotalBruto.toFixed(2);
-    document.getElementById('inputDescuento').value        = (ahorroPromos + descuento).toFixed(2);
+    document.getElementById('inputDescuento').value        = descuentoTotal.toFixed(2);
     document.getElementById('inputComisionTerminal').value = comision.toFixed(2);
     document.getElementById('inputTotal').value            = total.toFixed(2);
 
-    // Sección de ahorro
+    // Sección de ahorro (fila de promos oculta — ya va en Descuento)
     const resAhorroRow  = document.getElementById('resAhorroRow');
-    const resAhorroPromo = document.getElementById('resAhorroPromo');
+    if (resAhorroRow) resAhorroRow.style.display = 'none';
     const resAhorroTotal = document.getElementById('resAhorroTotal');
-    if (resAhorroRow) {
-        resAhorroRow.style.display = ahorroPromos > 0 ? '' : 'none';
-        if (resAhorroPromo) resAhorroPromo.textContent = '-$' + ahorroPromos.toFixed(2);
-    }
     if (resAhorroTotal) {
         resAhorroTotal.closest('.resumen-ahorro-total').style.display = ahorroTotal > 0 ? '' : 'none';
         resAhorroTotal.textContent = '$' + ahorroTotal.toFixed(2);
@@ -1962,7 +2121,7 @@ function generarTicketHTML(venta) {
                 <span>$${(cantidadRestante * precioOrig).toFixed(2)}</span>
             </div>
             <div class="t-fila">
-                <span>${cantidadRestante} x $${precioFinal.toFixed(2)} <span style="font-size:10px;">&#127991; -${pctPromo}% (-$${ahorroUnit})</span></span>
+                <span>${cantidadRestante} x $${precioFinal.toFixed(2)} <span style="font-size:10px;">-${pctPromo}% (-$${ahorroUnit})</span></span>
                 <span>$${(cantidadRestante * precioFinal).toFixed(2)}</span>
             </div>`;
         } else if (tieneAjuste) {
@@ -1989,20 +2148,13 @@ function generarTicketHTML(venta) {
     html += `<div class="t-linea"></div>`;
 
     if (parseFloat(venta.descuento) > 0) {
-        html += `<div class="t-fila"><span>Subtotal</span><span>$${parseFloat(venta.subtotal).toFixed(2)}</span></div>
-                 <div class="t-fila"><span>Descuento</span><span>-$${parseFloat(venta.descuento).toFixed(2)}</span></div>`;
+        html += `<div class="t-fila"><span>Subtotal</span><span>$${parseFloat(venta.subtotal).toFixed(2)}</span></div>`;
     }
     if (parseFloat(venta.comision_terminal) > 0) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${parseFloat(venta.comision_terminal).toFixed(2)}</span></div>`;
     }
-
-    // Ahorro total: promos + descuentos — se muestra como línea antes del total
-    const ahorroDescuento = parseFloat(venta.descuento) || 0;
-    const ahorroTotal     = ahorroPromoTicket + ahorroDescuento;
-    if (ahorroTotal > 0.005) {
-        html += `<div class="t-fila" style="font-size:11px;">
-            <span>&#127991; Ahorraste</span><span>-$${ahorroTotal.toFixed(2)}</span>
-        </div>`;
+    if (parseFloat(venta.descuento) > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${parseFloat(venta.descuento).toFixed(2)}</span></div>`;
     }
 
     html += `

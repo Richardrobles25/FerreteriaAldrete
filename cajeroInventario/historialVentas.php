@@ -109,6 +109,34 @@ $stmtTot = $pdo->prepare("
 $stmtTot->execute($params);
 $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 
+// ── Movimientos de caja del mismo período ────────────────────────────────────
+$whereM  = "WHERE m.sucursal_id = ?";
+$paramsM = [$_SESSION['sucursal_id']];
+if ($fechaDesde !== '' && $fechaHasta !== '') {
+    $whereM .= " AND DATE(m.created_at) BETWEEN ? AND ?";
+    $paramsM[] = $fechaDesde; $paramsM[] = $fechaHasta;
+} elseif ($fechaDesde !== '') {
+    $whereM .= " AND DATE(m.created_at) >= ?";
+    $paramsM[] = $fechaDesde;
+} elseif ($fechaHasta !== '') {
+    $whereM .= " AND DATE(m.created_at) <= ?";
+    $paramsM[] = $fechaHasta;
+}
+$stmtMov = $pdo->prepare("
+    SELECT m.movimiento_id, m.tipo, m.monto, m.nota, m.created_at,
+           u.nombre_completo AS cajero
+    FROM movimientos_caja m
+    LEFT JOIN usuarios u ON m.usuario_id = u.usuario_id
+    $whereM
+    ORDER BY m.created_at DESC
+    LIMIT 500
+");
+$stmtMov->execute($paramsM);
+$movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
+
+$totalIngresos = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo']==='Ingreso'), 'monto'));
+$totalRetiros  = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo']==='Retiro'),  'monto'));
+
 // ── Datos de sucursal para el ticket ────────────────────────────────────────
 $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
 $stmtSuc->execute([$_SESSION['sucursal_id']]);
@@ -189,6 +217,18 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     .badge-devuelto   { background: #f3e5f5; color: #6a1b9a; }
     .badge-modificado { background: #fff8e1; color: #e65100; }
     .sin-resultados { padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
+    .badge-ingreso { background: #e8f5e9; color: #2e7d32; }
+    .badge-retiro  { background: #fdecea; color: #c0392b; }
+    .mov-nota { font-size: 11px; color: #888; margin-top: 2px; max-width: 320px; word-break: break-word; }
+    .seccion-mov { margin-top: 20px; }
+    .seccion-mov-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .seccion-mov-header h2 { font-size: 15px; font-weight: 600; color: #333; }
+    .seccion-mov-stats { display: flex; gap: 10px; }
+    .mov-stat { background: white; border-radius: 8px; padding: 10px 16px; border: 0.5px solid #e8e8e8; font-size: 12px; }
+    .mov-stat span { display: block; color: #999; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
+    .mov-stat.ing strong { color: #2e7d32; font-size: 15px; font-weight: 700; }
+    .mov-stat.ret strong { color: #c0392b; font-size: 15px; font-weight: 700; }
+    .sin-mov { padding: 32px; text-align: center; color: #bbb; font-size: 13px; }
     .btn-accion { border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .btn-detalle { background: #e3f2fd; color: #1565c0; }
     .btn-detalle:hover { background: #bbdefb; }
@@ -475,6 +515,62 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                 <div class="sin-resultados">No hay ventas en el período seleccionado.</div>
             <?php endif; ?>
         </div>
+
+        <!-- ── Movimientos de caja ─────────────────────────────────────────── -->
+        <div class="seccion-mov">
+            <div class="seccion-mov-header">
+                <h2>Movimientos de caja</h2>
+                <div class="seccion-mov-stats">
+                    <div class="mov-stat ing">
+                        <span>Ingresos</span>
+                        <strong>+$<?= number_format($totalIngresos, 2) ?></strong>
+                    </div>
+                    <div class="mov-stat ret">
+                        <span>Retiros</span>
+                        <strong>-$<?= number_format($totalRetiros, 2) ?></strong>
+                    </div>
+                </div>
+            </div>
+            <div class="tabla-wrapper">
+                <?php if (count($movimientos) > 0): ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tipo</th>
+                            <th>Monto</th>
+                            <th>Nota / Motivo</th>
+                            <th>Cajero</th>
+                            <th>Fecha/Hora</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($movimientos as $m): ?>
+                        <tr>
+                            <td>
+                                <span class="badge badge-<?= strtolower($m['tipo']) ?>">
+                                    <?= $m['tipo'] === 'Ingreso' ? '&#8593; Ingreso' : '&#8595; Retiro' ?>
+                                </span>
+                            </td>
+                            <td style="font-weight:700;color:<?= $m['tipo']==='Ingreso' ? '#2e7d32' : '#c0392b' ?>;">
+                                <?= $m['tipo']==='Ingreso' ? '+' : '-' ?>$<?= number_format($m['monto'], 2) ?>
+                            </td>
+                            <td>
+                                <div class="mov-nota"><?= htmlspecialchars($m['nota']) ?></div>
+                            </td>
+                            <td style="font-size:12px;"><?= htmlspecialchars($m['cajero'] ?? '—') ?></td>
+                            <td style="color:#aaa;font-size:12px;white-space:nowrap;">
+                                <?= date('d/m/Y H:i', strtotime($m['created_at'])) ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php else: ?>
+                    <div class="sin-mov">No hay movimientos de caja en este período.</div>
+                <?php endif; ?>
+            </div>
+        </div>
+
     </div>
 </div>
 
@@ -577,17 +673,26 @@ function renderDetalle(v) {
     // Productos
     document.getElementById('detProductos').innerHTML = v.productos.map(p => {
         const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
-        const precioMostrar = (p.precio_final && parseFloat(p.precio_final) !== parseFloat(p.precio_unitario))
-            ? parseFloat(p.precio_final) : parseFloat(p.precio_unitario);
-        const precioHTML = tieneAjuste
-            ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${fmt(p.precio_unitario)}</span> <span style="color:#c0392b;font-weight:700;">$${fmt(precioMostrar)}</span>`
-            : `$${fmt(p.precio_unitario)}`;
+        const precioOrig  = parseFloat(p.precio_unitario);
+        const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
+        const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
+
+        let precioHTML;
+        if (tieneAjuste) {
+            precioHTML = `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${fmt(precioOrig)}</span> <span style="color:#c0392b;font-weight:700;">$${fmt(precioFinal)}</span>`;
+        } else if (tienePromo) {
+            precioHTML = `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${fmt(precioOrig)}</span> <span style="color:#2e7d32;font-weight:700;">$${fmt(precioFinal)}</span>`;
+        } else {
+            precioHTML = `$${fmt(precioOrig)}`;
+        }
+
         return `
         <tr>
             <td style="color:#aaa;font-size:12px;font-family:monospace;">${esc(p.codigo)}</td>
             <td>
                 ${esc(p.nombre_producto)}
                 ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño: ${esc(p.nota_ajuste)}</div>` : ''}
+                ${tienePromo  ? `<div style="font-size:11px;color:#2e7d32;margin-top:2px;">Precio de promoción</div>` : ''}
             </td>
             <td style="text-align:right;">${parseFloat(p.cantidad).toFixed(2)}</td>
             <td style="text-align:right;">${precioHTML}</td>
@@ -599,7 +704,7 @@ function renderDetalle(v) {
     let html = '';
     if (parseFloat(v.descuento) > 0) {
         html += `<div class="det-fila"><span>Subtotal</span><span>$${fmt(v.subtotal)}</span></div>`;
-        html += `<div class="det-fila" style="color:#2e7d32;"><span>Descuento</span><span>-$${fmt(v.descuento)}</span></div>`;
+        html += `<div class="det-fila" style="color:#2e7d32;"><span>Ahorraste</span><span>-$${fmt(v.descuento)}</span></div>`;
     }
     if (parseFloat(v.comision_terminal) > 0) {
         html += `<div class="det-fila"><span>Comisión terminal</span><span>$${fmt(v.comision_terminal)}</span></div>`;
@@ -662,29 +767,36 @@ function generarTicketHTML(venta) {
         <div class="t-fila t-bold"><span>Producto</span><span>Importe</span></div>
         <div class="t-linea"></div>`;
 
+    let ahorroPromoTicket = 0;
     (venta.productos || []).forEach(p => {
         const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
-        const precioUsado = (p.precio_final && parseFloat(p.precio_final) !== parseFloat(p.precio_unitario))
-            ? parseFloat(p.precio_final) : parseFloat(p.precio_unitario);
-        html += `
-            <div>${esc(p.nombre_producto)}</div>
-            <div class="t-fila">
-                <span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span>
-                <span>$${fmt(p.subtotal)}</span>
-            </div>`;
-        if (tieneAjuste) {
-            html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
+        const precioOrig  = parseFloat(p.precio_unitario);
+        const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
+        const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
+
+        if (tienePromo) ahorroPromoTicket += (precioOrig - precioFinal) * parseFloat(p.cantidad);
+
+        html += `<div>${esc(p.nombre_producto)}</div>`;
+        if (tienePromo) {
+            html += `<div style="font-size:10px;text-decoration:line-through;color:#888;">$${fmt(precioOrig)}/u (precio normal)</div>`;
+            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioFinal)}</span><span>$${fmt(p.subtotal)}</span></div>`;
+        } else {
+            const precioUsado = tieneAjuste ? precioFinal : precioOrig;
+            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span><span>$${fmt(p.subtotal)}</span></div>`;
+            if (tieneAjuste) html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
         }
     });
 
     html += `<div class="t-linea"></div>`;
 
     if (parseFloat(venta.descuento) > 0) {
-        html += `<div class="t-fila"><span>Subtotal</span><span>$${fmt(venta.subtotal)}</span></div>
-                 <div class="t-fila"><span>Descuento</span><span>-$${fmt(venta.descuento)}</span></div>`;
+        html += `<div class="t-fila"><span>Subtotal</span><span>$${fmt(venta.subtotal)}</span></div>`;
     }
     if (parseFloat(venta.comision_terminal) > 0) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${fmt(venta.comision_terminal)}</span></div>`;
+    }
+    if (parseFloat(venta.descuento) > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${fmt(venta.descuento)}</span></div>`;
     }
 
     html += `

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -222,7 +222,8 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -236,6 +237,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
         <div class="menu-label">Más</div>
         <a class="menu-item active" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>

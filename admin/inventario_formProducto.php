@@ -11,6 +11,7 @@ $editando  = null;
 $errores   = [];
 $esEdicion = isset($_GET['id']);
 $proveedoresProducto = [];
+$esAdmin = $_SESSION['rol'] === 'Administrador';
 
 function esValorEnteroValido($valor): bool {
     if ($valor === null || $valor === '') {
@@ -28,8 +29,13 @@ function normalizarNumeroFormulario($valor): string {
 }
 
 if ($esEdicion) {
-    $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-    $stmt->execute([intval($_GET['id']), $_SESSION['sucursal_id']]);
+    if ($esAdmin) {
+        $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ?");
+        $stmt->execute([intval($_GET['id'])]);
+    } else {
+        $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
+        $stmt->execute([intval($_GET['id']), $_SESSION['sucursal_id']]);
+    }
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$editando) { header('Location: inventario_productos.php'); exit(); }
 
@@ -42,6 +48,9 @@ if ($esEdicion) {
     $stmtPP->execute([$editando['producto_id']]);
     $proveedoresProducto = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// Sucursal efectiva: la del producto al editar, la propia al crear
+$sucursalActiva = $editando ? intval($editando['sucursal_id']) : intval($_SESSION['sucursal_id']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $codigo           = strtoupper(trim($_POST['codigo'] ?? ''));
@@ -76,11 +85,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($codigo) {
         $stmtCheck = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ? AND producto_id != ?");
-        $stmtCheck->execute([$codigo, $_SESSION['sucursal_id'], $producto_id]);
+        $stmtCheck->execute([$codigo, $sucursalActiva, $producto_id]);
         if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en esta sucursal.';
     }
 
     if (empty($errores)) {
+        // Auto-insertar unidad en la tabla si no existe aún
+        if ($unidad_medida !== '') {
+            $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
+                ->execute([$unidad_medida, $sucursalActiva]);
+        }
+
         if ($producto_id) {
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
@@ -89,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ")->execute([$codigo,$nombre_producto,$descripcion,$categoria_id,
                          $precio_compra,$precio_venta,$precio_mayoreo,
                          $stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null,
-                         $producto_id,$_SESSION['sucursal_id']]);
+                         $producto_id,$sucursalActiva]);
         } else {
             $pdo->prepare("
                 INSERT INTO productos
@@ -97,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  precio_compra,precio_venta,precio_mayoreo,stock_actual,
                  stock_minimo,stock_maximo,tipo_venta,unidad_medida,activo)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
-            ")->execute([$_SESSION['sucursal_id'],$categoria_id,$codigo,$nombre_producto,
+            ")->execute([$sucursalActiva,$categoria_id,$codigo,$nombre_producto,
                          $descripcion,$precio_compra,$precio_venta,$precio_mayoreo,
                          $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null]);
             $producto_id = $pdo->lastInsertId();
@@ -128,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $categorias  = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $stmtUnd = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE sucursal_id = ? ORDER BY nombre ASC");
-$stmtUnd->execute([$_SESSION['sucursal_id']]);
+$stmtUnd->execute([$sucursalActiva]);
 $unidadesMedida = $stmtUnd->fetchAll(PDO::FETCH_COLUMN);
 
 // Categoría actual para pre-llenar el autocomplete

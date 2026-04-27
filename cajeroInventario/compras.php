@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -64,10 +64,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
 
             $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
 
-            // Actualizar precio de compra si el usuario lo solicitó
+            // Actualizar precios si el usuario lo solicitó
             if (!empty($item['actualizar_precio'])) {
-                $pdo->prepare("UPDATE productos SET precio_compra = ? WHERE producto_id = ?")
-                    ->execute([$item['precio_unitario'], $item['producto_id']]);
+                $nuevoPrecioCompra = floatval($item['precio_unitario']);
+
+                // Obtener precios actuales para calcular los márgenes
+                $stmtPrecios = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
+                $stmtPrecios->execute([$item['producto_id']]);
+                $precios = $stmtPrecios->fetch(PDO::FETCH_ASSOC);
+
+                $precioCompraViejo = floatval($precios['precio_compra']);
+                $precioVentaViejo  = floatval($precios['precio_venta']);
+                $precioMayoreoViejo = floatval($precios['precio_mayoreo']);
+
+                // Calcular nuevos precios manteniendo el mismo margen de ganancia
+                if ($precioCompraViejo > 0) {
+                    $margenVenta    = ($precioVentaViejo - $precioCompraViejo) / $precioCompraViejo;
+                    $margenMayoreo  = $precioMayoreoViejo > 0
+                        ? ($precioMayoreoViejo - $precioCompraViejo) / $precioCompraViejo
+                        : 0;
+                    $nuevoPrecioVenta   = round($nuevoPrecioCompra * (1 + $margenVenta), 2);
+                    $nuevoPrecioMayoreo = $precioMayoreoViejo > 0
+                        ? round($nuevoPrecioCompra * (1 + $margenMayoreo), 2)
+                        : $precioMayoreoViejo;
+                } else {
+                    $nuevoPrecioVenta   = $precioVentaViejo;
+                    $nuevoPrecioMayoreo = $precioMayoreoViejo;
+                }
+
+                $pdo->prepare("UPDATE productos SET precio_compra = ?, precio_venta = ?, precio_mayoreo = ? WHERE producto_id = ?")
+                    ->execute([$nuevoPrecioCompra, $nuevoPrecioVenta, $nuevoPrecioMayoreo, $item['producto_id']]);
             }
 
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
@@ -102,7 +128,7 @@ $compras = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Datos para el formulario
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo = 1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
-$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_compra FROM productos WHERE sucursal_id = ? AND activo = 1 ORDER BY nombre_producto ASC");
+$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_compra, precio_venta, precio_mayoreo FROM productos WHERE sucursal_id = ? AND activo = 1 ORDER BY nombre_producto ASC");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -224,7 +250,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -238,6 +265,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -456,12 +484,26 @@ function filtrarProductosCompra(q) {
 function seleccionarProdCompra(id) {
     const p = productosData.find(x => x.producto_id == id);
     if (!p) return;
-    document.getElementById('prodCompraId').value     = id;
-    document.getElementById('prodCompraNombre').value = p.nombre_producto;
-    document.getElementById('buscarProdCompra').value = p.nombre_producto;
-    document.getElementById('precioCompra').value     = p.precio_compra || '';
+    document.getElementById('prodCompraId').value        = id;
+    document.getElementById('prodCompraNombre').value    = p.nombre_producto;
+    document.getElementById('buscarProdCompra').value    = p.nombre_producto;
+    document.getElementById('precioCompra').value        = p.precio_compra || '';
     document.getElementById('dropProdCompra').style.display = 'none';
     document.getElementById('cantCompra').focus();
+}
+
+function calcularNuevosPrecios(prod, nuevoPrecioCompra) {
+    const compraViejo   = parseFloat(prod.precio_compra || 0);
+    const ventaViejo    = parseFloat(prod.precio_venta || 0);
+    const mayoreoViejo  = parseFloat(prod.precio_mayoreo || 0);
+    if (compraViejo <= 0) return { venta: ventaViejo, mayoreo: mayoreoViejo };
+    const margenVenta   = (ventaViejo - compraViejo) / compraViejo;
+    const margenMayoreo = mayoreoViejo > 0 ? (mayoreoViejo - compraViejo) / compraViejo : 0;
+    return {
+        venta:   Math.round(nuevoPrecioCompra * (1 + margenVenta) * 100) / 100,
+        mayoreo: mayoreoViejo > 0 ? Math.round(nuevoPrecioCompra * (1 + margenMayoreo) * 100) / 100 : 0,
+        margenPct: Math.round(margenVenta * 10000) / 100
+    };
 }
 
 function agregarProdCompra() {
@@ -472,9 +514,22 @@ function agregarProdCompra() {
 
     if (!id || cant <= 0 || precio <= 0) { alert('Completa producto, cantidad y precio.'); return; }
 
+    const prod = productosData.find(x => x.producto_id == id);
     const existe = itemsCompra.find(i => i.producto_id == id);
-    if (existe) { existe.cantidad += cant; existe.precio_unitario = precio; }
-    else { itemsCompra.push({ producto_id: parseInt(id), nombre, cantidad: cant, precio_unitario: precio, actualizar_precio: false }); }
+    if (existe) {
+        existe.cantidad += cant;
+        existe.precio_unitario = precio;
+        existe.prod_data = prod;
+    } else {
+        itemsCompra.push({
+            producto_id:    parseInt(id),
+            nombre,
+            cantidad:       cant,
+            precio_unitario: precio,
+            actualizar_precio: false,
+            prod_data:      prod
+        });
+    }
 
     document.getElementById('prodCompraId').value     = '';
     document.getElementById('prodCompraNombre').value = '';
@@ -494,21 +549,44 @@ function renderListaCompra() {
     }
     let total = 0;
     div.innerHTML = itemsCompra.map(function(i, idx) {
-        const sub = i.cantidad * i.precio_unitario;
+        const sub    = i.cantidad * i.precio_unitario;
         total += sub;
-        return '<div class="compra-item">'
+        const prod   = i.prod_data || {};
+        const compraViejo = parseFloat(prod.precio_compra || 0);
+        const precioChanged = compraViejo > 0 && Math.abs(i.precio_unitario - compraViejo) > 0.001;
+        const nuevos = calcularNuevosPrecios(prod, i.precio_unitario);
+
+        let previewHTML = '';
+        if (i.actualizar_precio && precioChanged) {
+            previewHTML = '<div style="margin-top:6px;background:#fff8e1;border:1px solid #ffe082;border-radius:5px;padding:6px 10px;font-size:11px;color:#555;">'
+                + '<div style="font-weight:700;color:#e65100;margin-bottom:4px;">📋 Actualización de precios (margen ' + nuevos.margenPct + '%)</div>'
+                + '<div>Precio compra: <s style="color:#aaa;">$' + compraViejo.toFixed(2) + '</s> → <strong>$' + i.precio_unitario.toFixed(2) + '</strong></div>'
+                + '<div>Precio venta: <s style="color:#aaa;">$' + parseFloat(prod.precio_venta||0).toFixed(2) + '</s> → <strong style="color:#2e7d32;">$' + nuevos.venta.toFixed(2) + '</strong></div>'
+                + (parseFloat(prod.precio_mayoreo||0) > 0
+                    ? '<div>Precio mayoreo: <s style="color:#aaa;">$' + parseFloat(prod.precio_mayoreo||0).toFixed(2) + '</s> → <strong style="color:#2e7d32;">$' + nuevos.mayoreo.toFixed(2) + '</strong></div>'
+                    : '')
+                + '</div>';
+        } else if (i.actualizar_precio && !precioChanged) {
+            previewHTML = '<div style="margin-top:4px;font-size:11px;color:#aaa;">El precio no cambió, no se actualizará.</div>';
+        }
+
+        return '<div class="compra-item" style="flex-direction:column;align-items:stretch;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;">'
             + '<div style="flex:1;">'
-            + '<div style="font-size:13px;">' + i.nombre + '</div>'
-            + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2) + '</div>'
-            + '<label style="font-size:11px;color:#e65100;display:flex;align-items:center;gap:4px;margin-top:3px;cursor:pointer;">'
+            + '<div style="font-size:13px;font-weight:600;">' + i.nombre + '</div>'
+            + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2)
+            + (precioChanged ? ' <span style="color:#e65100;">(antes $' + compraViejo.toFixed(2) + ')</span>' : '') + '</div>'
+            + '<label style="font-size:11px;color:#e65100;display:flex;align-items:center;gap:4px;margin-top:4px;cursor:pointer;">'
             + '<input type="checkbox" ' + (i.actualizar_precio ? 'checked' : '') + ' onchange="toggleActualizarPrecio(' + idx + ',this.checked)" style="width:auto;margin:0;">'
-            + 'Actualizar precio de compra en inventario'
+            + 'Actualizar precios en inventario'
             + '</label>'
             + '</div>'
-            + '<div style="display:flex;align-items:center;gap:10px;">'
+            + '<div style="display:flex;align-items:center;gap:10px;margin-left:12px;">'
             + '<span style="font-weight:700;">$' + sub.toFixed(2) + '</span>'
             + '<button class="btn-quitar" onclick="quitarProdCompra(' + idx + ')">×</button>'
-            + '</div></div>';
+            + '</div></div>'
+            + previewHTML
+            + '</div>';
     }).join('');
     document.getElementById('totalCompraValor').textContent = '$' + total.toFixed(2);
     tot.style.display = 'flex';

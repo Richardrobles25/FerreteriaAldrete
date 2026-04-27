@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -62,7 +62,22 @@ $stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destin
 $stmt->execute([$mySuc]);
 $transfParaRecibir = intval($stmt->fetchColumn());
 
-$totalTransfAlertas = $transfParaAprobar + $transfParaEnviar + $transfParaRecibir;
+// Transferencias con cantidad modificada por origen que esperan confirmación del destino (mi sucursal)
+$stmtMod = $pdo->prepare("
+    SELECT t.transferencias_id, t.cantidad,
+           COALESCE(p.nombre_producto,'?') AS nombre_producto,
+           so.nombre AS sucursal_origen
+    FROM transferencias t
+    LEFT JOIN productos p ON t.producto_id = p.producto_id
+    JOIN sucursales so ON t.sucursal_origen_id = so.sucursal_id
+    WHERE t.sucursal_destino_id = ? AND t.estado = 'Modificada'
+    ORDER BY t.created_at ASC LIMIT 5
+");
+$stmtMod->execute([$mySuc]);
+$transfModificadas    = $stmtMod->fetchAll(PDO::FETCH_ASSOC);
+$transfParaConfirmar  = count($transfModificadas);
+
+$totalTransfAlertas = $transfParaAprobar + $transfParaEnviar + $transfParaRecibir + $transfParaConfirmar;
 
 // Últimas ventas del turno
 $ultimasVentas = [];
@@ -158,6 +173,8 @@ if ($cajaActual) {
     .notif-transf-enviar a { color: #2e7d32; font-weight: 700; text-decoration: none; }
     .notif-transf-recibir { background: #f3e5f5; border: 1px solid #e1bee7; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #6a1b9a; }
     .notif-transf-recibir a { color: #6a1b9a; font-weight: 700; text-decoration: none; }
+    .notif-transf-modificada { background: #e8eaf6; border: 1px solid #c5cae9; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; font-size: 13px; color: #283593; }
+    .notif-transf-modificada a { color: #283593; font-weight: 700; text-decoration: none; white-space: nowrap; margin-left: 16px; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -190,7 +207,8 @@ if ($cajaActual) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -204,6 +222,7 @@ if ($cajaActual) {
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias <?= $totalTransfAlertas>0?"({$totalTransfAlertas})":'' ?></a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -273,6 +292,21 @@ if ($cajaActual) {
         <div class="notif-transf-recibir">
             <span>&#128666; Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepcion.</span>
             <a href="transferencias.php">Ver transferencias</a>
+        </div>
+        <?php endif; ?>
+        <?php if ($transfParaConfirmar > 0): ?>
+        <div class="notif-transf-modificada">
+            <div>
+                <div>&#9997; <strong><?= $transfParaConfirmar ?></strong> transferencia(s) con cantidad modificada esperan tu confirmacion:</div>
+                <?php foreach ($transfModificadas as $tm): ?>
+                <div style="font-size:12px;margin-top:5px;padding-left:6px;">
+                    &bull; <strong><?= htmlspecialchars($tm['nombre_producto']) ?></strong>
+                    &times; <?= number_format($tm['cantidad'], 2) ?>
+                    <span style="opacity:.65;">(envia: <?= htmlspecialchars($tm['sucursal_origen']) ?>)</span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <a href="transferencias.php">Revisar</a>
         </div>
         <?php endif; ?>
 

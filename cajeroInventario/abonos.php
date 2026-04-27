@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -10,6 +10,12 @@ $credito_id = intval($_GET['credito_id'] ?? $_GET['ver'] ?? 0);
 $soloVer    = isset($_GET['ver']);
 $credito    = null;
 $errores    = [];
+
+// Datos bancarios y comisión de la sucursal
+$sucursalInfo = $pdo->prepare("SELECT banco, titular_cuenta, numero_cuenta, clabe_interbancaria, alias_tarjeta, comision_terminal_pct FROM sucursales WHERE sucursal_id = ?");
+$sucursalInfo->execute([$_SESSION['sucursal_id']]);
+$datosBanco = $sucursalInfo->fetch(PDO::FETCH_ASSOC);
+$comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
 
 if ($credito_id) {
     $stmt = $pdo->prepare("
@@ -27,10 +33,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
     $monto      = floatval($_POST['monto'] ?? 0);
     $metodo     = $_POST['metodo_pago'] ?? '';
     $notas      = trim($_POST['notas'] ?? '');
+    $referencia = trim($_POST['referencia'] ?? '');
     $cred_id    = intval($_POST['credito_id'] ?? 0);
+
+    // Comisión de terminal
+    $comisionMonto = 0;
+    if ($metodo === 'Terminal' && $comisionPct > 0) {
+        $comisionMonto = round($monto * $comisionPct / 100, 2);
+    }
+
+    // Adjuntar referencia a notas si aplica
+    if ($metodo === 'Transferencia' && $referencia !== '') {
+        $notas = 'Ref: ' . $referencia . ($notas !== '' ? ' — ' . $notas : '');
+    }
 
     if ($monto <= 0) $errores[] = 'El monto debe ser mayor a 0.';
     if (!$metodo)    $errores[] = 'Selecciona el método de pago.';
+    if ($metodo === 'Transferencia' && $referencia === '') $errores[] = 'Ingresa la referencia de la transferencia.';
 
     if ($credito && $monto > $credito['saldo_pendiente']) {
         $errores[] = 'El monto no puede ser mayor al saldo pendiente ($'.number_format($credito['saldo_pendiente'],2).')';
@@ -38,8 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
 
     if (empty($errores)) {
         // Insertar abono
-        $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, metodo_pago, notas) VALUES (?,?,?,?,?)")
-            ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $metodo, $notas]);
+        $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
+            ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $comisionMonto, $metodo, $notas]);
 
         // Actualizar saldo
         $nuevoSaldo = $credito['saldo_pendiente'] - $monto;
@@ -142,8 +161,16 @@ if (!$credito_id) {
     .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
     .badge-efectivo { background: #e8f5e9; color: #2e7d32; }
     .badge-terminal { background: #e3f2fd; color: #1565c0; }
+    .badge-transferencia { background: #fff8e1; color: #e65100; }
     .badge-mixto { background: #f3e5f5; color: #6a1b9a; }
+    .badge-credito { background: #fdecea; color: #c0392b; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; }
+    .panel-transferencia { display: none; background: #f0f9ff; border: 1px solid #b3e0f7; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+    .panel-transferencia.visible { display: block; }
+    .panel-transferencia h4 { font-size: 13px; font-weight: 700; color: #0077a8; margin: 0 0 10px; }
+    .dato-banco { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin-bottom: 6px; }
+    .dato-banco span:first-child { color: #888; }
+    .dato-banco span:last-child { font-weight: 600; }
     .lista-creditos { display: flex; flex-direction: column; gap: 10px; }
     .credito-item { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
     .credito-item:hover { border-color: #14ace7; }
@@ -180,7 +207,8 @@ if (!$credito_id) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -194,6 +222,7 @@ if (!$credito_id) {
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -247,7 +276,7 @@ if (!$credito_id) {
                         </div>
                         <div class="form-group">
                             <label>Método de pago *</label>
-                            <select name="metodo_pago">
+                            <select name="metodo_pago" onchange="toggleTransferencia(this.value)">
                                 <option value="">-- Selecciona --</option>
                                 <option value="Efectivo">Efectivo</option>
                                 <option value="Terminal">Terminal</option>
@@ -255,6 +284,56 @@ if (!$credito_id) {
                                 <option value="Mixto">Mixto</option>
                             </select>
                         </div>
+
+                        <!-- Panel de terminal -->
+                        <div class="panel-transferencia" id="panelTerminal" style="background:#e3f2fd;border-color:#90caf9;">
+                            <h4 style="color:#1565c0;">💳 Comisión de terminal</h4>
+                            <?php if ($comisionPct > 0): ?>
+                                <div class="dato-banco"><span>Porcentaje de comisión</span><span style="color:#1565c0;font-weight:700;"><?= number_format($comisionPct, 2) ?>%</span></div>
+                                <div class="dato-banco" id="filaComisionMonto">
+                                    <span>Comisión (cargo extra)</span>
+                                    <span id="montoComision" style="color:#c0392b;">$0.00</span>
+                                </div>
+                                <div style="border-top:1px dashed #90caf9;margin:8px 0;"></div>
+                                <div class="dato-banco" id="filaTotalTerminal" style="font-size:14px;">
+                                    <span><strong>Total que paga el cliente</strong></span>
+                                    <span id="totalTerminal" style="color:#1565c0;font-weight:700;">$0.00</span>
+                                </div>
+                                <div style="font-size:11px;color:#666;margin-top:6px;">El abono al crédito es solo el monto base, sin incluir la comisión.</div>
+                            <?php else: ?>
+                                <div style="font-size:12px;color:#888;">No hay comisión de terminal configurada para esta sucursal.</div>
+                            <?php endif; ?>
+                        </div>
+
+                        <!-- Panel de transferencia -->
+                        <div class="panel-transferencia" id="panelTransferencia">
+                            <h4>📋 Datos para transferencia</h4>
+                            <?php if (!empty($datosBanco['banco'])): ?>
+                                <div class="dato-banco"><span>Banco</span><span><?= htmlspecialchars($datosBanco['banco']) ?></span></div>
+                            <?php endif; ?>
+                            <?php if (!empty($datosBanco['titular_cuenta'])): ?>
+                                <div class="dato-banco"><span>Titular</span><span><?= htmlspecialchars($datosBanco['titular_cuenta']) ?></span></div>
+                            <?php endif; ?>
+                            <?php if (!empty($datosBanco['numero_cuenta'])): ?>
+                                <div class="dato-banco"><span>N° cuenta</span><span><?= htmlspecialchars($datosBanco['numero_cuenta']) ?></span></div>
+                            <?php endif; ?>
+                            <?php if (!empty($datosBanco['clabe_interbancaria'])): ?>
+                                <div class="dato-banco"><span>CLABE</span><span><?= htmlspecialchars($datosBanco['clabe_interbancaria']) ?></span></div>
+                            <?php endif; ?>
+                            <?php if (!empty($datosBanco['alias_tarjeta'])): ?>
+                                <div class="dato-banco"><span>Alias / tarjeta</span><span><?= htmlspecialchars($datosBanco['alias_tarjeta']) ?></span></div>
+                            <?php endif; ?>
+                            <?php if (empty(array_filter($datosBanco ?? []))): ?>
+                                <div style="font-size:12px;color:#888;">No hay datos bancarios configurados para esta sucursal.</div>
+                            <?php endif; ?>
+                        </div>
+
+                        <!-- Referencia (solo transferencia) -->
+                        <div class="form-group" id="grupoReferencia" style="display:none;">
+                            <label>Referencia de transferencia *</label>
+                            <input type="text" name="referencia" id="campoReferencia" placeholder="Número de folio o referencia...">
+                        </div>
+
                         <div class="form-group">
                             <label>Notas (opcional)</label>
                             <input type="text" name="notas" placeholder="Observaciones del abono...">
@@ -277,7 +356,6 @@ if (!$credito_id) {
                 <table>
                     <thead>
                         <tr>
-                            <th>#</th>
                             <th>Monto</th>
                             <th>Método</th>
                             <th>Cajero</th>
@@ -288,8 +366,12 @@ if (!$credito_id) {
                     <tbody>
                         <?php foreach ($abonos as $a): ?>
                         <tr>
-                            <td style="color:#aaa;"><?= $a['abono_id'] ?></td>
-                            <td style="font-weight:700;color:#2e7d32;">$<?= number_format($a['monto'],2) ?></td>
+                            <td>
+                                <span style="font-weight:700;color:#2e7d32;">$<?= number_format($a['monto'],2) ?></span>
+                                <?php if (!empty($a['comision_terminal']) && $a['comision_terminal'] > 0): ?>
+                                    <br><span style="font-size:11px;color:#1565c0;">+$<?= number_format($a['comision_terminal'],2) ?> comisión</span>
+                                <?php endif; ?>
+                            </td>
                             <td><span class="badge badge-<?= strtolower($a['metodo_pago']) ?>"><?= $a['metodo_pago'] ?></span></td>
                             <td style="font-size:12px;"><?= htmlspecialchars($a['cajero']) ?></td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($a['created_at'])) ?></td>
@@ -333,6 +415,54 @@ if (!$credito_id) {
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+const COMISION_PCT = <?= $comisionPct ?>;
+
+function toggleTransferencia(valor) {
+    // Panel terminal
+    document.getElementById('panelTerminal').classList.toggle('visible', valor === 'Terminal');
+
+    // Panel transferencia
+    const panelTrans = document.getElementById('panelTransferencia');
+    const grupo      = document.getElementById('grupoReferencia');
+    const campo      = document.getElementById('campoReferencia');
+    if (valor === 'Transferencia') {
+        panelTrans.classList.add('visible');
+        grupo.style.display = 'block';
+        campo.required = true;
+    } else {
+        panelTrans.classList.remove('visible');
+        grupo.style.display = 'none';
+        campo.required = false;
+        campo.value = '';
+    }
+
+    actualizarComision();
+}
+
+function actualizarComision() {
+    if (COMISION_PCT <= 0) return;
+    const sel   = document.querySelector('select[name="metodo_pago"]');
+    const monto = parseFloat(document.querySelector('input[name="monto"]').value) || 0;
+    if (!sel || sel.value !== 'Terminal') return;
+
+    const comision = Math.round(monto * COMISION_PCT / 100 * 100) / 100;
+    const total    = monto + comision;
+
+    document.getElementById('montoComision').textContent = '$' + comision.toFixed(2);
+    document.getElementById('totalTerminal').textContent  = '$' + total.toFixed(2);
+}
+
+// Recalcular al cambiar el monto
+document.querySelector('input[name="monto"]')?.addEventListener('input', actualizarComision);
+
+// Si hubo error y el método ya estaba seleccionado, restaurar el panel
+(function() {
+    const sel = document.querySelector('select[name="metodo_pago"]');
+    <?php if (!empty($_POST['metodo_pago'])): ?>
+    if (sel) { sel.value = '<?= htmlspecialchars($_POST['metodo_pago']) ?>'; toggleTransferencia(sel.value); }
+    <?php endif; ?>
+})();
 </script>
 </body>
 </html>

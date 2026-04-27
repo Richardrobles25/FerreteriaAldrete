@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -21,6 +21,28 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
 $stmtSuc->execute([$_SESSION['sucursal_id']]);
 $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
+
+// Promociones activas para esta sucursal (indexed by producto_id)
+$stmtPromos = $pdo->prepare("
+    SELECT pr.promocion_id, pr.producto_id, pr.precio_promocional, pr.descripcion
+    FROM promociones pr
+    JOIN productos p ON pr.producto_id = p.producto_id
+    WHERE p.sucursal_id = ?
+      AND pr.activo = 1
+      AND CURDATE() BETWEEN pr.fecha_inicio AND pr.fecha_fin
+    ORDER BY pr.precio_promocional ASC
+");
+$stmtPromos->execute([$_SESSION['sucursal_id']]);
+$promosList = $stmtPromos->fetchAll(PDO::FETCH_ASSOC);
+$promosByProdId = [];
+foreach ($promosList as $promo) {
+    // Si hay varias promociones para el mismo producto, queda la de menor precio
+    $promosByProdId[$promo['producto_id']] = [
+        'promo_id'    => intval($promo['promocion_id']),
+        'precio_promo'=> floatval($promo['precio_promocional']),
+        'descripcion' => $promo['descripcion'] ?? '',
+    ];
+}
 
 // ── AJAX: paquetes activos ───────────────────────────────────────────────────
 // ── AJAX: todos los productos de la sucursal (para búsqueda local en JS) ─────
@@ -554,7 +576,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -568,6 +591,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -709,9 +733,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             <div class="resumen">
                 <h3>Resumen</h3>
                 <div class="resumen-fila"><span>Subtotal</span><span id="resSubtotal">$0.00</span></div>
+                <div class="resumen-fila" id="resAhorroRow" style="display:none;">
+                    <span style="color:#2e7d32;">🏷 Ahorro en promociones</span>
+                    <span id="resAhorroPromo" style="color:#2e7d32;">-$0.00</span>
+                </div>
                 <div class="resumen-fila"><span>Descuento</span><span id="resDescuento" style="color:#2e7d32;">-$0.00</span></div>
                 <div class="resumen-fila"><span>Comisión terminal</span><span id="resComision">$0.00</span></div>
                 <div class="resumen-fila total"><span>Total</span><span id="resTotal">$0.00</span></div>
+                <div class="resumen-ahorro-total" style="display:none;background:#e8f5e9;border-radius:6px;padding:10px 14px;margin-top:10px;text-align:center;">
+                    <div style="font-size:11px;color:#2e7d32;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Ahorro total del cliente</div>
+                    <div style="font-size:22px;font-weight:700;color:#2e7d32;" id="resAhorroTotal">$0.00</div>
+                </div>
 
                 <div style="margin-top:14px;">
                     <div class="form-group-sm">
@@ -736,7 +768,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <div class="campos-pago" id="camposTerminal">
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
-                            <input type="number" id="porcComision" placeholder="0" step="0.1" value="4.6" class="js-zero-default" oninput="recalcularTodo()">
+                            <input type="number" id="porcComision" value="<?= number_format(floatval($sucursalTicket['comision_terminal_pct'] ?? 0), 2) ?>" readonly style="background:#f5f5f5;color:#888;cursor:not-allowed;">
                         </div>
                     </div>
 
@@ -779,7 +811,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                         </div>
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
-                            <input type="number" id="mixtoComision" placeholder="0" step="0.1" value="4.6" class="js-zero-default" oninput="calcularMixto()">
+                            <input type="number" id="mixtoComision" value="<?= number_format(floatval($sucursalTicket['comision_terminal_pct'] ?? 0), 2) ?>" readonly style="background:#f5f5f5;color:#888;cursor:not-allowed;">
                         </div>
                     </div>
                 </div>
@@ -898,7 +930,8 @@ let clientesGlobales  = [];
 let modoScannerActivo = false;
 let scannerTimer      = null;
 
-const miSucursalId = <?= intval($_SESSION['sucursal_id']) ?>;
+const miSucursalId    = <?= intval($_SESSION['sucursal_id']) ?>;
+const promoByProdId   = <?= json_encode($promosByProdId) ?>;
 const datosTicket  = <?= json_encode([
     'nombre'       => $sucursalTicket['nombre'] ?? 'Ferretería Aldrete',
     'rfc'          => $sucursalTicket['rfc'] ?? '',
@@ -1117,12 +1150,34 @@ function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad) 
     id    = parseInt(id);
     stock = parseFloat(stock);
     if (stock <= 0) { alert('Sin stock disponible.'); return; }
+
+    // Aplicar promoción si existe
+    const promo         = promoByProdId[id] || null;
+    const precioNormal  = parseFloat(precio);
+    const precioFinal   = promo ? promo.precio_promo : precioNormal;
+
     const existe = carrito.find(i => i.producto_id === id);
     if (existe) {
         if (existe.cantidad < stock) existe.cantidad++;
         else { alert(`Stock máximo: ${stock}`); return; }
     } else {
-        carrito.push({ producto_id: id, nombre, precio: parseFloat(precio), precio_compra: parseFloat(precioCompra||0), ajuste_activo: false, precio_ajuste: null, nota_ajuste: '', cantidad: 1, stock, tipo, unidad: unidad||'' });
+        carrito.push({
+            producto_id:    id,
+            nombre,
+            precio:         precioFinal,
+            precio_normal:  precioNormal,
+            tiene_promo:    !!promo,
+            promo_id:       promo ? promo.promo_id : null,
+            promo_desc:     promo ? (promo.descripcion || '') : '',
+            precio_compra:  parseFloat(precioCompra||0),
+            ajuste_activo:  false,
+            precio_ajuste:  null,
+            nota_ajuste:    '',
+            cantidad:       1,
+            stock,
+            tipo,
+            unidad:         unidad||''
+        });
     }
     document.getElementById('inputProducto').value = '';
     document.getElementById('dropdownProductos').classList.remove('visible');
@@ -1213,18 +1268,29 @@ function renderCarrito() {
         const stockDisp = esSuelto ? parseFloat(item.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(item.stock);
         const cantDisp  = esSuelto ? parseFloat(item.cantidad).toFixed(3).replace(/\.?0+$/,'') : item.cantidad;
         const tieneAjuste = item.ajuste_activo === true && item.precio_ajuste !== null;
+        const tienePromo  = item.tiene_promo === true;
         const precioFinal = tieneAjuste ? item.precio_ajuste : item.precio;
+        // Para mostrar el precio base en la celda de precio (lo que se cobró antes de ajuste por daño)
+        const precioBase  = item.precio; // ya es el precio promo si aplica
+
         return `<tr>
             <td>
                 ${esc(item.nombre)}
+                ${tienePromo ? (() => {
+                    const pctPromo   = ((1 - item.precio / item.precio_normal) * 100).toFixed(1);
+                    const ahorroUnit = (item.precio_normal - item.precio).toFixed(2);
+                    const desc       = item.promo_desc ? ` · ${item.promo_desc}` : '';
+                    return `<div style="font-size:10px;color:#2e7d32;margin-top:2px;">🏷 Promoción${desc} &nbsp;·&nbsp; -${pctPromo}% (-$${ahorroUnit}/u)</div>`;
+                })() : ''}
                 ${tieneAjuste ? (() => {
-                    const pctDesc = ((1 - item.precio_ajuste / item.precio) * 100).toFixed(1);
-                    const montoDesc = (item.precio - item.precio_ajuste).toFixed(2);
+                    const pctDesc   = ((1 - item.precio_ajuste / precioBase) * 100).toFixed(1);
+                    const montoDesc = (precioBase - item.precio_ajuste).toFixed(2);
                     return `<div style="font-size:10px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño &nbsp;·&nbsp; -${pctDesc}% (-$${montoDesc})</div>`;
                 })() : ''}
             </td>
             <td>
-                <span style="${tieneAjuste?'text-decoration:line-through;color:#aaa;font-size:11px;display:block;':''}">$${parseFloat(item.precio).toFixed(2)}</span>
+                ${tienePromo ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;display:block;">$${parseFloat(item.precio_normal).toFixed(2)}</span>` : ''}
+                <span style="${tieneAjuste?'text-decoration:line-through;color:#aaa;font-size:11px;display:block;':''}${tienePromo&&!tieneAjuste?'color:#2e7d32;font-weight:700;':''}">$${parseFloat(precioBase).toFixed(2)}</span>
                 ${tieneAjuste ? `<span style="color:#c0392b;font-weight:700;">$${parseFloat(precioFinal).toFixed(2)}</span>` : ''}
             </td>
             <td>
@@ -1631,10 +1697,18 @@ function seleccionarMetodo(metodo, btn) {
 
 // ── Cálculos ─────────────────────────────────────────────────────────────────
 function recalcularTodo() {
-    // Subtotal bruto: precios originales × cantidades (sin ningún descuento)
-    const subtotalBruto = carrito.reduce((a,i) => a + (i.cantidad * i.precio), 0);
+    // Subtotal bruto: precio de venta normal (sin promos) × cantidades
+    const subtotalBruto = carrito.reduce((a,i) => a + (i.cantidad * (i.precio_normal ?? i.precio)), 0);
 
-    // Ahorro por ajustes de daño
+    // Ahorro por promociones
+    const ahorroPromos = carrito.reduce((a,i) => {
+        if (i.tiene_promo && i.precio_normal > i.precio) {
+            return a + (i.cantidad * (i.precio_normal - i.precio));
+        }
+        return a;
+    }, 0);
+
+    // Ahorro por ajustes de daño (sobre precio promo si aplica)
     const ahorroAjustes = carrito.reduce((a,i) => {
         if (i.ajuste_activo && i.precio_ajuste !== null) {
             return a + (i.cantidad * (i.precio - i.precio_ajuste));
@@ -1642,32 +1716,49 @@ function recalcularTodo() {
         return a;
     }, 0);
 
-    // Subtotal efectivo (después de ajustes) sobre el que se aplica descuento de cliente
-    const subtotalEfectivo = subtotalBruto - ahorroAjustes;
+    // Subtotal efectivo: precio ya con promo, antes de ajustes de daño
+    const subtotalConPromo = carrito.reduce((a,i) => a + (i.cantidad * i.precio), 0);
+    const subtotalEfectivo = subtotalConPromo - ahorroAjustes;
 
     const usarDescuentoCliente = clienteActual && clienteActual.descuento > 0 && document.getElementById('aplicarDescCliente').checked;
     const porcentajeDescuento = usarDescuentoCliente ? (parseFloat(document.getElementById('porcDescCliente').value) || 0) : 0;
     const descuentoCliente = porcentajeDescuento > 0 ? subtotalEfectivo * (porcentajeDescuento / 100) : 0;
 
-    // Descuento total = ahorro por daño + descuento de cliente
+    // Descuento total = ahorro por daño + descuento de cliente (las promos ya van en el precio)
     const descuento = ahorroAjustes + descuentoCliente;
 
-    // Subtotal que se muestra y guarda es el bruto (sin descuentos)
-    const subtotal = subtotalBruto;
+    // Subtotal mostrado = precio con promos × cantidades (sin ajustes de daño ni descuento cliente)
+    const subtotal = subtotalConPromo;
 
     let comision = 0;
     if (metodoPago === 'Terminal') {
         comision = (subtotal - descuento) * ((parseFloat(document.getElementById('porcComision').value) || 0) / 100);
     }
-    const total = subtotal - descuento + comision;
+    const total       = subtotal - descuento + comision;
+    const ahorroTotal = ahorroPromos + ahorroAjustes + descuentoCliente;
+
     document.getElementById('resSubtotal').textContent  = '$'+subtotal.toFixed(2);
     document.getElementById('resDescuento').textContent = '-$'+descuento.toFixed(2);
     document.getElementById('resComision').textContent  = '$'+comision.toFixed(2);
     document.getElementById('resTotal').textContent     = '$'+total.toFixed(2);
-    document.getElementById('inputSubtotal').value         = subtotal.toFixed(2);
-    document.getElementById('inputDescuento').value        = descuento.toFixed(2);
+    // Guardar subtotal como precio original (antes de promos) y descuento incluyendo ahorro por promos
+    document.getElementById('inputSubtotal').value         = subtotalBruto.toFixed(2);
+    document.getElementById('inputDescuento').value        = (ahorroPromos + descuento).toFixed(2);
     document.getElementById('inputComisionTerminal').value = comision.toFixed(2);
     document.getElementById('inputTotal').value            = total.toFixed(2);
+
+    // Sección de ahorro
+    const resAhorroRow  = document.getElementById('resAhorroRow');
+    const resAhorroPromo = document.getElementById('resAhorroPromo');
+    const resAhorroTotal = document.getElementById('resAhorroTotal');
+    if (resAhorroRow) {
+        resAhorroRow.style.display = ahorroPromos > 0 ? '' : 'none';
+        if (resAhorroPromo) resAhorroPromo.textContent = '-$' + ahorroPromos.toFixed(2);
+    }
+    if (resAhorroTotal) {
+        resAhorroTotal.closest('.resumen-ahorro-total').style.display = ahorroTotal > 0 ? '' : 'none';
+        resAhorroTotal.textContent = '$' + ahorroTotal.toFixed(2);
+    }
     // Para pago Terminal: guardar el monto completo en monto_terminal (campo hidden)
     // Esto es necesario para que el corte de caja pueda sumar correctamente
     if (metodoPago === 'Terminal') {
@@ -1740,8 +1831,10 @@ function prepararVenta() {
                 producto_id:  item.producto_id,
                 cantidad:     item.cantidad,
                 precio:       tieneAjuste ? item.precio_ajuste : item.precio,
-                precio_orig:  item.precio,
-                nota_ajuste:  tieneAjuste ? (item.nota_ajuste || '') : ''
+                precio_orig:  item.precio_normal ?? item.precio,   // precio antes de promo (para el ticket)
+                nota_ajuste:  tieneAjuste ? (item.nota_ajuste || '') : '',
+                tiene_promo:  item.tiene_promo ? 1 : 0,
+                promo_desc:   item.promo_desc || ''
             });
         }
     }
@@ -1843,6 +1936,8 @@ function generarTicketHTML(venta) {
         });
     });
 
+    let ahorroPromoTicket = 0;
+
     (venta.productos || []).forEach((p) => {
         const key = String(p.producto_id || '');
         let cantidadRestante = parseFloat(p.cantidad);
@@ -1850,12 +1945,27 @@ function generarTicketHTML(venta) {
             cantidadRestante = +(cantidadRestante - consumidosPaquete[key]).toFixed(3);
         }
         if (cantidadRestante <= 0) return;
-        const precioOrig   = parseFloat(p.precio_unitario);
-        const precioFinal  = p.precio_final ? parseFloat(p.precio_final) : precioOrig;
-        const tieneAjuste  = p.nota_ajuste && p.nota_ajuste.trim() !== '' && precioFinal < precioOrig;
-        const precioLinea  = tieneAjuste ? precioFinal : precioOrig;
+        const precioOrig  = parseFloat(p.precio_unitario);   // precio antes de promo
+        const precioFinal = p.precio_final ? parseFloat(p.precio_final) : precioOrig;  // precio cobrado
+        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '' && precioFinal < precioOrig;
+        const tienePromo  = !tieneAjuste && precioFinal < precioOrig;
+
         html += `<div>${esc(p.nombre_producto)}</div>`;
-        if (tieneAjuste) {
+
+        if (tienePromo) {
+            const pctPromo   = ((1 - precioFinal / precioOrig) * 100).toFixed(0);
+            const ahorroUnit = (precioOrig - precioFinal).toFixed(2);
+            ahorroPromoTicket += cantidadRestante * (precioOrig - precioFinal);
+            html += `
+            <div class="t-fila" style="text-decoration:line-through;color:#aaa;font-size:10px;">
+                <span>${cantidadRestante} x $${precioOrig.toFixed(2)}</span>
+                <span>$${(cantidadRestante * precioOrig).toFixed(2)}</span>
+            </div>
+            <div class="t-fila">
+                <span>${cantidadRestante} x $${precioFinal.toFixed(2)} <span style="font-size:10px;">&#127991; -${pctPromo}% (-$${ahorroUnit})</span></span>
+                <span>$${(cantidadRestante * precioFinal).toFixed(2)}</span>
+            </div>`;
+        } else if (tieneAjuste) {
             const pctDesc   = ((1 - precioFinal / precioOrig) * 100).toFixed(1);
             const montoDesc = (precioOrig - precioFinal).toFixed(2);
             html += `
@@ -1884,6 +1994,15 @@ function generarTicketHTML(venta) {
     }
     if (parseFloat(venta.comision_terminal) > 0) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${parseFloat(venta.comision_terminal).toFixed(2)}</span></div>`;
+    }
+
+    // Ahorro total: promos + descuentos — se muestra como línea antes del total
+    const ahorroDescuento = parseFloat(venta.descuento) || 0;
+    const ahorroTotal     = ahorroPromoTicket + ahorroDescuento;
+    if (ahorroTotal > 0.005) {
+        html += `<div class="t-fila" style="font-size:11px;">
+            <span>&#127991; Ahorraste</span><span>-$${ahorroTotal.toFixed(2)}</span>
+        </div>`;
     }
 
     html += `

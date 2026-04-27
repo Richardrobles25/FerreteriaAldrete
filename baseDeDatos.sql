@@ -19,7 +19,8 @@
         titular_cuenta     VARCHAR(150)  NULL DEFAULT NULL,
         numero_cuenta      VARCHAR(30)   NULL DEFAULT NULL,
         clabe_interbancaria CHAR(18)     NULL DEFAULT NULL,
-        alias_tarjeta      VARCHAR(60)   NULL DEFAULT NULL
+        alias_tarjeta      VARCHAR(60)   NULL DEFAULT NULL,
+        comision_terminal_pct DECIMAL(5,2) DEFAULT 0
     );
 
     -- 2. USUARIOS
@@ -232,6 +233,7 @@
         credito_id INT UNSIGNED NOT NULL,
         usuario_id INT UNSIGNED NOT NULL,
         monto DECIMAL(10,2) NOT NULL,
+        comision_terminal DECIMAL(10,2) DEFAULT 0,
         metodo_pago ENUM('Efectivo','Terminal','Credito','Mixto','Transferencia') NOT NULL,
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -265,7 +267,7 @@
         usuario_solicita_id INT UNSIGNED NOT NULL,
         usuario_aprueba_id INT UNSIGNED,
         cantidad DECIMAL(10,3) NOT NULL,
-        estado ENUM('Pendiente', 'Aprobada', 'Rechazada', 'En tránsito', 'Entregada') DEFAULT 'Pendiente',
+        estado ENUM('Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada') DEFAULT 'Pendiente',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -323,14 +325,27 @@
     -- ============================================
 
     CREATE TABLE unidades_medida (
-        unidad_id   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        sucursal_id INT UNSIGNED NOT NULL,
-        nombre      VARCHAR(50) NOT NULL,
-        UNIQUE KEY uq_sucursal_nombre (sucursal_id, nombre),
-        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id) ON DELETE CASCADE
-    );
+    unidad_id   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    sucursal_id INT UNSIGNED NOT NULL,
+    nombre      VARCHAR(50) NOT NULL,
+    UNIQUE KEY uq_sucursal_nombre (sucursal_id, nombre),
+    FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id) ON DELETE CASCADE
+);
 
     -- ============================================
     -- DATOS INICIALES
     -- ============================================
 
+CREATE TABLE promociones (
+    promocion_id       INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    producto_id        INT UNSIGNED NOT NULL,
+    precio_promocional DECIMAL(10,2) NOT NULL,
+    fecha_inicio       DATE NOT NULL,
+    fecha_fin          DATE NOT NULL,
+    descripcion        VARCHAR(255) NULL,
+    activo             TINYINT(1) NOT NULL DEFAULT 1,
+    usuario_id         INT UNSIGNED NOT NULL,
+    created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (producto_id) REFERENCES productos(producto_id) ON DELETE CASCADE,
+    FOREIGN KEY (usuario_id)  REFERENCES usuarios(usuario_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

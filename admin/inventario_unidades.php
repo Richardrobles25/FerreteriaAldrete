@@ -13,12 +13,11 @@ $esAdmin = $_SESSION['rol'] === 'Administrador';
 // Eliminar unidad
 if (isset($_GET['eliminar'])) {
     $id = intval($_GET['eliminar']);
-    // Verificar que no tenga productos con esa unidad
     $u = $pdo->prepare("SELECT nombre, sucursal_id FROM unidades_medida WHERE unidad_id = ?");
     $u->execute([$id]);
     $unidadRow = $u->fetch(PDO::FETCH_ASSOC);
     if ($unidadRow) {
-        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND sucursal_id = ?");
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND sucursal_id = ? AND activo = 1");
         $check->execute([$unidadRow['nombre'], $unidadRow['sucursal_id']]);
         if ($check->fetchColumn() > 0) {
             header('Location: inventario_unidades.php?msg=error_productos');
@@ -55,7 +54,6 @@ $busqueda = trim($_GET['buscar'] ?? '');
 
 // Cargar unidades según rol y filtro de sucursal
 if ($esAdmin && $sucursalVista === 0) {
-    // Admin viendo todas
     if ($busqueda) {
         $stmt = $pdo->prepare("
             SELECT u.*, s.nombre AS nombre_sucursal,
@@ -168,7 +166,7 @@ $todasSucursales = $esAdmin
     .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     .msg-error { background: #fdecea; color: #c0392b; border-left: 3px solid #c0392b; }
-    table { width: 100%; border-collapse: collapse; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     thead { background: #f9f9f9; }
     th { padding: 11px 14px; text-align: left; font-size: 12px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #eee; }
     td { padding: 11px 14px; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
@@ -241,7 +239,6 @@ $todasSucursales = $esAdmin
                 <table>
                     <thead>
                         <tr>
-                            <th>ID</th>
                             <th>Nombre</th>
                             <?php if ($esAdmin && $sucursalVista === 0): ?><th>Sucursal</th><?php endif; ?>
                             <th>Productos</th>
@@ -251,7 +248,6 @@ $todasSucursales = $esAdmin
                     <tbody id="tablaFiltrable">
                         <?php foreach ($unidades as $u): ?>
                         <tr>
-                            <td style="color:#aaa;"><?= $u['unidad_id'] ?></td>
                             <td><strong><?= htmlspecialchars($u['nombre']) ?></strong></td>
                             <?php if ($esAdmin && $sucursalVista === 0): ?>
                                 <td style="color:#888;"><?= htmlspecialchars($u['nombre_sucursal'] ?? '—') ?></td>

@@ -44,6 +44,7 @@ function renderAdminSidebar(string $activeKey): void
                 <a class="menu-item<?= $isActive('inventario_paquetes') ?>" href="inventario_paquetes.php" style="padding-left:28px;">Paquetes</a>
                 <a class="menu-item<?= $isActive('inventario_transferencias') ?>" href="inventario_transferencias.php" style="padding-left:28px;">Transferencias</a>
                 <a class="menu-item<?= $isActive('inventario_mas_vendidos') ?>" href="inventario_masVendidos.php" style="padding-left:28px;">Mas vendidos</a>
+                <a class="menu-item<?= $isActive('promociones') ?>" href="promociones.php" style="padding-left:28px;">Promociones</a>
             </div>
 
             <button type="button" class="menu-item" onclick="toggleAdminSection('cajeroSubmenu')" style="width:100%;text-align:left;background:none;border:none;">

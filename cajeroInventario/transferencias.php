@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -52,10 +52,37 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
     if ($accion === 'editar_cantidad') {
         $nuevaCantidad = floatval($_POST['nueva_cantidad'] ?? 0);
         if ($nuevaCantidad > 0) {
-            $pdo->prepare("UPDATE transferencias SET cantidad = ? WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?")
-                ->execute([$nuevaCantidad, $id, $miSucursal]);
+            // Validar tipo_venta: si es Unidad, forzar entero
+            $stmtTV = $pdo->prepare("SELECT p.tipo_venta FROM transferencias t JOIN productos p ON t.producto_id = p.producto_id WHERE t.transferencias_id = ?");
+            $stmtTV->execute([$id]);
+            $tvRow = $stmtTV->fetch(PDO::FETCH_ASSOC);
+            if ($tvRow && $tvRow['tipo_venta'] !== 'Suelto') {
+                $nuevaCantidad = floor($nuevaCantidad);
+            }
+            if ($nuevaCantidad <= 0) { header('Location: transferencias.php?msg=cantidad_editada'); exit(); }
+
+            // Obtener cantidad anterior para la nota
+            $stmtOld = $pdo->prepare("SELECT cantidad FROM transferencias WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?");
+            $stmtOld->execute([$id, $miSucursal]);
+            $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
+            if ($old) {
+                $notaEdicion = 'Cantidad modificada por origen de ' . number_format($old['cantidad'], 2) . ' a ' . number_format($nuevaCantidad, 2) . ' el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Pendiente de confirmacion por destino.';
+                $pdo->prepare("UPDATE transferencias SET cantidad = ?, estado = 'Modificada', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?")
+                    ->execute([$nuevaCantidad, $notaEdicion, $id, $miSucursal]);
+            }
         }
         header('Location: transferencias.php?msg=cantidad_editada'); exit();
+
+    } elseif ($accion === 'aceptar_modificacion') {
+        $pdo->prepare("UPDATE transferencias SET estado = 'Aprobada' WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?")
+            ->execute([$id, $miSucursal]);
+        header('Location: transferencias.php?msg=aceptar_modificacion'); exit();
+
+    } elseif ($accion === 'rechazar_modificacion') {
+        $notaRechazo = 'Modificacion de cantidad rechazada por destino el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '.';
+        $pdo->prepare("UPDATE transferencias SET estado = 'Pendiente', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?")
+            ->execute([$notaRechazo, $id, $miSucursal]);
+        header('Location: transferencias.php?msg=rechazar_modificacion'); exit();
 
     } elseif ($accion === 'aprobar') {
         $notaAprobacion = 'Aceptada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Preparar envio a sucursal destino.';
@@ -133,8 +160,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         foreach ($items as $item) {
+            $prodId  = intval($item['id']);
+            $cantidad = floatval($item['cantidad']);
+            // Validar tipo_venta en backend
+            $stmtTV2 = $pdo->prepare("SELECT tipo_venta FROM productos WHERE producto_id = ?");
+            $stmtTV2->execute([$prodId]);
+            $tvRow2 = $stmtTV2->fetch(PDO::FETCH_ASSOC);
+            if ($tvRow2 && $tvRow2['tipo_venta'] !== 'Suelto') {
+                $cantidad = floor($cantidad);
+            }
+            if ($cantidad <= 0) continue;
             $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado) VALUES (?,?,?,?,?,?,'Pendiente')")
-                ->execute([intval($item['id']), $sucursal_origen_id, $_SESSION['sucursal_id'], $_SESSION['usuario_id'], floatval($item['cantidad']), $notas]);
+                ->execute([$prodId, $sucursal_origen_id, $_SESSION['sucursal_id'], $_SESSION['usuario_id'], $cantidad, $notas]);
         }
         header('Location: transferencias.php?msg=solicitado'); exit();
     }
@@ -154,7 +191,7 @@ if ($filtroEstado) { $whereExtra .= ' AND t.estado = ?'; $paramsExtra[] = $filtr
 // Transferencias de esta sucursal (como origen o destino)
 $stmt = $pdo->prepare("
     SELECT t.*,
-        p.nombre_producto, p.codigo,
+        p.nombre_producto, p.codigo, p.tipo_venta,
         so.nombre AS sucursal_origen,
         sd.nombre AS sucursal_destino,
         us.nombre_completo AS solicitante,
@@ -187,6 +224,7 @@ $stmt = $pdo->prepare("
         po.nombre_producto,
         po.stock_actual,
         po.sucursal_id,
+        po.tipo_venta,
         pm.stock_actual AS mi_stock,
         (pm.stock_actual < pm.stock_minimo AND pm.stock_minimo > 0) AS bajo
     FROM productos po
@@ -204,12 +242,13 @@ $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
 $prodsBySucursal = [];
 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     $prodsBySucursal[$p['sucursal_id']][] = [
-        'id'       => intval($p['producto_id']),
-        'codigo'   => $p['codigo'],
-        'nombre'   => $p['nombre_producto'],
-        'stock'    => floatval($p['stock_actual']),
-        'mi_stock' => floatval($p['mi_stock']),
-        'bajo'     => (bool)$p['bajo'],
+        'id'         => intval($p['producto_id']),
+        'codigo'     => $p['codigo'],
+        'nombre'     => $p['nombre_producto'],
+        'stock'      => floatval($p['stock_actual']),
+        'mi_stock'   => floatval($p['mi_stock']),
+        'bajo'       => (bool)$p['bajo'],
+        'tipo_venta' => $p['tipo_venta'],
     ];
 }
 ?>
@@ -259,11 +298,14 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #fafafa; }
     .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
-    .badge-pendiente { background: #e3f2fd; color: #1565c0; }
-    .badge-aprobada  { background: #e8f5e9; color: #2e7d32; }
-    .badge-rechazada { background: #fdecea; color: #c0392b; }
-    .badge-transito  { background: #fff8e1; color: #e65100; }
-    .badge-entregada { background: #f0f0f0; color: #666; }
+    .badge-pendiente  { background: #e3f2fd; color: #1565c0; }
+    .badge-aprobada   { background: #e8f5e9; color: #2e7d32; }
+    .badge-rechazada  { background: #fdecea; color: #c0392b; }
+    .badge-transito   { background: #fff8e1; color: #e65100; }
+    .badge-entregada  { background: #f0f0f0; color: #666; }
+    .badge-modificada { background: #e8eaf6; color: #283593; }
+    .btn-aceptar-mod  { background: #e8f5e9; color: #2e7d32; }
+    .btn-rechazar-mod { background: #fdecea; color: #c0392b; }
     .direction-badge { font-size: 10px; padding: 2px 6px; border-radius: 99px; font-weight: 600; }
     .dir-enviada { background: #fdecea; color: #c0392b; }
     .dir-recibida { background: #e8f5e9; color: #2e7d32; }
@@ -341,7 +383,8 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -355,6 +398,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item active" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -382,7 +426,9 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                     'rechazar'        => 'Transferencia rechazada.',
                     'enviar'          => 'Productos marcados como enviados. La sucursal destino debe confirmar la recepcion.',
                     'recibir'         => 'Recepcion confirmada. El stock fue actualizado en ambas sucursales.',
-                    'cantidad_editada'=> 'Cantidad actualizada correctamente.',
+                    'cantidad_editada'       => 'Cantidad modificada. La sucursal destino debe confirmar el cambio.',
+                    'aceptar_modificacion'  => 'Cambio de cantidad aceptado. La transferencia continua como Aprobada.',
+                    'rechazar_modificacion' => 'Cambio de cantidad rechazado. La transferencia volvio a estado Pendiente.',
                 ]; ?>
                 <div class="msg msg-exito"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>
@@ -404,7 +450,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                         <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Estado</label>
                         <select name="estado_f" style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
                             <option value="">Todos</option>
-                            <?php foreach (['Pendiente','Aprobada','En tránsito','Entregada','Rechazada'] as $est): ?>
+                            <?php foreach (['Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada'] as $est): ?>
                             <option value="<?= $est ?>" <?= $filtroEstado === $est ? 'selected' : '' ?>><?= $est ?></option>
                             <?php endforeach; ?>
                         </select>
@@ -426,6 +472,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                             $badgeMap = [
                                 'Pendiente'   => 'badge-pendiente',
                                 'Aprobada'    => 'badge-aprobada',
+                                'Modificada'  => 'badge-modificada',
                                 'En tránsito' => 'badge-transito',
                                 'Entregada'   => 'badge-entregada',
                                 'Rechazada'   => 'badge-rechazada',
@@ -449,13 +496,29 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                             <td style="color:#aaa;font-size:11px;"><?= date('d/m/Y', strtotime($t['created_at'])) ?></td>
                             <td>
                                 <div class="acciones">
-                                    <?php if ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
+                                    <?php
+                                    $tvJs = $t['tipo_venta'] === 'Suelto' ? 'Suelto' : 'Unidad';
+                                ?>
+                                <?php if ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
                                         <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</a>
                                         <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Rechazar esta solicitud de transferencia?')">Rechazar</a>
-                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="editarCantidadTransf(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>)">Editar cantidad</button>
+                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>')">Editar cantidad</button>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
-                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="editarCantidadTransf(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>)">Editar cantidad</button>
+                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>')">Editar cantidad</button>
                                         <a class="btn-accion btn-enviar" href="transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Confirmar que ya enviaste los productos?')">Marcar enviado</a>
+                                    <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
+                                        <a class="btn-accion btn-aceptar-mod"
+                                           href="transferencias.php?accion=aceptar_modificacion&id=<?= $t['transferencias_id'] ?>"
+                                           onclick="return confirm('Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
+                                            ✓ Aceptar cantidad
+                                        </a>
+                                        <a class="btn-accion btn-rechazar-mod"
+                                           href="transferencias.php?accion=rechazar_modificacion&id=<?= $t['transferencias_id'] ?>"
+                                           onclick="return confirm('Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
+                                            ✕ Rechazar cambio
+                                        </a>
+                                    <?php elseif ($t['estado'] === 'Modificada' && $esMiOrigen): ?>
+                                        <span style="color:#283593;font-size:11px;font-style:italic;">Esperando confirmacion del destino</span>
                                     <?php elseif ($t['estado'] === 'En tránsito' && !$esMiOrigen): ?>
                                         <a class="btn-accion btn-recibir" href="transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</a>
                                     <?php else: ?>
@@ -545,7 +608,8 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 <script>
 const prodsBySucursal = <?= json_encode($prodsBySucursal) ?>;
 let itemsTransf = [];
-let prodSelId = null;
+let prodSelId    = null;
+let prodSelTipo  = 'Unidad'; // 'Suelto' o 'Unidad'
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
@@ -585,47 +649,74 @@ function buscarProducto() {
 function renderSug(prods) {
     const div = document.getElementById('sugerencias');
     if (!prods.length) { hideSug(); return; }
-    div.innerHTML = prods.map(p => `
-        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${esc(p.nombre)}', '${esc(p.codigo)}', ${p.stock}, ${p.mi_stock}, ${p.bajo})">
+    div.innerHTML = prods.map(p => {
+        const esSuelto = p.tipo_venta === 'Suelto';
+        const stockFmt = esSuelto ? parseFloat(p.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(p.stock);
+        const miStockFmt = esSuelto ? parseFloat(p.mi_stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(p.mi_stock);
+        return `
+        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${esc(p.nombre)}', '${esc(p.codigo)}', ${p.stock}, ${p.mi_stock}, ${p.bajo}, '${p.tipo_venta||'Unidad'}')">
             <div>
                 <span class="sug-nombre">${esc(p.nombre)}</span>
                 <span class="sug-codigo">${esc(p.codigo)}</span>
                 ${p.bajo ? '<span class="badge-bajo">Stock bajo</span>' : ''}
+                ${esSuelto ? '<span style="font-size:10px;color:#888;margin-left:4px;">granel</span>' : ''}
             </div>
             <div class="sug-stocks">
-                <span class="sug-stock-row sug-stock-orig">Mi Sucursal: ${parseFloat(p.stock).toFixed(0)}</span>
-                <span class="sug-stock-row sug-stock-dest">Sucursal Externa: ${parseFloat(p.mi_stock).toFixed(0)}</span>
+                <span class="sug-stock-row sug-stock-orig">Mi Sucursal: ${stockFmt}</span>
+                <span class="sug-stock-row sug-stock-dest">Sucursal Externa: ${miStockFmt}</span>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
     div.style.display = 'block';
 }
 
 function hideSug() { document.getElementById('sugerencias').style.display = 'none'; }
 
-function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo) {
-    prodSelId = id;
+function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta) {
+    prodSelId   = id;
+    prodSelTipo = tipoVenta || 'Unidad';
+    const esSuelto = prodSelTipo === 'Suelto';
+
     document.getElementById('busquedaProd').value = nombre;
     hideSug();
     document.getElementById('prodSelNombre').textContent = nombre + ' (' + codigo + ')';
+
+    const stockFmt   = esSuelto ? parseFloat(stock).toFixed(3).replace(/\.?0+$/,'')    : Math.floor(stock);
+    const miStockFmt = esSuelto ? parseFloat(mi_stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(mi_stock);
     document.getElementById('prodSelStock').innerHTML =
-        'Origen: <strong style="color:#1565c0;">' + parseFloat(stock).toFixed(0) + '</strong>' +
-        ' &nbsp;|&nbsp; Destino (tu sucursal): <strong style="color:#2e7d32;">' + parseFloat(mi_stock).toFixed(0) + '</strong>' +
-        (bajo ? ' <span style="color:#c0392b;font-size:11px;">(stock bajo)</span>' : '');
+        'Origen: <strong style="color:#1565c0;">' + stockFmt + '</strong>' +
+        ' &nbsp;|&nbsp; Destino (tu sucursal): <strong style="color:#2e7d32;">' + miStockFmt + '</strong>' +
+        (bajo ? ' <span style="color:#c0392b;font-size:11px;">(stock bajo)</span>' : '') +
+        (esSuelto ? ' <span style="font-size:11px;color:#888;">&nbsp;— granel (acepta decimales)</span>' : '');
+
+    const inpCant = document.getElementById('cantProd');
+    inpCant.step        = esSuelto ? '0.001' : '1';
+    inpCant.min         = esSuelto ? '0.001' : '1';
+    inpCant.inputMode   = esSuelto ? 'decimal' : 'numeric';
+    inpCant.placeholder = esSuelto ? 'Cantidad (ej. 2.5)' : 'Cantidad (número entero)';
+    inpCant.value = '';
+
     document.getElementById('prodSeleccionado').style.display = 'block';
-    document.getElementById('cantProd').value = '';
-    document.getElementById('cantProd').focus();
+    inpCant.focus();
 }
 
 function agregarItem() {
     if (!prodSelId) { alert('Selecciona un producto primero.'); return; }
-    const cant = parseFloat(document.getElementById('cantProd').value) || 0;
+    const esSuelto = prodSelTipo === 'Suelto';
+    let cant = parseFloat(document.getElementById('cantProd').value) || 0;
     if (cant <= 0) { alert('Ingresa una cantidad mayor a 0.'); return; }
+    if (!esSuelto) {
+        if (!Number.isInteger(cant) || cant !== Math.floor(cant)) {
+            alert('Este producto no es granel. La cantidad debe ser un número entero (sin decimales).');
+            return;
+        }
+        cant = Math.floor(cant);
+    }
 
     const nombre = document.getElementById('prodSelNombre').textContent;
     const existe = itemsTransf.find(i => i.id === prodSelId);
-    if (existe) { existe.cantidad = cant; }
-    else { itemsTransf.push({ id: prodSelId, nombre, cantidad: cant }); }
+    if (existe) { existe.cantidad = cant; existe.tipo_venta = prodSelTipo; }
+    else { itemsTransf.push({ id: prodSelId, nombre, cantidad: cant, tipo_venta: prodSelTipo }); }
 
     prodSelId = null;
     document.getElementById('busquedaProd').value = '';
@@ -670,15 +761,50 @@ document.getElementById('busquedaProd').addEventListener('blur', function() {
 });
 
 // ── Editar cantidad transferencia ────────────────────────────────────────────
-function editarCantidadTransf(id, cantActual) {
-    const nueva = prompt('Ingresa la nueva cantidad a transferir (actual: ' + cantActual + '):', cantActual);
-    if (nueva === null) return;
-    const val = parseFloat(nueva);
+let _modalEditTipoVenta = 'Unidad';
+
+function abrirModalEditarCantidad(id, cantActual, tipoVenta) {
+    _modalEditTipoVenta = tipoVenta || 'Unidad';
+    const esSuelto = _modalEditTipoVenta === 'Suelto';
+
+    const cantFmt = esSuelto
+        ? parseFloat(cantActual).toFixed(3).replace(/\.?0+$/,'')
+        : Math.floor(cantActual);
+    document.getElementById('modalEditCantidadActual').textContent = cantFmt;
+
+    const inp = document.getElementById('inputNuevaCantidadModal');
+    inp.step        = esSuelto ? '0.001' : '1';
+    inp.min         = esSuelto ? '0.001' : '1';
+    inp.inputMode   = esSuelto ? 'decimal' : 'numeric';
+    inp.placeholder = esSuelto ? 'Ej. 2.5' : 'Ej. 5';
+    inp.value       = '';
+
+    // Mostrar/ocultar aviso granel
+    document.getElementById('modalEditGranelHint').style.display = esSuelto ? 'block' : 'none';
+
+    document.getElementById('inputEditarTransfId').value     = id;
+    document.getElementById('inputEditarNuevaCantidad').value = '';
+    document.getElementById('modalEditCantidad').style.display = 'flex';
+    setTimeout(() => inp.focus(), 80);
+}
+
+function cerrarModalEditarCantidad() {
+    document.getElementById('modalEditCantidad').style.display = 'none';
+}
+
+function confirmarEditarCantidad() {
+    const esSuelto = _modalEditTipoVenta === 'Suelto';
+    let val = parseFloat(document.getElementById('inputNuevaCantidadModal').value);
     if (!val || val <= 0) { alert('Ingresa una cantidad válida mayor a 0.'); return; }
-    const form = document.getElementById('formEditarCantidadTransf');
-    document.getElementById('inputEditarTransfId').value       = id;
-    document.getElementById('inputEditarNuevaCantidad').value  = val;
-    form.submit();
+    if (!esSuelto) {
+        if (val !== Math.floor(val)) {
+            alert('Este producto no es granel. La cantidad debe ser un número entero (sin decimales).');
+            return;
+        }
+        val = Math.floor(val);
+    }
+    document.getElementById('inputEditarNuevaCantidad').value = val;
+    document.getElementById('formEditarCantidadTransf').submit();
 }
 
 // ── Modal ticket transferencia ──────────────────────────────────────────────
@@ -765,7 +891,10 @@ function imprimirTicket() {
 }
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') cerrarModalTicket();
+    if (e.key === 'Escape') {
+        cerrarModalTicket();
+        cerrarModalEditarCantidad();
+    }
 });
 </script>
 
@@ -775,6 +904,49 @@ document.addEventListener('keydown', function(e) {
     <input type="hidden" id="inputEditarTransfId" name="id">
     <input type="hidden" id="inputEditarNuevaCantidad" name="nueva_cantidad">
 </form>
+
+<!-- Modal editar cantidad — event listener aquí porque el script principal corre antes del HTML -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('modalEditCantidad').addEventListener('click', function(e) {
+        if (e.target === this) cerrarModalEditarCantidad();
+    });
+});
+</script>
+<div id="modalEditCantidad" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:8px;padding:22px;width:320px;box-shadow:0 8px 32px rgba(0,0,0,.3);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <span style="font-size:14px;font-weight:700;color:#333;">Modificar cantidad a enviar</span>
+            <button onclick="cerrarModalEditarCantidad()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;line-height:1;">×</button>
+        </div>
+        <div style="font-size:13px;color:#555;margin-bottom:14px;">
+            Cantidad actual: <strong id="modalEditCantidadActual" style="color:#1565c0;"></strong>
+        </div>
+        <div style="font-size:12px;color:#888;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:14px;">
+            ⚠ Al guardar, la transferencia pasará a estado <strong>Modificada</strong> y la sucursal destino deberá aceptar o rechazar el cambio.
+        </div>
+        <div id="modalEditGranelHint" style="display:none;font-size:12px;color:#555;background:#e8f5e9;border:1px solid #c8e6c9;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
+            🌾 Producto a granel — acepta decimales (ej. 2.5 kg)
+        </div>
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:12px;color:#555;font-weight:600;margin-bottom:6px;">Nueva cantidad *</label>
+            <input type="number" id="inputNuevaCantidadModal" step="1" min="1"
+                   placeholder="Ej. 5"
+                   style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;"
+                   onkeydown="if(event.key==='Enter') confirmarEditarCantidad()">
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button onclick="confirmarEditarCantidad()"
+                    style="flex:1;background:#14ace7;color:#fff;border:none;padding:10px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
+                Guardar cambio
+            </button>
+            <button onclick="cerrarModalEditarCantidad()"
+                    style="background:#f0f0f0;color:#555;border:none;padding:10px 16px;border-radius:6px;font-size:13px;cursor:pointer;">
+                Cancelar
+            </button>
+        </div>
+    </div>
+</div>
 
 <!-- Modal ticket -->
 <div id="modalTicket" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;">

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -17,7 +17,7 @@ if (isset($_GET['exportar'])) {
     $stmt = $pdo->prepare("
         SELECT p.codigo, p.nombre_producto, c.nombre as categoria, p.precio_compra,
                p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo,
-               p.stock_maximo, p.tipo_venta, p.descripcion
+               p.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida
         FROM productos p
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
         WHERE p.sucursal_id = ? AND p.activo = 1
@@ -31,9 +31,9 @@ if (isset($_GET['exportar'])) {
     $sheet->setTitle('Productos');
 
     // Encabezados
-    $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción'];
+    $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
     $sheet->fromArray($headers, null, 'A1');
-    $sheet->getStyle('A1:K1')->getFont()->setBold(true);
+    $sheet->getStyle('A1:L1')->getFont()->setBold(true);
 
     // Datos
     $rowIndex = 2;
@@ -50,12 +50,13 @@ if (isset($_GET['exportar'])) {
             $p['stock_maximo'],
             $p['tipo_venta'],
             $p['descripcion'] ?? '',
+            $p['unidad_medida'] ?? '',
         ], null, 'A' . $rowIndex);
         $rowIndex++;
     }
 
     // Auto ancho
-    foreach (range('A','K') as $col) {
+    foreach (range('A','L') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
 
@@ -100,6 +101,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $stock_maximo   = floatval($row[8] ?? 0);
                 $tipo_venta     = trim($row[9] ?? 'Unidad');
                 $descripcion    = trim($row[10] ?? '');
+                $unidad_medida  = trim($row[11] ?? '');
+
+                // Auto-crear unidad de medida si no existe en la sucursal
+                if ($unidad_medida !== '') {
+                    $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
+                        ->execute([$unidad_medida, $_SESSION['sucursal_id']]);
+                }
 
                 // Buscar categoría por nombre
                 $categoria_id = null;
@@ -116,13 +124,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
                 if ($check->fetch()) {
                     // Actualizar
-                    $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
-                        ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                    $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE codigo=? AND sucursal_id=?")
+                        ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $unidad_medida ?: null, $codigo, $_SESSION['sucursal_id']]);
                     $omitidos++;
                 } else {
                     // Insertar
-                    $pdo->prepare("INSERT INTO productos (sucursal_id, categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, tipo_venta, activo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)")
-                        ->execute([$_SESSION['sucursal_id'], $categoria_id, $codigo, $nombre_producto, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta]);
+                    $pdo->prepare("INSERT INTO productos (sucursal_id, categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, tipo_venta, unidad_medida, activo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)")
+                        ->execute([$_SESSION['sucursal_id'], $categoria_id, $codigo, $nombre_producto, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta, $unidad_medida ?: null]);
                     $importados++;
                 }
             }
@@ -141,13 +149,13 @@ if (isset($_GET['plantilla'])) {
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Plantilla');
-    $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción'];
+    $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
     $sheet->fromArray($headers, null, 'A1');
-    $sheet->getStyle('A1:K1')->getFont()->setBold(true);
+    $sheet->getStyle('A1:L1')->getFont()->setBold(true);
     // Fila de ejemplo
-    $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional'];
+    $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional','pieza'];
     $sheet->fromArray($ejemplo, null, 'A2');
-    foreach (range('A','K') as $col) {
+    foreach (range('A','L') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -348,7 +356,8 @@ $totalStockBajo = $stmtBajo->fetchColumn();
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item active" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -362,6 +371,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>

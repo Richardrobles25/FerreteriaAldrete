@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $direccion             = trim($_POST['direccion']             ?? '');
     $telefono              = trim($_POST['telefono']              ?? '');
     $datos_ticket          = trim($_POST['datos_ticket']          ?? '');
-    $logo_url              = trim($_POST['logo_url']              ?? '');
+    $comision_terminal_pct = floatval($_POST['comision_terminal_pct'] ?? 0);
     $banco                 = trim($_POST['banco']                 ?? '');
     $titular_cuenta        = trim($_POST['titular_cuenta']        ?? '');
     $numero_cuenta         = trim($_POST['numero_cuenta']         ?? '');
@@ -38,13 +38,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         $campos = [
-            'nombre'              => $nombre,
-            'rfc'                 => $rfc,
-            'direccion'           => $direccion,
-            'telefono'            => $telefono,
-            'datos_ticket'        => $datos_ticket,
-            'logo_url'            => $logo_url ?: null,
-            'banco'               => $banco ?: null,
+            'nombre'                => $nombre,
+            'rfc'                   => $rfc,
+            'direccion'             => $direccion,
+            'telefono'              => $telefono,
+            'datos_ticket'          => $datos_ticket,
+            'comision_terminal_pct' => $comision_terminal_pct,
+            'banco'                 => $banco ?: null,
             'titular_cuenta'      => $titular_cuenta ?: null,
             'numero_cuenta'       => $numero_cuenta ?: null,
             'clabe_interbancaria' => $clabe_interbancaria ?: null,
@@ -184,24 +184,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="hint">Este texto aparece en todos los tickets de venta de esta sucursal.</div>
                 </div>
 
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Logo/Imagen para ticket</label>
-                        <input type="text" name="logo_url"
-                            id="inputLogoUrl"
-                            value="<?= htmlspecialchars($_POST['logo_url'] ?? $editando['logo_url'] ?? '') ?>"
-                            placeholder="https://ejemplo.com/logo.png">
-                        <div class="hint">URL completa (JPG, PNG). Recomendado: 200x100px</div>
-                    </div>
-                    <div class="form-group" style="display:flex;flex-direction:column;justify-content:flex-end;">
-                        <button type="button" class="btn-guardar" onclick="abrirPreviewTicket()" style="background:#9c27b0;margin-bottom:0;">👁️ Vista previa</button>
-                    </div>
+                <div class="form-group" style="display:flex;flex-direction:column;justify-content:flex-end;">
+                    <button type="button" class="btn-guardar" onclick="abrirPreviewTicket()" style="background:#9c27b0;margin-bottom:0;">👁️ Vista previa del ticket</button>
                 </div>
 
-                <!-- Sección: Datos bancarios para transferencias -->
+                <!-- Sección: Terminal y transferencias -->
                 <div style="border-top:1px solid #eee;margin:20px 0 18px;padding-top:18px;">
-                    <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px;">Datos bancarios</div>
-                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">Se muestran al cliente cuando paga por transferencia bancaria.</div>
+                    <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px;">Terminal y transferencias</div>
+                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">Configura la comisión de terminal y los datos bancarios para transferencias.</div>
+
+                    <div class="form-group">
+                        <label>% Comisión de terminal</label>
+                        <input type="number" name="comision_terminal_pct" step="0.01" min="0" max="100"
+                            value="<?= htmlspecialchars($_POST['comision_terminal_pct'] ?? $editando['comision_terminal_pct'] ?? '0') ?>"
+                            placeholder="Ej. 3.5">
+                        <div class="hint">Se suma automáticamente cuando el cliente paga con terminal en ventas y abonos.</div>
+                    </div>
 
                     <div class="form-row">
                         <div class="form-group">
@@ -291,7 +289,6 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 function abrirPreviewTicket() {
     const nombre = document.querySelector('input[name="nombre"]').value || 'FERRETERIA ALDRETE';
     const datosTicket = document.querySelector('textarea[name="datos_ticket"]').value || '';
-    const logoUrl = document.querySelector('input[name="logo_url"]').value || '';
     const banco = document.querySelector('input[name="banco"]').value || '';
     const titular = document.querySelector('input[name="titular_cuenta"]').value || '';
     const cuenta = document.querySelector('input[name="numero_cuenta"]').value || '';
@@ -299,9 +296,6 @@ function abrirPreviewTicket() {
 
     const html = `
 <div style="font-family:'Courier New',monospace;width:72mm;font-size:10px;line-height:1.3;white-space:pre-wrap;">
-${logoUrl ? `<div style="text-align:center;margin-bottom:8px;">
-  <img src="${logoUrl}" alt="Logo" style="max-width:60mm;max-height:35mm;display:block;margin:0 auto;border-radius:2px;">
-</div>` : ''}
 <div style="text-align:center;font-weight:bold;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;">
 ${nombre.toUpperCase()}
 ${datosTicket.trim() ? '\n' + datosTicket : ''}

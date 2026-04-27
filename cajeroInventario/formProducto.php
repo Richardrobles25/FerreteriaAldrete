@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -80,6 +80,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores)) {
+        // Auto-insertar unidad en la tabla si no existe aún
+        if ($unidad_medida !== '') {
+            $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
+                ->execute([$unidad_medida, intval($_SESSION['sucursal_id'])]);
+        }
+
         if ($producto_id) {
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
@@ -270,7 +276,8 @@ if ($editando && $editando['categoria_id']) {
 
         <div class="menu-label">Inventario</div>
         <a class="menu-item active" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>\n        <a class="menu-item" href="unidades.php">Unidades de medida</a>
+        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="unidades.php">Unidades de medida</a>
         <a class="menu-item" href="entradas.php">Entradas</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
         <a class="menu-item" href="historial.php">Movimientos</a>
@@ -284,6 +291,7 @@ if ($editando && $editando['categoria_id']) {
         <div class="menu-label">Más</div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
+        <a class="menu-item" href="promociones.php">Promociones</a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>

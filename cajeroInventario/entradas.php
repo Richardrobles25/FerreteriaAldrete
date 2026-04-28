@@ -374,6 +374,7 @@ function seleccionarProducto(id) {
     document.getElementById('productoIdHidden').value = id;
     document.getElementById('buscarProducto').value   = '';
     document.getElementById('dropProductos').style.display = 'none';
+    document.getElementById('buscarProducto').style.display = 'none';
     document.getElementById('productoChipNombre').textContent = p.nombre_producto;
     document.getElementById('productoChip').style.display    = 'flex';
     mostrarStockInfo(parseFloat(p.stock_actual), parseFloat(p.stock_minimo), parseFloat(p.stock_maximo));
@@ -394,8 +395,10 @@ function limpiarProducto() {
     document.getElementById('productoChip').style.display = 'none';
     document.getElementById('stockInfo').style.display    = 'none';
     document.getElementById('buscarProducto').value = '';
+    document.getElementById('buscarProducto').style.display = '';
     document.getElementById('grupoProveedor').style.display = 'none';
     limpiarProveedor();
+    document.getElementById('buscarProducto').focus();
 }
 
 function mostrarStockInfo(stock, minimo, maximo) {

@@ -73,6 +73,13 @@ if (isset($_GET['exportar'])) {
 $erroresImport = [];
 $exitoImport   = false;
 
+// Bloquear acciones de escritura si se está consultando otra sucursal
+$sucursalPostConsulta = intval($_GET['sucursal_consulta'] ?? $_SESSION['sucursal_id']);
+if ($sucursalPostConsulta !== intval($_SESSION['sucursal_id']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Location: productos.php?sucursal_consulta=' . $sucursalPostConsulta);
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
     $archivo = $_FILES['archivo_excel'];
     if ($archivo['error'] === 0) {
@@ -226,6 +233,9 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
 $stmtBajo = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
 $stmtBajo->execute([$sucursal_consulta]);
 $totalStockBajo = $stmtBajo->fetchColumn();
+
+// Modo solo lectura: cuando se consulta una sucursal diferente a la del usuario
+$soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -399,12 +409,25 @@ $totalStockBajo = $stmtBajo->fetchColumn();
         <div class="content-header">
             <h1>Inventario de productos</h1>
             <div class="acciones-header">
+                <?php if (!$soloLectura): ?>
                 <a class="btn-plantilla" href="productos.php?plantilla=1">Descargar plantilla</a>
                 <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
                 <a class="btn-excel-export" href="productos.php?exportar=1">Exportar Excel</a>
                 <a class="btn-agregar" href="formProducto.php">+ Agregar producto</a>
+                <?php endif; ?>
             </div>
         </div>
+
+        <?php if ($soloLectura): ?>
+        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:#795548;">
+            <span style="font-size:16px;">👁</span>
+            <span>Estás viendo el inventario de <strong><?php
+                foreach ($sucursalesConsulta as $s) {
+                    if (intval($s['sucursal_id']) === $sucursal_consulta) { echo htmlspecialchars($s['nombre']); break; }
+                }
+            ?></strong>. Solo lectura — no puedes editar, agregar ni eliminar productos de esta sucursal.</span>
+        </div>
+        <?php endif; ?>
 
         <!-- Panel de importación -->
         <div class="import-card" id="importCard">
@@ -490,7 +513,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                         <th>Stock</th>
                         <th>P. Venta</th>
                         <th>P. Mayoreo</th>
-                        <th>Acciones</th>
+                        <?php if (!$soloLectura): ?><th>Acciones</th><?php endif; ?>
                     </tr>
                 </thead>
                 <tbody id="tablaFiltrable">
@@ -517,6 +540,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                         </td>
                         <td>$<?= number_format($p['precio_venta'],2) ?></td>
                         <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
+                        <?php if (!$soloLectura): ?>
                         <td>
                             <div class="acciones">
                                 <a class="btn-accion btn-editar" href="formProducto.php?id=<?= $p['producto_id'] ?>">Editar</a>
@@ -527,6 +551,7 @@ $totalStockBajo = $stmtBajo->fetchColumn();
                                     onclick="confirmarEliminacion(parseInt(this.dataset.id), this.dataset.nombre)">Eliminar</button>
                             </div>
                         </td>
+                        <?php endif; ?>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>

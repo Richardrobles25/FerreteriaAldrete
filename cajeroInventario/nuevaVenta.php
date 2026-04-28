@@ -1305,7 +1305,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
         const cls   = p.stock_actual > 0 ? 'stock-ok' : 'stock-bajo';
         const label = p.stock_actual > 0 ? `Stock: ${parseFloat(p.stock_actual).toFixed(p.tipo_venta==='Suelto'?3:0)}` : 'Sin stock';
         html += `<div class="resultado-item"
-            onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${esc(p.unidad_medida||'')}')">
+            onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${esc(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)})">
             <div>
                 <div class="resultado-nombre">${esc(p.nombre_producto)}</div>
                 <div class="resultado-codigo">${esc(p.codigo)}</div>
@@ -1323,7 +1323,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
 }
 
 // ── Agregar producto ─────────────────────────────────────────────────────────
-function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad) {
+function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, precioMayoreo) {
     id    = parseInt(id);
     stock = parseFloat(stock);
     if (stock <= 0) { alert('Sin stock disponible.'); return; }
@@ -1347,6 +1347,8 @@ function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad) 
             promo_id:       promo ? promo.promo_id : null,
             promo_desc:     promo ? (promo.descripcion || '') : '',
             precio_compra:  parseFloat(precioCompra||0),
+            precio_mayoreo: parseFloat(precioMayoreo||0),
+            es_mayoreo:     false,
             ajuste_activo:  false,
             precio_ajuste:  null,
             nota_ajuste:    '',
@@ -1444,11 +1446,12 @@ function renderCarrito() {
         const qtyMode   = esSuelto ? 'decimal' : 'numeric';
         const stockDisp = esSuelto ? parseFloat(item.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(item.stock);
         const cantDisp  = esSuelto ? parseFloat(item.cantidad).toFixed(3).replace(/\.?0+$/,'') : item.cantidad;
-        const tieneAjuste = item.ajuste_activo === true && item.precio_ajuste !== null;
-        const tienePromo  = item.tiene_promo === true;
-        const precioFinal = tieneAjuste ? item.precio_ajuste : item.precio;
-        // Para mostrar el precio base en la celda de precio (lo que se cobró antes de ajuste por daño)
-        const precioBase  = item.precio; // ya es el precio promo si aplica
+        const tieneAjuste  = item.ajuste_activo === true && item.precio_ajuste !== null;
+        const tienePromo   = item.tiene_promo === true && !item.es_mayoreo;
+        const tieneMayoreo = item.es_mayoreo === true;
+        const precioFinal  = tieneAjuste ? item.precio_ajuste : item.precio;
+        const precioBase   = item.precio;
+        const mayoreoDisp  = item.precio_mayoreo > 0;
 
         return `<tr>
             <td>
@@ -1459,6 +1462,11 @@ function renderCarrito() {
                     const desc       = item.promo_desc ? ` · ${item.promo_desc}` : '';
                     return `<div style="font-size:10px;color:#2e7d32;margin-top:2px;">🏷 Promoción${desc} &nbsp;·&nbsp; -${pctPromo}% (-$${ahorroUnit}/u)</div>`;
                 })() : ''}
+                ${tieneMayoreo ? (() => {
+                    const pctMay     = ((1 - item.precio_mayoreo / item.precio_normal) * 100).toFixed(1);
+                    const ahorroUnit = (item.precio_normal - item.precio_mayoreo).toFixed(2);
+                    return `<div style="font-size:10px;color:#6a1b9a;margin-top:2px;">📦 Precio mayoreo &nbsp;·&nbsp; -${pctMay}% (-$${ahorroUnit}/u)</div>`;
+                })() : ''}
                 ${tieneAjuste ? (() => {
                     const pctDesc   = ((1 - item.precio_ajuste / precioBase) * 100).toFixed(1);
                     const montoDesc = (precioBase - item.precio_ajuste).toFixed(2);
@@ -1467,8 +1475,13 @@ function renderCarrito() {
             </td>
             <td>
                 ${tienePromo ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;display:block;">$${parseFloat(item.precio_normal).toFixed(2)}</span>` : ''}
-                <span style="${tieneAjuste?'text-decoration:line-through;color:#aaa;font-size:11px;display:block;':''}${tienePromo&&!tieneAjuste?'color:#2e7d32;font-weight:700;':''}">$${parseFloat(precioBase).toFixed(2)}</span>
+                ${tieneMayoreo ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;display:block;">$${parseFloat(item.precio_normal).toFixed(2)}</span>` : ''}
+                <span style="${tieneAjuste?'text-decoration:line-through;color:#aaa;font-size:11px;display:block;':''}${(tienePromo||tieneMayoreo)&&!tieneAjuste?'color:#6a1b9a;font-weight:700;':''}">$${parseFloat(precioBase).toFixed(2)}</span>
                 ${tieneAjuste ? `<span style="color:#c0392b;font-weight:700;">$${parseFloat(precioFinal).toFixed(2)}</span>` : ''}
+                ${mayoreoDisp ? `<button type="button" onclick="toggleMayoreo(${i})"
+                    style="margin-top:4px;display:block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;cursor:pointer;border:1px solid ${tieneMayoreo?'#6a1b9a':'#bbb'};background:${tieneMayoreo?'#f3e5f5':'#f5f5f5'};color:${tieneMayoreo?'#6a1b9a':'#888'};">
+                    📦 ${tieneMayoreo ? 'Mayoreo ✓' : 'Mayoreo'}
+                </button>` : ''}
             </td>
             <td>
                 <div style="display:flex;align-items:center;gap:5px;">
@@ -1699,6 +1712,27 @@ function eliminarItem(i) {
     if (document.getElementById('chkAjusteDano').checked) actualizarSelectProductos();
 }
 
+function toggleMayoreo(i) {
+    const item = carrito[i];
+    if (!item.precio_mayoreo || item.precio_mayoreo <= 0) return;
+
+    item.es_mayoreo = !item.es_mayoreo;
+
+    if (item.es_mayoreo) {
+        // Activar precio mayoreo: sobreescribe promo si la hubiera
+        item.precio      = item.precio_mayoreo;
+        item.tiene_promo = false; // mayoreo tiene prioridad
+    } else {
+        // Restaurar precio original (promo si existe, sino precio_venta)
+        const promo      = promoByProdId[item.producto_id] || null;
+        item.precio      = promo ? promo.precio_promo : item.precio_normal;
+        item.tiene_promo = !!promo;
+    }
+
+    renderCarrito();
+    recalcularTodo();
+}
+
 function limpiarVenta() {
     if (carrito.length > 0 && !confirm('¿Cancelar la venta?')) return;
     carrito = []; clienteActual = null; metodoPago = null; idxAjusteActual = -1;
@@ -1868,7 +1902,11 @@ function seleccionarMetodo(metodo, btn) {
     if (metodo==='Efectivo') document.getElementById('camposEfectivo').classList.add('visible');
     if (metodo==='Terminal') document.getElementById('camposTerminal').classList.add('visible');
     if (metodo==='Transferencia') document.getElementById('camposTransferencia').classList.add('visible');
-    if (metodo==='Mixto')    document.getElementById('camposMixto').classList.add('visible');
+    if (metodo==='Mixto') {
+        document.getElementById('camposMixto').classList.add('visible');
+        document.getElementById('mixtoEfectivo').value = '';
+        document.getElementById('mixtoTerminal').value = '0.00';
+    }
     recalcularTodo(); verificarCobrar();
 }
 
@@ -1877,10 +1915,11 @@ function recalcularTodo() {
     // Subtotal bruto: precio de venta normal (sin promos) × cantidades
     const subtotalBruto = carrito.reduce((a,i) => a + (i.cantidad * (i.precio_normal ?? i.precio)), 0);
 
-    // Ahorro por promociones
+    // Ahorro por promociones o precio mayoreo
     const ahorroPromos = carrito.reduce((a,i) => {
-        if (i.tiene_promo && i.precio_normal > i.precio) {
-            return a + (i.cantidad * (i.precio_normal - i.precio));
+        const precioRef = i.precio_normal ?? i.precio;
+        if ((i.tiene_promo || i.es_mayoreo) && precioRef > i.precio) {
+            return a + (i.cantidad * (precioRef - i.precio));
         }
         return a;
     }, 0);
@@ -1945,6 +1984,11 @@ function recalcularTodo() {
         document.getElementById('inputCambio').value = '0.00';
         document.getElementById('resCambio').textContent = '$0.00';
     }
+    // Mixto: recalcular el split efectivo/terminal con los nuevos valores base
+    if (metodoPago === 'Mixto') {
+        calcularMixto();
+        return; // calcularMixto ya llama verificarCobrar
+    }
     verificarCobrar();
 }
 
@@ -1963,28 +2007,29 @@ function calcularMixto() {
     const porc = parseFloat(document.getElementById('mixtoComision').value) || 0;
     const sub  = parseFloat(document.getElementById('inputSubtotal').value) || 0;
     const desc = parseFloat(document.getElementById('inputDescuento').value) || 0;
-    const base = sub - desc; // monto antes de comisión
+    const base = sub - desc; // monto base sin comisión
 
     let com = 0;
-    let termDisplay = 0; // lo que se cobra en tarjeta (ya incluye comisión)
+    let termDisplay = 0;
     let total = base;
 
-    if (ef < base - 0.005) {
+    if (ef > 0 && ef < base - 0.005) {
         // hay parte que va a terminal
         const resto = base - ef;
         com = resto * (porc / 100);
-        termDisplay = resto + com;  // cargo total en tarjeta
+        termDisplay = resto + com;   // cargo real en tarjeta (incluye comisión)
         total = base + com;
     }
-    // si ef >= base, todo se paga en efectivo, sin comisión de terminal
+    // ef = 0  → estado neutro: sin comisión, terminal en 0, Cobrar deshabilitado
+    // ef >= base → todo en efectivo, sin comisión de terminal
 
-    document.getElementById('mixtoTerminal').value        = termDisplay > 0 ? termDisplay.toFixed(2) : '0.00';
-    document.getElementById('resComision').textContent    = '$' + com.toFixed(2);
-    document.getElementById('resTotal').textContent       = '$' + total.toFixed(2);
+    document.getElementById('mixtoTerminal').value         = termDisplay.toFixed(2);
+    document.getElementById('resComision').textContent     = '$' + com.toFixed(2);
+    document.getElementById('resTotal').textContent        = '$' + total.toFixed(2);
     document.getElementById('inputComisionTerminal').value = com.toFixed(2);
-    document.getElementById('inputMontoEfectivo').value   = ef.toFixed(2);
-    document.getElementById('inputMontoTerminal').value   = termDisplay.toFixed(2);
-    document.getElementById('inputTotal').value           = total.toFixed(2);
+    document.getElementById('inputMontoEfectivo').value    = ef.toFixed(2);
+    document.getElementById('inputMontoTerminal').value    = termDisplay.toFixed(2);
+    document.getElementById('inputTotal').value            = total.toFixed(2);
     verificarCobrar();
 }
 

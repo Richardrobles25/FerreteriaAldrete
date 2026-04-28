@@ -626,8 +626,18 @@ try {
 /* ── Ticket térmico 80mm ── */
 @page { size: 80mm auto; margin: 0; }
 @media print {
+    html, body {
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+    }
     body > * { display: none !important; }
-    #ticketImprimir { display: block !important; }
+    #ticketImprimir {
+        display: block !important;
+        page-break-after: avoid;
+        break-after: avoid;
+    }
 }
 #ticketImprimir {
     display: none;
@@ -635,7 +645,7 @@ try {
     font-size: 11px;
     width: 72mm;
     margin: 0;
-    padding: 3mm 4mm;
+    padding: 3mm 4mm 2mm;
 }
 #ticketImprimir .t-centro { text-align: center; }
 #ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
@@ -1144,7 +1154,20 @@ function cerrarTicketVenta() {
 
 function imprimirTicketPend() {
     cerrarTicketVenta();
-    setTimeout(() => window.print(), 150);
+    requestAnimationFrame(() => {
+        const ticket = document.getElementById('ticketImprimir');
+        ticket.style.display = 'block';
+        const altoMm = Math.ceil(ticket.scrollHeight * 0.2646) + 4;
+        ticket.style.display = '';
+        let estilo = document.getElementById('__ticketPageStyle');
+        if (!estilo) {
+            estilo = document.createElement('style');
+            estilo.id = '__ticketPageStyle';
+            document.head.appendChild(estilo);
+        }
+        estilo.textContent = `@page { size: 80mm ${altoMm}mm; margin: 0; }`;
+        setTimeout(() => window.print(), 150);
+    });
 }
 
 </script>

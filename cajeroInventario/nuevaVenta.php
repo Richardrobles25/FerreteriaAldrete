@@ -587,20 +587,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
     /* ── Ticket de impresión ── */
     @page {
-        size: 80mm auto;   /* POS-8360: rollo 80mm, largo automático */
-        margin: 0;         /* Sin márgenes de página — la impresora ya tiene los suyos */
+        size: 80mm auto;
+        margin: 0;
     }
     @media print {
+        html, body {
+            height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+        }
         body > * { display: none !important; }
-        #ticketImprimir { display: block !important; }
+        #ticketImprimir {
+            display: block !important;
+            page-break-after: avoid;
+            break-after: avoid;
+        }
     }
     #ticketImprimir {
         display: none;
         font-family: 'Courier New', monospace;
         font-size: 11px;
-        width: 72mm;       /* 80mm - 4mm margen físico por lado */
+        width: 72mm;
         margin: 0;
-        padding: 3mm 4mm;
+        padding: 3mm 4mm 2mm;
     }
     #ticketImprimir .t-centro { text-align: center; }
     #ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
@@ -911,8 +921,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                             <input type="number" id="mixtoEfectivo" placeholder="0.00" step="0.01" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                         <div class="form-group-sm">
-                            <label>Monto terminal</label>
-                            <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" class="js-zero-default" oninput="calcularMixto()">
+                            <label>Cargo a terminal <span style="font-size:11px;color:#888;font-weight:400;">(resto + comisión)</span></label>
+                            <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" readonly
+                                style="background:#f5f5f5;color:#555;cursor:not-allowed;">
                         </div>
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
@@ -1948,25 +1959,43 @@ function calcularCambio() {
 }
 
 function calcularMixto() {
-    const ef   = parseFloat(document.getElementById('mixtoEfectivo').value)||0;
-    const term = parseFloat(document.getElementById('mixtoTerminal').value)||0;
-    const porc = parseFloat(document.getElementById('mixtoComision').value)||0;
-    const com  = term*(porc/100);
-    const sub  = parseFloat(document.getElementById('inputSubtotal').value)||0;
-    const desc = parseFloat(document.getElementById('inputDescuento').value)||0;
-    const total= sub - desc + com;
-    document.getElementById('resComision').textContent    = '$'+com.toFixed(2);
-    document.getElementById('resTotal').textContent       = '$'+total.toFixed(2);
+    const ef   = parseFloat(document.getElementById('mixtoEfectivo').value) || 0;
+    const porc = parseFloat(document.getElementById('mixtoComision').value) || 0;
+    const sub  = parseFloat(document.getElementById('inputSubtotal').value) || 0;
+    const desc = parseFloat(document.getElementById('inputDescuento').value) || 0;
+    const base = sub - desc; // monto antes de comisión
+
+    let com = 0;
+    let termDisplay = 0; // lo que se cobra en tarjeta (ya incluye comisión)
+    let total = base;
+
+    if (ef < base - 0.005) {
+        // hay parte que va a terminal
+        const resto = base - ef;
+        com = resto * (porc / 100);
+        termDisplay = resto + com;  // cargo total en tarjeta
+        total = base + com;
+    }
+    // si ef >= base, todo se paga en efectivo, sin comisión de terminal
+
+    document.getElementById('mixtoTerminal').value        = termDisplay > 0 ? termDisplay.toFixed(2) : '0.00';
+    document.getElementById('resComision').textContent    = '$' + com.toFixed(2);
+    document.getElementById('resTotal').textContent       = '$' + total.toFixed(2);
     document.getElementById('inputComisionTerminal').value = com.toFixed(2);
     document.getElementById('inputMontoEfectivo').value   = ef.toFixed(2);
-    document.getElementById('inputMontoTerminal').value   = term.toFixed(2);
+    document.getElementById('inputMontoTerminal').value   = termDisplay.toFixed(2);
     document.getElementById('inputTotal').value           = total.toFixed(2);
     verificarCobrar();
 }
 
 function verificarCobrar() {
     const referenciaOk = metodoPago !== 'Transferencia' || String(document.getElementById('transferReferencia')?.value || '').trim() !== '';
-    document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago && referenciaOk);
+    let mixtoOk = true;
+    if (metodoPago === 'Mixto') {
+        const ef = parseFloat(document.getElementById('mixtoEfectivo').value) || 0;
+        mixtoOk = ef > 0;
+    }
+    document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago && referenciaOk && mixtoOk);
 }
 
 // ── Preparar y enviar venta ──────────────────────────────────────────────────
@@ -2050,7 +2079,24 @@ function imprimirTicket(ventaId) {
         .then(venta => {
             if (!venta) { alert('No se pudo cargar el ticket.'); return; }
             generarTicketHTML(venta);
-            setTimeout(() => window.print(), 300);
+            // Esperar un frame para que el navegador calcule el layout del ticket
+            requestAnimationFrame(() => {
+                const ticket = document.getElementById('ticketImprimir');
+                ticket.style.display = 'block';
+                const altoPx = ticket.scrollHeight;
+                ticket.style.display = '';
+                // Convertir px → mm (1px ≈ 0.2646mm a 96dpi) y agregar 4mm de margen inferior
+                const altoMm = Math.ceil(altoPx * 0.2646) + 4;
+                // Inyectar @page con alto exacto para que Chrome no agregue hoja en blanco
+                let estilo = document.getElementById('__ticketPageStyle');
+                if (!estilo) {
+                    estilo = document.createElement('style');
+                    estilo.id = '__ticketPageStyle';
+                    document.head.appendChild(estilo);
+                }
+                estilo.textContent = `@page { size: 80mm ${altoMm}mm; margin: 0; }`;
+                setTimeout(() => window.print(), 150);
+            });
         });
 }
 

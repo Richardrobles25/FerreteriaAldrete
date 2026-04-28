@@ -37,10 +37,25 @@ $stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE caja_id = ? AND est
 $stmtPend->execute([$caja['caja_id']]);
 $ventasPendientes = $stmtPend->fetchColumn();
 
-// Efectivo esperado = apertura + efectivo de ventas
-$efectivoEsperado = floatval($caja['monto_apertura']) +
-                    floatval($resumen['ef']) +
-                    floatval($resumen['mixto_ef']);
+// Movimientos de caja (retiros e ingresos) del turno actual
+$stmtMov = $pdo->prepare("
+    SELECT tipo, monto, nota, created_at
+    FROM movimientos_caja
+    WHERE caja_id = ?
+    ORDER BY created_at ASC
+");
+$stmtMov->execute([$caja['caja_id']]);
+$movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
+
+$totalIngresos = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso'), 'monto'));
+$totalRetiros  = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro'),  'monto'));
+
+// Efectivo esperado = apertura + ventas en efectivo + ingresos - retiros
+$efectivoEsperado = floatval($caja['monto_apertura'])
+                  + floatval($resumen['ef'])
+                  + floatval($resumen['mixto_ef'])
+                  + $totalIngresos
+                  - $totalRetiros;
 
 // Procesar cierre
 $errores = [];
@@ -217,7 +232,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <h3>Ventas del turno</h3>
                     <div class="fila"><span>Total de ventas completadas</span><span><?= $resumen['total_ventas'] ?></span></div>
                     <div class="fila"><span>Total cobrado</span><span style="font-weight:700;">$<?= number_format($resumen['total_cobrado'],2) ?></span></div>
-                    <div class="fila"><span>Comisiones de terminal</span><span>-$<?= number_format($resumen['comisiones'],2) ?></span></div>
+                    <?php if (floatval($resumen['comisiones']) > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;">
+                        <span>Incluye comisión de terminal</span>
+                        <span>$<?= number_format($resumen['comisiones'],2) ?></span>
+                    </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Desglose por método -->
@@ -230,12 +250,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>Crédito (no cobrado en caja)</span><span>$<?= number_format($resumen['cred'],2) ?></span></div>
                 </div>
 
+                <!-- Movimientos de caja del turno -->
+                <?php if (count($movimientos) > 0): ?>
+                <div class="seccion">
+                    <h3>Movimientos de caja</h3>
+                    <?php foreach ($movimientos as $m): ?>
+                    <div class="fila <?= $m['tipo'] === 'Ingreso' ? 'positivo' : 'negativo' ?>">
+                        <span>
+                            <?= $m['tipo'] === 'Ingreso' ? '&#8593;' : '&#8595;' ?>
+                            <?= htmlspecialchars($m['tipo']) ?>
+                            <span style="font-size:11px;color:#aaa;margin-left:6px;"><?= htmlspecialchars($m['nota']) ?></span>
+                        </span>
+                        <span><?= $m['tipo'] === 'Ingreso' ? '+' : '-' ?>$<?= number_format($m['monto'],2) ?></span>
+                    </div>
+                    <?php endforeach; ?>
+                    <?php if (count($movimientos) > 1): ?>
+                    <div class="fila subtotal" style="margin-top:4px;">
+                        <span>Neto de movimientos</span>
+                        <span style="color:<?= ($totalIngresos - $totalRetiros) >= 0 ? '#2e7d32' : '#c0392b' ?>;">
+                            <?= ($totalIngresos - $totalRetiros) >= 0 ? '+' : '' ?>$<?= number_format($totalIngresos - $totalRetiros, 2) ?>
+                        </span>
+                    </div>
+                    <?php endif; ?>
+                </div>
+                <?php endif; ?>
+
                 <!-- Efectivo esperado -->
                 <div class="seccion">
                     <h3>Efectivo esperado en caja</h3>
                     <div class="fila"><span>Monto de apertura</span><span>$<?= number_format($caja['monto_apertura'],2) ?></span></div>
                     <div class="fila"><span>+ Ventas en efectivo</span><span>$<?= number_format($resumen['ef'],2) ?></span></div>
                     <div class="fila"><span>+ Efectivo de pagos mixtos</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
+                    <?php if ($totalIngresos > 0): ?>
+                    <div class="fila positivo"><span>+ Ingresos a caja</span><span>+$<?= number_format($totalIngresos,2) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($totalRetiros > 0): ?>
+                    <div class="fila negativo"><span>- Retiros de caja</span><span>-$<?= number_format($totalRetiros,2) ?></span></div>
+                    <?php endif; ?>
                     <div class="fila total-ef">
                         <span>Total esperado en caja</span>
                         <span>$<?= number_format($efectivoEsperado,2) ?></span>

@@ -56,19 +56,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
     }
 
     if (empty($errores)) {
-        // Insertar abono
-        $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
-            ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $comisionMonto, $metodo, $notas]);
+        $pdo->beginTransaction();
+        try {
+            // Insertar abono
+            $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
+                ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $comisionMonto, $metodo, $notas]);
 
-        // Actualizar saldo
-        $nuevoSaldo = $credito['saldo_pendiente'] - $monto;
-        $nuevoEstado = $nuevoSaldo <= 0 ? 'Liquidado' : 'Activo';
+            // Actualizar saldo del crédito
+            $nuevoSaldo  = $credito['saldo_pendiente'] - $monto;
+            $nuevoEstado = $nuevoSaldo <= 0.001 ? 'Liquidado' : 'Activo';
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
+                ->execute([$nuevoSaldo > 0 ? $nuevoSaldo : 0, $nuevoEstado, $cred_id]);
 
-        $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
-            ->execute([$nuevoSaldo > 0 ? $nuevoSaldo : 0, $nuevoEstado, $cred_id]);
+            // Registrar ingreso en movimientos_caja si hay caja abierta
+            $stmtCaja = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
+            $stmtCaja->execute([$_SESSION['usuario_id']]);
+            $cajaId = $stmtCaja->fetchColumn();
 
-        header('Location: abonos.php?ver='.$cred_id.'&msg=abonado');
-        exit();
+            if ($cajaId) {
+                $notaMov = 'Abono de crédito — ' . $credito['nombre_completo'];
+                if (trim($notas) !== '') $notaMov .= ': ' . trim($notas);
+                $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,'Ingreso',?,?)")
+                    ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $monto, $notaMov]);
+            }
+
+            $pdo->commit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $errores[] = 'Error al registrar el abono: ' . $e->getMessage();
+        }
+
+        if (empty($errores)) {
+            header('Location: abonos.php?ver='.$cred_id.'&msg=abonado');
+            exit();
+        }
     }
 }
 

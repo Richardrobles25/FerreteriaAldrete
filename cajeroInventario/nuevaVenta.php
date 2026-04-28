@@ -586,6 +586,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .sucursal-diferente { font-size: 11px; color: #1565c0; background: #e3f2fd; padding: 2px 7px; border-radius: 99px; margin-left: 5px; }
 
     /* ── Ticket de impresión ── */
+    @page {
+        size: 80mm auto;   /* POS-8360: rollo 80mm, largo automático */
+        margin: 0;         /* Sin márgenes de página — la impresora ya tiene los suyos */
+    }
     @media print {
         body > * { display: none !important; }
         #ticketImprimir { display: block !important; }
@@ -593,16 +597,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     #ticketImprimir {
         display: none;
         font-family: 'Courier New', monospace;
-        font-size: 12px;
-        width: 280px;
-        margin: 0 auto;
-        padding: 10px;
+        font-size: 11px;
+        width: 72mm;       /* 80mm - 4mm margen físico por lado */
+        margin: 0;
+        padding: 3mm 4mm;
     }
     #ticketImprimir .t-centro { text-align: center; }
-    #ticketImprimir .t-linea { border-top: 1px dashed #000; margin: 6px 0; }
-    #ticketImprimir .t-fila { display: flex; justify-content: space-between; }
-    #ticketImprimir .t-bold { font-weight: bold; }
-    #ticketImprimir .t-grande { font-size: 15px; font-weight: bold; }
+    #ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
+    #ticketImprimir .t-fila   { display: flex; justify-content: space-between; }
+    #ticketImprimir .t-bold   { font-weight: bold; }
+    #ticketImprimir .t-grande { font-size: 13px; font-weight: bold; }
 </style>
 
 <!-- Ticket oculto para impresión -->

@@ -6,19 +6,37 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-// Verificar si ya tiene caja abierta
+// Auto-cerrar cajas huérfanas del usuario actual de días anteriores
+// (ocurre cuando el navegador se cerró sin hacer corte)
+$pdo->prepare("
+    UPDATE cajas
+    SET estado = 'Cerrada', cerrada_en = NOW(),
+        observaciones = CONCAT(COALESCE(observaciones,''), ' [Cerrada automáticamente al abrir nueva sesión]')
+    WHERE usuario_id = ? AND estado = 'Abierta' AND DATE(abierta_en) < CURDATE()
+")->execute([$_SESSION['usuario_id']]);
+
+// Verificar si ya tiene caja abierta hoy
 $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
 $stmt->execute([$_SESSION['usuario_id']]);
 $cajaAbierta = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Calcular siguiente número de turno para esta sucursal
-$stmtTurno = $pdo->prepare("SELECT COUNT(*) + 1 FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta'");
-$stmtTurno->execute([$_SESSION['sucursal_id']]);
+// Turno = cuántas cajas de OTROS usuarios están abiertas en esta sucursal + 1
+// Se excluye la caja del propio usuario para que nunca se cuente a sí mismo
+$stmtTurno = $pdo->prepare("
+    SELECT COUNT(*) + 1
+    FROM cajas
+    WHERE sucursal_id = ? AND estado = 'Abierta' AND usuario_id != ?
+");
+$stmtTurno->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id']]);
 $siguienteTurno = $stmtTurno->fetchColumn();
 
-// Contar cajas abiertas actualmente en la sucursal
-$stmtAbiertas = $pdo->prepare("SELECT COUNT(*) FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta'");
-$stmtAbiertas->execute([$_SESSION['sucursal_id']]);
+// Contar cajas abiertas de otros usuarios en la sucursal (para mostrar aviso)
+$stmtAbiertas = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM cajas
+    WHERE sucursal_id = ? AND estado = 'Abierta' AND usuario_id != ?
+");
+$stmtAbiertas->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id']]);
 $cajasAbiertas = $stmtAbiertas->fetchColumn();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {

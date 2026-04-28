@@ -349,3 +349,17 @@ CREATE TABLE promociones (
     FOREIGN KEY (producto_id) REFERENCES productos(producto_id) ON DELETE CASCADE,
     FOREIGN KEY (usuario_id)  REFERENCES usuarios(usuario_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE movimientos_caja (
+  movimiento_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  caja_id       INT UNSIGNED NOT NULL,
+  usuario_id    INT UNSIGNED NOT NULL,
+  sucursal_id   INT UNSIGNED NOT NULL,
+  tipo          ENUM('Retiro','Ingreso') NOT NULL,
+  monto         DECIMAL(10,2) NOT NULL,
+  nota          TEXT NOT NULL,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_caja (caja_id),
+  KEY idx_suc  (sucursal_id),
+  KEY idx_fecha (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

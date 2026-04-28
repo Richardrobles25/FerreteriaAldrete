@@ -297,9 +297,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Actualizar estado según si fue devolución total o parcial
                 $stmtNuevoTotal = $pdo->prepare("SELECT total FROM ventas WHERE venta_id = ?");
                 $stmtNuevoTotal->execute([$venta_id]);
-                $nuevoEstado = floatval($stmtNuevoTotal->fetchColumn()) <= 0 ? 'Devuelto' : 'Modificado';
-                $pdo->prepare("UPDATE ventas SET estado = ? WHERE venta_id = ?")
-                    ->execute([$nuevoEstado, $venta_id]);
+                $nuevoTotal  = floatval($stmtNuevoTotal->fetchColumn());
+                $nuevoEstado = $nuevoTotal <= 0 ? 'Devuelto' : 'Modificado';
+                if ($nuevoEstado === 'Devuelto') {
+                    // Devolución total: limpiar subtotal, descuento y total a 0
+                    $pdo->prepare("UPDATE ventas SET estado = ?, subtotal = 0, descuento = 0, total = 0 WHERE venta_id = ?")
+                        ->execute([$nuevoEstado, $venta_id]);
+                } else {
+                    $pdo->prepare("UPDATE ventas SET estado = ? WHERE venta_id = ?")
+                        ->execute([$nuevoEstado, $venta_id]);
+                }
 
                 // Si era crédito, actualizar el saldo
                 if ($ventaInfo['metodo_pago'] === 'Credito' && $ventaInfo['cliente_id']) {

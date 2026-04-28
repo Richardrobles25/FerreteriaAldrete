@@ -14,7 +14,36 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 // Liquidar venta pendiente (el folio ya fue asignado al crear)
 if (isset($_GET['liquidar'])) {
     $venta_id = intval($_GET['liquidar']);
-    $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
+
+    // Obtener datos de la venta antes de cambiar estado
+    $stmtV = $pdo->prepare("SELECT venta_id, cliente_id, metodo_pago, total FROM ventas WHERE venta_id = ? AND estado = 'Pendiente'");
+    $stmtV->execute([$venta_id]);
+    $ventaLiq = $stmtV->fetch(PDO::FETCH_ASSOC);
+
+    if ($ventaLiq) {
+        $pdo->beginTransaction();
+        try {
+            // Marcar como completada
+            $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ?")->execute([$venta_id]);
+
+            // Si es pago a crédito, crear registro en tabla creditos (igual que nuevaVenta.php)
+            $metodoPagoLiq = trim($ventaLiq['metodo_pago']);
+            if (($metodoPagoLiq === 'Crédito' || $metodoPagoLiq === 'Credito') && $ventaLiq['cliente_id']) {
+                // Evitar duplicado por si se llama dos veces
+                $stmtCheck = $pdo->prepare("SELECT credito_id FROM creditos WHERE venta_id = ? LIMIT 1");
+                $stmtCheck->execute([$venta_id]);
+                if (!$stmtCheck->fetchColumn()) {
+                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado) VALUES (?, ?, ?, ?, 'Activo')")
+                        ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total']]);
+                }
+            }
+
+            $pdo->commit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+        }
+    }
+
     header('Location: ventasPendientes.php?msg=liquidado');
     exit();
 }
@@ -83,18 +112,19 @@ if (isset($_GET['get_ticket_venta'])) {
 
     header('Content-Type: application/json');
     echo json_encode([
-        'venta_id' => $venta['venta_id'],
-        'folio' => $venta['folio'],
-        'fecha' => $venta['created_at'],
-        'turno' => $numTurno,
-        'cliente' => $cliente,
+        'venta_id'  => $venta['venta_id'],
+        'folio'     => $venta['folio'],
+        'fecha'     => $venta['created_at'],
+        'turno'     => $numTurno,
+        'cliente'   => $cliente,
         'productos' => $productos,
-        'subtotal' => $venta['subtotal'],
-        'descuento' => $venta['descuento'],
-        'total' => $venta['total'],
-        'metodo_pago' => $venta['metodo_pago'],
+        'subtotal'           => $venta['subtotal'],
+        'descuento'          => $venta['descuento'],
+        'comision_terminal'  => $venta['comision_terminal'] ?? 0,
+        'total'              => $venta['total'],
+        'metodo_pago'        => $venta['metodo_pago'],
         'referencia_transferencia' => $venta['referencia_transferencia'],
-        'estado' => $venta['estado'],
+        'estado'    => $venta['estado'],
         'sucursal' => [
             'nombre' => $sucursal['nombre'] ?? 'FERRETERIA ALDRETE',
             'datos_ticket' => $sucursal['datos_ticket'] ?? '',
@@ -125,9 +155,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $subtotal     = floatval($_POST['subtotal'] ?? 0);
         $descuento    = floatval($_POST['descuento'] ?? 0);
         $total        = floatval($_POST['total'] ?? 0);
-        $metodo_pago  = in_array($_POST['metodo_pago'] ?? '', ['Efectivo', 'Crédito', 'Terminal']) ? $_POST['metodo_pago'] : 'Efectivo';
+        $metodo_pago  = in_array($_POST['metodo_pago'] ?? '', ['Efectivo', 'Crédito', 'Terminal', 'Transferencia', 'Mixto']) ? $_POST['metodo_pago'] : 'Efectivo';
+        $ref_transf      = ($metodo_pago === 'Transferencia') ? trim($_POST['referencia_transferencia'] ?? '') : null;
+        $comision_terminal = floatval($_POST['comision_terminal'] ?? 0);
 
-        if (!empty($items)) {
+        // Validar referencia obligatoria para Transferencia
+        if ($metodo_pago === 'Transferencia' && empty($ref_transf)) {
+            $errores[] = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
+        }
+
+        if (!empty($items) && empty($errores)) {
             $pdo->beginTransaction();
             try {
                 // Generar folio secuencial mensual (mismo criterio que nuevaVenta.php)
@@ -143,8 +180,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $numFolio = intval($stmtFolio->fetchColumn());
                 $folio    = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
 
-                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, total, metodo_pago, estado, notas) VALUES (?,?,?,?,?,?,?,?,'Pendiente',?)")
-                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $total, $metodo_pago, $notas]);
+                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,?,?,?,'Pendiente',?,?)")
+                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $comision_terminal, $total, $metodo_pago, $notas, $ref_transf]);
                 $venta_id = $pdo->lastInsertId();
 
                 foreach ($items as $item) {
@@ -158,12 +195,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new Exception("Stock insuficiente para \"$nombre\". Disponible: $disponible.");
                     }
 
-                    $subtotalItem  = $item['cantidad'] * $item['precio'];
+                    $precioOrig    = floatval($item['precio_normal'] ?? $item['precio']);
+                    $precioFinal   = floatval($item['precio']);
+                    $subtotalItem  = $item['cantidad'] * $precioFinal;
                     $stockAnterior = floatval($prodChk['stock_actual']);
                     $stockNuevo    = $stockAnterior - $item['cantidad'];
 
-                    $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
-                        ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $item['precio'], $subtotalItem]);
+                    $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal) VALUES (?,?,?,?,?,?)")
+                        ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $precioOrig, $precioFinal, $subtotalItem]);
                     $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
                     $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
                         ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
@@ -197,12 +236,30 @@ $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, precio_venta
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Promociones activas para esta sucursal
+$stmtPromosPend = $pdo->prepare("
+    SELECT pr.producto_id, pr.precio_promocional, pr.descripcion
+    FROM promociones pr
+    JOIN productos p ON pr.producto_id = p.producto_id
+    WHERE p.sucursal_id = ?
+      AND (pr.fecha_inicio IS NULL OR pr.fecha_inicio <= CURDATE())
+      AND (pr.fecha_fin    IS NULL OR pr.fecha_fin    >= CURDATE())
+      AND pr.activo = 1
+");
+$stmtPromosPend->execute([$_SESSION['sucursal_id']]);
+$promosPendById = [];
+foreach ($stmtPromosPend->fetchAll(PDO::FETCH_ASSOC) as $promo) {
+    $promosPendById[(int)$promo['producto_id']] = [
+        'precio_promo' => floatval($promo['precio_promocional']),
+        'descripcion'  => $promo['descripcion'] ?? '',
+    ];
+}
+
 // Clientes
 try {
-    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, COALESCE(descuento_fijo,0) as descuento FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, COALESCE(descuento_fijo,0) as descuento, COALESCE(credito_autorizado,0) as credito FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
 } catch (Exception $e) {
-    // Si la columna descuento_fijo no existe en este entorno, cargamos sin descuento
-    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, 0 as descuento FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, 0 as descuento, 0 as credito FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
 }
 ?>
 <!DOCTYPE html>
@@ -286,7 +343,6 @@ try {
         <a class="menu-item" href="historialVentas.php">Historial de ventas</a>
         <a class="menu-item active" href="ventasPendientes.php">Ventas pendientes</a>
         <a class="menu-item" href="devoluciones.php">Devoluciones</a>
-        <button class="menu-item" type="button" onclick="mostrarEjemploTicket()" style="border:none;background:none;width:100%;text-align:left;">🎨 Ejemplo de ticket</button>
         <div class="divider"></div>
 
         <div class="menu-label">Caja</div>
@@ -361,15 +417,20 @@ try {
                         </div>
                     </div>
                     <?php
-                    $stmtProd = $pdo->prepare("SELECT vp.cantidad, vp.precio_unitario, p.nombre_producto FROM venta_productos vp JOIN productos p ON vp.producto_id = p.producto_id WHERE vp.venta_id = ?");
+                    $stmtProd = $pdo->prepare("SELECT vp.cantidad, vp.precio_unitario, vp.precio_final, p.nombre_producto FROM venta_productos vp JOIN productos p ON vp.producto_id = p.producto_id WHERE vp.venta_id = ?");
                     $stmtProd->execute([$p['venta_id']]);
                     $prods = $stmtProd->fetchAll(PDO::FETCH_ASSOC);
                     ?>
                     <div class="pendiente-productos">
                         <?php foreach ($prods as $prod): ?>
+                        <?php
+                            $precioMostrar = (!empty($prod['precio_final']) && floatval($prod['precio_final']) > 0)
+                                ? floatval($prod['precio_final'])
+                                : floatval($prod['precio_unitario']);
+                        ?>
                         <div class="prod-row">
                             <span><?= htmlspecialchars($prod['nombre_producto']) ?> × <?= $prod['cantidad'] ?></span>
-                            <span>$<?= number_format($prod['precio_unitario'] * $prod['cantidad'],2) ?></span>
+                            <span>$<?= number_format($precioMostrar * $prod['cantidad'], 2) ?></span>
                         </div>
                         <?php endforeach; ?>
                     </div>
@@ -429,6 +490,9 @@ try {
                     <div id="descuentoLinea" style="display:none;justify-content:space-between;font-size:12px;color:#2e7d32;font-weight:500;">
                         <span>Descuento</span><span id="descuentoValor">-$0.00</span>
                     </div>
+                    <div id="comisionLineaMini" style="display:none;justify-content:space-between;font-size:12px;color:#e65100;font-weight:500;">
+                        <span>Comisión terminal</span><span id="comisionValorMini">+$0.00</span>
+                    </div>
                     <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#222;">
                         <span>Total</span><span id="totalValor">$0.00</span>
                     </div>
@@ -458,23 +522,71 @@ try {
                         </div>
                     </div>
 
-                    <div class="form-group" id="descClientePendGrupo" style="display:none;">
-                        <label>Descuento del cliente (<span id="descMaxPend">0</span>% máx.)</label>
-                        <input type="number" id="inputDescClientePend" min="0" step="0.1"
-                            oninput="recalcularTotalPend()"
-                            onblur="clampearDescClientePend()"
-                            style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                    <div id="descClientePendGrupo" style="display:none;background:#f0faf4;border:1px solid #c8e6c9;border-radius:8px;padding:12px 14px;margin-bottom:13px;">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:10px;">
+                            <input type="checkbox" id="aplicarDescPend" onchange="recalcularTotalPend()" style="cursor:pointer;width:16px;height:16px;accent-color:#2e7d32;">
+                            <span style="font-size:13px;font-weight:600;color:#2e7d32;">Aplicar descuento al cliente</span>
+                        </label>
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span style="font-size:12px;color:#555;white-space:nowrap;">Porcentaje:</span>
+                            <input type="number" id="inputDescClientePend" min="0" step="0.1"
+                                oninput="recalcularTotalPend()"
+                                onblur="clampearDescClientePend()"
+                                style="width:80px;padding:6px 10px;border:1px solid #a5d6a7;border-radius:6px;font-size:13px;background:white;">
+                            <span id="descMaxPendLabel" style="font-size:12px;color:#888;"></span>
+                        </div>
                     </div>
 
                     <div class="form-group">
                         <label>Método de pago</label>
-                        <div style="display:flex;gap:8px;">
-                            <label style="flex:1;display:flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;" id="labelEfectivoPend">
-                                <input type="radio" name="metodo_pago" value="Efectivo" checked onchange="actualizarMetodoPend(this)"> Efectivo
-                            </label>
-                            <label style="flex:1;display:flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;" id="labelCreditoPend">
-                                <input type="radio" name="metodo_pago" value="Crédito" onchange="actualizarMetodoPend(this)"> Crédito
-                            </label>
+                        <select name="metodo_pago" id="metodoPagoPend" onchange="cambiarMetodoPend(this.value)"
+                            style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Terminal">Terminal</option>
+                            <option value="Transferencia">Transferencia</option>
+                            <option value="Mixto">Mixto</option>
+                            <option value="Crédito" id="optCreditoPend" style="display:none;">Crédito</option>
+                        </select>
+                    </div>
+
+                    <!-- Comisión terminal -->
+                    <div id="comisionTerminalGrupo" style="display:none;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:13px;font-size:13px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <span style="font-weight:600;color:#795548;">Comisión terminal</span>
+                            <span style="font-size:11px;color:#999;"><?= number_format(floatval($sucursalTicket['comision_terminal_pct'] ?? 0), 2) ?>%</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:#666;">Se suma al total:</span>
+                            <span id="comisionValorPend" style="font-weight:700;color:#e65100;">+$0.00</span>
+                        </div>
+                    </div>
+                    <input type="hidden" name="comision_terminal" id="inputComisionTerminalPend">
+
+                    <div id="refTransfPendGrupo" style="display:none;">
+                        <div class="form-group">
+                            <label>Referencia bancaria</label>
+                            <input type="text" name="referencia_transferencia" id="refTransfPend"
+                                placeholder="Folio o número de referencia"
+                                style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                        </div>
+                        <?php
+                            $tb = trim($sucursalTicket['banco']               ?? '');
+                            $tt = trim($sucursalTicket['titular_cuenta']      ?? '');
+                            $tc = trim($sucursalTicket['numero_cuenta']       ?? '');
+                            $tl = trim($sucursalTicket['clabe_interbancaria'] ?? '');
+                            $ta = trim($sucursalTicket['alias_tarjeta']       ?? '');
+                        ?>
+                        <div style="font-size:12px;line-height:1.9;background:#f0f8ff;border:1px solid #b3e0f7;border-radius:6px;padding:10px 12px;color:#333;margin-bottom:13px;">
+                            <div style="font-size:11px;font-weight:700;color:#1565c0;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">Datos para la transferencia</div>
+                            <?php if ($tb || $tt || $tc || $tl): ?>
+                                <?php if ($tb): ?><div><strong>Banco:</strong> <?= htmlspecialchars($tb) ?></div><?php endif; ?>
+                                <?php if ($tt): ?><div><strong>Titular:</strong> <?= htmlspecialchars($tt) ?></div><?php endif; ?>
+                                <?php if ($tc): ?><div><strong>No. cuenta:</strong> <?= htmlspecialchars($tc) ?></div><?php endif; ?>
+                                <?php if ($tl): ?><div><strong>CLABE:</strong> <?= htmlspecialchars($tl) ?></div><?php endif; ?>
+                                <?php if ($ta): ?><div><strong>Alias:</strong> <?= htmlspecialchars($ta) ?></div><?php endif; ?>
+                            <?php else: ?>
+                                <span style="color:#aaa;">Sin datos bancarios configurados.<br>Agrégalos en Configuración → Sucursal.</span>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -499,22 +611,43 @@ try {
         </div>
         <div id="ticketContenidoVentaPend" style="margin-bottom:16px;"></div>
         <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:16px;">
-            <button type="button" onclick="window.print()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
+            <button type="button" onclick="imprimirTicketPend()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
             <button type="button" onclick="cerrarTicketVenta()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
         </div>
     </div>
 </div>
 
+<!-- Ticket oculto para impresión -->
+<div id="ticketImprimir"></div>
+
 <style>
 .modal-overlay.visible { display: flex !important; }
+
+/* ── Ticket térmico 80mm ── */
+@page { size: 80mm auto; margin: 0; }
 @media print {
     body > * { display: none !important; }
-    .modal-overlay.visible { display: flex !important; background: none; position: relative; inset: auto; }
-    .modal-overlay.visible > div { max-width: 100%; box-shadow: none; padding: 0; }
-    .modal-overlay.visible button { display: none !important; }
-    .modal-overlay.visible h3 { display: none !important; }
-    .modal-overlay.visible > div > div:first-of-type { display: none !important; }
+    #ticketImprimir { display: block !important; }
 }
+#ticketImprimir {
+    display: none;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    width: 72mm;
+    margin: 0;
+    padding: 3mm 4mm;
+}
+#ticketImprimir .t-centro { text-align: center; }
+#ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
+#ticketImprimir .t-fila   { display: flex; justify-content: space-between; }
+#ticketImprimir .t-bold   { font-weight: bold; }
+#ticketImprimir .t-grande { font-size: 13px; font-weight: bold; }
+/* Mismo estilo para preview en modal */
+#ticketContenidoVentaPend .t-centro { text-align: center; }
+#ticketContenidoVentaPend .t-linea  { border-top: 1px dashed #aaa; margin: 4px 0; }
+#ticketContenidoVentaPend .t-fila   { display: flex; justify-content: space-between; }
+#ticketContenidoVentaPend .t-bold   { font-weight: bold; }
+#ticketContenidoVentaPend .t-grande { font-size: 13px; font-weight: bold; }
 </style>
 
 <script>
@@ -522,20 +655,30 @@ let carritoP = [];
 let prodSelPendActual = null;
 let clientePendActual = null;
 
-const prodsPend = <?= json_encode(array_values(array_map(fn($p) => [
-    'producto_id'  => (int)$p['producto_id'],
-    'nombre'       => $p['nombre_producto'],
-    'codigo'       => $p['codigo'],
-    'precio'       => floatval($p['precio_venta']),
-    'stock'        => floatval($p['stock_actual']),
-    'tipo'         => $p['tipo_venta'],
-    'texto'        => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
-], $productos))) ?>;
+const prodsPend = <?= json_encode(array_values(array_map(function($p) use ($promosPendById) {
+    $pid          = (int)$p['producto_id'];
+    $precioNormal = floatval($p['precio_venta']);
+    $tienePromo   = isset($promosPendById[$pid]) && floatval($promosPendById[$pid]['precio_promo']) < $precioNormal - 0.001;
+    $precioFinal  = $tienePromo ? floatval($promosPendById[$pid]['precio_promo']) : $precioNormal;
+    return [
+        'producto_id'   => $pid,
+        'nombre'        => $p['nombre_producto'],
+        'codigo'        => $p['codigo'],
+        'precio'        => $precioFinal,
+        'precio_normal' => $precioNormal,
+        'tiene_promo'   => $tienePromo,
+        'promo_desc'    => $tienePromo ? ($promosPendById[$pid]['descripcion'] ?? '') : '',
+        'stock'         => floatval($p['stock_actual']),
+        'tipo'          => $p['tipo_venta'],
+        'texto'         => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
+    ];
+}, $productos))) ?>;
 
 const clientesPend = <?= json_encode(array_values(array_map(fn($c) => [
     'id'        => (int)$c['cliente_id'],
     'nombre'    => $c['nombre_completo'],
     'descuento' => floatval($c['descuento']),
+    'credito'   => intval($c['credito']),
     'texto'     => mb_strtolower($c['nombre_completo']),
 ], $clientes))) ?>;
 
@@ -628,10 +771,10 @@ function confirmarAgregarProdPend() {
         return;
     }
 
-    const { producto_id, nombre, precio } = prodSelPendActual;
+    const { producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc } = prodSelPendActual;
     const existe = carritoP.find(i => i.producto_id === producto_id);
     if (existe) { existe.cantidad += cantidad; }
-    else { carritoP.push({ producto_id, nombre, precio, cantidad }); }
+    else { carritoP.push({ producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc, cantidad }); }
 
     // Ocultar panel sin reabrir el dropdown
     prodSelPendActual = null;
@@ -660,10 +803,13 @@ function renderCarritoMini() {
     }
     div.innerHTML = carritoP.map((i,idx) => {
         const cantStr = Number.isInteger(i.cantidad) ? i.cantidad : i.cantidad.toFixed(3).replace(/\.?0+$/,'');
+        const precioDisplay = i.tiene_promo
+            ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${i.precio_normal.toFixed(2)}</span> <span style="color:#2e7d32;font-weight:700;font-size:12px;">$${i.precio.toFixed(2)}</span>`
+            : `<span style="color:#14ace7;font-weight:600;font-size:12px;">$${i.precio.toFixed(2)}</span>`;
         return `<div class="item-mini">
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${i.nombre}</span>
             <span style="white-space:nowrap;color:#555;font-size:12px;margin:0 6px;">×${cantStr}</span>
-            <span style="white-space:nowrap;color:#14ace7;font-weight:600;font-size:12px;">$${(i.cantidad*i.precio).toFixed(2)}</span>
+            ${precioDisplay}
             <button class="btn-quitar-mini" onclick="quitarProd(${idx})">×</button>
         </div>`;
     }).join('');
@@ -674,16 +820,38 @@ function renderCarritoMini() {
 function quitarProd(i) { carritoP.splice(i,1); renderCarritoMini(); }
 
 function recalcularTotalPend() {
-    const subtotal = carritoP.reduce((a, i) => a + (i.cantidad * i.precio), 0);
-    const descPorc = (clientePendActual && clientePendActual.descuento > 0)
+    // Subtotal bruto: siempre precio original (antes de promos)
+    const subtotalBruto = carritoP.reduce((a, i) => a + (i.cantidad * (i.precio_normal ?? i.precio)), 0);
+    // Ahorro por promociones
+    const ahorroPromos = carritoP.reduce((a, i) => {
+        if (i.tiene_promo && i.precio_normal > i.precio) {
+            return a + (i.cantidad * (i.precio_normal - i.precio));
+        }
+        return a;
+    }, 0);
+    const subtotalConPromo = subtotalBruto - ahorroPromos;
+
+    const aplicarDesc = document.getElementById('aplicarDescPend').checked;
+    const descPorc = (clientePendActual && clientePendActual.descuento > 0 && aplicarDesc)
         ? Math.min(parseFloat(document.getElementById('inputDescClientePend').value || 0), clientePendActual.descuento)
         : 0;
-    const descVal = subtotal * (descPorc / 100);
-    const total   = subtotal - descVal;
+    const descCliente    = subtotalConPromo * (descPorc / 100);
+    const descuentoTotal = ahorroPromos + descCliente;
+
+    const metodo   = document.getElementById('metodoPagoPend').value;
+    const comision = (metodo === 'Terminal') ? (subtotalBruto - descuentoTotal) * (porcComisionPend / 100) : 0;
+    const total    = subtotalBruto - descuentoTotal + comision;
+
     document.getElementById('totalValor').textContent = '$' + total.toFixed(2);
-    const linea = document.getElementById('descuentoLinea');
-    linea.style.display = (descPorc > 0 && carritoP.length) ? 'flex' : 'none';
-    document.getElementById('descuentoValor').textContent = '-$' + descVal.toFixed(2);
+
+    const lineaDesc = document.getElementById('descuentoLinea');
+    lineaDesc.style.display = (descuentoTotal > 0.004 && carritoP.length) ? 'flex' : 'none';
+    document.getElementById('descuentoValor').textContent = '-$' + descuentoTotal.toFixed(2);
+
+    const lineaCom = document.getElementById('comisionLineaMini');
+    lineaCom.style.display = (comision > 0 && carritoP.length) ? 'flex' : 'none';
+    document.getElementById('comisionValorMini').textContent = '+$' + comision.toFixed(2);
+    document.getElementById('comisionValorPend').textContent  = '+$' + comision.toFixed(2);
 }
 
 /* ── Búsqueda de clientes ── */
@@ -698,7 +866,9 @@ function filtrarClientesPend(q) {
             <div onclick="seleccionarClientePend(${c.id})"
                 style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;font-size:13px;"
                 onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
-                ${c.nombre}${c.descuento > 0 ? ' <span style="font-size:11px;color:#2e7d32;font-weight:600;">('+c.descuento+'% desc.)</span>' : ''}
+                ${c.nombre}
+                ${c.descuento > 0 ? `<span style="font-size:11px;color:#2e7d32;font-weight:600;margin-left:4px;">${c.descuento}% desc.</span>` : ''}
+                ${c.credito  > 0 ? `<span style="font-size:11px;color:#1565c0;font-weight:600;margin-left:4px;">Crédito</span>` : ''}
             </div>
         `).join('');
     }
@@ -717,24 +887,56 @@ function seleccionarClientePend(id) {
     document.getElementById('inputClienteIdPend').value = clientePendActual.id;
     document.getElementById('clienteSelNombrePend').textContent = clientePendActual.nombre;
     document.getElementById('clienteSelPend').style.display = 'flex';
+
+    // Descuento
     const descGrupo = document.getElementById('descClientePendGrupo');
     if (clientePendActual.descuento > 0) {
-        document.getElementById('descMaxPend').textContent = clientePendActual.descuento;
+        document.getElementById('aplicarDescPend').checked = true;
         document.getElementById('inputDescClientePend').value = clientePendActual.descuento.toFixed(1);
-        document.getElementById('inputDescClientePend').max  = clientePendActual.descuento;
+        document.getElementById('inputDescClientePend').max   = clientePendActual.descuento;
+        document.getElementById('descMaxPendLabel').textContent = 'Máximo: ' + parseFloat(clientePendActual.descuento).toFixed(1) + '%';
         descGrupo.style.display = 'block';
     } else {
         descGrupo.style.display = 'none';
     }
+
+    // Crédito: solo habilitar si el cliente tiene crédito autorizado
+    const optCredito = document.getElementById('optCreditoPend');
+    if (clientePendActual.credito > 0) {
+        optCredito.style.display = '';
+        optCredito.disabled = false;
+    } else {
+        optCredito.style.display = 'none';
+        optCredito.disabled = true;
+        // Si ya estaba seleccionado Crédito, resetear
+        const sel = document.getElementById('metodoPagoPend');
+        if (sel.value === 'Crédito') {
+            sel.value = 'Efectivo';
+            cambiarMetodoPend('Efectivo');
+        }
+    }
+
     recalcularTotalPend();
 }
 
 function quitarClientePend() {
+    // Si método es Crédito, resetear
+    const sel = document.getElementById('metodoPagoPend');
+    if (sel.value === 'Crédito') {
+        sel.value = 'Efectivo';
+        cambiarMetodoPend('Efectivo');
+    }
+    // Ocultar opción Crédito
+    const optCredito = document.getElementById('optCreditoPend');
+    optCredito.style.display = 'none';
+    optCredito.disabled = true;
+
     clientePendActual = null;
     document.getElementById('inputClienteIdPend').value = '';
     document.getElementById('buscarClientePend').value  = '';
     document.getElementById('clienteSelPend').style.display = 'none';
     document.getElementById('descClientePendGrupo').style.display = 'none';
+    document.getElementById('aplicarDescPend').checked = false;
     document.getElementById('inputDescClientePend').value = 0;
     recalcularTotalPend();
 }
@@ -742,7 +944,7 @@ function quitarClientePend() {
 function clampearDescClientePend() {
     if (!clientePendActual) return;
     const input  = document.getElementById('inputDescClientePend');
-    const maximo = clientePendActual.descuento;
+    const maximo = parseFloat(clientePendActual.descuento || 0);
     let valor = parseFloat(input.value || 0);
     if (isNaN(valor) || valor < 0) valor = 0;
     if (valor > maximo) valor = maximo;
@@ -759,217 +961,190 @@ function filtrarPendientes(q) {
     });
 }
 
-/* ── Submit ── */
-function actualizarMetodoPend(radio) {
-    document.getElementById('labelEfectivoPend').style.borderColor = '#ddd';
-    document.getElementById('labelEfectivoPend').style.background  = '';
-    document.getElementById('labelCreditoPend').style.borderColor  = '#ddd';
-    document.getElementById('labelCreditoPend').style.background   = '';
-    const lbl = radio.value === 'Efectivo' ? 'labelEfectivoPend' : 'labelCreditoPend';
-    document.getElementById(lbl).style.borderColor = '#14ace7';
-    document.getElementById(lbl).style.background  = '#eef8ff';
+/* ── Método de pago ── */
+const porcComisionPend = <?= floatval($sucursalTicket['comision_terminal_pct'] ?? 0) ?>;
+const datosTicket = <?= json_encode([
+    'nombre'       => $sucursalTicket['nombre']       ?? 'Ferretería Aldrete',
+    'rfc'          => $sucursalTicket['rfc']           ?? '',
+    'direccion'    => $sucursalTicket['direccion']     ?? '',
+    'telefono'     => $sucursalTicket['telefono']      ?? '',
+    'datos_ticket' => $sucursalTicket['datos_ticket']  ?? '',
+]) ?>;
+
+function cambiarMetodoPend(valor) {
+    if (valor === 'Crédito') {
+        if (!clientePendActual || !clientePendActual.credito) {
+            alert('Selecciona un cliente con crédito autorizado para usar este método de pago.');
+            document.getElementById('metodoPagoPend').value = 'Efectivo';
+            valor = 'Efectivo';
+        }
+    }
+    document.getElementById('refTransfPendGrupo').style.display =
+        valor === 'Transferencia' ? 'block' : 'none';
+    document.getElementById('comisionTerminalGrupo').style.display =
+        valor === 'Terminal' ? 'block' : 'none';
+    recalcularTotalPend();
 }
 
 function prepararPendiente() {
     if (!carritoP.length) { alert('Agrega al menos un producto.'); return false; }
-    const subtotal = carritoP.reduce((a, i) => a + (i.cantidad * i.precio), 0);
-    const descPorc = (clientePendActual && clientePendActual.descuento > 0)
+
+    const metodo = document.getElementById('metodoPagoPend').value;
+
+    // Validar referencia obligatoria
+    if (metodo === 'Transferencia') {
+        const ref = document.getElementById('refTransfPend').value.trim();
+        if (!ref) {
+            alert('El número de referencia bancaria es obligatorio para pago por Transferencia.');
+            document.getElementById('refTransfPend').focus();
+            return false;
+        }
+    }
+
+    const subtotalBruto = carritoP.reduce((a, i) => a + (i.cantidad * (i.precio_normal ?? i.precio)), 0);
+    const ahorroPromos  = carritoP.reduce((a, i) => {
+        if (i.tiene_promo && i.precio_normal > i.precio) return a + (i.cantidad * (i.precio_normal - i.precio));
+        return a;
+    }, 0);
+    const subtotalConPromo = subtotalBruto - ahorroPromos;
+    const aplicarDesc = document.getElementById('aplicarDescPend').checked;
+    const descPorc = (clientePendActual && clientePendActual.descuento > 0 && aplicarDesc)
         ? Math.min(parseFloat(document.getElementById('inputDescClientePend').value || 0), clientePendActual.descuento)
         : 0;
-    const descVal = subtotal * (descPorc / 100);
-    const total   = subtotal - descVal;
-    document.getElementById('inputItemsPend').value    = JSON.stringify(carritoP.map(i=>({producto_id:i.producto_id,cantidad:i.cantidad,precio:i.precio})));
-    document.getElementById('inputSubtotalPend').value = subtotal.toFixed(2);
-    document.getElementById('inputDescuentoPend').value = descVal.toFixed(2);
-    document.getElementById('inputTotalPend').value    = total.toFixed(2);
+    const descCliente    = subtotalConPromo * (descPorc / 100);
+    const descuentoTotal = ahorroPromos + descCliente;
+    const comision       = (metodo === 'Terminal') ? (subtotalBruto - descuentoTotal) * (porcComisionPend / 100) : 0;
+    const total          = subtotalBruto - descuentoTotal + comision;
+
+    document.getElementById('inputItemsPend').value            = JSON.stringify(carritoP.map(i => ({
+        producto_id:   i.producto_id,
+        cantidad:      i.cantidad,
+        precio:        i.precio,
+        precio_normal: i.precio_normal ?? i.precio,
+    })));
+    document.getElementById('inputSubtotalPend').value          = subtotalBruto.toFixed(2);
+    document.getElementById('inputDescuentoPend').value         = descuentoTotal.toFixed(2);
+    document.getElementById('inputComisionTerminalPend').value  = comision.toFixed(2);
+    document.getElementById('inputTotalPend').value             = total.toFixed(2);
     return true;
 }
 
-/* ── Mostrar ejemplo/preview del ticket ── */
-function mostrarEjemploTicket() {
-    const t = {
-        folio: '0001',
-        turno: 1,
-        fecha: new Date().toISOString(),
-        cliente: 'Juan Pérez López',
-        productos: [
-            { nombre_producto: 'Cemento saco 50kg', cantidad: 2, precio_unitario: 8.50 },
-            { nombre_producto: 'Ladrillo rojo común', cantidad: 1000, precio_unitario: 0.95 },
-            { nombre_producto: 'Tubo PVC 1/2"', cantidad: 5, precio_unitario: 12.00 }
-        ],
-        subtotal: 1086.50,
-        descuento: 0,
-        total: 1086.50,
-        metodo_pago: 'Transferencia',
-        referencia_transferencia: 'REF-123456',
-        sucursal: {
-            nombre: '<?= htmlspecialchars($sucursalTicket['nombre'] ?? 'FERRETERIA ALDRETE') ?>',
-            datos_ticket: '<?= htmlspecialchars($sucursalTicket['datos_ticket'] ?? '') ?>',
-            logo_url: '<?= htmlspecialchars($sucursalTicket['logo_url'] ?? '') ?>',
-            banco: '<?= htmlspecialchars($sucursalTicket['banco'] ?? '') ?>',
-            titular_cuenta: '<?= htmlspecialchars($sucursalTicket['titular_cuenta'] ?? '') ?>',
-            numero_cuenta: '<?= htmlspecialchars($sucursalTicket['numero_cuenta'] ?? '') ?>',
-            clabe_interbancaria: '<?= htmlspecialchars($sucursalTicket['clabe_interbancaria'] ?? '') ?>'
-        }
-    };
-
-    const suc = t.sucursal || {};
-    const banco = (suc.banco || '').trim();
-    const titular = (suc.titular_cuenta || '').trim();
-    const cuenta = (suc.numero_cuenta || '').trim();
-    const clabe = (suc.clabe_interbancaria || '').trim();
-    const logo = (suc.logo_url || '').trim();
-
-    const html = `
-<div style="font-family:'Courier New',monospace;width:72mm;font-size:10px;line-height:1.3;white-space:pre-wrap;">
-${logo ? `<div style="text-align:center;margin-bottom:8px;">
-  <img src="${logo}" alt="Logo" style="max-width:60mm;max-height:35mm;display:block;margin:0 auto;border-radius:2px;">
-</div>` : ''}
-<div style="text-align:center;font-weight:bold;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;">
-${(suc.nombre || 'FERRETERIA ALDRETE').toUpperCase()}
-${(suc.datos_ticket || '').trim() ? '\n' + suc.datos_ticket : ''}
-</div>
-
-<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:9px;">
-Folio: ${t.folio || '—'} | Turno: ${t.turno}
-${new Date(t.fecha).toLocaleString('es-MX', {year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
-${t.cliente}
-</div>
-
-<table style="width:100%;border-collapse:collapse;">
-<tr style="border-bottom:0.5px solid #333;font-weight:bold;">
- <th style="text-align:left;padding:3px 0;padding-right:4px;">Producto</th>
- <th style="text-align:right;padding:3px 0;width:35px;">Cant</th>
- <th style="text-align:right;padding:3px 0;width:40px;">Total</th>
-</tr>
-${t.productos.map(p => {
-    const total = (parseFloat(p.precio_unitario) * parseFloat(p.cantidad)).toFixed(2);
-    const nombre = p.nombre_producto.substring(0, 20);
-    return `<tr style="border-bottom:0.5px solid #ddd;">
- <td style="padding:2px 0;padding-right:4px;overflow:hidden;text-overflow:ellipsis;">${nombre}</td>
- <td style="text-align:right;padding:2px 0;">${parseFloat(p.cantidad).toFixed(p.cantidad%1?2:0)}</td>
- <td style="text-align:right;padding:2px 0;">$${total}</td>
-</tr>`;
-}).join('')}
-</table>
-
-<div style="border-bottom:1px dashed #000;border-top:1px dashed #000;padding:6px 0;margin:6px 0;text-align:right;font-weight:bold;font-size:11px;">
-Subtotal: $${parseFloat(t.subtotal).toFixed(2)}
-${parseFloat(t.descuento) > 0 ? `
-Descuento: -$${parseFloat(t.descuento).toFixed(2)}` : ''}
-TOTAL: $${parseFloat(t.total).toFixed(2)}
-</div>
-
-<div style="padding:4px 0;font-size:9px;${t.metodo_pago === 'Transferencia' ? 'border-bottom:1px dashed #000;margin-bottom:6px;padding-bottom:6px;' : ''}">
-Pago: ${t.metodo_pago}
-${t.referencia_transferencia ? `Ref: ${t.referencia_transferencia}` : ''}
-</div>
-
-${banco || titular || cuenta || clabe ? `
-<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:8px;background:#f9f9f9;padding:4px;">
-DATOS BANCARIOS:
-${banco ? `Banco: ${banco}` : ''}
-${titular ? `\nTitular: ${titular}` : ''}
-${cuenta ? `\nCuenta: ${cuenta}` : ''}
-${clabe ? `CLABE: ${clabe}` : ''}
-</div>
-` : ''}
-
-<div style="text-align:center;padding-top:6px;font-size:8px;color:#999;">
-Gracias por su compra
-www.ferreterialdrete.com
-</div>
-</div>`;
-
-    document.getElementById('ticketContenidoVentaPend').innerHTML = html;
-    document.getElementById('modalTicketVentaPend').classList.add('visible');
-    document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'false');
+/* ── Ticket de venta pendiente ── */
+function fmt(n) { return parseFloat(n||0).toFixed(2); }
+function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-/* ── Ticket de venta pendiente ── */
+function generarTicketHTML(venta) {
+    const fecha = venta.fecha_formateada || venta.created_at;
+    let html = `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
+
+    if (datosTicket.datos_ticket) {
+        html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(datosTicket.datos_ticket)}</div>`;
+    } else {
+        if (datosTicket.rfc)       html += `<div class="t-centro">RFC: ${esc(datosTicket.rfc)}</div>`;
+        if (datosTicket.direccion) html += `<div class="t-centro">${esc(datosTicket.direccion)}</div>`;
+        if (datosTicket.telefono)  html += `<div class="t-centro">Tel: ${esc(datosTicket.telefono)}</div>`;
+    }
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Folio:</span><span>${venta.folio || ('#'+venta.venta_id)}</span></div>
+        <div class="t-fila"><span>Fecha:</span><span>${esc(fecha)}</span></div>
+        <div class="t-fila"><span>Cajero:</span><span>${esc(venta.cajero || '—')}</span></div>`;
+
+    if (venta.cliente) {
+        html += `<div class="t-fila"><span>Cliente:</span><span>${esc(venta.cliente)}</span></div>`;
+    }
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>Producto</span><span>Importe</span></div>
+        <div class="t-linea"></div>`;
+
+    let ahorroPromoTicket = 0;
+    (venta.productos || []).forEach(p => {
+        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
+        const precioOrig  = parseFloat(p.precio_unitario);
+        const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
+        const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
+
+        if (tienePromo) ahorroPromoTicket += (precioOrig - precioFinal) * parseFloat(p.cantidad);
+
+        html += `<div>${esc(p.nombre_producto)}</div>`;
+        if (tienePromo) {
+            html += `<div style="font-size:10px;text-decoration:line-through;color:#888;">$${fmt(precioOrig)}/u (precio normal)</div>`;
+            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioFinal)}</span><span>$${fmt(p.subtotal)}</span></div>`;
+        } else {
+            const precioUsado = tieneAjuste ? precioFinal : precioOrig;
+            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span><span>$${fmt(p.subtotal)}</span></div>`;
+            if (tieneAjuste) html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
+        }
+    });
+
+    html += `<div class="t-linea"></div>`;
+
+    if (parseFloat(venta.descuento) > 0) {
+        html += `<div class="t-fila"><span>Subtotal</span><span>$${fmt(venta.subtotal)}</span></div>`;
+    }
+    if (parseFloat(venta.comision_terminal) > 0) {
+        html += `<div class="t-fila"><span>Comisión terminal</span><span>$${fmt(venta.comision_terminal)}</span></div>`;
+    }
+    if (parseFloat(venta.descuento) > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${fmt(venta.descuento)}</span></div>`;
+    }
+
+    html += `
+        <div class="t-fila t-bold t-grande">
+            <span>TOTAL</span><span>$${fmt(venta.total)}</span>
+        </div>
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
+
+    if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
+        html += `
+        <div class="t-fila"><span>Recibido</span><span>$${fmt(venta.monto_efectivo)}</span></div>
+        <div class="t-fila"><span>Cambio</span><span>$${fmt(venta.cambio)}</span></div>`;
+    }
+    if (venta.metodo_pago === 'Mixto') {
+        html += `
+        <div class="t-fila"><span>Efectivo</span><span>$${fmt(venta.monto_efectivo)}</span></div>
+        <div class="t-fila"><span>Terminal</span><span>$${fmt(venta.monto_terminal)}</span></div>`;
+    }
+    if (venta.metodo_pago === 'Credito') {
+        html += `<div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>`;
+    }
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-centro">¡Gracias por su compra!</div>
+        <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
+
+    document.getElementById('ticketImprimir').innerHTML = html;
+}
+
 function abrirTicketVenta(ventaId) {
-    fetch('ventasPendientes.php?get_ticket_venta=' + ventaId)
+    fetch(`historialVentas.php?detalle_venta=${ventaId}`)
         .then(r => r.json())
-        .then(function(t) {
-            if (t.error) { alert('No se pudo cargar el ticket.'); return; }
-            const suc = t.sucursal || {};
-            const banco = (suc.banco || '').trim();
-            const titular = (suc.titular_cuenta || '').trim();
-            const cuenta = (suc.numero_cuenta || '').trim();
-            const clabe = (suc.clabe_interbancaria || '').trim();
-
-            const logo = (suc.logo_url || '').trim();
-
-            const html = `
-<div style="font-family:'Courier New',monospace;width:72mm;font-size:10px;line-height:1.3;white-space:pre-wrap;">
-${logo ? `<div style="text-align:center;margin-bottom:8px;">
-  <img src="${logo}" alt="Logo" style="max-width:60mm;max-height:35mm;display:block;margin:0 auto;border-radius:2px;">
-</div>` : ''}
-<div style="text-align:center;font-weight:bold;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;">
-${(suc.nombre || 'FERRETERIA ALDRETE').toUpperCase()}
-${(suc.datos_ticket || '').trim() ? '\n' + suc.datos_ticket : ''}
-</div>
-
-<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:9px;">
-Folio: ${t.folio || '—'} | Turno: ${t.turno}
-${new Date(t.fecha).toLocaleString('es-MX', {year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
-${t.cliente}
-</div>
-
-<table style="width:100%;border-collapse:collapse;">
-<tr style="border-bottom:0.5px solid #333;font-weight:bold;">
- <th style="text-align:left;padding:3px 0;padding-right:4px;">Producto</th>
- <th style="text-align:right;padding:3px 0;width:35px;">Cant</th>
- <th style="text-align:right;padding:3px 0;width:40px;">Total</th>
-</tr>
-${t.productos.map(p => {
-    const total = (parseFloat(p.precio_unitario) * parseFloat(p.cantidad)).toFixed(2);
-    const nombre = p.nombre_producto.substring(0, 20);
-    return `<tr style="border-bottom:0.5px solid #ddd;">
- <td style="padding:2px 0;padding-right:4px;overflow:hidden;text-overflow:ellipsis;">${nombre}</td>
- <td style="text-align:right;padding:2px 0;">${parseFloat(p.cantidad).toFixed(p.cantidad%1?2:0)}</td>
- <td style="text-align:right;padding:2px 0;">$${total}</td>
-</tr>`;
-}).join('')}
-</table>
-
-<div style="border-bottom:1px dashed #000;border-top:1px dashed #000;padding:6px 0;margin:6px 0;text-align:right;font-weight:bold;font-size:11px;">
-Subtotal: $${parseFloat(t.subtotal).toFixed(2)}
-${parseFloat(t.descuento) > 0 ? `
-Descuento: -$${parseFloat(t.descuento).toFixed(2)}` : ''}
-TOTAL: $${parseFloat(t.total).toFixed(2)}
-</div>
-
-<div style="padding:4px 0;font-size:9px;${t.metodo_pago === 'Transferencia' ? 'border-bottom:1px dashed #000;margin-bottom:6px;padding-bottom:6px;' : ''}">
-Pago: ${t.metodo_pago}
-${t.referencia_transferencia ? `Ref: ${t.referencia_transferencia}` : ''}
-</div>
-
-${banco || titular || cuenta || clabe ? `
-<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:8px;background:#f9f9f9;padding:4px;">
-DATOS BANCARIOS:
-${banco ? `Banco: ${banco}` : ''}
-${titular ? `\nTitular: ${titular}` : ''}
-${cuenta ? `\nCuenta: ${cuenta}` : ''}
-${clabe ? `CLABE: ${clabe}` : ''}
-</div>
-` : ''}
-
-<div style="text-align:center;padding-top:6px;font-size:8px;color:#999;">
-Gracias por su compra
-www.ferreterialdrete.com
-</div>
-</div>`;
-            document.getElementById('ticketContenidoVentaPend').innerHTML = html;
+        .then(function(venta) {
+            if (!venta) { alert('No se pudo cargar el ticket.'); return; }
+            generarTicketHTML(venta);
+            document.getElementById('ticketContenidoVentaPend').innerHTML =
+                document.getElementById('ticketImprimir').innerHTML;
             document.getElementById('modalTicketVentaPend').classList.add('visible');
             document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'false');
         })
-        .catch(e => alert('Error: ' + e.message));
+        .catch(e => alert('Error al cargar el ticket: ' + e.message));
 }
 
 function cerrarTicketVenta() {
     document.getElementById('modalTicketVentaPend').classList.remove('visible');
     document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'true');
+}
+
+function imprimirTicketPend() {
+    cerrarTicketVenta();
+    setTimeout(() => window.print(), 150);
 }
 
 </script>

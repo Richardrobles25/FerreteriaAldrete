@@ -264,6 +264,10 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     .btn-cerrar-modal { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; }
 
     /* Ticket impresión */
+    @page {
+        size: 80mm auto;
+        margin: 0;
+    }
     @media print {
         body > * { display: none !important; }
         #ticketImprimir { display: block !important; }
@@ -271,16 +275,16 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     #ticketImprimir {
         display: none;
         font-family: 'Courier New', monospace;
-        font-size: 12px;
-        width: 280px;
-        margin: 0 auto;
-        padding: 10px;
+        font-size: 11px;
+        width: 72mm;
+        margin: 0;
+        padding: 3mm 4mm;
     }
     #ticketImprimir .t-centro { text-align: center; }
-    #ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 6px 0; }
+    #ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
     #ticketImprimir .t-fila   { display: flex; justify-content: space-between; }
     #ticketImprimir .t-bold   { font-weight: bold; }
-    #ticketImprimir .t-grande { font-size: 15px; font-weight: bold; }
+    #ticketImprimir .t-grande { font-size: 13px; font-weight: bold; }
 </style>
 
 <!-- Ticket oculto para impresión -->
@@ -484,7 +488,12 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                         </td>
                         <td>$<?= number_format($v['subtotal'],2) ?></td>
                         <td style="color:#2e7d32;">
-                            <?= floatval($v['descuento'])>0 ? '-$'.number_format($v['descuento'],2) : '—' ?>
+                            <?php
+                                $sinDesc = in_array($v['estado'], ['Devuelto','Cancelada']);
+                                echo (!$sinDesc && floatval($v['descuento']) > 0)
+                                    ? '-$'.number_format($v['descuento'],2)
+                                    : '—';
+                            ?>
                         </td>
                         <td style="font-weight:700;">$<?= number_format($v['total'],2) ?></td>
                         <td>

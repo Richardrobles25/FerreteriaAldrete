@@ -27,8 +27,13 @@ function normalizarNumeroFormulario($valor): string {
 }
 
 if ($esEdicion) {
-    $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-    $stmt->execute([intval($_GET['id']), $_SESSION['sucursal_id']]);
+    $stmt = $pdo->prepare("
+        SELECT p.*, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        WHERE p.producto_id = ?
+    ");
+    $stmt->execute([$_SESSION['sucursal_id'], intval($_GET['id'])]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$editando) { header('Location: productos.php'); exit(); }
 
@@ -74,9 +79,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($codigo) {
-        $stmtCheck = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ? AND producto_id != ?");
-        $stmtCheck->execute([$codigo, $_SESSION['sucursal_id'], $producto_id]);
-        if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en esta sucursal.';
+        $stmtCheck = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND producto_id != ?");
+        $stmtCheck->execute([$codigo, $producto_id]);
+        if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en el catálogo.';
     }
 
     if (empty($errores)) {
@@ -87,25 +92,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($producto_id) {
+            // Actualizar catálogo (datos compartidos)
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
-                precio_compra=?,precio_venta=?,precio_mayoreo=?,stock_minimo=?,stock_maximo=?,tipo_venta=?,unidad_medida=?
-                WHERE producto_id=? AND sucursal_id=?
+                precio_compra=?,precio_venta=?,precio_mayoreo=?,tipo_venta=?,unidad_medida=?
+                WHERE producto_id=?
             ")->execute([$codigo,$nombre_producto,$descripcion,$categoria_id,
                          $precio_compra,$precio_venta,$precio_mayoreo,
-                         $stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null,
-                         $producto_id,$_SESSION['sucursal_id']]);
+                         $tipo_venta,$unidad_medida ?: null,$producto_id]);
+            // Actualizar stock de esta sucursal
+            $pdo->prepare("
+                UPDATE stock_sucursal SET stock_minimo=?,stock_maximo=?
+                WHERE producto_id=? AND sucursal_id=?
+            ")->execute([$stock_minimo,$stock_maximo,$producto_id,$_SESSION['sucursal_id']]);
         } else {
+            // Insertar en catálogo (sin stock ni sucursal)
             $pdo->prepare("
                 INSERT INTO productos
-                (sucursal_id,categoria_id,codigo,nombre_producto,descripcion,
-                 precio_compra,precio_venta,precio_mayoreo,stock_actual,
-                 stock_minimo,stock_maximo,tipo_venta,unidad_medida,activo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
-            ")->execute([$_SESSION['sucursal_id'],$categoria_id,$codigo,$nombre_producto,
-                         $descripcion,$precio_compra,$precio_venta,$precio_mayoreo,
-                         $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null]);
+                (categoria_id,codigo,nombre_producto,descripcion,
+                 precio_compra,precio_venta,precio_mayoreo,tipo_venta,unidad_medida,activo)
+                VALUES (?,?,?,?,?,?,?,?,?,1)
+            ")->execute([$categoria_id,$codigo,$nombre_producto,$descripcion,
+                         $precio_compra,$precio_venta,$precio_mayoreo,
+                         $tipo_venta,$unidad_medida ?: null]);
             $producto_id = $pdo->lastInsertId();
+
+            // Insertar stock para esta sucursal
+            $pdo->prepare("
+                INSERT INTO stock_sucursal (producto_id,sucursal_id,stock_actual,stock_minimo,stock_maximo,activo)
+                VALUES (?,?,?,?,?,1)
+            ")->execute([$producto_id,$_SESSION['sucursal_id'],$cantidad_inicial,$stock_minimo,$stock_maximo]);
 
             if ($cantidad_inicial > 0) {
                 $pdo->prepare("
@@ -336,7 +352,7 @@ if ($editando && $editando['categoria_id']) {
                                 placeholder="Ej. TUBO-3/4-PVC"
                                 oninput="this.value=this.value.toUpperCase()"
                                 autocomplete="off">
-                            <div class="hint">Único por sucursal. Puede ser código de barras.</div>
+                            <div class="hint">Único en el catálogo. Puede ser código de barras.</div>
                         </div>
 
                         <!-- Categoría con autocomplete -->

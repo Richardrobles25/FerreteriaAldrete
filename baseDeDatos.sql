@@ -71,7 +71,6 @@
     -- 5. PRODUCTOS
     CREATE TABLE productos (
         producto_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        sucursal_id INT UNSIGNED NOT NULL,
         categoria_id INT UNSIGNED,
         codigo VARCHAR(50) NOT NULL, UNIQUE (sucursal_id, codigo),
         nombre_producto VARCHAR(150) NOT NULL,
@@ -79,9 +78,6 @@
         precio_compra DECIMAL(10,2) NOT NULL DEFAULT 0,
         precio_venta DECIMAL(10,2) NOT NULL DEFAULT 0,
         precio_mayoreo DECIMAL(10,2) DEFAULT 0,
-        stock_actual DECIMAL(10,3) DEFAULT 0,
-        stock_minimo DECIMAL(10,3) DEFAULT 0,
-        stock_maximo DECIMAL(10,3) DEFAULT 0,
         tipo_venta ENUM('Unidad', 'Suelto') DEFAULT 'Unidad',
         unidad_medida VARCHAR(30) NULL DEFAULT NULL,
         activo boolean DEFAULT true,
@@ -363,3 +359,18 @@ CREATE TABLE movimientos_caja (
   KEY idx_suc  (sucursal_id),
   KEY idx_fecha (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE stock_sucursal (
+  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  producto_id   INT UNSIGNED NOT NULL,
+  sucursal_id   INT UNSIGNED NOT NULL,
+  stock_actual  DECIMAL(10,3) NOT NULL DEFAULT 0.000,
+  stock_minimo  DECIMAL(10,3) NOT NULL DEFAULT 0.000,
+  stock_maximo  DECIMAL(10,3) NOT NULL DEFAULT 0.000,
+  activo        TINYINT(1)    NOT NULL DEFAULT 1,
+  updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_prod_suc (producto_id, sucursal_id),
+  KEY idx_sucursal (sucursal_id),
+  KEY idx_producto (producto_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

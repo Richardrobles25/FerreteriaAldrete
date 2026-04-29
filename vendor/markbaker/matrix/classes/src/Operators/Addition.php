@@ -66,3 +66,4 @@ class Addition extends Operator
         return $this;
     }
 }
+

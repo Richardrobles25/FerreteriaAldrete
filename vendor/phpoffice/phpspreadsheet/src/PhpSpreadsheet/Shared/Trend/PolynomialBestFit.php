@@ -218,3 +218,4 @@ class PolynomialBestFit extends BestFit
         }
     }
 }
+

@@ -85,3 +85,4 @@ class Maximum extends MaxMinBase
         return $returnValue;
     }
 }
+

@@ -229,3 +229,4 @@ class RowColumnInformation
         return $rows;
     }
 }
+

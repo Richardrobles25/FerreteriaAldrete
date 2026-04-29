@@ -22,3 +22,4 @@ class ExceptionHandler
         restore_error_handler();
     }
 }
+

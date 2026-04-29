@@ -37,3 +37,4 @@ class WildcardMatch
         return (bool) preg_match("/^{$wildcard}\$/mui", $value);
     }
 }
+

@@ -105,3 +105,4 @@ class Single
         return ($futureValue / $presentValue) ** (1 / $periods) - 1;
     }
 }
+

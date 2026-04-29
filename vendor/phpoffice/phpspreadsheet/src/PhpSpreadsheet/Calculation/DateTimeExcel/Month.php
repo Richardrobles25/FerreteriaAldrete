@@ -102,3 +102,4 @@ class Month
         return Helpers::returnIn3FormatsObject($PHPDateObject);
     }
 }
+

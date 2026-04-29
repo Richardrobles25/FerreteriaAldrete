@@ -22,3 +22,4 @@ class StreamNotSeekableException extends Exception
         parent::__construct('enableZeroHeader must be enable to add non seekable streams');
     }
 }
+

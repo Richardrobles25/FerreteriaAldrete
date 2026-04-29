@@ -14,3 +14,4 @@ class Thumbnails extends WriterPart
         return '';
     }
 }
+

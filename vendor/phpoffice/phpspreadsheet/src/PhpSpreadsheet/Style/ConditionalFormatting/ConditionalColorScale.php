@@ -266,3 +266,4 @@ class ConditionalColorScale
         return true;
     }
 }
+

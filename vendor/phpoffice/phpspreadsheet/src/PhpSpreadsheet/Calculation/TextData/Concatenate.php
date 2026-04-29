@@ -223,3 +223,4 @@ class Concatenate
         return $returnValue;
     }
 }
+

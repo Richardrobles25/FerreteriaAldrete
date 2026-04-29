@@ -326,3 +326,4 @@ class Format
         return is_array($value) ? ExcelError::VALUE() : (float) $value;
     }
 }
+

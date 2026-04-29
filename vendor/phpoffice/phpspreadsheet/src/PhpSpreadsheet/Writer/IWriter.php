@@ -85,3 +85,4 @@ interface IWriter
      */
     public function getDiskCachingDirectory(): string;
 }
+

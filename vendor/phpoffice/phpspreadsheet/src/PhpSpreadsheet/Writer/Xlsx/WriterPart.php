@@ -27,3 +27,4 @@ abstract class WriterPart
         $this->parentWriter = $writer;
     }
 }
+

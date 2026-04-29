@@ -211,3 +211,4 @@ class Amortization
         return 2.5;
     }
 }
+

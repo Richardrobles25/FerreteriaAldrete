@@ -427,3 +427,4 @@ class CalculationLocale extends CalculationBase
         return $function;
     }
 }
+

@@ -39,3 +39,4 @@ class CashFlowValidations extends FinancialValidations
         return self::validateFloat($futureValue);
     }
 }
+

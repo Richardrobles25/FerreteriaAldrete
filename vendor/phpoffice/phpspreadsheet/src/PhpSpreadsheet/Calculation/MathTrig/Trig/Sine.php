@@ -114,3 +114,4 @@ class Sine
         return Helpers::numberOrNan(asinh($number));
     }
 }
+

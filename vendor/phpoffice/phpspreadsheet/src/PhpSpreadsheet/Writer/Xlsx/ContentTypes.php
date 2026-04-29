@@ -328,3 +328,4 @@ class ContentTypes extends WriterPart
         }
     }
 }
+

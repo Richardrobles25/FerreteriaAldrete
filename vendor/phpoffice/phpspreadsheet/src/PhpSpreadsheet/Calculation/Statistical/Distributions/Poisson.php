@@ -64,3 +64,4 @@ class Poisson
         return (exp(0 - $mean) * $mean ** $value) / $fact;
     }
 }
+

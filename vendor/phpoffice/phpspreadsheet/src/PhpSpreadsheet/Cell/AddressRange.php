@@ -25,3 +25,4 @@ interface AddressRange
 
     public function __toString(): string;
 }
+

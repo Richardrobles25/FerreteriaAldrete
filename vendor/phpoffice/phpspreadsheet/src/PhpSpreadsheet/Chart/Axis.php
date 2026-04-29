@@ -342,3 +342,4 @@ class Axis extends Properties
         $this->fillColor = clone $this->fillColor;
     }
 }
+

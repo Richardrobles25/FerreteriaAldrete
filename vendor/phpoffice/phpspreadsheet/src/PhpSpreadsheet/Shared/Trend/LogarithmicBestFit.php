@@ -78,3 +78,4 @@ class LogarithmicBestFit extends BestFit
         }
     }
 }
+

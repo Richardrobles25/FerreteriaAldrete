@@ -55,3 +55,4 @@ class AutoFilters
         return "'{$title}'.{$range}";
     }
 }
+

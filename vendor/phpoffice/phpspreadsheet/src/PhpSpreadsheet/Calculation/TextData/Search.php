@@ -95,3 +95,4 @@ class Search
         return ExcelError::VALUE();
     }
 }
+

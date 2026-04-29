@@ -209,3 +209,4 @@ class Conditional
         return ExcelError::NA();
     }
 }
+

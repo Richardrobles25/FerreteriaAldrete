@@ -1164,3 +1164,4 @@ class Workbook extends BIFFwriter
         $this->escher = $escher;
     }
 }
+

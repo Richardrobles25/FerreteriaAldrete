@@ -73,3 +73,4 @@ class HyperGeometric
         return $successesPopulationAndSample * $adjustedPopulationAndSample / $numbersPopulationAndSample;
     }
 }
+

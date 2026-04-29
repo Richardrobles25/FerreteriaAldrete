@@ -117,3 +117,4 @@ final class PregMatchTypeSpecifyingExtension implements StaticMethodTypeSpecifyi
         );
     }
 }
+

@@ -69,3 +69,4 @@ class InterestRate
         return $periodsPerYear * (($effectiveRate + 1) ** (1 / $periodsPerYear) - 1);
     }
 }
+

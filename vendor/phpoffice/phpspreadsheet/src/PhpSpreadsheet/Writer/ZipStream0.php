@@ -15,3 +15,4 @@ class ZipStream0
         return class_exists(Archive::class) ? ZipStream2::newZipStream($fileHandle) : ZipStream3::newZipStream($fileHandle);
     }
 }
+

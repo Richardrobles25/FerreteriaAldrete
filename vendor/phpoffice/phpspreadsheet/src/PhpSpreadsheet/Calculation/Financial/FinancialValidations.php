@@ -120,3 +120,4 @@ class FinancialValidations
         return $discount;
     }
 }
+

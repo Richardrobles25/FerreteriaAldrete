@@ -35,3 +35,4 @@ class Absolute
         return abs($number);
     }
 }
+

@@ -102,3 +102,4 @@ class EndlessCycleStream implements StreamInterface
         return $key !== null ? null : [];
     }
 }
+

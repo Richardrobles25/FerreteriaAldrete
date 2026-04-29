@@ -20,3 +20,4 @@ interface IRenderer
      */
     public function render(?string $filename): bool;
 }
+

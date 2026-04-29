@@ -371,3 +371,4 @@ class Csv extends BaseWriter
         return $this;
     }
 }
+

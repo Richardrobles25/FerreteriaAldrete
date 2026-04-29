@@ -86,3 +86,4 @@ class Styles extends WriterPart
         return $objWriter->getData();
     }
 }
+

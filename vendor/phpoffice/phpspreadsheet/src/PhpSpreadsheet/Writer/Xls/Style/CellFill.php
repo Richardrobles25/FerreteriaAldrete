@@ -44,3 +44,4 @@ class CellFill
         return self::$fillStyleMap[Fill::FILL_NONE];
     }
 }
+

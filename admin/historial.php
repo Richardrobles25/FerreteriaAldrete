@@ -3,21 +3,71 @@ session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-$fecha    = $_GET['fecha'] ?? '';
-$tipo     = $_GET['tipo'] ?? '';
-$sucursal = intval($_GET['sucursal'] ?? 0);
-$busqueda = trim($_GET['buscar'] ?? '');
+$fechaInicio = $_GET['fecha_inicio'] ?? '';
+$fechaFin    = $_GET['fecha_fin']    ?? '';
+$tipo        = $_GET['tipo']         ?? '';
+$sucursal    = intval($_GET['sucursal'] ?? 0);
+$busqueda    = trim($_GET['buscar']  ?? '');
 
 $where  = "WHERE 1=1";
 $params = [];
 
-if ($sucursal) { $where .= " AND p.sucursal_id = ?"; $params[] = $sucursal; }
-if ($fecha)    { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
-if ($tipo)     { $where .= " AND m.tipo = ?"; $params[] = $tipo; }
-if ($busqueda) { $where .= " AND p.nombre_producto LIKE ?"; $params[] = '%'.$busqueda.'%'; }
+if ($sucursal)                      { $where .= " AND p.sucursal_id = ?";                        $params[] = $sucursal; }
+if ($fechaInicio && $fechaFin)      { $where .= " AND DATE(m.created_at) BETWEEN ? AND ?";       $params[] = $fechaInicio; $params[] = $fechaFin; }
+elseif ($fechaInicio)               { $where .= " AND DATE(m.created_at) >= ?";                  $params[] = $fechaInicio; }
+elseif ($fechaFin)                  { $where .= " AND DATE(m.created_at) <= ?";                  $params[] = $fechaFin; }
+if ($tipo)                          { $where .= " AND m.tipo = ?";                               $params[] = $tipo; }
+if ($busqueda)                      { $where .= " AND p.nombre_producto LIKE ?";                 $params[] = '%'.$busqueda.'%'; }
+
+// ── Exportar ─────────────────────────────────────────────────────────
+if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
+    require_once __DIR__ . '/export_helper.php';
+
+    $stmtExp = $pdo->prepare("
+        SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo AS usuario, s.nombre AS sucursal
+        FROM movimientos_inventario m
+        JOIN productos p ON m.producto_id = p.producto_id
+        JOIN usuarios u ON m.usuario_id = u.usuario_id
+        JOIN sucursales s ON p.sucursal_id = s.sucursal_id
+        $where
+        ORDER BY m.created_at DESC
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
+
+    $titulo = 'Historial General de Movimientos';
+    $rangoFecha = $fechaInicio && $fechaFin ? "Del $fechaInicio al $fechaFin"
+                : ($fechaInicio ? "Desde $fechaInicio" : ($fechaFin ? "Hasta $fechaFin" : ''));
+    $subtitulo = implode(' | ', array_filter([
+        $rangoFecha,
+        $tipo     ? "Tipo: $tipo"    : '',
+        $sucursal ? "Sucursal ID: $sucursal" : '',
+        $busqueda ? "Búsqueda: $busqueda" : '',
+    ])) ?: 'Todos los movimientos';
+    $columnas = ['Producto','Código','Tipo','Cantidad','Stock Ant.','Stock Nuevo','Motivo','Usuario','Sucursal','Fecha'];
+    $filas = array_map(fn($r) => [
+        $r['nombre_producto'],
+        $r['codigo'],
+        $r['tipo'],
+        $r['cantidad'],
+        $r['stock_anterior'],
+        $r['stock_nuevo'],
+        $r['motivo'] ?? '',
+        $r['usuario'],
+        $r['sucursal'],
+        date('d/m/Y H:i', strtotime($r['created_at'])),
+    ], $expData);
+
+    if ($_GET['exportar'] === 'pdf') {
+        exportarPDF($titulo, $subtitulo, $columnas, $filas, [], 'L');
+    } else {
+        exportarExcel($titulo, $subtitulo, $columnas, $filas, []);
+    }
+}
 
 $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo AS usuario, s.nombre AS sucursal
@@ -62,16 +112,16 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -84,11 +134,11 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .filtro-group { display: flex; flex-direction: column; gap: 5px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
     .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #ff8c00; }
-    .btn-filtrar { background: #ff8c00; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
+    .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; margin-bottom: 14px; }
-    .stat { background: white; border-radius: 8px; padding: 14px; border: 0.5px solid #e8e8e8; border-top: 3px solid #ff8c00; }
+    .stat { background: white; border-radius: 8px; padding: 14px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; }
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
     .tabla-wrapper { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
@@ -108,29 +158,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
 </style>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
-        <p>Administrador</p>
-    </div>
-    <div class="sidebar-menu">
-        <a class="menu-item" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item" href="reporteProductos.php">Productos más vendidos</a>
-        <a class="menu-item active" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('historial_admin'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -145,15 +173,26 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     </div>
 
     <div class="content">
+        <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h1 style="font-size:20px;color:#222;font-weight:600;">Historial de Movimientos</h1>
+            <div style="display:flex;gap:8px;">
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+            </div>
+        </div>
         <form method="GET">
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar producto</label>
-                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;">
+                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;" oninput="filtrarTabla(this.value)">
                 </div>
                 <div class="filtro-group">
-                    <label>Fecha</label>
-                    <input type="date" name="fecha" value="<?= htmlspecialchars($fecha) ?>">
+                    <label>Fecha inicio</label>
+                    <input type="date" name="fecha_inicio" value="<?= htmlspecialchars($fechaInicio) ?>">
+                </div>
+                <div class="filtro-group">
+                    <label>Fecha fin</label>
+                    <input type="date" name="fecha_fin" value="<?= htmlspecialchars($fechaFin) ?>">
                 </div>
                 <div class="filtro-group">
                     <label>Tipo</label>
@@ -175,15 +214,15 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                     </select>
                 </div>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
-                <?php if ($fecha||$tipo||$sucursal||$busqueda): ?><a class="btn-limpiar" href="historial.php">Limpiar</a><?php endif; ?>
+                <?php if ($fechaInicio||$fechaFin||$tipo||$sucursal||$busqueda): ?><a class="btn-limpiar" href="historial.php">Limpiar</a><?php endif; ?>
             </div>
         </form>
 
         <div class="stats">
-            <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'],2) ?></h3></div>
-            <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'],2) ?></h3></div>
-            <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?></h3></div>
-            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transf'] ?></h3></div>
+            <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'] ?? 0, 2) ?></h3></div>
+            <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'] ?? 0, 2) ?></h3></div>
+            <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?? 0 ?></h3></div>
+            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transf'] ?? 0 ?></h3></div>
         </div>
 
         <div class="tabla-wrapper">
@@ -192,7 +231,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <thead>
                     <tr><th>Producto</th><th>Sucursal</th><th>Tipo</th><th>Cantidad</th><th>Stock ant.</th><th>Stock nuevo</th><th>Motivo</th><th>Usuario</th><th>Fecha</th></tr>
                 </thead>
-                <tbody>
+                <tbody id="tablaFiltrable">
                     <?php foreach ($movimientos as $m): ?>
                     <tr>
                         <td>
@@ -221,7 +260,18 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
 </body>
 </html>
+
+

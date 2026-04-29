@@ -157,3 +157,4 @@ class ResourceStream implements StreamInterface
         return $result;
     }
 }
+

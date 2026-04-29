@@ -187,3 +187,4 @@ class Protection extends Supervisor
         return $exportedArray;
     }
 }
+

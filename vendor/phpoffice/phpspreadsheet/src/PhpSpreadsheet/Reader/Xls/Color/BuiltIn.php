@@ -29,3 +29,4 @@ class BuiltIn
         return ['rgb' => self::BUILTIN_COLOR_MAP[$color] ?? '000000'];
     }
 }
+

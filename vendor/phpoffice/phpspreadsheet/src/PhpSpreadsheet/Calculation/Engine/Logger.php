@@ -124,3 +124,4 @@ class Logger
         return $this->debugLog;
     }
 }
+

@@ -93,3 +93,4 @@ class Blanks extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

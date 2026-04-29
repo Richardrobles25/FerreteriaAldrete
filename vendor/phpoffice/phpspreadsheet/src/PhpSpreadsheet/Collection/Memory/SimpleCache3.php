@@ -78,3 +78,4 @@ class SimpleCache3 implements CacheInterface
         return true;
     }
 }
+

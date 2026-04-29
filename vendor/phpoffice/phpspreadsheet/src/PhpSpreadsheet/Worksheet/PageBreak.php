@@ -55,3 +55,4 @@ class PageBreak
         return Coordinate::indexesFromString($this->coordinate)[2];
     }
 }
+

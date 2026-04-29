@@ -80,16 +80,16 @@ if ($verCorte) {
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -99,19 +99,19 @@ if ($verCorte) {
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
     .content { flex: 1; padding: 24px; overflow-y: auto; display: grid; grid-template-columns: 1fr 380px; gap: 18px; align-items: start; }
     .stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 14px; }
-    .stat { background: white; border-radius: 8px; padding: 14px; border: 0.5px solid #e8e8e8; border-top: 3px solid #ff8c00; }
+    .stat { background: white; border-radius: 8px; padding: 14px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; }
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
     .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 13px; margin-bottom: 13px; display: flex; gap: 10px; align-items: flex-end; }
     .filtro-group { display: flex; flex-direction: column; gap: 4px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
     .filtro-group input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .filtro-group input:focus { outline: none; border-color: #ff8c00; }
-    .btn-filtrar { background: #ff8c00; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .filtro-group input:focus { outline: none; border-color: #14ace7; }
+    .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     .corte-item { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 16px; margin-bottom: 10px; cursor: pointer; transition: border-color 0.15s; }
-    .corte-item:hover { border-color: #ff8c00; }
-    .corte-item.seleccionado { border-color: #ff8c00; border-width: 1.5px; }
+    .corte-item:hover { border-color: #14ace7; }
+    .corte-item.seleccionado { border-color: #14ace7; border-width: 1.5px; }
     .corte-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
     .corte-info h4 { font-size: 14px; color: #333; margin: 0 0 3px; font-weight: 600; }
     .corte-info p { font-size: 12px; color: #888; margin: 0; }
@@ -122,10 +122,10 @@ if ($verCorte) {
     .corte-desglose span { font-size: 11px; color: #888; }
     .badge-estado { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; margin-left: 6px; }
     .estado-cerrada { background: #e8f5e9; color: #2e7d32; }
-    .estado-abierta { background: #fff3e0; color: #e65c00; }
+    .estado-abierta { background: #e3f2fd; color: #1565c0; }
     .dif-ok  { color: #2e7d32; font-size: 11px; font-weight: 600; }
     .dif-neg { color: #c0392b; font-size: 11px; font-weight: 600; }
-    .dif-pos { color: #f57f17; font-size: 11px; font-weight: 600; }
+    .dif-pos { color: #1565c0; font-size: 11px; font-weight: 600; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
     .detalle-card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 20px; position: sticky; top: 0; }
     .detalle-card h3 { font-size: 15px; font-weight: 600; color: #333; margin: 0 0 16px; }
@@ -142,12 +142,12 @@ if ($verCorte) {
     .badge-ef { background: #e8f5e9; color: #2e7d32; }
     .badge-term { background: #e3f2fd; color: #1565c0; }
     .badge-mix { background: #f3e5f5; color: #6a1b9a; }
-    .badge-cred { background: #fff3e0; color: #e65c00; }
+    .badge-cred { background: #e3f2fd; color: #1565c0; }
     .sin-seleccion { text-align: center; color: #aaa; font-size: 13px; padding: 40px 20px; }
     .dif-box { border-radius: 6px; padding: 10px 14px; font-size: 13px; font-weight: 600; text-align: center; margin-top: 12px; }
     .dif-box.cuadrado { background: #e8f5e9; color: #2e7d32; }
     .dif-box.faltante  { background: #fdecea; color: #c0392b; }
-    .dif-box.sobrante  { background: #fff8e1; color: #f57f17; }
+    .dif-box.sobrante  { background: #fff8e1; color: #1565c0; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -228,7 +228,7 @@ if ($verCorte) {
                                 <?php if ($c['cerrada_en']): ?>
                                     → <?= date('H:i', strtotime($c['cerrada_en'])) ?>
                                 <?php else: ?>
-                                    · <span style="color:#ff8c00;">En curso</span>
+                                    · <span style="color:#14ace7;">En curso</span>
                                 <?php endif; ?>
                                 · <?= htmlspecialchars($c['nombre_sucursal']) ?>
                             </p>
@@ -328,3 +328,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

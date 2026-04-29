@@ -193,3 +193,4 @@ class Periodic
         return (-$presentValue - $futureValue) / $payment;
     }
 }
+

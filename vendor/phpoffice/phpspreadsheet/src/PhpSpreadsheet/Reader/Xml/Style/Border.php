@@ -104,3 +104,4 @@ class Border extends StyleBase
         return [$borderPosition, $diagonalDirection];
     }
 }
+

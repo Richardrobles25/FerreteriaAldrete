@@ -559,3 +559,4 @@ class OLE
         return IntOrFloat::evaluate($unixTimestamp);
     }
 }
+

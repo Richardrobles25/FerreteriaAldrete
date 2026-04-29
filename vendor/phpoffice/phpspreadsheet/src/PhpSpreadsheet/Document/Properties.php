@@ -507,3 +507,4 @@ class Properties
         return $this;
     }
 }
+

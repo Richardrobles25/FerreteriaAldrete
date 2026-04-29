@@ -590,3 +590,4 @@ class ComplexFunctions
         return (string) $complex->pow((float) $realNumber);
     }
 }
+

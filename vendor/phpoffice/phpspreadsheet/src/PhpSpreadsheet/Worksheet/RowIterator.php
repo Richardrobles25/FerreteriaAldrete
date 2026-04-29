@@ -153,3 +153,4 @@ class RowIterator implements NativeIterator
         return $this->position <= $this->endRow && $this->position >= $this->startRow;
     }
 }
+

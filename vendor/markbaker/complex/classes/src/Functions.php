@@ -821,3 +821,4 @@ class Functions
         return M_PI - \atan($complex->getImaginary() / \abs($complex->getReal()));
     }
 }
+

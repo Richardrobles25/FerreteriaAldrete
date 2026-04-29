@@ -38,3 +38,4 @@ class RelsVBA extends WriterPart
         return $objWriter->getData();
     }
 }
+

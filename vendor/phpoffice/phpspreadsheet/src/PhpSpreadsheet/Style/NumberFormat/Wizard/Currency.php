@@ -8,3 +8,4 @@ class Currency extends CurrencyBase
 
     protected ?CurrencyNegative $overrideNegative = null;
 }
+

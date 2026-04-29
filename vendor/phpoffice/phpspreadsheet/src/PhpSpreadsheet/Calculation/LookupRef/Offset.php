@@ -163,3 +163,4 @@ class Offset
         return $endCellRow;
     }
 }
+

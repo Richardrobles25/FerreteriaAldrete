@@ -61,3 +61,4 @@ class Angle
         return deg2rad($number);
     }
 }
+

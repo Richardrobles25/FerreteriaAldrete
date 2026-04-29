@@ -103,3 +103,4 @@ class Dimension
         return $size / self::ABSOLUTE_UNITS[$unitOfMeasure];
     }
 }
+

@@ -41,3 +41,4 @@ final class CalculationParserOnly extends Calculation
         return $this;
     }
 }
+

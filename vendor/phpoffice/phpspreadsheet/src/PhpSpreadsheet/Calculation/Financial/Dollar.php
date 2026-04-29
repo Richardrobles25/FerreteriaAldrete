@@ -129,3 +129,4 @@ class Dollar
         return $dollars + $cents;
     }
 }
+

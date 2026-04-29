@@ -60,3 +60,4 @@ $phar->compressFiles(Phar::GZ);
 echo "Complete.\n";
 
 exit();
+

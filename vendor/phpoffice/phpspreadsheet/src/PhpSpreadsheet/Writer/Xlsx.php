@@ -907,3 +907,4 @@ class Xlsx extends BaseWriter
         }
     }
 }
+

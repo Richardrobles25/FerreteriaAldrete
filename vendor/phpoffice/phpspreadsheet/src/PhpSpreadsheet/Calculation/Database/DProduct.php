@@ -42,3 +42,4 @@ class DProduct extends DatabaseAbstract
         );
     }
 }
+

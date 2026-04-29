@@ -151,3 +151,4 @@ class Difference
         return (int) $PHPDiffDateObject->format('%m');
     }
 }
+

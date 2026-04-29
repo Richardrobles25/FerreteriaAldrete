@@ -165,3 +165,4 @@ class ExcelError
         return self::ERROR_CODES['spill'];
     }
 }
+

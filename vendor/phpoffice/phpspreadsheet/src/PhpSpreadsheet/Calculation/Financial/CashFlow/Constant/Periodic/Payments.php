@@ -114,3 +114,4 @@ class Payments
         return $interestAndPrincipal->principal();
     }
 }
+

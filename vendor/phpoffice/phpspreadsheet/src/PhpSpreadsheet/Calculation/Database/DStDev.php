@@ -43,3 +43,4 @@ class DStDev extends DatabaseAbstract
         );
     }
 }
+

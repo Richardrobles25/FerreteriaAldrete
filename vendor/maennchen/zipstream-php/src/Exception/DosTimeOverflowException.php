@@ -23,3 +23,4 @@ class DosTimeOverflowException extends Exception
         parent::__construct('The date ' . $dateTime->format(DateTimeInterface::ATOM) . " can't be represented as DOS time / date.");
     }
 }
+

@@ -100,3 +100,4 @@ class Logarithms
         return log($number);
     }
 }
+

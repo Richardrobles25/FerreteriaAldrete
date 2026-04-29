@@ -39,3 +39,4 @@ class EndOfCentralDirectoryTest extends TestCase
         );
     }
 }
+

@@ -41,3 +41,4 @@ final class ReplaceResult
         $this->result = $result;
     }
 }
+

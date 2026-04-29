@@ -844,3 +844,4 @@ class Roman
         return self::calculateRoman((int) $aValue, (int) $style);
     }
 }
+

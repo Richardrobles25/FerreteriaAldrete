@@ -20,3 +20,4 @@ abstract class Category
     const CATEGORY_UNCATEGORISED = 'Uncategorised';
     const CATEGORY_MICROSOFT_INTERNAL = 'MS Internal';
 }
+

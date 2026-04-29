@@ -47,3 +47,4 @@ class AutoFit
         return $autoFilterIndentRange;
     }
 }
+

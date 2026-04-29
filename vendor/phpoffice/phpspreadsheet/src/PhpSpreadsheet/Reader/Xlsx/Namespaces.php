@@ -134,3 +134,4 @@ class Namespaces
     const RELATIONSHIPS_FEATURE_PROPERTY_BAG = 'http://schemas.microsoft.com/office/2022/11/relationships/FeaturePropertyBag';
     const STYLE_CHECKBOX_URI = '{C7286773-470A-42A8-94C5-96B5CB345126}';
 }
+

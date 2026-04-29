@@ -237,3 +237,4 @@ class ConditionalDataBarExtension
         return $this;
     }
 }
+

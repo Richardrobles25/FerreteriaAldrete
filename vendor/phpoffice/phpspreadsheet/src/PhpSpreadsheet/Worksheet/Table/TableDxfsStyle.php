@@ -168,3 +168,4 @@ class TableDxfsStyle
         return $this->secondRowStripeStyle;
     }
 }
+

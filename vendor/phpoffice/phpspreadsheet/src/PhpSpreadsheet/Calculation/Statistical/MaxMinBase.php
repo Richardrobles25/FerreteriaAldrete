@@ -15,3 +15,4 @@ abstract class MaxMinBase
         return $value;
     }
 }
+

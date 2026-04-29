@@ -65,3 +65,4 @@ class CyclicReferenceStack
         return $this->stack;
     }
 }
+

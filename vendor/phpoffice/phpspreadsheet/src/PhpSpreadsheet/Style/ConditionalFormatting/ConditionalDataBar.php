@@ -74,3 +74,4 @@ class ConditionalDataBar
         return $this;
     }
 }
+

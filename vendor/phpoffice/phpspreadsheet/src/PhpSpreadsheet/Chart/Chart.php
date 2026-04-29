@@ -783,3 +783,4 @@ class Chart
         $this->fillColor = clone $this->fillColor;
     }
 }
+

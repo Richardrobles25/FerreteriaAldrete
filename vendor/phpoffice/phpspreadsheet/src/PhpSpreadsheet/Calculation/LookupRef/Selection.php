@@ -49,3 +49,4 @@ class Selection
         return $chooseArgs[$chosenEntry];
     }
 }
+

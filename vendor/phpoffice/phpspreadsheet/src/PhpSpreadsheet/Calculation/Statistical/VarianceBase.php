@@ -26,3 +26,4 @@ abstract class VarianceBase
         return $value;
     }
 }
+

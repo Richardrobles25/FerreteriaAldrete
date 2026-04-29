@@ -374,3 +374,4 @@ class Conditional implements IComparable
         return in_array($type, self::CONDITION_TYPES);
     }
 }
+

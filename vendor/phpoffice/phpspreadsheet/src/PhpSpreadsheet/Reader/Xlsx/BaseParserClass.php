@@ -19,3 +19,4 @@ class BaseParserClass
         return $value === 'true' || $value === 'TRUE';
     }
 }
+

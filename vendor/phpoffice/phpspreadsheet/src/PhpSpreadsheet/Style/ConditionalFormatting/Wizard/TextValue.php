@@ -162,3 +162,4 @@ class TextValue extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

@@ -128,3 +128,4 @@ class Time
         return (int) $value;
     }
 }
+

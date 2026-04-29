@@ -46,3 +46,4 @@ final class MatchAllWithOffsetsResult
         $this->count = $count;
     }
 }
+

@@ -116,3 +116,4 @@ class Cotangent
         return Helpers::numberOrNan($result);
     }
 }
+

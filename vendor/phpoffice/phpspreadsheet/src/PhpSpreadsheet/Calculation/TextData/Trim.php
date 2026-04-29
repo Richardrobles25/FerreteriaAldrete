@@ -48,3 +48,4 @@ class Trim
         return trim(preg_replace('/ +/', ' ', trim("$stringValue", ' ')) ?? '', ' ');
     }
 }
+

@@ -156,3 +156,4 @@ class Settings
         return self::$requestFactory;
     }
 }
+

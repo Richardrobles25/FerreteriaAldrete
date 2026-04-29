@@ -57,3 +57,4 @@ class CellAlignment
         return self::$verticalMap[Alignment::VERTICAL_BOTTOM];
     }
 }
+

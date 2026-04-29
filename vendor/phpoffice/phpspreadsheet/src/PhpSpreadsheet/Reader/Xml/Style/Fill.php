@@ -59,3 +59,4 @@ class Fill extends StyleBase
         return $style;
     }
 }
+

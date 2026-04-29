@@ -191,3 +191,4 @@ class PageMargins
         return $value * 72;
     }
 }
+

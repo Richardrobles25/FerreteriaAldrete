@@ -132,3 +132,4 @@ class FormulaToken
         $this->tokenSubType = $value;
     }
 }
+

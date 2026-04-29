@@ -83,3 +83,4 @@ abstract class CellIterator implements NativeIterator
         $this->adjustForExistingOnlyRange();
     }
 }
+

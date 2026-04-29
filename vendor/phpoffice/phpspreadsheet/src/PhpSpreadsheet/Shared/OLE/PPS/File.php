@@ -60,3 +60,4 @@ class File extends PPS
         $this->_data .= $data;
     }
 }
+

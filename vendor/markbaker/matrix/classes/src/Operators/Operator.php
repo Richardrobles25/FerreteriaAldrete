@@ -76,3 +76,4 @@ abstract class Operator
         return new Matrix($this->matrix);
     }
 }
+

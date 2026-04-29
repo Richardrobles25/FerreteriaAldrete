@@ -968,7 +968,7 @@ class Ods extends BaseReader
 
                 $type = $cellData->getAttributeNS($officeNs, 'value-type');
                 $symbol = '';
-                $leftHandCurrency = Preg::isMatch('/\$|£|￥/', $allCellDataText, $matches);
+                $leftHandCurrency = Preg::isMatch('/\$|Â£|ï¿¥/', $allCellDataText, $matches);
                 if ($leftHandCurrency) {
                     $type = str_replace('float', 'currency', $type);
                     $symbol = (string) $matches[0];
@@ -1022,7 +1022,7 @@ class Ods extends BaseReader
                             if ($symbol !== '$') {
                                 $formatting = str_replace('$', $symbol, $formatting);
                             }
-                        } elseif (str_contains($allCellDataText, '€')) {
+                        } elseif (str_contains($allCellDataText, 'â‚¬')) {
                             $typeValue = 'currency';
                             $formatting = str_contains($allCellDataText, '.') ? NumberFormat::FORMAT_CURRENCY_EUR : NumberFormat::FORMAT_CURRENCY_EUR_INTEGER;
                         }
@@ -1750,3 +1750,4 @@ class Ods extends BaseReader
         return $borders; // @phpstan-ignore-line
     }
 }
+

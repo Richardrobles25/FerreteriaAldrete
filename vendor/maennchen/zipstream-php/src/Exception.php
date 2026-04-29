@@ -8,3 +8,4 @@ namespace ZipStream;
  * @api
  */
 abstract class Exception extends \Exception {}
+

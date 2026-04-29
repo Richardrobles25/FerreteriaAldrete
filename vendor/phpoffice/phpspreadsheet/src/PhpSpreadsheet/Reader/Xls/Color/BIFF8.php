@@ -73,3 +73,4 @@ class BIFF8
         return ['rgb' => self::BIFF8_COLOR_MAP[$color] ?? '000000'];
     }
 }
+

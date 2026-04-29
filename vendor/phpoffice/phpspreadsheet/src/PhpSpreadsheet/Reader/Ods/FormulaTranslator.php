@@ -125,3 +125,4 @@ class FormulaTranslator
         return $excelFormula;
     }
 }
+

@@ -144,3 +144,4 @@ class TreasuryBill
         return ((100 - $price) / $price) * (360 / $daysBetweenSettlementAndMaturity);
     }
 }
+

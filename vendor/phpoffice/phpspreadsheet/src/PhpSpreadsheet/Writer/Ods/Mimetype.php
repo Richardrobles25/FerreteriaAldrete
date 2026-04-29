@@ -14,3 +14,4 @@ class Mimetype extends WriterPart
         return 'application/vnd.oasis.opendocument.spreadsheet';
     }
 }
+

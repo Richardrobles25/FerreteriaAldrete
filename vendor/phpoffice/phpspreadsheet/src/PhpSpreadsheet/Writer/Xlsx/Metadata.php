@@ -158,3 +158,4 @@ class Metadata extends WriterPart
         $objWriter->endElement(); // valueMetadata
     }
 }
+

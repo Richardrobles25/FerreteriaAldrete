@@ -123,3 +123,4 @@ class ColumnRange implements AddressRange, Stringable
         return "{$from}:{$to}";
     }
 }
+

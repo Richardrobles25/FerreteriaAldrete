@@ -3281,3 +3281,4 @@ class Worksheet extends BIFFwriter
         return (empty($rgb) || $this->writerWorkbook === null) ? $default : $this->writerWorkbook->addColor($rgb, $default);
     }
 }
+

@@ -122,3 +122,4 @@ abstract class Dimension
         return $this;
     }
 }
+

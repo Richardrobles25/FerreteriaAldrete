@@ -20,3 +20,4 @@ class Exception extends PhpSpreadsheetException
         throw $e;
     }
 }
+

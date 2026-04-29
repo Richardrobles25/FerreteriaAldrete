@@ -52,7 +52,7 @@ class CharacterConvert
         }
 
         if ($ansi && $character === 219 && self::$oneByteCharacterSet[0] === 'M') {
-            return '€';
+            return 'â‚¬';
         }
 
         $min = Functions::getCompatibilityMode() === Functions::COMPATIBILITY_OPENOFFICE ? 0 : 1;
@@ -122,7 +122,7 @@ class CharacterConvert
         if (mb_strlen($characters, 'UTF-8') > 1) {
             $character = mb_substr($characters, 0, 1, 'UTF-8');
         }
-        if ($ansi && $character === '€' && self::$oneByteCharacterSet[0] === 'M') {
+        if ($ansi && $character === 'â‚¬' && self::$oneByteCharacterSet[0] === 'M') {
             return 219;
         }
 
@@ -146,3 +146,4 @@ class CharacterConvert
         self::$oneByteCharacterSet = 'MAC';
     }
 }
+

@@ -103,3 +103,4 @@ class Time extends DateTimeWizard
         return implode('', array_map([$this, 'intersperse'], $this->formatBlocks, $this->separators));
     }
 }
+

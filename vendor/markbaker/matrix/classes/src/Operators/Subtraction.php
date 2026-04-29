@@ -66,3 +66,4 @@ class Subtraction extends Operator
         return $this;
     }
 }
+

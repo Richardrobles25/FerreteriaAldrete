@@ -34,3 +34,4 @@ class Trunc
         return Round::down($value, $digits);
     }
 }
+

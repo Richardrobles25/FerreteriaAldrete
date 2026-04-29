@@ -227,3 +227,4 @@ abstract class Pdf extends Html
         $this->maybeCloseFileHandle();
     }
 }
+

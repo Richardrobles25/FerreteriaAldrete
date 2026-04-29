@@ -109,3 +109,4 @@ class Helpers
         return is_nan($result) ? ExcelError::NAN() : $result;
     }
 }
+

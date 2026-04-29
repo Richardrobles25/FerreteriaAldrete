@@ -369,3 +369,4 @@ class Biff8 extends Xls
         return "$fc$fr:$lc$lr";
     }
 }
+

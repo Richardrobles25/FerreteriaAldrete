@@ -49,3 +49,4 @@ abstract class DateTimeWizard implements Stringable, Wizard
         return $this->format();
     }
 }
+

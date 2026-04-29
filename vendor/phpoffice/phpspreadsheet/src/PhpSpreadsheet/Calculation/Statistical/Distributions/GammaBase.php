@@ -380,3 +380,4 @@ abstract class GammaBase
         return $res;
     }
 }
+

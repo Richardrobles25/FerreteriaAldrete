@@ -189,3 +189,4 @@ class RichDataDrawing
         return $xml->getData();
     }
 }
+

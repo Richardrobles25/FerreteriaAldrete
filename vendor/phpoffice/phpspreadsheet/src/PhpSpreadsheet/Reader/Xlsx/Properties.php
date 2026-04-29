@@ -96,3 +96,4 @@ class Properties
         return is_array($array) ? (string) ($array[0] ?? '') : '';
     }
 }
+

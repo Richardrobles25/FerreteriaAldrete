@@ -79,3 +79,4 @@ class BSE
         $this->blipType = $blipType;
     }
 }
+

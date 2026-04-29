@@ -96,3 +96,4 @@ class PowerBestFit extends BestFit
         }
     }
 }
+

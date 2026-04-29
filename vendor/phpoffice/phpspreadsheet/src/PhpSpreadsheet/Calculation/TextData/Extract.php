@@ -288,3 +288,4 @@ class Extract
         return ($matchMode === 0) ? 'mu' : 'miu';
     }
 }
+

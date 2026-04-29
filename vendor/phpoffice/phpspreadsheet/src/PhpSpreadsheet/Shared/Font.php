@@ -720,3 +720,4 @@ class Font
         return $fontPath;
     }
 }
+

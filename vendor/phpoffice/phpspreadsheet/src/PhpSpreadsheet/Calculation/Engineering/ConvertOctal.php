@@ -172,3 +172,4 @@ class ConvertOctal extends ConvertBase
         return $value;
     }
 }
+

@@ -63,3 +63,4 @@ final class PregMatchParameterOutTypeExtension implements StaticMethodParameterO
     }
 
 }
+

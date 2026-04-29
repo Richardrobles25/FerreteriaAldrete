@@ -99,3 +99,4 @@ class XMLWriter extends \XMLWriter
         return $this->text($rawTextData ?? '');
     }
 }
+

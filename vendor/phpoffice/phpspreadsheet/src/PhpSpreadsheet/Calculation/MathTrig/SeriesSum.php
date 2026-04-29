@@ -51,3 +51,4 @@ class SeriesSum
         return $returnValue;
     }
 }
+

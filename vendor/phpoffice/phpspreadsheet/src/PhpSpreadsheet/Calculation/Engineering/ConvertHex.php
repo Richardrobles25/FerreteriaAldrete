@@ -173,3 +173,4 @@ class ConvertHex extends ConvertBase
         return $value;
     }
 }
+

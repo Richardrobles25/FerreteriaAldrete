@@ -142,3 +142,4 @@ class Delimiter
         return ($line !== '') ? $line : false;
     }
 }
+

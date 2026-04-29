@@ -23,3 +23,4 @@ interface WizardInterface
 
     public static function fromConditional(Conditional $conditional, string $cellRange = 'A1'): self;
 }
+

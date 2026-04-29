@@ -245,3 +245,4 @@ class BitWise
         return $number;
     }
 }
+

@@ -211,3 +211,4 @@ class Interest
         return $numerator / $denominator;
     }
 }
+

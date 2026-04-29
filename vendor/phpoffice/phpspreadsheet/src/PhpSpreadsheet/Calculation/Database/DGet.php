@@ -48,3 +48,4 @@ class DGet extends DatabaseAbstract
         return array_pop($row);
     }
 }
+

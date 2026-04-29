@@ -117,3 +117,4 @@ class NetworkDays
         return ($sDate > $eDate) ? -$result : $result;
     }
 }
+

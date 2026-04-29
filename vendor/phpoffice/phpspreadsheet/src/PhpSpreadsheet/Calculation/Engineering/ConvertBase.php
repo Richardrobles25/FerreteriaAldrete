@@ -68,3 +68,4 @@ abstract class ConvertBase
         return substr($value, -10);
     }
 }
+

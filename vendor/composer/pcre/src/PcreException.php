@@ -53,3 +53,4 @@ class PcreException extends \RuntimeException
         return 'UNDEFINED_ERROR';
     }
 }
+

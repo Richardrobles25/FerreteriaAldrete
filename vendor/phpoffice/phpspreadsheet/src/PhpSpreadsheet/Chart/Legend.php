@@ -172,3 +172,4 @@ class Legend
         $this->fillColor = clone $this->fillColor;
     }
 }
+

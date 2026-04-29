@@ -274,3 +274,4 @@ class Price
         return $investment / (1 - ($discount * $daysBetweenSettlementAndMaturity));
     }
 }
+

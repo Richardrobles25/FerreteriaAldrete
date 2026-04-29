@@ -70,3 +70,4 @@ class ErrorValue
         return $value === ExcelError::NA();
     }
 }
+

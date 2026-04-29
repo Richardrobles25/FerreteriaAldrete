@@ -89,3 +89,4 @@ class Font extends StyleBase
         return $style;
     }
 }
+

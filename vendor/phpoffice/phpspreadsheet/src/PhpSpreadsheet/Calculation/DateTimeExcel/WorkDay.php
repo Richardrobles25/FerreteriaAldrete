@@ -204,3 +204,4 @@ class WorkDay
         return is_int($result) ? $result : -1;
     }
 }
+

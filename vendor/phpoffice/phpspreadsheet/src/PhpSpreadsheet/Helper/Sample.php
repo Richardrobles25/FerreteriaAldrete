@@ -309,3 +309,4 @@ class Sample
         $this->log($message);
     }
 }
+

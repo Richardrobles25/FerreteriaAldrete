@@ -94,3 +94,4 @@ class Counts extends AggregateBase
         return $returnValue;
     }
 }
+

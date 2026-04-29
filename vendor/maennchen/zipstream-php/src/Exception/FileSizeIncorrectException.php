@@ -23,3 +23,4 @@ class FileSizeIncorrectException extends Exception
         parent::__construct("File is {$actualSize} instead of {$expectedSize} bytes large. Adjust `exactSize` parameter.");
     }
 }
+

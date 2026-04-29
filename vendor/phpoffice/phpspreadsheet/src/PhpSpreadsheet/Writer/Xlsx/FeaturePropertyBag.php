@@ -64,3 +64,4 @@ class FeaturePropertyBag extends WriterPart
         return $objWriter->getData();
     }
 }
+

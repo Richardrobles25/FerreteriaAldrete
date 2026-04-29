@@ -59,3 +59,4 @@ class Helpers
         return $date->format('d') === $date->format('t');
     }
 }
+

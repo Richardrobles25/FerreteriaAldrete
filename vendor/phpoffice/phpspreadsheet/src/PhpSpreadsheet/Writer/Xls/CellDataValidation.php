@@ -64,3 +64,4 @@ class CellDataValidation
         return self::$operatorMap[$operator] ?? self::$operatorMap[DataValidation::OPERATOR_BETWEEN];
     }
 }
+

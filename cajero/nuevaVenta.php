@@ -22,12 +22,40 @@ $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
 $stmtSuc->execute([$_SESSION['sucursal_id']]);
 $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
+// ── AJAX: todos los productos de la sucursal (búsqueda local en JS) ──────────
+if (isset($_GET['get_productos_all'])) {
+    $stmt = $pdo->prepare("
+        SELECT producto_id, codigo, nombre_producto, precio_venta,
+               precio_mayoreo, stock_actual, tipo_venta
+        FROM productos
+        WHERE sucursal_id = ? AND activo = 1
+        ORDER BY nombre_producto ASC
+    ");
+    $stmt->execute([$_SESSION['sucursal_id']]);
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
+// ── AJAX: todos los clientes (búsqueda local en JS) ──────────────────────────
+if (isset($_GET['get_clientes_all'])) {
+    $stmt = $pdo->query("
+        SELECT cliente_id, nombre_completo, telefono,
+               descuento_fijo, credito_autorizado
+        FROM clientes WHERE activo = 1
+        ORDER BY nombre_completo ASC
+    ");
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
 // ── AJAX: paquetes activos ───────────────────────────────────────────────────
 if (isset($_GET['get_paquetes'])) {
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_requerida,
-               pr.nombre_producto
+               pr.nombre_producto, pr.stock_actual
         FROM paquetes pk
         JOIN paquete_productos pp ON pk.paquete_id = pp.paquete_id
         JOIN productos pr ON pp.producto_id = pr.producto_id
@@ -50,7 +78,8 @@ if (isset($_GET['get_paquetes'])) {
         $agrupados[$pid]['productos'][] = [
             'producto_id'        => intval($f['producto_id']),
             'nombre_producto'    => $f['nombre_producto'],
-            'cantidad_requerida' => floatval($f['cantidad_requerida'])
+            'cantidad_requerida' => floatval($f['cantidad_requerida']),
+            'stock_actual'       => floatval($f['stock_actual'])
         ];
     }
     header('Content-Type: application/json');
@@ -207,13 +236,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $cambio            = floatval($_POST['cambio'] ?? 0);
 
     if (!empty($items) && $metodo_pago) {
+        // Generar folio mensual: NNNN-MM-YYYY (se reinicia cada 1ro de mes)
+        $mesFolio  = date('m');
+        $anioFolio = date('Y');
+        $stmtFolio = $pdo->prepare("
+            SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(folio,'-',1) AS UNSIGNED)),0)+1
+            FROM ventas
+            WHERE folio IS NOT NULL
+              AND MONTH(created_at) = ? AND YEAR(created_at) = ?
+        ");
+        $stmtFolio->execute([$mesFolio, $anioFolio]);
+        $numFolio = intval($stmtFolio->fetchColumn());
+        $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT) . '-' . $mesFolio . '-' . $anioFolio;
+
         $stmt = $pdo->prepare("
             INSERT INTO ventas
-            (caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
+            (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
              total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,'Completada')
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada')
         ");
-        $stmt->execute([$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
+        $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
                         $subtotal,$descuento,$comision_terminal,$total,
                         $metodo_pago,$monto_efectivo,$monto_terminal,$cambio]);
         $venta_id = $pdo->lastInsertId();
@@ -257,16 +299,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -280,15 +322,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .card h3 { font-size: 14px; font-weight: 600; color: #333; margin: 0 0 10px; }
     .busqueda-wrap { position: relative; }
     .busqueda-wrap input { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
-    .busqueda-wrap input:focus { outline: none; border-color: #ff8c00; }
+    .busqueda-wrap input:focus { outline: none; border-color: #14ace7; }
     .dropdown-resultados { display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e8e8e8; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100; max-height: 280px; overflow-y: auto; margin-top: 2px; }
     .dropdown-resultados.visible { display: block; }
     .resultado-item { padding: 10px 14px; cursor: pointer; border-bottom: 0.5px solid #f5f5f5; display: flex; justify-content: space-between; align-items: center; }
-    .resultado-item:hover { background: #fff5e6; }
+    .resultado-item:hover { background: #eef8ff; }
     .resultado-item:last-child { border-bottom: none; }
     .resultado-nombre { font-size: 13px; color: #333; font-weight: 600; }
     .resultado-codigo { font-size: 11px; color: #999; }
-    .resultado-precio { font-size: 13px; color: #ff8c00; font-weight: 700; }
+    .resultado-precio { font-size: 13px; color: #14ace7; font-weight: 700; }
     .stock-badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; font-weight: 600; }
     .stock-ok { background: #e8f5e9; color: #2e7d32; }
     .stock-bajo { background: #fdecea; color: #c0392b; }
@@ -305,22 +347,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .carrito-tabla td { padding: 8px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #444; vertical-align: middle; }
     .carrito-tabla tr:last-child td { border-bottom: none; }
     .qty-input { width: 65px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px; text-align: center; }
-    .qty-input:focus { outline: none; border-color: #ff8c00; }
+    .qty-input:focus { outline: none; border-color: #14ace7; }
     .btn-eliminar-item { background: #fdecea; color: #c0392b; border: none; padding: 4px 9px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; }
     .carrito-vacio { text-align: center; color: #aaa; padding: 24px; font-size: 13px; }
     .paq-row td { background: #fffde7 !important; }
-    .rec-paquetes { display: none; background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 12px 14px; }
-    .rec-titulo { font-size: 12px; font-weight: 700; color: #f57f17; margin-bottom: 8px; }
-    .rec-item { background: white; border-radius: 6px; padding: 10px; margin-bottom: 8px; border: 0.5px solid #ffe082; }
+    .rec-paquetes { display: none; background: #fff8e1; border: 1px solid #90caf9; border-radius: 8px; padding: 12px 14px; }
+    .rec-titulo { font-size: 12px; font-weight: 700; color: #1565c0; margin-bottom: 8px; }
+    .rec-item { background: white; border-radius: 6px; padding: 10px; margin-bottom: 8px; border: 0.5px solid #90caf9; }
     .rec-item:last-child { margin-bottom: 0; }
     .rec-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
     .rec-nombre { font-size: 13px; font-weight: 600; color: #333; }
-    .rec-precio { color: #ff8c00; font-weight: 700; font-size: 13px; }
+    .rec-precio { color: #14ace7; font-weight: 700; font-size: 13px; }
     .rec-barra-bg { height: 4px; background: #f0f0f0; border-radius: 99px; margin-bottom: 4px; }
     .rec-barra { height: 4px; border-radius: 99px; }
     .rec-desc { font-size: 11px; color: #888; margin-bottom: 7px; }
     .rec-btn { width: 100%; border: none; padding: 7px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; color: white; }
-    .cliente-seleccionado { display: none; background: #fff5e6; border: 1px solid #ffe0b2; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 8px; justify-content: space-between; align-items: center; }
+    .cliente-seleccionado { display: none; background: #eef8ff; border: 1px solid #bbdefb; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 8px; justify-content: space-between; align-items: center; }
     .btn-quitar-cliente { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 12px; font-weight: 600; }
     .panel-der { display: flex; flex-direction: column; gap: 10px; }
     .resumen { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 16px; }
@@ -331,15 +373,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .form-group-sm { margin-bottom: 10px; }
     .form-group-sm label { display: block; font-size: 11px; color: #888; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; }
     .form-group-sm input { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .form-group-sm input:focus { outline: none; border-color: #ff8c00; }
+    .form-group-sm input:focus { outline: none; border-color: #14ace7; }
     .metodos { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px; }
     .metodo-btn { padding: 8px; border: 2px solid #e8e8e8; border-radius: 6px; text-align: center; cursor: pointer; font-size: 13px; color: #555; background: white; transition: all 0.15s; }
-    .metodo-btn:hover { border-color: #ff8c00; color: #ff8c00; }
-    .metodo-btn.selected { border-color: #ff8c00; background: #fff5e6; color: #ff8c00; font-weight: 600; }
+    .metodo-btn:hover { border-color: #14ace7; color: #14ace7; }
+    .metodo-btn.selected { border-color: #14ace7; background: #eef8ff; color: #14ace7; font-weight: 600; }
     .campos-pago { display: none; }
     .campos-pago.visible { display: block; }
-    .btn-cobrar { width: 100%; background: #ff8c00; color: white; border: none; padding: 13px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 8px; }
-    .btn-cobrar:hover { background: #e07800; }
+    .btn-cobrar { width: 100%; background: #14ace7; color: white; border: none; padding: 13px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 8px; }
+    .btn-cobrar:hover { background: #1196cb; }
     .btn-cobrar:disabled { background: #ddd; cursor: not-allowed; }
     .btn-cancelar-venta { width: 100%; background: white; color: #888; border: 1px solid #ddd; padding: 9px; border-radius: 8px; font-size: 13px; cursor: pointer; margin-top: 6px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; padding: 12px 16px; border-radius: 6px; font-size: 13px; border-left: 3px solid #2e7d32; grid-column: span 2; display: flex; justify-content: space-between; align-items: center; }
@@ -353,13 +395,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .modal-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
     .modal-filtros { display: flex; gap: 10px; margin-bottom: 14px; }
     .modal-filtros input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .modal-filtros input:focus { outline: none; border-color: #ff8c00; }
+    .modal-filtros input:focus { outline: none; border-color: #14ace7; }
     .modal-filtros select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .inv-tabla { width: 100%; border-collapse: collapse; }
     .inv-tabla th { font-size: 11px; color: #888; text-transform: uppercase; padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
     .inv-tabla td { padding: 9px 10px; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
     .inv-tabla tr:last-child td { border-bottom: none; }
-    .btn-agregar-inv { background: #fff3e0; color: #e65c00; border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .btn-agregar-inv { background: #e3f2fd; color: #1565c0; border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .btn-agregar-inv:disabled { background: #f5f5f5; color: #aaa; cursor: not-allowed; }
     .sucursal-diferente { font-size: 11px; color: #1565c0; background: #e3f2fd; padding: 2px 7px; border-radius: 99px; margin-left: 5px; }
 
@@ -518,9 +560,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <div>
                         <strong id="clienteNombre"></strong>
                         <span id="clienteTelefono" style="font-size:12px;color:#999;margin-left:8px;"></span>
-                        <span id="clienteDescuento" style="font-size:12px;color:#ff8c00;margin-left:8px;"></span>
+                        <span id="clienteDescuento" style="font-size:12px;color:#14ace7;margin-left:8px;"></span>
                     </div>
                     <button class="btn-quitar-cliente" onclick="quitarCliente()">Quitar</button>
+                </div>
+                <div id="clienteDescuentoConfig" style="display:none;margin-top:10px;padding:10px 12px;background:#f8fbff;border:1px solid #dbeafe;border-radius:6px;">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#444;margin-bottom:8px;">
+                        <input type="checkbox" id="aplicarDescCliente" checked onchange="recalcularTodo()">
+                        Aplicar descuento del cliente
+                    </label>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span style="font-size:12px;color:#666;">Porcentaje a aplicar</span>
+                        <input type="number" id="porcDescCliente" value="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()">
+                        <span id="clienteDescMax" style="font-size:12px;color:#888;"></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -556,22 +609,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <div class="campos-pago" id="camposTerminal">
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
-                            <input type="number" id="porcComision" placeholder="0" step="0.1" value="0" oninput="recalcularTodo()">
+                            <input type="number" id="porcComision" placeholder="0" step="0.1" value="4.6" class="js-zero-default" oninput="recalcularTodo()">
                         </div>
                     </div>
 
                     <div class="campos-pago" id="camposMixto">
                         <div class="form-group-sm">
                             <label>Monto efectivo</label>
-                            <input type="number" id="mixtoEfectivo" placeholder="0.00" step="0.01" oninput="calcularMixto()">
+                            <input type="number" id="mixtoEfectivo" placeholder="0.00" step="0.01" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                         <div class="form-group-sm">
                             <label>Monto terminal</label>
-                            <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" oninput="calcularMixto()">
+                            <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                         <div class="form-group-sm">
                             <label>Comisión terminal (%)</label>
-                            <input type="number" id="mixtoComision" placeholder="0" step="0.1" value="0" oninput="calcularMixto()">
+                            <input type="number" id="mixtoComision" placeholder="0" step="0.1" value="4.6" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                     </div>
                 </div>
@@ -625,12 +678,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
 <script>
 // ── Estado global ────────────────────────────────────────────────────────────
-let carrito          = [];
-let clienteActual    = null;
-let metodoPago       = null;
-let paquetesGlobales = [];
+let carrito           = [];
+let clienteActual     = null;
+let metodoPago        = null;
+let paquetesGlobales  = [];
+let productosGlobales = [];
+let clientesGlobales  = [];
 let modoScannerActivo = false;
 let scannerTimer      = null;
+
+function normalizar(str) {
+    return String(str || '').toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 
 const miSucursalId = <?= intval($_SESSION['sucursal_id']) ?>;
 const datosTicket  = <?= json_encode([
@@ -644,22 +704,25 @@ const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
-// ── Cargar paquetes al iniciar ───────────────────────────────────────────────
-fetch('nuevaVenta.php?get_paquetes=1')
-    .then(r => r.json())
-    .then(data => {
-        paquetesGlobales = data.map(paq => ({
-            ...paq,
-            paquete_id:     parseInt(paq.paquete_id),
-            precio_paquete: parseFloat(paq.precio_paquete),
-            productos: paq.productos.map(p => ({
-                ...p,
-                producto_id:        parseInt(p.producto_id),
-                cantidad_requerida: parseFloat(p.cantidad_requerida)
-            }))
-        }));
-    })
-    .catch(() => {});
+// ── Precargar productos, paquetes y clientes al iniciar ──────────────────────
+Promise.all([
+    fetch('nuevaVenta.php?get_productos_all=1').then(r => r.json()),
+    fetch('nuevaVenta.php?get_paquetes=1').then(r => r.json()),
+    fetch('nuevaVenta.php?get_clientes_all=1').then(r => r.json())
+]).then(([prods, paqs, clis]) => {
+    productosGlobales = prods;
+    paquetesGlobales  = paqs.map(paq => ({
+        ...paq,
+        paquete_id:     parseInt(paq.paquete_id),
+        precio_paquete: parseFloat(paq.precio_paquete),
+        productos: paq.productos.map(p => ({
+            ...p,
+            producto_id:        parseInt(p.producto_id),
+            cantidad_requerida: parseFloat(p.cantidad_requerida)
+        }))
+    }));
+    clientesGlobales = clis;
+}).catch(() => {});
 
 // ── Modo scanner ─────────────────────────────────────────────────────────────
 function toggleModoScanner() {
@@ -694,7 +757,7 @@ document.getElementById('inputScanner').addEventListener('input', function() {
             procesarScan(document.getElementById('inputScanner').value.trim());
             document.getElementById('inputScanner').value = '';
         }
-    }, 150);
+    }, 450);
 });
 
 function procesarScan(codigo) {
@@ -730,18 +793,23 @@ function procesarScan(codigo) {
         });
 }
 
-// ── Búsqueda manual de productos + paquetes ──────────────────────────────────
+// ── Búsqueda manual de productos + paquetes (local, sin peticiones al servidor) ──
 let toProd;
 document.getElementById('inputProducto').addEventListener('input', function() {
     clearTimeout(toProd);
     const val = this.value.trim();
-    if (val.length < 2) { document.getElementById('dropdownProductos').classList.remove('visible'); return; }
+    if (!val) { document.getElementById('dropdownProductos').classList.remove('visible'); return; }
     toProd = setTimeout(() => {
-        Promise.all([
-            fetch(`nuevaVenta.php?buscar_producto=${encodeURIComponent(val)}&sucursal_id=${miSucursalId}`).then(r=>r.json()),
-            fetch(`nuevaVenta.php?buscar_paquete=${encodeURIComponent(val)}`).then(r=>r.json())
-        ]).then(([productos, paquetes]) => mostrarResultadosCombinados(productos, paquetes));
-    }, 300);
+        const q = normalizar(val);
+        const productos = productosGlobales.filter(p =>
+            p.sucursal_id == miSucursalId &&
+            (normalizar(p.nombre_producto).includes(q) || normalizar(p.codigo).includes(q))
+        ).slice(0, 30);
+        const paquetes = paquetesGlobales.filter(paq =>
+            normalizar(paq.nombre).includes(q) || normalizar(paq.codigo).includes(q)
+        ).slice(0, 10);
+        mostrarResultadosCombinados(productos, paquetes);
+    }, 60);
 });
 
 function mostrarResultadosCombinados(productos, paquetes) {
@@ -938,7 +1006,7 @@ function verificarRecomendaciones() {
 
     divList.innerHTML = recs.map(rec => {
         const completo = rec.cubiertos === rec.total;
-        const color    = completo ? '#2e7d32' : '#ff8c00';
+        const color    = completo ? '#2e7d32' : '#14ace7';
         const paqData  = JSON.stringify(rec.paq).replace(/"/g, '&quot;');
         return `<div class="rec-item">
             <div class="rec-header">
@@ -962,16 +1030,20 @@ function verificarRecomendaciones() {
     divRec.style.display = 'block';
 }
 
-// ── Clientes ─────────────────────────────────────────────────────────────────
+// ── Clientes (búsqueda local, sin peticiones al servidor) ───────────────────
 let toCli;
 document.getElementById('inputCliente').addEventListener('input', function() {
     clearTimeout(toCli);
     const val = this.value.trim();
-    if (val.length < 2) { document.getElementById('dropdownClientes').classList.remove('visible'); return; }
+    if (!val) { document.getElementById('dropdownClientes').classList.remove('visible'); return; }
     toCli = setTimeout(() => {
-        fetch(`nuevaVenta.php?buscar_cliente=${encodeURIComponent(val)}`)
-            .then(r => r.json()).then(mostrarClientes);
-    }, 300);
+        const q = normalizar(val);
+        const lista = clientesGlobales.filter(c =>
+            normalizar(c.nombre_completo).includes(q) ||
+            normalizar(c.telefono ?? '').includes(q)
+        ).slice(0, 20);
+        mostrarClientes(lista);
+    }, 60);
 });
 
 function mostrarClientes(lista) {
@@ -999,6 +1071,11 @@ function seleccionarCliente(id, nombre, telefono, descuento, credito) {
     document.getElementById('clienteTelefono').textContent  = telefono;
     document.getElementById('clienteDescuento').textContent = descuento > 0 ? 'Desc: '+descuento+'%' : '';
     document.getElementById('clienteSeleccionado').style.display = 'flex';
+    document.getElementById('clienteDescuentoConfig').style.display = descuento > 0 ? 'block' : 'none';
+    document.getElementById('aplicarDescCliente').checked = descuento > 0;
+    document.getElementById('porcDescCliente').value = parseFloat(descuento || 0).toFixed(1);
+    document.getElementById('porcDescCliente').max = parseFloat(descuento || 0).toFixed(1);
+    document.getElementById('clienteDescMax').textContent = descuento > 0 ? 'Maximo: ' + parseFloat(descuento).toFixed(1) + '%' : '';
     document.getElementById('inputClienteId').value = id;
     document.getElementById('btnCredito').style.display = credito ? 'block' : 'none';
     recalcularTodo();
@@ -1007,6 +1084,7 @@ function seleccionarCliente(id, nombre, telefono, descuento, credito) {
 function quitarCliente() {
     clienteActual = null;
     document.getElementById('clienteSeleccionado').style.display = 'none';
+    document.getElementById('clienteDescuentoConfig').style.display = 'none';
     document.getElementById('inputClienteId').value = '';
     document.getElementById('btnCredito').style.display = 'none';
     if (metodoPago === 'Credito') {
@@ -1014,6 +1092,17 @@ function quitarCliente() {
         document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
         document.querySelectorAll('.campos-pago').forEach(c => c.classList.remove('visible'));
     }
+    recalcularTodo();
+}
+
+function ajustarDescuentoCliente() {
+    if (!clienteActual) return;
+    const input = document.getElementById('porcDescCliente');
+    const maximo = parseFloat(clienteActual.descuento || 0);
+    let valor = parseFloat(input.value || 0);
+    if (Number.isNaN(valor) || valor < 0) valor = 0;
+    if (valor > maximo) valor = maximo;
+    input.value = valor.toFixed(1);
     recalcularTodo();
 }
 
@@ -1034,7 +1123,9 @@ function seleccionarMetodo(metodo, btn) {
 // ── Cálculos ─────────────────────────────────────────────────────────────────
 function recalcularTodo() {
     let subtotal  = carrito.reduce((a,i) => a + (i.cantidad * i.precio), 0);
-    let descuento = (clienteActual && clienteActual.descuento > 0) ? subtotal*(clienteActual.descuento/100) : 0;
+    const usarDescuentoCliente = clienteActual && clienteActual.descuento > 0 && document.getElementById('aplicarDescCliente').checked;
+    const porcentajeDescuento = usarDescuentoCliente ? (parseFloat(document.getElementById('porcDescCliente').value) || 0) : 0;
+    let descuento = porcentajeDescuento > 0 ? subtotal*(porcentajeDescuento/100) : 0;
     let comision  = 0;
     if (metodoPago === 'Terminal') {
         comision = (subtotal-descuento) * ((parseFloat(document.getElementById('porcComision').value)||0)/100);
@@ -1137,7 +1228,7 @@ function generarTicketHTML(venta) {
 
     html += `
         <div class="t-linea"></div>
-        <div class="t-fila"><span>Folio:</span><span>#${venta.venta_id}</span></div>
+        <div class="t-fila"><span>Folio:</span><span>${venta.folio || ('#'+venta.venta_id)}</span></div>
         <div class="t-fila"><span>Fecha:</span><span>${fecha}</span></div>
         <div class="t-fila"><span>Cajero:</span><span>${esc(cajeroNombre)}</span></div>`;
 
@@ -1261,6 +1352,22 @@ document.addEventListener('click', function(e) {
 function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+
+document.querySelectorAll('.js-zero-default').forEach((input) => {
+    input.addEventListener('focus', function() {
+        const valor = String(this.value ?? '').trim();
+        if (valor === '0' || valor === '0.00' || valor === '0.0' || valor === '4.6') {
+            this.value = '';
+        }
+    });
+    input.addEventListener('blur', function() {
+        if (String(this.value ?? '').trim() === '') {
+            this.value = this.id.toLowerCase().includes('comision') ? '4.6' : '0.00';
+            if (typeof this.oninput === 'function') this.oninput();
+        }
+    });
+});
 </script>
 </body>
 </html>
+

@@ -146,3 +146,4 @@ class Gamma extends GammaBase
         return log(self::gammaValue($value));
     }
 }
+

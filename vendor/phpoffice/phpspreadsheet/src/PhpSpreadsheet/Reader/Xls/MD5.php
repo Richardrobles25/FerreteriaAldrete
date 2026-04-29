@@ -196,3 +196,4 @@ class MD5
         return self::signedInt(bindec(substr($binary, $bits) . substr($binary, 0, $bits)));
     }
 }
+

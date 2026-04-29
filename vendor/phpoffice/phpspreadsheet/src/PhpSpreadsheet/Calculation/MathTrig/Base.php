@@ -63,3 +63,4 @@ class Base
         return ExcelError::VALUE();
     }
 }
+

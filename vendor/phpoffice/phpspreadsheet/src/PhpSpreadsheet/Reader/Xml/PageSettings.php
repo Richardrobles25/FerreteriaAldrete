@@ -132,3 +132,4 @@ class PageSettings
         $printDefaults->bottomMargin = (float) $pageSetupAttributes->Bottom ?: 1.0;
     }
 }
+

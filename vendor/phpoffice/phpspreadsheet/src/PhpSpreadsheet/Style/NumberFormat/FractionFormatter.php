@@ -68,3 +68,4 @@ class FractionFormatter extends BaseFormatter
         return $decimalPart;
     }
 }
+

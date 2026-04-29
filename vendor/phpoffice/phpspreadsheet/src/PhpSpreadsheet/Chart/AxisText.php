@@ -61,3 +61,4 @@ class AxisText extends Properties
         $this->font = clone $this->font;
     }
 }
+

@@ -200,3 +200,4 @@ final class CallbackOutputTest extends TestCase
         $this->assertTrue(true); // Placeholder assertion
     }
 }
+

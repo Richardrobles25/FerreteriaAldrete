@@ -132,3 +132,4 @@ class CellRange implements AddressRange, Stringable
         return "{$fromAddress}:{$toAddress}";
     }
 }
+

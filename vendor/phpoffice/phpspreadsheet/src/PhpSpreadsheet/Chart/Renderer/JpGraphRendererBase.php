@@ -884,3 +884,4 @@ abstract class JpGraphRendererBase implements IRenderer
         return true;
     }
 }
+

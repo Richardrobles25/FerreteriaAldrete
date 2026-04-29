@@ -66,3 +66,4 @@ class NewtonRaphson
         return $x;
     }
 }
+

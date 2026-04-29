@@ -38,3 +38,4 @@ abstract class LocalFileHeader
         ) . $fileName . $extraField;
     }
 }
+

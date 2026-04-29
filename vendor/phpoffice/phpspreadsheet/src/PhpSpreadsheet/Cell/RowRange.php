@@ -92,3 +92,4 @@ class RowRange implements AddressRange, Stringable
         return "{$this->from}:{$this->to}";
     }
 }
+

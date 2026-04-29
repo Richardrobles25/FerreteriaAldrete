@@ -29,3 +29,4 @@ abstract class WriterPart
 
     abstract public function write(): string;
 }
+

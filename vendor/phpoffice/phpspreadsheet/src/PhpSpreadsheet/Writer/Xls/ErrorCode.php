@@ -22,3 +22,4 @@ class ErrorCode
         return self::$errorCodeMap[$errorCode] ?? 0;
     }
 }
+

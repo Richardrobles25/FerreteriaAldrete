@@ -54,3 +54,4 @@ class NamedRange extends DefinedName
         return Coordinate::extractAllCellReferencesInRange($range);
     }
 }
+

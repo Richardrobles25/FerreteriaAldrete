@@ -110,3 +110,4 @@ final class UnsafeStrictGroupsCallRule implements Rule
         return [];
     }
 }
+

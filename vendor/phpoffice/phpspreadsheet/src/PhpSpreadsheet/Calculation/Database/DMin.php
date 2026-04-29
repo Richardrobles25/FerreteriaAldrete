@@ -43,3 +43,4 @@ class DMin extends DatabaseAbstract
         );
     }
 }
+

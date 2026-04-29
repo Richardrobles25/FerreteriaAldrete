@@ -176,3 +176,4 @@ class CellReferenceHelper
         return "{$absoluteRow}{$newRow}";
     }
 }
+

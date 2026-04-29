@@ -132,3 +132,4 @@ trait ArrayEnabled
         return ArrayArgumentProcessor::processArguments(self::$arrayArgumentHelper, $method, ...$arguments);
     }
 }
+

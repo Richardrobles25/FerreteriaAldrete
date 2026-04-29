@@ -690,3 +690,4 @@ class LoadSpreadsheet extends Xls
         return $xls->spreadsheet;
     }
 }
+

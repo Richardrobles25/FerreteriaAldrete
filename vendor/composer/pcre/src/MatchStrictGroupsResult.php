@@ -37,3 +37,4 @@ final class MatchStrictGroupsResult
         $this->matched = (bool) $count;
     }
 }
+

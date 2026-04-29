@@ -137,3 +137,4 @@ class LogNormal
         return exp($mean + $stdDev * $inverse);
     }
 }
+

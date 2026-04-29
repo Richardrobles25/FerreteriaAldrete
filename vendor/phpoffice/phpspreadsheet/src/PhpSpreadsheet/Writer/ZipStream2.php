@@ -25,3 +25,4 @@ class ZipStream2
         return new ZipStream(null, $options);
     }
 }
+

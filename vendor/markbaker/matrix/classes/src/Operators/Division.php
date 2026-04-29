@@ -33,3 +33,4 @@ class Division extends Multiplication
         throw new Exception('Invalid argument for division');
     }
 }
+

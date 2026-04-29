@@ -136,3 +136,4 @@ class Deviations
         return ExcelError::DIV0();
     }
 }
+

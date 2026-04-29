@@ -26,3 +26,4 @@ class EndOfCentralDirectoryLocatorTest extends TestCase
         );
     }
 }
+

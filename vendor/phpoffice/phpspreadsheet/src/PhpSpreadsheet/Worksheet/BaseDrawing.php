@@ -611,3 +611,4 @@ class BaseDrawing implements IComparable
         return $this->index;
     }
 }
+

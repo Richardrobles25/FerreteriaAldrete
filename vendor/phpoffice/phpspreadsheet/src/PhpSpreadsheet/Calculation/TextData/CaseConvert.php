@@ -88,3 +88,4 @@ class CaseConvert
         return StringHelper::strToTitle($mixedCaseValue);
     }
 }
+

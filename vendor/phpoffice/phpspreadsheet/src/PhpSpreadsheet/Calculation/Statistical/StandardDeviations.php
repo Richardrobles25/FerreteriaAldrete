@@ -87,3 +87,4 @@ class StandardDeviations
         return sqrt((float) $result);
     }
 }
+

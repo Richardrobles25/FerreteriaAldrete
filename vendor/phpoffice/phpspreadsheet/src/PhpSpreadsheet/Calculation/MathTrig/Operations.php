@@ -153,3 +153,4 @@ class Operations
         return (int) ($numerator / $denominator);
     }
 }
+

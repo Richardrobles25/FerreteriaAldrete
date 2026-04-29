@@ -36,3 +36,4 @@ class Sign
         return Helpers::returnSign($number);
     }
 }
+

@@ -115,3 +115,4 @@ class XmlScanner
         return $this->scan(file_get_contents($filestream));
     }
 }
+

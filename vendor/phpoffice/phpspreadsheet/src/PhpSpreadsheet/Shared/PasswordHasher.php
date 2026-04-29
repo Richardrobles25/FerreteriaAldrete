@@ -104,3 +104,4 @@ class PasswordHasher
         return base64_encode($hashValue);
     }
 }
+

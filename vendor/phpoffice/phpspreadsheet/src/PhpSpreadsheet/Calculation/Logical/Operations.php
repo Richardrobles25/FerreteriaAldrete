@@ -165,3 +165,4 @@ class Operations
         return ($count === 0) ? ExcelError::VALUE() : $func($trueValueCount, $count);
     }
 }
+

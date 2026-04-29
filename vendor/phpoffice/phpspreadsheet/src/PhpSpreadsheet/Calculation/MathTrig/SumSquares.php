@@ -141,3 +141,4 @@ class SumSquares
         return $result;
     }
 }
+

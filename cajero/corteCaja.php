@@ -83,16 +83,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -112,17 +112,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .fila.total-ef { font-size: 15px; font-weight: 700; color: #222; border-top: 1px solid #eee; padding-top: 12px; margin-top: 4px; }
     .fila.positivo span:last-child { color: #2e7d32; font-weight: 700; }
     .fila.negativo span:last-child { color: #c0392b; font-weight: 700; }
-    .alerta-pend { background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #e65c00; margin-bottom: 18px; }
+    .alerta-pend { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #1565c0; margin-bottom: 18px; }
     .errores { background: #fdecea; color: #c0392b; padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; border-left: 3px solid #c0392b; }
     .form-group { margin-bottom: 16px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; font-family: Arial, sans-serif; }
-    .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #ff8c00; }
+    .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .form-group textarea { min-height: 80px; resize: vertical; }
     .diferencia-preview { border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; font-size: 14px; font-weight: 600; text-align: center; display: none; }
     .dif-cuadrado { background: #e8f5e9; color: #2e7d32; }
     .dif-faltante { background: #fdecea; color: #c0392b; }
-    .dif-sobrante { background: #fff8e1; color: #f57f17; }
+    .dif-sobrante { background: #fff8e1; color: #1565c0; }
     .btn-cerrar { width: 100%; background: #c0392b; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; }
     .btn-cerrar:hover { background: #a93226; }
     .turno-info { background: #f9f9f9; border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; font-size: 13px; }
@@ -180,7 +180,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php if ($ventasPendientes > 0): ?>
                 <div class="alerta-pend">
                     ⚠ Tienes <strong><?= $ventasPendientes ?></strong> venta(s) pendiente(s) sin liquidar.
-                    <a href="ventasPendientes.php" style="color:#e65c00;font-weight:700;margin-left:6px;">Ver</a>
+                    <a href="ventasPendientes.php" style="color:#1565c0;font-weight:700;margin-left:6px;">Ver</a>
                 </div>
                 <?php endif; ?>
 
@@ -289,3 +289,4 @@ function confirmarCierre() {
 </script>
 </body>
 </html>
+

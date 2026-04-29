@@ -147,3 +147,4 @@ class CellAddress implements Stringable
         return $this->fullCellAddress();
     }
 }
+

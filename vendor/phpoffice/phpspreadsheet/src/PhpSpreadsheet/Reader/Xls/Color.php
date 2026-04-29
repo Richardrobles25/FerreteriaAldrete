@@ -27,3 +27,4 @@ class Color
         return ($version === Xls::XLS_BIFF8) ? Color\BIFF8::lookup($color) : Color\BIFF5::lookup($color);
     }
 }
+

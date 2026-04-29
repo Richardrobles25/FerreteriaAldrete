@@ -62,3 +62,4 @@ class Secant
         return Helpers::verySmallDenominator(1.0, cosh($angle));
     }
 }
+

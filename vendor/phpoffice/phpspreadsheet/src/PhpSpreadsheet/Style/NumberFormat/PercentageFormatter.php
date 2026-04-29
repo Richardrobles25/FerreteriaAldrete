@@ -46,3 +46,4 @@ class PercentageFormatter extends BaseFormatter
         return self::adjustSeparators(sprintf($mask, round($valueFloat, $decimalPartSize)));
     }
 }
+

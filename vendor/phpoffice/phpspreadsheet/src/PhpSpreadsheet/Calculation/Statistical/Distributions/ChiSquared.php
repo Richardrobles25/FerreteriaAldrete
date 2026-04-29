@@ -330,3 +330,4 @@ class ChiSquared
         return $h * exp(-$x + $a * log($x) - $gln);
     }
 }
+

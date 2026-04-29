@@ -32,3 +32,4 @@ interface ITextElement
      */
     public function getHashCode(): string;
 }
+

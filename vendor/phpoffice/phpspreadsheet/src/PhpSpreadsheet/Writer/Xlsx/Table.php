@@ -112,3 +112,4 @@ class Table extends WriterPart
         return $objWriter->getData();
     }
 }
+

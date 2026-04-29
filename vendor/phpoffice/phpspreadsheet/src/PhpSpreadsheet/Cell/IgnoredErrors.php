@@ -74,3 +74,4 @@ class IgnoredErrors
         return $this->evalError;
     }
 }
+

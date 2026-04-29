@@ -23,3 +23,4 @@ abstract class BaseFormatter
         return $value;
     }
 }
+

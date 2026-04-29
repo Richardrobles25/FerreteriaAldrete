@@ -128,3 +128,4 @@ class HLookup extends LookupBase
         return $lookupArray;
     }
 }
+

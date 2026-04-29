@@ -87,3 +87,4 @@ abstract class GeneralPurposeBitFlag
      */
     public const ENCRYPT_CENTRAL_DIRECTORY = 1 << 13;
 }
+

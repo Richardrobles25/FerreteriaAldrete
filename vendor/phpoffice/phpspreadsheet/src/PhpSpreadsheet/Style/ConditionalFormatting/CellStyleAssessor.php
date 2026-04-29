@@ -63,3 +63,4 @@ class CellStyleAssessor
         return null;
     }
 }
+

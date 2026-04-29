@@ -62,3 +62,4 @@ class DirectSum extends Operator
         return $this;
     }
 }
+

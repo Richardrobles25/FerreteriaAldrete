@@ -774,3 +774,4 @@ abstract class Coordinate
         }
     }
 }
+

@@ -124,3 +124,4 @@ class Stack
         $this->count = 0;
     }
 }
+

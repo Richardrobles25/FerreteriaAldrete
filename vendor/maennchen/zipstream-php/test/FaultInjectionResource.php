@@ -139,3 +139,4 @@ class FaultInjectionResource
         return in_array($function, $this->injectFaults, true);
     }
 }
+

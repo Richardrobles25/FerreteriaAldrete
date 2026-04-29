@@ -82,16 +82,16 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -108,8 +108,8 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .errores ul { margin: 6px 0 0 16px; }
     .barra-busqueda { display: flex; gap: 10px; margin-bottom: 14px; }
     .barra-busqueda input { flex: 1; padding: 9px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .barra-busqueda input:focus { outline: none; border-color: #ff8c00; }
-    .btn-buscar { background: #ff8c00; color: white; border: none; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .barra-busqueda input:focus { outline: none; border-color: #14ace7; }
+    .btn-buscar { background: #14ace7; color: white; border: none; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     table { width: 100%; border-collapse: collapse; }
     thead { background: #f9f9f9; }
@@ -119,8 +119,8 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     tr:hover td { background: #fafafa; }
     .acciones { display: flex; gap: 5px; flex-wrap: wrap; }
     .btn-accion { padding: 4px 10px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-block; }
-    .btn-editar { background: #fff3e0; color: #e65c00; }
-    .btn-editar:hover { background: #ffe0b2; }
+    .btn-editar { background: #e3f2fd; color: #1565c0; }
+    .btn-editar:hover { background: #bbdefb; }
     .btn-eliminar { background: #fdecea; color: #c0392b; }
     .btn-eliminar:hover { background: #ffcdd2; }
     .badge-credito { background: #e8f5e9; color: #2e7d32; font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
@@ -128,14 +128,14 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .form-group { margin-bottom: 13px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 5px; font-weight: 600; }
     .form-group input, .form-group textarea { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; color: #333; font-family: Arial, sans-serif; }
-    .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #ff8c00; }
+    .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .check-row { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; font-size: 13px; color: #555; }
     .check-row input { width: auto; }
     .credito-campos { display: none; }
     .credito-campos.visible { display: block; }
-    .btn-guardar { background: #ff8c00; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
-    .btn-guardar:hover { background: #e07800; }
+    .btn-guardar { background: #14ace7; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
+    .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar-edit { background: white; color: #666; border: 1px solid #ddd; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 8px; text-decoration: none; display: block; text-align: center; }
 </style>
 
@@ -187,7 +187,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             <form method="GET" action="clientes.php">
                 <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar por nombre..." value="<?= htmlspecialchars($busqueda) ?>">
+                    <input type="text" name="buscar" placeholder="Buscar por nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
                     <button class="btn-buscar" type="submit">Buscar</button>
                     <?php if ($busqueda): ?><a class="btn-limpiar" href="clientes.php">Limpiar</a><?php endif; ?>
                 </div>
@@ -205,7 +205,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <th>Acciones</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($clientes as $c): ?>
                         <tr>
                             <td>
@@ -310,6 +310,15 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
 }
@@ -319,3 +328,4 @@ function toggleCredito(checked) {
 </script>
 </body>
 </html>
+

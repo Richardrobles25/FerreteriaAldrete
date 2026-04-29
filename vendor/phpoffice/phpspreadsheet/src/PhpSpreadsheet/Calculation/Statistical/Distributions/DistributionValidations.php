@@ -19,3 +19,4 @@ class DistributionValidations extends StatisticalValidations
         return $probability;
     }
 }
+

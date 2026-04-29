@@ -140,3 +140,4 @@ class InvalidRegexPatternRule implements Rule
     }
 
 }
+

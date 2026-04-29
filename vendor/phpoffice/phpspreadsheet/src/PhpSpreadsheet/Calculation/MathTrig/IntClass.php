@@ -38,3 +38,4 @@ class IntClass
         return (int) floor($number);
     }
 }
+

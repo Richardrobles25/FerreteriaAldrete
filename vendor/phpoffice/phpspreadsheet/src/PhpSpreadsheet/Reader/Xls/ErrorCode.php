@@ -22,3 +22,4 @@ class ErrorCode
         return self::ERROR_CODE_MAP[$code] ?? false;
     }
 }
+

@@ -124,3 +124,4 @@ class Mean
         return ExcelError::VALUE();
     }
 }
+

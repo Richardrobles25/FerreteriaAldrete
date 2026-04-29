@@ -412,3 +412,4 @@ class ConditionalStyles
         }
     }
 }
+

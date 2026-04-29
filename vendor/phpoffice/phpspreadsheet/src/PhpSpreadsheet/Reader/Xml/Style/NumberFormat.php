@@ -32,3 +32,4 @@ class NumberFormat extends StyleBase
         return $style;
     }
 }
+

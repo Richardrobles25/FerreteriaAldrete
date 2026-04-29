@@ -48,3 +48,4 @@ class CellAlignment
         $alignment->setWrapText((bool) $wrap);
     }
 }
+

@@ -263,3 +263,4 @@ class Depreciation
         return $factor;
     }
 }
+

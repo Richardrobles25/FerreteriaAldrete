@@ -6,3 +6,4 @@ interface Wizard
 {
     public function format(): string;
 }
+

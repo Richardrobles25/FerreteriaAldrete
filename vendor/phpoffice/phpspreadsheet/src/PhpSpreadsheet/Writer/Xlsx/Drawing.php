@@ -627,3 +627,4 @@ class Drawing extends WriterPart
         return reset($drawings) ?: null;
     }
 }
+

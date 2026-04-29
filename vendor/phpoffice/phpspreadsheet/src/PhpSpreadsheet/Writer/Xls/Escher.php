@@ -505,3 +505,4 @@ class Escher
         return $this->spTypes;
     }
 }
+

@@ -91,3 +91,4 @@ class Helpers
         return (int) StringHelper::convertToString($value);
     }
 }
+

@@ -161,3 +161,4 @@ class ConvertBinary extends ConvertBase
         return $value;
     }
 }
+

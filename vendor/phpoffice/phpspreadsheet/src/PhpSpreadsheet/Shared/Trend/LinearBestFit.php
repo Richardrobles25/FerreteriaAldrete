@@ -73,3 +73,4 @@ class LinearBestFit extends BestFit
         }
     }
 }
+

@@ -69,3 +69,4 @@ class Run extends TextElement implements ITextElement
         );
     }
 }
+

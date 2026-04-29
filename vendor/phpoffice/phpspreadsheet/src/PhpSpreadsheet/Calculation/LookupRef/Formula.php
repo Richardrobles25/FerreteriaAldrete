@@ -42,3 +42,4 @@ class Formula
         return $worksheet->getCell($cellReference)->getValueString();
     }
 }
+

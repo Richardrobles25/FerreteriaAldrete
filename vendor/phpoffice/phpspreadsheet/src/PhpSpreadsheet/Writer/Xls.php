@@ -917,3 +917,4 @@ class Xls extends BaseWriter
         return $data;
     }
 }
+

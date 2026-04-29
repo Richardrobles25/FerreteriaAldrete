@@ -38,3 +38,4 @@ class JpGraph extends JpGraphRendererBase
         $loaded = true;
     }
 }
+

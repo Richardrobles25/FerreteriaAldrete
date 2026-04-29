@@ -248,3 +248,4 @@ class DocProps extends WriterPart
         return $objWriter->getData();
     }
 }
+

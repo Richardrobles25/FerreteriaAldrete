@@ -40,3 +40,4 @@ trait Tempfile
         return [$tmp, $stream];
     }
 }
+

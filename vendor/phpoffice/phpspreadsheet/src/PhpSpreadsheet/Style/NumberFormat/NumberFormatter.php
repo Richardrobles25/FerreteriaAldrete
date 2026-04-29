@@ -325,3 +325,4 @@ class NumberFormatter extends BaseFormatter
         return $scale;
     }
 }
+

@@ -19,3 +19,4 @@ class SimulationFileUnknownException extends Exception
         parent::__construct('The details of the strict simulation file could not be determined without reading the entire file.');
     }
 }
+

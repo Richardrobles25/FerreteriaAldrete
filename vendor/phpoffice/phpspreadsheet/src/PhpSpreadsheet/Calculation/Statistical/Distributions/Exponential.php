@@ -52,3 +52,4 @@ class Exponential
         return $lambda * exp(0 - $value * $lambda);
     }
 }
+

@@ -139,3 +139,4 @@ class Properties
         $docProps->setCustomProperty($propertyValueName, $propertyValue, $propertyValueType);
     }
 }
+

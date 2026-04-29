@@ -43,3 +43,4 @@ class AutoFilter extends BaseLoader
         return null;
     }
 }
+

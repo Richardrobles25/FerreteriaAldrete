@@ -38,3 +38,4 @@ class CellBorder
         return self::$styleMap[Border::BORDER_NONE];
     }
 }
+

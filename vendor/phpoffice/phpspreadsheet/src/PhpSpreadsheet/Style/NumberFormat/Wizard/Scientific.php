@@ -31,3 +31,4 @@ class Scientific extends NumberBase implements Wizard
         return sprintf('0%sE+00', $this->decimals > 0 ? '.' . str_repeat('0', $this->decimals) : null);
     }
 }
+

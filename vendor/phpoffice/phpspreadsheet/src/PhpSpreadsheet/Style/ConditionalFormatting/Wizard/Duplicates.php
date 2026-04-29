@@ -72,3 +72,4 @@ class Duplicates extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

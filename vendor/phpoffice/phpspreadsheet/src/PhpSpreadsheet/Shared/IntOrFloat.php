@@ -15,3 +15,4 @@ class IntOrFloat
         return ($value == $iValue) ? $iValue : $value;
     }
 }
+

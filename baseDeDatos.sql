@@ -11,9 +11,16 @@
         direccion VARCHAR(255),
         telefono VARCHAR(20),
         datos_ticket TEXT,
+        logo_url VARCHAR(255) NULL DEFAULT NULL,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        banco              VARCHAR(100)  NULL DEFAULT NULL,
+        titular_cuenta     VARCHAR(150)  NULL DEFAULT NULL,
+        numero_cuenta      VARCHAR(30)   NULL DEFAULT NULL,
+        clabe_interbancaria CHAR(18)     NULL DEFAULT NULL,
+        alias_tarjeta      VARCHAR(60)   NULL DEFAULT NULL,
+        comision_terminal_pct DECIMAL(5,2) DEFAULT 0
     );
 
     -- 2. USUARIOS
@@ -66,7 +73,7 @@
         producto_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         sucursal_id INT UNSIGNED NOT NULL,
         categoria_id INT UNSIGNED,
-        codigo VARCHAR(50) NOT NULL, UNIQUE (sucursal_id, codigo)
+        codigo VARCHAR(50) NOT NULL, UNIQUE (sucursal_id, codigo),
         nombre_producto VARCHAR(150) NOT NULL,
         descripcion TEXT,
         precio_compra DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -76,6 +83,7 @@
         stock_minimo DECIMAL(10,3) DEFAULT 0,
         stock_maximo DECIMAL(10,3) DEFAULT 0,
         tipo_venta ENUM('Unidad', 'Suelto') DEFAULT 'Unidad',
+        unidad_medida VARCHAR(30) NULL DEFAULT NULL,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -98,13 +106,13 @@
     CREATE TABLE paquetes (
         paquete_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         sucursal_id INT UNSIGNED NOT NULL,
+        codigo VARCHAR(50) NOT NULL DEFAULT '',
         nombre VARCHAR(150) NOT NULL,
         descripcion TEXT,
         precio_paquete DECIMAL(10,2) NOT NULL DEFAULT 0,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        codigo VARCHAR(50) NOT NULL DEFAULT '' AFTER paquete_id,
         FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id)
     );
 
@@ -163,6 +171,7 @@
     -- 11. VENTAS
     CREATE TABLE ventas (
         venta_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        folio VARCHAR(20) DEFAULT NULL,
         caja_id INT UNSIGNED NOT NULL,
         cliente_id INT UNSIGNED,
         usuario_id INT UNSIGNED NOT NULL,
@@ -170,13 +179,17 @@
         descuento DECIMAL(10,2) DEFAULT 0,
         comision_terminal DECIMAL(10,2) DEFAULT 0,
         total DECIMAL(10,2) NOT NULL DEFAULT 0,
-        metodo_pago ENUM('Efectivo', 'Terminal', 'Credito', 'Mixto') NOT NULL,
+        metodo_pago ENUM('Efectivo', 'Terminal', 'Credito', 'Mixto', 'Transferencia') NOT NULL,
+        referencia_transferencia VARCHAR(100) NULL DEFAULT NULL,
         monto_efectivo DECIMAL(10,2) DEFAULT 0,
         monto_terminal DECIMAL(10,2) DEFAULT 0,
         cambio DECIMAL(10,2) DEFAULT 0,
-        estado ENUM('Completada', 'Cancelada', 'Pendiente') DEFAULT 'Completada',
+        estado ENUM('Pendiente','Completada','Cancelada','Devuelto','Modificado') NOT NULL DEFAULT 'Pendiente',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        referencia_transferencia VARCHAR(100) NULL DEFAULT NULL,
+        INDEX idx_folio (folio),
+        INDEX idx_ventas_mes (created_at),
         FOREIGN KEY (caja_id) REFERENCES cajas(caja_id),
         FOREIGN KEY (cliente_id) REFERENCES clientes(cliente_id),
         FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
@@ -187,10 +200,14 @@
         venta_productos_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         venta_id INT UNSIGNED NOT NULL,
         producto_id INT UNSIGNED NOT NULL,
+        paquete_id INT NULL DEFAULT NULL,
         cantidad DECIMAL(10,3) NOT NULL,
         precio_unitario DECIMAL(10,2) NOT NULL,
+        precio_final DECIMAL(10,2) NULL DEFAULT NULL,
+        precio_final DECIMAL(10,2) NULL DEFAULT NULL,
         descuento DECIMAL(10,2) DEFAULT 0,
         subtotal DECIMAL(10,2) NOT NULL,
+        nota_ajuste VARCHAR(255) NULL DEFAULT NULL,
         FOREIGN KEY (venta_id) REFERENCES ventas(venta_id),
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
     );
@@ -216,7 +233,8 @@
         credito_id INT UNSIGNED NOT NULL,
         usuario_id INT UNSIGNED NOT NULL,
         monto DECIMAL(10,2) NOT NULL,
-        metodo_pago ENUM('Efectivo', 'Terminal', 'Mixto') NOT NULL,
+        comision_terminal DECIMAL(10,2) DEFAULT 0,
+        metodo_pago ENUM('Efectivo','Terminal','Credito','Mixto','Transferencia') NOT NULL,
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
@@ -233,7 +251,9 @@
         stock_anterior DECIMAL(10,3) NOT NULL,
         stock_nuevo DECIMAL(10,3) NOT NULL,
         motivo VARCHAR(255),
+        proveedor_id INT NULL DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        devolucion_id INT UNSIGNED NULL DEFAULT NULL,
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
         FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
     );
@@ -247,7 +267,7 @@
         usuario_solicita_id INT UNSIGNED NOT NULL,
         usuario_aprueba_id INT UNSIGNED,
         cantidad DECIMAL(10,3) NOT NULL,
-        estado ENUM('Pendiente', 'Aprobada', 'Rechazada', 'Entregada') DEFAULT 'Pendiente',
+        estado ENUM('Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada') DEFAULT 'Pendiente',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -284,7 +304,62 @@
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id)
     );
 
+    CREATE TABLE devoluciones (
+    devolucion_id   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    venta_id        INT UNSIGNED NOT NULL,
+    usuario_id      INT UNSIGNED NOT NULL,
+    procesada_en    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cancelada_en    DATETIME NULL DEFAULT NULL,
+    cancelada_por   INT UNSIGNED NULL DEFAULT NULL,
+    nota_cancelacion TEXT NULL DEFAULT NULL,
+    total_devuelto DECIMAL(10,2) NOT NULL DEFAULT 0,
+    FOREIGN KEY (venta_id)   REFERENCES ventas(venta_id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+);
+
+
+
+
+    -- ============================================
+    -- UNIDADES DE MEDIDA
+    -- ============================================
+
+    CREATE TABLE unidades_medida (
+    unidad_id   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    sucursal_id INT UNSIGNED NOT NULL,
+    nombre      VARCHAR(50) NOT NULL,
+    UNIQUE KEY uq_sucursal_nombre (sucursal_id, nombre),
+    FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id) ON DELETE CASCADE
+);
+
     -- ============================================
     -- DATOS INICIALES
     -- ============================================
 
+CREATE TABLE promociones (
+    promocion_id       INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    producto_id        INT UNSIGNED NOT NULL,
+    precio_promocional DECIMAL(10,2) NOT NULL,
+    fecha_inicio       DATE NOT NULL,
+    fecha_fin          DATE NOT NULL,
+    descripcion        VARCHAR(255) NULL,
+    activo             TINYINT(1) NOT NULL DEFAULT 1,
+    usuario_id         INT UNSIGNED NOT NULL,
+    created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (producto_id) REFERENCES productos(producto_id) ON DELETE CASCADE,
+    FOREIGN KEY (usuario_id)  REFERENCES usuarios(usuario_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE movimientos_caja (
+  movimiento_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  caja_id       INT UNSIGNED NOT NULL,
+  usuario_id    INT UNSIGNED NOT NULL,
+  sucursal_id   INT UNSIGNED NOT NULL,
+  tipo          ENUM('Retiro','Ingreso') NOT NULL,
+  monto         DECIMAL(10,2) NOT NULL,
+  nota          TEXT NOT NULL,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_caja (caja_id),
+  KEY idx_suc  (sucursal_id),
+  KEY idx_fecha (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

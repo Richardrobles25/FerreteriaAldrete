@@ -556,3 +556,4 @@ class Styles extends BaseParserClass
         return is_array($array) ? ($array[0] ?? null) : null; // @phpstan-ignore-line
     }
 }
+

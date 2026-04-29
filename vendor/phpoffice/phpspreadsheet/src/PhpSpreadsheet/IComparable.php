@@ -11,3 +11,4 @@ interface IComparable
      */
     public function getHashCode(): string;
 }
+

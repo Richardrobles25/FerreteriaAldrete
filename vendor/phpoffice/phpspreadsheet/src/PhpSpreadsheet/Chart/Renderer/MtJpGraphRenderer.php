@@ -36,3 +36,4 @@ class MtJpGraphRenderer extends JpGraphRendererBase
         $loaded = true;
     }
 }
+

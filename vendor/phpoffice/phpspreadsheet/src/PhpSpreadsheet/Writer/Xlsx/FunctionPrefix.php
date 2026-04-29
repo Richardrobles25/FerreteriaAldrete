@@ -233,3 +233,4 @@ class FunctionPrefix
         return self::addFunctionPrefix(substr($functionString, 1));
     }
 }
+

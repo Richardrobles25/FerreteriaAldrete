@@ -62,3 +62,4 @@ class Theme
         return $this->colourMap[$index] ?? null;
     }
 }
+

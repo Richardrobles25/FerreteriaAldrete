@@ -199,3 +199,4 @@ class BranchPruner
         return $storeKeyValue;
     }
 }
+

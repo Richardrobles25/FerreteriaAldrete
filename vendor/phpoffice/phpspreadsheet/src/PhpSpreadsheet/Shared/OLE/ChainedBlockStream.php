@@ -195,3 +195,4 @@ class ChainedBlockStream
     // bool dir_rewinddir ( void )
     // bool dir_closedir ( void )
 }
+

@@ -68,3 +68,4 @@ class DefinedNames extends BaseLoader
         }
     }
 }
+

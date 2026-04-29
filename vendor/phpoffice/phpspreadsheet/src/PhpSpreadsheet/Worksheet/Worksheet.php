@@ -4100,3 +4100,4 @@ class Worksheet
         $this->setCellValue($toCell, $newFormula);
     }
 }
+

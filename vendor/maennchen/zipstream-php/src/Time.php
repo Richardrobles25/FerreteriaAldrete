@@ -37,3 +37,4 @@ abstract class Time
             | ((int) $second >> 1);
     }
 }
+

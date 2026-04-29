@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -71,7 +71,7 @@ $proveedores = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-// Categorías del proveedor en edición
+// CategorÃ­as del proveedor en ediciÃ³n
 $catsEditando = [];
 if ($editando) {
     $stmtC = $pdo->prepare("SELECT categoria_id FROM proveedor_categorias WHERE proveedor_id = ?");
@@ -84,7 +84,7 @@ if ($editando) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Proveedores — Ferretería Aldrete</title>
+    <title>Proveedores â€” FerreterÃ­a Aldrete</title>
 </head>
 <body>
 <style>
@@ -93,16 +93,16 @@ if ($editando) {
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -121,8 +121,8 @@ if ($editando) {
     .filtro-group { display: flex; flex-direction: column; gap: 5px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
     .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #ff8c00; }
-    .btn-filtrar { background: #ff8c00; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
+    .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     table { width: 100%; border-collapse: collapse; }
     thead { background: #f9f9f9; }
@@ -131,12 +131,12 @@ if ($editando) {
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #fafafa; }
     .cats-lista { display: flex; gap: 4px; flex-wrap: wrap; }
-    .cat-badge { background: #fff3e0; color: #e65c00; font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+    .cat-badge { background: #e3f2fd; color: #1565c0; font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
     .acciones { display: flex; gap: 6px; }
     .btn-accion { padding: 5px 11px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-block; }
-    .btn-editar { background: #fff3e0; color: #e65c00; }
-    .btn-editar:hover { background: #ffe0b2; }
-    .btn-desactivar { background: #fff8e1; color: #f57f17; }
+    .btn-editar { background: #e3f2fd; color: #1565c0; }
+    .btn-editar:hover { background: #bbdefb; }
+    .btn-desactivar { background: #fff8e1; color: #1565c0; }
     .btn-activar { background: #e8f5e9; color: #2e7d32; }
     .btn-eliminar { background: #fdecea; color: #c0392b; }
     .btn-eliminar:hover { background: #ffcdd2; }
@@ -144,23 +144,25 @@ if ($editando) {
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
     .form-group input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .form-group input:focus { outline: none; border-color: #ff8c00; }
+    .form-group input:focus { outline: none; border-color: #14ace7; }
     .cats-check { display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 10px; }
     .cat-check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #555; }
-    .btn-guardar { background: #ff8c00; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
-    .btn-guardar:hover { background: #e07800; }
+    .area-search { width: 100%; padding: 9px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+    .area-search:focus { outline: none; border-color: #14ace7; }
+    .btn-guardar { background: #14ace7; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
+    .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar-edit { background: white; color: #666; border: 1px solid #ddd; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 8px; text-decoration: none; display: block; text-align: center; }
 </style>
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
+        <h3>FerreterÃ­a Aldrete</h3>
         <p><?= $_SESSION['rol'] ?></p>
     </div>
     <div class="sidebar-menu">
         <a class="menu-item" href="inicioInventario.php">Inicio</a>
         <a class="menu-item" href="productos.php">Productos</a>
-        <a class="menu-item" href="categorias.php">Categorías</a>
+        <a class="menu-item" href="categorias.php">CategorÃ­as</a>
         <div class="divider"></div>
         <a class="menu-item" href="entradas.php">Entradas de productos</a>
         <a class="menu-item" href="salidas.php">Salidas y mermas</a>
@@ -171,7 +173,7 @@ if ($editando) {
         <div class="divider"></div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
         <a class="menu-item" href="transferencias.php">Transferencias</a>
-        <a class="menu-item" href="masVendidos.php">Más vendidos</a>
+        <a class="menu-item" href="masVendidos.php">MÃ¡s vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
@@ -183,8 +185,8 @@ if ($editando) {
             <h2>Proveedores</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">â€” <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesiÃ³n</button></form>
         </div>
     </div>
 
@@ -199,12 +201,12 @@ if ($editando) {
                 <div class="filtros">
                     <div class="filtro-group">
                         <label>Buscar</label>
-                        <input type="text" name="buscar" placeholder="Nombre del proveedor..." value="<?= htmlspecialchars($busqueda) ?>">
+                        <input type="text" name="buscar" placeholder="Nombre del proveedor..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
                     </div>
                     <div class="filtro-group">
-                        <label>Filtrar por área</label>
+                        <label>Filtrar por Ã¡rea</label>
                         <select name="categoria">
-                            <option value="">Todas las áreas</option>
+                            <option value="">Todas las Ã¡reas</option>
                             <?php foreach ($categorias as $c): ?>
                                 <option value="<?= $c['categoria_id'] ?>" <?= $filtrocat===$c['categoria_id']?'selected':'' ?>><?= htmlspecialchars($c['nombre']) ?></option>
                             <?php endforeach; ?>
@@ -219,9 +221,9 @@ if ($editando) {
                 <?php if (count($proveedores) > 0): ?>
                 <table>
                     <thead>
-                        <tr><th>Nombre</th><th>Teléfono</th><th>Correo</th><th>Áreas</th><th>Acciones</th></tr>
+                        <tr><th>Nombre</th><th>TelÃ©fono</th><th>Correo</th><th>Ãreas</th><th>Acciones</th></tr>
                     </thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($proveedores as $p):
                             $stmtC = $pdo->prepare("SELECT c.nombre FROM proveedor_categorias pc JOIN categorias c ON pc.categoria_id = c.categoria_id WHERE pc.proveedor_id = ?");
                             $stmtC->execute([$p['proveedor_id']]);
@@ -229,23 +231,23 @@ if ($editando) {
                         ?>
                         <tr>
                             <td><strong><?= htmlspecialchars($p['nombre']) ?></strong></td>
-                            <td><?= htmlspecialchars($p['telefono']??'—') ?></td>
-                            <td style="font-size:12px;"><?= htmlspecialchars($p['correo']??'—') ?></td>
+                            <td><?= htmlspecialchars($p['telefono']??'â€”') ?></td>
+                            <td style="font-size:12px;"><?= htmlspecialchars($p['correo']??'â€”') ?></td>
                             <td>
                                 <div class="cats-lista">
                                     <?php foreach ($cats as $cat): ?>
                                         <span class="cat-badge"><?= htmlspecialchars($cat) ?></span>
                                     <?php endforeach; ?>
-                                    <?php if (!$cats): ?><span style="color:#aaa;font-size:12px;">—</span><?php endif; ?>
+                                    <?php if (!$cats): ?><span style="color:#aaa;font-size:12px;">â€”</span><?php endif; ?>
                                 </div>
                             </td>
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="proveedores.php?editar=<?= $p['proveedor_id'] ?>">Editar</a>
-                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="proveedores.php?toggle=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Confirmar cambio?')">
+                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="proveedores.php?toggle=<?= $p['proveedor_id'] ?>" onclick="return confirm('Â¿Confirmar cambio?')">
                                         <?= $p['activo']?'Desactivar':'Activar' ?>
                                     </a>
-                                    <a class="btn-accion btn-eliminar" href="proveedores.php?eliminar=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Eliminar proveedor?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="proveedores.php?eliminar=<?= $p['proveedor_id'] ?>" onclick="return confirm('Â¿Eliminar proveedor?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -271,22 +273,23 @@ if ($editando) {
                         <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Nombre del proveedor">
                     </div>
                     <div class="form-group">
-                        <label>Teléfono</label>
-                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos">
+                        <label>TelÃ©fono</label>
+                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dÃ­gitos">
                     </div>
                     <div class="form-group">
                         <label>Correo</label>
                         <input type="email" name="correo" value="<?= htmlspecialchars($editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com">
                     </div>
                     <div class="form-group">
-                        <label>Dirección</label>
-                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="Dirección del proveedor">
+                        <label>DirecciÃ³n</label>
+                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="DirecciÃ³n del proveedor">
                     </div>
                     <div class="form-group">
-                        <label>Áreas que abastece</label>
+                        <label>Ãreas que abastece</label>
+                        <input type="text" class="area-search" id="buscarAreaProveedor" placeholder="Buscar y agregar areas..." oninput="filtrarAreasProveedor(this.value)">
                         <div class="cats-check">
                             <?php foreach ($categorias as $c): ?>
-                                <label class="cat-check-row">
+                                <label class="cat-check-row" data-area-texto="<?= htmlspecialchars(mb_strtolower($c['nombre'])) ?>">
                                     <input type="checkbox" name="categorias[]" value="<?= $c['categoria_id'] ?>"
                                         <?= in_array($c['categoria_id'], $catsEditando) ? 'checked' : '' ?>>
                                     <?= htmlspecialchars($c['nombre']) ?>
@@ -303,7 +306,25 @@ if ($editando) {
 </div>
 
 <script>
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
+}
+function filtrarAreasProveedor(q) {
+    q = normalizar(q);
+    document.querySelectorAll('.cat-check-row').forEach(function(item) {
+        const texto = normalizar(item.dataset.areaTexto || item.textContent || '');
+        item.style.display = texto.includes(q) ? 'flex' : 'none';
+    });
+}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
 </body>
 </html>
+
+

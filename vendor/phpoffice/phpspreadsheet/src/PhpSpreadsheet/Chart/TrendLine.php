@@ -215,3 +215,4 @@ class TrendLine extends Properties
         return $this;
     }
 }
+

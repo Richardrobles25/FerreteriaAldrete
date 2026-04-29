@@ -57,3 +57,4 @@ abstract class AggregateBase
         return false;
     }
 }
+

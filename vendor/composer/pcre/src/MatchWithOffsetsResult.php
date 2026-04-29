@@ -39,3 +39,4 @@ final class MatchWithOffsetsResult
         $this->matched = (bool) $count;
     }
 }
+

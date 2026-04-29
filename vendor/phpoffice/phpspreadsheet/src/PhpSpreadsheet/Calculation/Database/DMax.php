@@ -43,3 +43,4 @@ class DMax extends DatabaseAbstract
         );
     }
 }
+

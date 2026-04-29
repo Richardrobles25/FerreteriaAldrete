@@ -57,3 +57,4 @@ class ProtectedRange
         return Coordinate::allRanges($this->sqref, false);
     }
 }
+

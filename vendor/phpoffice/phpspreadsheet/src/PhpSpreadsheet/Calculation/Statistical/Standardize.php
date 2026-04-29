@@ -47,3 +47,4 @@ class Standardize extends StatisticalValidations
         return ($value - $mean) / $stdDev;
     }
 }
+

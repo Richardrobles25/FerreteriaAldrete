@@ -25,3 +25,4 @@ class EngineeringValidations
         return (int) floor((float) $value);
     }
 }
+

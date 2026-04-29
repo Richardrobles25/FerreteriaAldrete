@@ -31,3 +31,4 @@ class Border
         return self::$borderStyleMap[$index] ?? StyleBorder::BORDER_NONE;
     }
 }
+

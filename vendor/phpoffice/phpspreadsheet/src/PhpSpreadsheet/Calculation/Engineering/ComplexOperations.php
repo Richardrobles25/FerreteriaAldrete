@@ -126,3 +126,4 @@ class ComplexOperations
         return (string) $returnValue;
     }
 }
+

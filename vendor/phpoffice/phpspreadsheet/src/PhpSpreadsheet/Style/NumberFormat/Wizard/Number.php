@@ -55,3 +55,4 @@ class Number extends NumberBase implements Wizard
         );
     }
 }
+

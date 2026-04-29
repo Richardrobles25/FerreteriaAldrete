@@ -42,3 +42,4 @@ class InterestAndPrincipal
         return $this->principal;
     }
 }
+

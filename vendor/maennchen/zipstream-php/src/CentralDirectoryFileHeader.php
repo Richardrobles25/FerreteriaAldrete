@@ -50,3 +50,4 @@ abstract class CentralDirectoryFileHeader
         ) . $fileName . $extraField . $fileComment;
     }
 }
+

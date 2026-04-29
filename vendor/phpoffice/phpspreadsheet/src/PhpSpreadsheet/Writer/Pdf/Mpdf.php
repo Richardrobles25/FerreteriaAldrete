@@ -94,3 +94,4 @@ class Mpdf extends Pdf
         return $inches * 25.4;
     }
 }
+

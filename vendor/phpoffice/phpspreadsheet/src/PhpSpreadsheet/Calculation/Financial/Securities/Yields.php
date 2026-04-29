@@ -148,3 +148,4 @@ class Yields
             * ($daysPerYear / $daysBetweenSettlementAndMaturity);
     }
 }
+

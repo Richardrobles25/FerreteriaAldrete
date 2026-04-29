@@ -1873,3 +1873,4 @@ class Worksheet extends WriterPart
         }
     }
 }
+

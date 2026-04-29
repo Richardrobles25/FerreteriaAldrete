@@ -267,3 +267,4 @@ abstract class DefinedName
         }
     }
 }
+

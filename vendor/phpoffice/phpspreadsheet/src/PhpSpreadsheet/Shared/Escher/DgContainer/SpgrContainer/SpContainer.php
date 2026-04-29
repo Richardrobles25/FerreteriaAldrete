@@ -298,3 +298,4 @@ class SpContainer
         return $nestingLevel;
     }
 }
+

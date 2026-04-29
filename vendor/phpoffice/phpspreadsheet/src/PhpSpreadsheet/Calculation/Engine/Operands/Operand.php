@@ -9,3 +9,4 @@ interface Operand
 
     public function value(): string;
 }
+

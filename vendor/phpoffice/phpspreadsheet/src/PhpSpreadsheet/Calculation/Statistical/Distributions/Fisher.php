@@ -70,3 +70,4 @@ class Fisher
         return (exp(2 * $probability) - 1) / (exp(2 * $probability) + 1);
     }
 }
+

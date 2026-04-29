@@ -126,3 +126,4 @@ class Validations
         return $coordinate;
     }
 }
+

@@ -211,3 +211,4 @@ class ConvertDecimal extends ConvertBase
         return $value;
     }
 }
+

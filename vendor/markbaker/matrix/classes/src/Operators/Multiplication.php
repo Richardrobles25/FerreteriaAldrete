@@ -84,3 +84,4 @@ class Multiplication extends Operator
         return $this;
     }
 }
+

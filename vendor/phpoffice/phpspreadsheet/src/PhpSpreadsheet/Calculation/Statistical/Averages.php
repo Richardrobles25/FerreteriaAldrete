@@ -270,3 +270,4 @@ class Averages extends AggregateBase
         return $maxfreqdatum;
     }
 }
+

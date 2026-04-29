@@ -33,3 +33,4 @@ echo 'Multiplication', PHP_EOL;
 
 $result = Operations::multiply(...$values);
 echo '=> ', $result, PHP_EOL;
+

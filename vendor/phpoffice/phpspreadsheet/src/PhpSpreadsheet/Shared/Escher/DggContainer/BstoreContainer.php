@@ -30,3 +30,4 @@ class BstoreContainer
         return $this->BSECollection;
     }
 }
+

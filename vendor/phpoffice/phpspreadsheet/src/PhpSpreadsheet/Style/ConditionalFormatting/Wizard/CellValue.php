@@ -185,3 +185,4 @@ class CellValue extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

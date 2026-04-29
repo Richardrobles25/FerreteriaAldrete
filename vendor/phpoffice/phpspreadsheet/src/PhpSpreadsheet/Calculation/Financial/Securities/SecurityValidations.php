@@ -30,3 +30,4 @@ class SecurityValidations extends FinancialValidations
         return $redemption;
     }
 }
+

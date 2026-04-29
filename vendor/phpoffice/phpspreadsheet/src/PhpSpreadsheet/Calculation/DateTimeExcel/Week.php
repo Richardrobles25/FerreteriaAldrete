@@ -272,3 +272,4 @@ class Week
             && !$origNull && $dateObject->format('Y-m-d') === '1904-01-01';
     }
 }
+

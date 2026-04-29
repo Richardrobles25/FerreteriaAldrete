@@ -437,3 +437,4 @@ abstract class BestFit
         $this->yValues = $yValues;
     }
 }
+

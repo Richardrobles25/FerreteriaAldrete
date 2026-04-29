@@ -98,3 +98,4 @@ class Permutations
         return IntOrFloat::evaluate($result);
     }
 }
+

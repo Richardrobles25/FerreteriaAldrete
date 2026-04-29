@@ -8,3 +8,4 @@ enum TextGridRightAlign
     case numeric;
     case floatOrInt;
 }
+

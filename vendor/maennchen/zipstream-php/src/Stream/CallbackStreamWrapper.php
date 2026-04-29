@@ -251,3 +251,4 @@ final class CallbackStreamWrapper
         return false;
     }
 }
+

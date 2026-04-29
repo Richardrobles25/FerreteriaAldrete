@@ -222,3 +222,4 @@ class Floor
         return ExcelError::NAN();
     }
 }
+

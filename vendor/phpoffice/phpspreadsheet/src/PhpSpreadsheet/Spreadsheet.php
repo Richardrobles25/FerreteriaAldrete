@@ -1951,3 +1951,4 @@ class Spreadsheet implements JsonSerializable
         return $this->usesCheckBoxStyle;
     }
 }
+

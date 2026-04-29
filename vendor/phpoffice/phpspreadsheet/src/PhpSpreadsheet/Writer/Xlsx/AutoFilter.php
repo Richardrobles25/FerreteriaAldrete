@@ -123,3 +123,4 @@ class AutoFilter extends WriterPart
         }
     }
 }
+

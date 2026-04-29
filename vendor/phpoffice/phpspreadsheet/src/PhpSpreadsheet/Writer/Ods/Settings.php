@@ -150,3 +150,4 @@ class Settings extends WriterPart
         $this->writeSplitValue($objWriter, 'ActiveSplitRange', 'short', '3');
     }
 }
+

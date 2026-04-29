@@ -162,3 +162,4 @@ class RichText implements IComparable, Stringable
         }
     }
 }
+

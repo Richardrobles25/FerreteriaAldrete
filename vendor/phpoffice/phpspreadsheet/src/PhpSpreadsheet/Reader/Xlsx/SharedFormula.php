@@ -24,3 +24,4 @@ class SharedFormula
         return $this->formula;
     }
 }
+

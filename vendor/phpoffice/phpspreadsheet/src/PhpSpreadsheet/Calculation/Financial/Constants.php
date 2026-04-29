@@ -17,3 +17,4 @@ class Constants
     public const PAYMENT_END_OF_PERIOD = 0;
     public const PAYMENT_BEGINNING_OF_PERIOD = 1;
 }
+

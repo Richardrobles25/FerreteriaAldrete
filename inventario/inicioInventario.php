@@ -42,13 +42,35 @@ $stmtMov = $pdo->prepare("
 $stmtMov->execute([$_SESSION['sucursal_id']]);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
-// Transferencias pendientes hacia esta sucursal
-$stmtTransf = $pdo->prepare("
-    SELECT COUNT(*) FROM transferencias
-    WHERE sucursal_destino_id = ? AND estado = 'Pendiente'
+// Notificaciones de transferencias
+$mySuc = $_SESSION['sucursal_id'];
+
+// Solicitudes pendientes donde YO soy el ORIGEN (tengo los productos, debo aprobar)
+$stmt = $pdo->prepare("
+    SELECT t.transferencias_id, t.cantidad,
+           COALESCE(p.nombre_producto,'?') AS nombre_producto,
+           COALESCE(mp.stock_actual,0) AS mi_stock,
+           sd.nombre AS sucursal_destino
+    FROM transferencias t
+    LEFT JOIN productos p ON t.producto_id = p.producto_id AND p.sucursal_id = ?
+    LEFT JOIN productos mp ON t.producto_id = mp.producto_id AND mp.sucursal_id = ?
+    JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
+    WHERE t.sucursal_origen_id = ? AND t.estado = 'Pendiente'
+    ORDER BY t.created_at ASC LIMIT 5
 ");
-$stmtTransf->execute([$_SESSION['sucursal_id']]);
-$transfPendientes = $stmtTransf->fetchColumn();
+$stmt->execute([$mySuc, $mySuc, $mySuc]);
+$solicitudesPendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$transfParaAprobar = count($solicitudesPendientes);
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_origen_id = ? AND estado = 'Aprobada'");
+$stmt->execute([$mySuc]);
+$transfParaEnviar = intval($stmt->fetchColumn());
+
+$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'En tránsito'");
+$stmt->execute([$mySuc]);
+$transfParaRecibir = intval($stmt->fetchColumn());
+
+$totalTransfAlertas = $transfParaAprobar + $transfParaEnviar + $transfParaRecibir;
 
 // Últimas compras a proveedor
 $stmtCompras = $pdo->prepare("
@@ -76,16 +98,16 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -103,17 +125,21 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .alerta-nombre { color: #333; font-weight: 500; }
     .alerta-stock-val { color: #c0392b; font-weight: 700; font-size: 12px; }
     .alerta-minimo { color: #aaa; font-size: 11px; margin-left: 6px; }
-    .notif-transf { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 12px 18px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #1565c0; }
+    .notif-transf { background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #1565c0; }
     .notif-transf a { color: #1565c0; font-weight: 700; text-decoration: none; }
+    .notif-transf-enviar { background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #2e7d32; }
+    .notif-transf-enviar a { color: #2e7d32; font-weight: 700; text-decoration: none; }
+    .notif-transf-recibir { background: #f3e5f5; border: 1px solid #e1bee7; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #6a1b9a; }
+    .notif-transf-recibir a { color: #6a1b9a; font-weight: 700; text-decoration: none; }
     .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: 14px; margin-bottom: 20px; }
-    .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #ff8c00; }
+    .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
     .stat h3 { font-size: 22px; font-weight: 700; color: #222; margin: 0; }
-    .stat small { font-size: 11px; color: #ff8c00; }
+    .stat small { font-size: 11px; color: #14ace7; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .tabla { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
     .tabla-header { padding: 14px 18px; border-bottom: 0.5px solid #eee; font-size: 14px; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center; }
-    .tabla-header a { font-size: 12px; color: #ff8c00; text-decoration: none; font-weight: 400; }
+    .tabla-header a { font-size: 12px; color: #14ace7; text-decoration: none; font-weight: 400; }
     .tabla-row { padding: 10px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #555; display: flex; justify-content: space-between; align-items: center; }
     .tabla-row:last-child { border-bottom: none; }
     .badge-tipo { display: inline-block; padding: 2px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; }
@@ -123,7 +149,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .tipo-transferencia { background: #f3e5f5; color: #6a1b9a; }
     .accesos { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 20px; }
     .acceso { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; text-decoration: none; display: flex; align-items: center; gap: 10px; transition: border-color 0.15s; }
-    .acceso:hover { border-color: #ff8c00; }
+    .acceso:hover { border-color: #14ace7; }
     .acceso-icon { font-size: 20px; }
     .acceso-label { font-size: 13px; font-weight: 600; color: #333; }
     .acceso-sub { font-size: 11px; color: #aaa; }
@@ -147,7 +173,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <a class="menu-item" href="compras.php">Compras a proveedor</a>
         <div class="divider"></div>
         <a class="menu-item" href="paquetes.php">Paquetes</a>
-        <a class="menu-item" href="transferencias.php">Transferencias <?= $transfPendientes>0?"({$transfPendientes})":'' ?></a>
+        <a class="menu-item" href="transferencias.php">Transferencias <?= $totalTransfAlertas>0?"({$totalTransfAlertas})":'' ?></a>
         <a class="menu-item" href="masVendidos.php">Más vendidos</a>
     </div>
     <div class="sidebar-footer">v1.0.0</div>
@@ -183,7 +209,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                     <span class="alerta-stock-val"><?= number_format($p['stock_actual'],2) ?></span>
                     <span class="alerta-minimo">mín: <?= number_format($p['stock_minimo'],2) ?></span>
                     <a href="entradas.php?producto_id=<?= $p['producto_id'] ?>"
-                       style="background:#ff8c00;color:white;font-size:11px;padding:2px 8px;border-radius:4px;text-decoration:none;margin-left:8px;">
+                       style="background:#14ace7;color:white;font-size:11px;padding:2px 8px;border-radius:4px;text-decoration:none;margin-left:8px;">
                        Entrada
                     </a>
                 </div>
@@ -192,10 +218,32 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         </div>
         <?php endif; ?>
 
-        <!-- Notificación de transferencias -->
-        <?php if ($transfPendientes > 0): ?>
+        <!-- Notificaciones de transferencias -->
+        <?php if ($transfParaAprobar > 0): ?>
         <div class="notif-transf">
-            <span>📦 Tienes <strong><?= $transfPendientes ?></strong> solicitud(es) de transferencia pendiente(s) de aprobar.</span>
+            <div>
+                <div>&#128230; <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
+                <?php foreach ($solicitudesPendientes as $sp): ?>
+                <div style="font-size:12px;margin-top:5px;padding-left:6px;">
+                    &bull; <strong><?= htmlspecialchars($sp['nombre_producto']) ?></strong>
+                    &times; <?= number_format($sp['cantidad'], 0) ?>
+                    &mdash; Tu stock: <strong style="color:<?= $sp['mi_stock'] < $sp['cantidad'] ? '#c0392b' : '#2e7d32' ?>;"><?= number_format($sp['mi_stock'], 0) ?></strong>
+                    <span style="opacity:.65;">(pide: <?= htmlspecialchars($sp['sucursal_destino']) ?>)</span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <a href="transferencias.php" style="margin-left:16px;white-space:nowrap;">Ver</a>
+        </div>
+        <?php endif; ?>
+        <?php if ($transfParaEnviar > 0): ?>
+        <div class="notif-transf-enviar">
+            <span>✅ Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
+            <a href="transferencias.php">Ver transferencias</a>
+        </div>
+        <?php endif; ?>
+        <?php if ($transfParaRecibir > 0): ?>
+        <div class="notif-transf-recibir">
+            <span>🚚 Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepción.</span>
             <a href="transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
@@ -240,7 +288,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             </a>
             <a class="acceso" href="transferencias.php">
                 <span class="acceso-icon">🔄</span>
-                <div><div class="acceso-label">Transferencias</div><div class="acceso-sub"><?= $transfPendientes>0?$transfPendientes.' pendiente(s)':'Entre sucursales' ?></div></div>
+                <div><div class="acceso-label">Transferencias</div><div class="acceso-sub"><?= $totalTransfAlertas>0?$totalTransfAlertas.' pendiente(s)':'Entre sucursales' ?></div></div>
             </a>
             <a class="acceso" href="productos.php">
                 <span class="acceso-icon">🔧</span>
@@ -306,3 +354,4 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+

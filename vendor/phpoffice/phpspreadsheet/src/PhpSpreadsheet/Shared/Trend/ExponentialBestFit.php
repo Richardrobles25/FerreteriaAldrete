@@ -106,3 +106,4 @@ class ExponentialBestFit extends BestFit
         }
     }
 }
+

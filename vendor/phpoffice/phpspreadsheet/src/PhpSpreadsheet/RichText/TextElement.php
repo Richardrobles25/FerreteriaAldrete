@@ -67,3 +67,4 @@ class TextElement implements ITextElement
         );
     }
 }
+

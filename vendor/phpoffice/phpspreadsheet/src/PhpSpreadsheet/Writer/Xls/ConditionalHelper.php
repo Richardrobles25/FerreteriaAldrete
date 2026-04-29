@@ -58,3 +58,4 @@ class ConditionalHelper
         return $this->size;
     }
 }
+

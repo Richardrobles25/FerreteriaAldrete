@@ -113,3 +113,4 @@ class Style
         return ($simple !== null) ? $simple : new SimpleXMLElement('<xml></xml>');
     }
 }
+

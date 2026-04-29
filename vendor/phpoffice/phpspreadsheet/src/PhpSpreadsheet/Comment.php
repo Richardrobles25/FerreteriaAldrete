@@ -356,3 +356,4 @@ class Comment implements IComparable, Stringable
         return $this;
     }
 }
+

@@ -312,3 +312,4 @@ class Helpers
         return is_numeric($result) ? ($result + 0) : 0;
     }
 }
+

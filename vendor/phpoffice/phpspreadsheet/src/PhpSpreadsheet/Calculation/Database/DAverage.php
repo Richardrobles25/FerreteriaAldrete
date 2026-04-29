@@ -42,3 +42,4 @@ class DAverage extends DatabaseAbstract
         );
     }
 }
+

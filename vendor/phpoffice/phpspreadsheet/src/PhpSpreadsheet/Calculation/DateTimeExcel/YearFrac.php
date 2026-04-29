@@ -122,3 +122,4 @@ class YearFrac
         return $days / $tmpCalcAnnualBasis;
     }
 }
+

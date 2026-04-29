@@ -89,3 +89,4 @@ class Errors extends WizardAbstract implements WizardInterface
         return $this;
     }
 }
+

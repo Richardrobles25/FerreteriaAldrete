@@ -9,21 +9,25 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 $errores = [];
 $exito   = false;
 
-// Buscar venta via AJAX
+// Buscar venta via AJAX (por folio NNNN + mes + año)
 if (isset($_GET['buscar_venta'])) {
-    $id = intval($_GET['buscar_venta']);
+    $folio_num = intval($_GET['buscar_venta']);
+    $mes       = intval($_GET['mes']  ?? date('m'));
+    $anio      = intval($_GET['anio'] ?? date('Y'));
+    $folioStr  = str_pad($folio_num, 4, '0', STR_PAD_LEFT) . '-' . str_pad($mes,2,'0',STR_PAD_LEFT) . '-' . $anio;
+
     $stmt = $pdo->prepare("
         SELECT v.*, c.nombre_completo as cliente
         FROM ventas v
         LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
-        WHERE v.venta_id = ? AND v.estado = 'Completada'
+        WHERE v.folio = ? AND v.estado = 'Completada'
     ");
-    $stmt->execute([$id]);
+    $stmt->execute([$folioStr]);
     $venta = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($venta) {
         $stmtP = $pdo->prepare("SELECT vp.*, p.nombre_producto, p.codigo FROM venta_productos vp JOIN productos p ON vp.producto_id = p.producto_id WHERE vp.venta_id = ?");
-        $stmtP->execute([$id]);
+        $stmtP->execute([$venta['venta_id']]);
         $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
     }
     header('Content-Type: application/json');
@@ -109,16 +113,16 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -136,10 +140,10 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .form-group { margin-bottom: 13px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 5px; font-weight: 600; }
     .form-group input, .form-group textarea { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: Arial, sans-serif; }
-    .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #ff8c00; }
+    .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
     .buscar-row { display: flex; gap: 8px; }
     .buscar-row input { flex: 1; }
-    .btn-buscar { background: #ff8c00; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-buscar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .venta-info { background: #f9f9f9; border-radius: 6px; padding: 12px; margin-bottom: 13px; font-size: 13px; display: none; }
     .venta-info.visible { display: block; }
     .venta-info h4 { font-size: 14px; color: #333; margin: 0 0 8px; }
@@ -208,11 +212,25 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <h3>Registrar devolución</h3>
 
                 <div class="form-group">
-                    <label>Buscar venta por número</label>
+                    <label>Buscar por folio</label>
                     <div class="buscar-row">
-                        <input type="number" id="inputVentaId" placeholder="Ej. 1042" min="1">
+                        <input type="number" id="inputFolioNum" placeholder="Ej. 42" min="1" max="9999" style="width:90px;">
+                        <select id="selectMes" style="padding:9px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <option value="01">Enero</option><option value="02">Febrero</option>
+                            <option value="03">Marzo</option><option value="04">Abril</option>
+                            <option value="05">Mayo</option><option value="06">Junio</option>
+                            <option value="07">Julio</option><option value="08">Agosto</option>
+                            <option value="09">Septiembre</option><option value="10">Octubre</option>
+                            <option value="11">Noviembre</option><option value="12">Diciembre</option>
+                        </select>
+                        <select id="selectAnio" style="padding:9px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <?php for($y=date('Y');$y>=date('Y')-2;$y--): ?>
+                            <option value="<?=$y?>"><?=$y?></option>
+                            <?php endfor; ?>
+                        </select>
                         <button class="btn-buscar" onclick="buscarVenta()">Buscar</button>
                     </div>
+                    <div style="font-size:11px;color:#aaa;margin-top:4px;">Número de folio (ej. 42) + mes y año de la venta.</div>
                 </div>
 
                 <div class="venta-info" id="ventaInfo">
@@ -279,16 +297,21 @@ let ventaActual = null;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
+// Pre-seleccionar mes actual
+document.getElementById('selectMes').value = String(new Date().getMonth()+1).padStart(2,'0');
+
 function buscarVenta() {
-    const id = document.getElementById('inputVentaId').value;
-    if (!id) return;
-    fetch(`devoluciones.php?buscar_venta=${id}`)
+    const num  = document.getElementById('inputFolioNum').value;
+    const mes  = document.getElementById('selectMes').value;
+    const anio = document.getElementById('selectAnio').value;
+    if (!num) { alert('Ingresa el número de folio.'); return; }
+    fetch(`devoluciones.php?buscar_venta=${encodeURIComponent(num)}&mes=${mes}&anio=${anio}`)
         .then(r => r.json())
         .then(data => {
-            if (!data) { alert('Venta no encontrada o no está completada.'); return; }
+            if (!data) { alert('Folio no encontrado o la venta no está completada.'); return; }
             ventaActual = data;
             document.getElementById('ventaCliente').textContent = data.cliente || 'Público general';
-            document.getElementById('ventaFecha').textContent = 'Venta #'+data.venta_id;
+            document.getElementById('ventaFecha').textContent = 'Folio: '+(data.folio || ('#'+data.venta_id));
             document.getElementById('ventaTotal').textContent = 'Total: $'+parseFloat(data.total).toFixed(2)+' · '+data.metodo_pago;
             document.getElementById('ventaInfo').classList.add('visible');
             document.getElementById('inputVentaIdHidden').value = data.venta_id;
@@ -325,3 +348,4 @@ function prepararDevolucion() {
 </script>
 </body>
 </html>
+

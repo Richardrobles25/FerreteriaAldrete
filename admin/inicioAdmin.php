@@ -3,10 +3,11 @@ session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-// Ventas de hoy — todas las sucursales
+// Ventas de hoy - todas las sucursales
 $stmtHoy = $pdo->query("
     SELECT
         COUNT(*) AS ventas_hoy,
@@ -72,7 +73,7 @@ $stmtCredAct = $pdo->query("SELECT COUNT(*), COALESCE(SUM(saldo_pendiente),0) FR
 $stmtTransf = $pdo->query("SELECT COUNT(*) FROM transferencias WHERE estado = 'Pendiente'");
 $transfPend = $stmtTransf->fetchColumn();
 
-// Últimas ventas globales
+// Ultimas ventas globales
 $stmtUltVentas = $pdo->query("
     SELECT v.venta_id, v.total, v.metodo_pago, v.created_at,
            cl.nombre_completo AS cliente, s.nombre AS sucursal, u.nombre_completo AS cajero
@@ -101,16 +102,16 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
     .sidebar { width: 220px; background: white; border-right: 1px solid #e8e8e8; display: flex; flex-direction: column; transition: width 0.3s; flex-shrink: 0; overflow: hidden; }
     .sidebar.collapsed { width: 0; }
     .sidebar-header { padding: 18px 16px; border-bottom: 1px solid #f0f0f0; }
-    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #ff8c00; margin: 0; }
+    .sidebar-header h3 { font-size: 14px; font-weight: 700; color: #14ace7; margin: 0; }
     .sidebar-header p { font-size: 11px; color: #999; margin: 4px 0 0; }
     .sidebar-menu { flex: 1; padding: 8px 0; overflow-y: auto; }
     .menu-item { display: block; padding: 10px 16px; font-size: 13px; color: #555; cursor: pointer; border-left: 3px solid transparent; text-decoration: none; transition: all 0.15s; white-space: nowrap; }
-    .menu-item:hover { background: #fff5e6; color: #ff8c00; }
-    .menu-item.active { background: #fff5e6; border-left-color: #ff8c00; color: #ff8c00; font-weight: 600; }
+    .menu-item:hover { background: #eef8ff; color: #14ace7; }
+    .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
-    .topbar { background: #ff8c00; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
@@ -120,21 +121,21 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
     .content { flex: 1; padding: 24px; overflow-y: auto; }
     .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: 14px; margin-bottom: 20px; }
-    .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #ff8c00; }
+    .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 6px; text-transform: uppercase; }
     .stat h3 { font-size: 22px; font-weight: 700; color: #222; margin: 0; }
-    .stat small { font-size: 11px; color: #ff8c00; }
+    .stat small { font-size: 11px; color: #14ace7; }
     .alertas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
     .alerta { border-radius: 8px; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
     .alerta-roja { background: #fdecea; border: 1px solid #ffcdd2; color: #c0392b; }
     .alerta-azul { background: #e3f2fd; border: 1px solid #bbdefb; color: #1565c0; }
-    .alerta-amarilla { background: #fff8e1; border: 1px solid #ffe082; color: #f57f17; }
+    .alerta-amarilla { background: #fff8e1; border: 1px solid #90caf9; color: #1565c0; }
     .alerta a { font-weight: 700; text-decoration: none; color: inherit; }
     .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
     .tabla { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
     .tabla-header { padding: 14px 18px; border-bottom: 0.5px solid #eee; font-size: 14px; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center; }
-    .tabla-header a { font-size: 12px; color: #ff8c00; text-decoration: none; font-weight: 400; }
+    .tabla-header a { font-size: 12px; color: #14ace7; text-decoration: none; font-weight: 400; }
     .tabla-row { padding: 10px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #555; display: flex; justify-content: space-between; align-items: center; }
     .tabla-row:last-child { border-bottom: none; }
     .caja-activa { padding: 10px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; }
@@ -148,7 +149,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
     .badge-ef { background: #e8f5e9; color: #2e7d32; }
     .badge-term { background: #e3f2fd; color: #1565c0; }
     .badge-mix { background: #f3e5f5; color: #6a1b9a; }
-    .badge-cred { background: #fff3e0; color: #e65c00; }
+    .badge-cred { background: #e3f2fd; color: #1565c0; }
     .stock-bajo-item { padding: 9px 18px; border-bottom: 0.5px solid #f5f5f5; display: flex; justify-content: space-between; font-size: 12px; }
     .stock-bajo-item:last-child { border-bottom: none; }
     .sin-datos { padding: 20px; text-align: center; color: #aaa; font-size: 13px; }
@@ -156,29 +157,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
     .sucursal-row:last-child { border-bottom: none; }
 </style>
 
-<div class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <h3>Ferretería Aldrete</h3>
-        <p>Administrador</p>
-    </div>
-    <div class="sidebar-menu">
-        <a class="menu-item active" href="inicioAdmin.php">Inicio</a>
-        <a class="menu-item" href="usuarios.php">Usuarios</a>
-        <a class="menu-item" href="sucursales.php">Sucursales</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="reporteVentas.php">Ventas</a>
-        <a class="menu-item" href="reporteProductos.php">Productos más vendidos</a>
-        <a class="menu-item" href="historial.php">Historial de movimientos</a>
-        <a class="menu-item" href="cortes.php">Cortes de caja</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="../inventario/inicioInventario.php">Inventario</a>
-        <a class="menu-item" href="../cajero/inicioCajero.php">Cajero</a>
-        <div class="divider"></div>
-        <a class="menu-item" href="clientes.php">Clientes</a>
-        <a class="menu-item" href="creditos.php">Créditos</a>
-    </div>
-    <div class="sidebar-footer">v1.0.0</div>
-</div>
+<?php renderAdminSidebar('inicio'); ?>
 
 <div class="main">
     <div class="topbar">
@@ -187,7 +166,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <h2>Panel Administrador</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">- <?= htmlspecialchars($nombreSucursal) ?></span></span>
             <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesión</button></form>
         </div>
     </div>
@@ -215,7 +194,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             </div>
             <div class="stat">
                 <p>Cajas abiertas</p>
-                <h3 style="color:<?= count($cajasAbiertas)>0?'#2e7d32':'#aaa' ?>;"><?= count($cajasAbiertas) ?></h3>
+                <h3 style="color:<?= count($cajasAbiertas)>0?'#0899d3':'#94a3b8' ?>;"><?= count($cajasAbiertas) ?></h3>
                 <small>En este momento</small>
             </div>
             <div class="stat">
@@ -236,7 +215,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <?php endif; ?>
             <?php if ($creditosVencidos['vencidos'] > 0): ?>
             <div class="alerta alerta-amarilla">
-                <span>💳 <strong><?= $creditosVencidos['vencidos'] ?></strong> crédito(s) vencido(s) · $<?= number_format($creditosVencidos['monto_vencido'],0) ?></span>
+                <span>💳 <strong><?= $creditosVencidos['vencidos'] ?></strong> crédito(s) vencido(s) - $<?= number_format($creditosVencidos['monto_vencido'],0) ?></span>
                 <a href="creditos.php?estado=Vencido">Ver</a>
             </div>
             <?php endif; ?>
@@ -253,7 +232,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <!-- Ventas por sucursal hoy -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Ventas por sucursal — hoy</span>
+                    <span>Ventas por sucursal - hoy</span>
                     <a href="reporteVentas.php">Ver reporte</a>
                 </div>
                 <?php if (count($ventasSucursal) > 0): ?>
@@ -263,7 +242,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                             <div style="font-weight:600;"><?= htmlspecialchars($vs['nombre']) ?></div>
                             <div style="font-size:11px;color:#aaa;"><?= $vs['num_ventas'] ?> ventas</div>
                         </div>
-                        <strong style="color:#2e7d32;">$<?= number_format($vs['total'],2) ?></strong>
+                        <strong style="color:#0899d3;">$<?= number_format($vs['total'],2) ?></strong>
                     </div>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -284,7 +263,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                             <div>
                                 <div class="caja-nombre"><?= htmlspecialchars($ca['nombre_completo']) ?></div>
                                 <div class="caja-sub">
-                                    <?= htmlspecialchars($ca['sucursal']) ?> · Turno #<?= $ca['numero_turno'] ?> · desde <?= date('H:i', strtotime($ca['abierta_en'])) ?>
+                                    <?= htmlspecialchars($ca['sucursal']) ?> - Turno #<?= $ca['numero_turno'] ?> - desde <?= date('H:i', strtotime($ca['abierta_en'])) ?>
                                 </div>
                             </div>
                             <div class="caja-monto">
@@ -301,10 +280,10 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <div class="grid-2">
-            <!-- Últimas ventas globales -->
+            <!-- Ultimas ventas globales -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Últimas ventas</span>
+                    <span>Ultimas ventas</span>
                     <a href="reporteVentas.php">Ver todas</a>
                 </div>
                 <?php if (count($ultimasVentas) > 0): ?>
@@ -312,7 +291,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                     <div class="tabla-row">
                         <div>
                             <div style="font-size:13px;"><?= htmlspecialchars($v['cliente']??'Público general') ?></div>
-                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($v['sucursal']) ?> · <?= date('H:i', strtotime($v['created_at'])) ?></div>
+                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($v['sucursal']) ?> - <?= date('H:i', strtotime($v['created_at'])) ?></div>
                         </div>
                         <div style="text-align:right;">
                             <span class="badge badge-<?= strtolower(substr($v['metodo_pago'],0,2))==='ef'?'ef':(strtolower(substr($v['metodo_pago'],0,2))==='te'?'term':(strtolower(substr($v['metodo_pago'],0,2))==='mi'?'mix':'cred')) ?>"><?= $v['metodo_pago'] ?></span>
@@ -328,7 +307,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <!-- Stock bajo global -->
             <div class="tabla">
                 <div class="tabla-header">
-                    <span>Stock bajo — todas las sucursales</span>
+                    <span>Stock bajo - todas las sucursales</span>
                     <a href="../inventario/productos.php?stock_bajo=1">Ver todo</a>
                 </div>
                 <?php if (count($stockBajo) > 0): ?>
@@ -340,12 +319,12 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                         <div style="text-align:right;">
                             <span style="color:#c0392b;font-weight:700;"><?= number_format($p['stock_actual'],2) ?></span>
-                            <span style="color:#aaa;font-size:11px;"> / mín <?= number_format($p['stock_minimo'],2) ?></span>
+                            <span style="color:#aaa;font-size:11px;"> / min <?= number_format($p['stock_minimo'],2) ?></span>
                         </div>
                     </div>
                     <?php endforeach; ?>
                 <?php else: ?>
-                    <div class="sin-datos" style="color:#2e7d32;">Todo el inventario en buen estado</div>
+                    <div class="sin-datos" style="color:#0899d3;">Todo el inventario en buen estado</div>
                 <?php endif; ?>
             </div>
         </div>
@@ -357,3 +336,6 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 </script>
 </body>
 </html>
+
+
+

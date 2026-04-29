@@ -45,3 +45,4 @@ class DVar extends DatabaseAbstract
         );
     }
 }
+

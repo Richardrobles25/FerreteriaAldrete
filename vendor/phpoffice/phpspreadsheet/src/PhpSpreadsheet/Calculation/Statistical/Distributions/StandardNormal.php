@@ -114,7 +114,7 @@ class StandardNormal
      * Returns the one-tailed P-value of a z-test.
      *
      * For a given hypothesized population mean, x, Z.TEST returns the probability that the sample mean would be
-     *     greater than the average of observations in the data set (array) — that is, the observed sample mean.
+     *     greater than the average of observations in the data set (array) â€” that is, the observed sample mean.
      *
      * @param mixed $dataSet The dataset should be an array of float values for the observations
      * @param mixed $m0 Alpha Parameter
@@ -156,3 +156,4 @@ class StandardNormal
         return 1 - (is_numeric($temp) ? $temp : 0);
     }
 }
+

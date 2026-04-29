@@ -229,3 +229,4 @@ class Binomial
         return $summer;
     }
 }
+

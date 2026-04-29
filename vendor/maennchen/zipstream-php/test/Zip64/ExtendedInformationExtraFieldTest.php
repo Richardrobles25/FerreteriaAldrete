@@ -40,3 +40,4 @@ class ExtendedInformationExtraFieldTest extends TestCase
         );
     }
 }
+

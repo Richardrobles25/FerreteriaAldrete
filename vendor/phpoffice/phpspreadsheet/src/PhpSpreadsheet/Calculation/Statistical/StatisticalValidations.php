@@ -34,3 +34,4 @@ class StatisticalValidations
         return (bool) $value;
     }
 }
+

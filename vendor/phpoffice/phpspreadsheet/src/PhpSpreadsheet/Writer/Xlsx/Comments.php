@@ -251,3 +251,4 @@ class Comments extends WriterPart
         $objWriter->endElement();
     }
 }
+

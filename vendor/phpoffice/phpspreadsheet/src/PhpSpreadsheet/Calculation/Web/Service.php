@@ -76,3 +76,4 @@ class Service
         return str_replace('+', '%20', urlencode($text));
     }
 }
+

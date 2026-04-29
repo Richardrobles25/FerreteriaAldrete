@@ -43,3 +43,4 @@ class DCount extends DatabaseAbstract
         );
     }
 }
+

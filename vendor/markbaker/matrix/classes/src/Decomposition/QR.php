@@ -189,3 +189,4 @@ class QR
             ->multiply($Y);
     }
 }
+

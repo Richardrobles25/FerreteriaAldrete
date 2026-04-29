@@ -37,3 +37,4 @@ final class MatchResult
         $this->matched = (bool) $count;
     }
 }
+

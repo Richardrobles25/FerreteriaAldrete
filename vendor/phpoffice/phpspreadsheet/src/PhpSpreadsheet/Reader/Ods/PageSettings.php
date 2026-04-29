@@ -174,3 +174,4 @@ class PageSettings
             ->setFooter($printSettings->marginFooter);
     }
 }
+

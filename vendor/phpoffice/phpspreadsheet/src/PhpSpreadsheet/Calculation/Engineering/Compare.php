@@ -80,3 +80,4 @@ class Compare
         return (int) ($number >= $step);
     }
 }
+

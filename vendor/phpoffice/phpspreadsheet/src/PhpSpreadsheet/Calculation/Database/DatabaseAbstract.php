@@ -226,3 +226,4 @@ abstract class DatabaseAbstract
         return str_replace('[:' . $criterion . ']', $dataValue, $conditions);
     }
 }
+

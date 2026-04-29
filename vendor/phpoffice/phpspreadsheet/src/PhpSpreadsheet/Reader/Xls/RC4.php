@@ -57,3 +57,4 @@ class RC4
         return $data;
     }
 }
+

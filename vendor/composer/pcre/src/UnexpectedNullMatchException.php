@@ -18,3 +18,4 @@ class UnexpectedNullMatchException extends PcreException
         throw new \LogicException('fromFunction should not be called on '.self::class.', use '.PcreException::class);
     }
 }
+

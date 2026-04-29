@@ -159,3 +159,4 @@ class ChartColor
         return 100 - ((int) $alpha / 1000);
     }
 }
+

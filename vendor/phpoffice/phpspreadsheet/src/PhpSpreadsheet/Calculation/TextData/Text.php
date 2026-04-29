@@ -248,3 +248,4 @@ class Text
         return StringHelper::convertToString($cellValue);
     }
 }
+

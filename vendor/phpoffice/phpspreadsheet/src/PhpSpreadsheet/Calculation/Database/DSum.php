@@ -42,3 +42,4 @@ class DSum extends DatabaseAbstract
         );
     }
 }
+

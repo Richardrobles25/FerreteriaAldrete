@@ -29,3 +29,4 @@ class ResourceActionException extends Exception
         parent::__construct('Function ' . $function . 'failed on resource.');
     }
 }
+

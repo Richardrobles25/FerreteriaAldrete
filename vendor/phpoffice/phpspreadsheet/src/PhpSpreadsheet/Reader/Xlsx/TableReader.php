@@ -135,3 +135,4 @@ class TableReader
         $table->setStyle($tableStyle);
     }
 }
+

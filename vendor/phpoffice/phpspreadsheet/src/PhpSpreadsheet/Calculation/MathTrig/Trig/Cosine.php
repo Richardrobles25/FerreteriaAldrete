@@ -114,3 +114,4 @@ class Cosine
         return Helpers::numberOrNan(acosh($number));
     }
 }
+

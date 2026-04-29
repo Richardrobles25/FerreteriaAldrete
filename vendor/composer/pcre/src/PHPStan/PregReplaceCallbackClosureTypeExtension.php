@@ -89,3 +89,4 @@ final class PregReplaceCallbackClosureTypeExtension implements StaticMethodParam
         );
     }
 }
+

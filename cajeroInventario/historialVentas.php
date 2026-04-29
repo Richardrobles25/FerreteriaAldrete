@@ -38,8 +38,8 @@ if (isset($_GET['detalle_venta'])) {
 
 // ── Filtros ──────────────────────────────────────────────────────────────────
 // Tomar valores crudos (pueden venir vacíos si el usuario borró el campo)
-$fechaDesde = trim($_GET['desde'] ?? '');
-$fechaHasta = trim($_GET['hasta'] ?? '');
+$fechaDesde = trim($_GET['desde'] ?? date('Y-m-d'));
+$fechaHasta = trim($_GET['hasta'] ?? date('Y-m-d'));
 $metodo     = $_GET['metodo'] ?? '';
 $estado     = $_GET['estado'] ?? '';
 $buscar     = trim($_GET['buscar'] ?? '');

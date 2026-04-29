@@ -5,7 +5,7 @@ require_once '../config/database.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
-$fecha    = $_GET['fecha'] ?? '';
+$fecha    = $_GET['fecha'] ?? date('Y-m-d');
 $tipo     = $_GET['tipo'] ?? '';
 $busqueda = trim($_GET['buscar'] ?? '');
 

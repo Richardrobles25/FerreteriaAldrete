@@ -15,8 +15,8 @@ if (isset($_GET['eliminar'])) {
     $u->execute([$id, $sucursalId]);
     $row = $u->fetch(PDO::FETCH_ASSOC);
     if ($row) {
-        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND sucursal_id = ? AND activo = 1");
-        $check->execute([$row['nombre'], $sucursalId]);
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND activo = 1");
+        $check->execute([$row['nombre']]);
         if ($check->fetchColumn() > 0) {
             header('Location: unidades.php?msg=error_productos');
             exit();
@@ -51,7 +51,7 @@ if ($busqueda) {
     $stmt = $pdo->prepare("
         SELECT u.*, COUNT(p.producto_id) AS total_productos
         FROM unidades_medida u
-        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
         WHERE u.sucursal_id = ? AND u.nombre LIKE ?
         GROUP BY u.unidad_id
         ORDER BY u.nombre ASC
@@ -61,7 +61,7 @@ if ($busqueda) {
     $stmt = $pdo->prepare("
         SELECT u.*, COUNT(p.producto_id) AS total_productos
         FROM unidades_medida u
-        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
         WHERE u.sucursal_id = ?
         GROUP BY u.unidad_id
         ORDER BY u.nombre ASC

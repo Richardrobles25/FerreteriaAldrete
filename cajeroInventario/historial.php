@@ -9,7 +9,7 @@ $fecha    = $_GET['fecha'] ?? date('Y-m-d');
 $tipo     = $_GET['tipo'] ?? '';
 $busqueda = trim($_GET['buscar'] ?? '');
 
-$where  = "WHERE p.sucursal_id = ?";
+$where  = "WHERE ss.sucursal_id = ?";
 $params = [$_SESSION['sucursal_id']];
 
 if ($fecha) { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
@@ -22,6 +22,7 @@ $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
     $where
     ORDER BY m.created_at DESC
@@ -39,6 +40,7 @@ $stmtRes = $pdo->prepare("
         COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     $where
 ");
 $stmtRes->execute($params);

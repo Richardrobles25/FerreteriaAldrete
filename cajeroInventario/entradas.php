@@ -8,8 +8,13 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 $productoPreseleccionado = null;
 if (isset($_GET['producto_id'])) {
-    $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-    $stmt->execute([intval($_GET['producto_id']), $_SESSION['sucursal_id']]);
+    $stmt = $pdo->prepare("
+        SELECT p.*, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        WHERE p.producto_id = ?
+    ");
+    $stmt->execute([$_SESSION['sucursal_id'], intval($_GET['producto_id'])]);
     $productoPreseleccionado = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
@@ -33,8 +38,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($cantidad < 1) $errores[] = 'La cantidad debe ser al menos 1.';
 
     if (empty($errores)) {
-        $stmtP = $pdo->prepare("SELECT stock_actual, nombre_producto FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-        $stmtP->execute([$producto_id, $_SESSION['sucursal_id']]);
+        $stmtP = $pdo->prepare("
+            SELECT p.nombre_producto, ss.stock_actual
+            FROM productos p
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            WHERE p.producto_id = ?
+        ");
+        $stmtP->execute([$_SESSION['sucursal_id'], $producto_id]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
         if (!$prod) {
@@ -43,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stockAnterior = floatval($prod['stock_actual']);
             $stockNuevo    = $stockAnterior + $cantidad;
 
-            $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $producto_id]);
+            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $_SESSION['sucursal_id']]);
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
                 ->execute([$producto_id, $_SESSION['usuario_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $proveedor_entrada]);
 
@@ -60,8 +70,9 @@ $stmtH = $pdo->prepare("
            pr.nombre AS nombre_proveedor
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     LEFT JOIN proveedores pr ON m.proveedor_id = pr.proveedor_id
-    WHERE m.tipo = 'Entrada' AND p.sucursal_id = ?
+    WHERE m.tipo = 'Entrada'
     ORDER BY m.created_at DESC
     LIMIT 25
 ");
@@ -70,14 +81,16 @@ $historial = $stmtH->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos con su proveedor default
 $stmtProds = $pdo->prepare("
-    SELECT p.producto_id, p.codigo, p.nombre_producto, p.stock_actual, p.stock_minimo, p.stock_maximo,
+    SELECT p.producto_id, p.codigo, p.nombre_producto,
+           ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
            MIN(pp.proveedor_id) AS proveedor_default_id,
            MIN(prov.nombre)     AS proveedor_default_nombre
     FROM productos p
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     LEFT JOIN producto_proveedor pp ON p.producto_id = pp.producto_id
     LEFT JOIN proveedores prov      ON pp.proveedor_id = prov.proveedor_id
-    WHERE p.sucursal_id = ? AND p.activo = 1
-    GROUP BY p.producto_id, p.codigo, p.nombre_producto, p.stock_actual, p.stock_minimo, p.stock_maximo
+    WHERE p.activo = 1 AND ss.activo = 1
+    GROUP BY p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
     ORDER BY p.nombre_producto ASC
 ");
 $stmtProds->execute([$_SESSION['sucursal_id']]);

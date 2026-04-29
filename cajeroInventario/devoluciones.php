@@ -33,9 +33,9 @@ function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
         SELECT m.producto_id, SUM(m.cantidad) AS cantidad_devuelta
         FROM movimientos_inventario m
         JOIN productos p ON p.producto_id = m.producto_id
+        JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         LEFT JOIN devoluciones d ON d.devolucion_id = m.devolucion_id
-        WHERE p.sucursal_id = ?
-          AND m.tipo = 'Entrada'
+        WHERE m.tipo = 'Entrada'
           AND (m.motivo LIKE ? OR m.motivo LIKE ?)
           AND (m.devolucion_id IS NULL OR d.cancelada_en IS NULL)
         GROUP BY m.producto_id
@@ -128,11 +128,11 @@ if (isset($_GET['cancelar_dev'])) {
     $pdo->beginTransaction();
     try {
         foreach ($movimientos as $m) {
-            $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? FOR UPDATE");
-            $stmtS->execute([$m['producto_id']]);
+            $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtS->execute([$m['producto_id'], $_SESSION['sucursal_id']]);
             $stockAnt  = floatval($stmtS->fetchColumn());
             $stockNuevo = max(0, $stockAnt - floatval($m['cantidad']));
-            $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $m['producto_id']]);
+            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $m['producto_id'], $_SESSION['sucursal_id']]);
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
                            VALUES (?,?,'Salida',?,?,?,?)")
                 ->execute([$m['producto_id'], $_SESSION['usuario_id'], $m['cantidad'], $stockAnt, $stockNuevo,
@@ -280,12 +280,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cantidad    = floatval($prod['cantidad']);
                     if ($cantidad <= 0) continue;
 
-                    $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? FOR UPDATE");
-                    $stmtS->execute([$producto_id]);
+                    $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                    $stmtS->execute([$producto_id, $_SESSION['sucursal_id']]);
                     $stockAnterior = floatval($stmtS->fetchColumn());
                     $stockNuevo    = $stockAnterior + $cantidad;
 
-                    $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $producto_id]);
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $_SESSION['sucursal_id']]);
                     $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
                         ->execute([$producto_id, $_SESSION['usuario_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id]);
                 }
@@ -342,7 +342,7 @@ $stmtHN = $pdo->prepare("
     JOIN ventas v ON d.venta_id = v.venta_id
     JOIN movimientos_inventario m ON m.devolucion_id = d.devolucion_id AND m.tipo = 'Entrada'
     JOIN productos p ON m.producto_id = p.producto_id
-    WHERE p.sucursal_id = ?
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     GROUP BY d.devolucion_id
     ORDER BY d.procesada_en DESC
     LIMIT 30
@@ -355,8 +355,8 @@ $stmtHV = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     WHERE m.motivo LIKE 'Devolucion venta #%'
-      AND p.sucursal_id = ?
       AND m.devolucion_id IS NULL
     ORDER BY m.created_at DESC LIMIT 20
 ");

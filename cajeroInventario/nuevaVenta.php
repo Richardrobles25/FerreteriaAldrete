@@ -58,8 +58,8 @@ $stmtPromos = $pdo->prepare("
     SELECT pr.promocion_id, pr.producto_id, pr.precio_promocional, pr.descripcion
     FROM promociones pr
     JOIN productos p ON pr.producto_id = p.producto_id
-    WHERE p.sucursal_id = ?
-      AND pr.activo = 1
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE pr.activo = 1
       AND CURDATE() BETWEEN pr.fecha_inicio AND pr.fecha_fin
     ORDER BY pr.precio_promocional ASC
 ");
@@ -79,11 +79,12 @@ foreach ($promosList as $promo) {
 // ── AJAX: todos los productos de la sucursal (para búsqueda local en JS) ─────
 if (isset($_GET['get_productos_all'])) {
     $stmt = $pdo->prepare("
-        SELECT producto_id, codigo, nombre_producto, precio_venta,
-               precio_mayoreo, precio_compra, stock_actual, tipo_venta, unidad_medida
-        FROM productos
-        WHERE sucursal_id = ? AND activo = 1
-        ORDER BY nombre_producto ASC
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta,
+               p.precio_mayoreo, p.precio_compra, ss.stock_actual, p.tipo_venta, p.unidad_medida
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        WHERE p.activo = 1 AND ss.activo = 1
+        ORDER BY p.nombre_producto ASC
     ");
     $stmt->execute([$_SESSION['sucursal_id']]);
     header('Content-Type: application/json');
@@ -95,11 +96,12 @@ if (isset($_GET['get_paquetes'])) {
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_requerida,
-               pr.nombre_producto, pr.stock_actual
+               pr.nombre_producto, ss.stock_actual
         FROM paquetes pk
         JOIN paquete_productos pp ON pk.paquete_id = pp.paquete_id
         JOIN productos pr ON pp.producto_id = pr.producto_id
-        WHERE pk.activo = 1 AND pr.sucursal_id = ?
+        JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
+        WHERE pk.activo = 1
     ");
     $stmtPaq->execute([$_SESSION['sucursal_id']]);
     $filas = $stmtPaq->fetchAll(PDO::FETCH_ASSOC);
@@ -133,11 +135,12 @@ if (isset($_GET['buscar_paquete'])) {
     $stmt = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_req,
-               pr.stock_actual, pr.nombre_producto
+               ss.stock_actual, pr.nombre_producto
         FROM paquetes pk
         JOIN paquete_productos pp ON pk.paquete_id = pp.paquete_id
         JOIN productos pr ON pp.producto_id = pr.producto_id
-        WHERE pk.activo = 1 AND pr.sucursal_id = ?
+        JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
+        WHERE pk.activo = 1
           AND (pk.codigo LIKE ? OR pk.nombre LIKE ?)
     ");
     $stmt->execute([$_SESSION['sucursal_id'], '%'.$termino.'%', '%'.$termino.'%']);
@@ -178,11 +181,12 @@ if (isset($_GET['buscar_combo'])) {
 
     // Productos
     $stmtP = $pdo->prepare("
-        SELECT producto_id, codigo, nombre_producto, precio_venta,
-               precio_mayoreo, precio_compra, stock_actual, tipo_venta, unidad_medida
-        FROM productos
-        WHERE sucursal_id = ? AND activo = 1
-          AND (codigo LIKE ? OR nombre_producto LIKE ?)
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta,
+               p.precio_mayoreo, p.precio_compra, ss.stock_actual, p.tipo_venta, p.unidad_medida
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        WHERE p.activo = 1 AND ss.activo = 1
+          AND (p.codigo LIKE ? OR p.nombre_producto LIKE ?)
         LIMIT 10
     ");
     $stmtP->execute([$sucursal_id, $like, $like]);
@@ -192,11 +196,12 @@ if (isset($_GET['buscar_combo'])) {
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_req,
-               pr.stock_actual, pr.nombre_producto
+               ss.stock_actual, pr.nombre_producto
         FROM paquetes pk
         JOIN paquete_productos pp ON pk.paquete_id = pp.paquete_id
         JOIN productos pr ON pp.producto_id = pr.producto_id
-        WHERE pk.activo = 1 AND pr.sucursal_id = ?
+        JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
+        WHERE pk.activo = 1
           AND (pk.codigo LIKE ? OR pk.nombre LIKE ?)
     ");
     $stmtPaq->execute([$sucursal_id, $like, $like]);
@@ -236,11 +241,12 @@ if (isset($_GET['buscar_producto'])) {
     $termino     = trim($_GET['buscar_producto']);
     $sucursal_id = intval($_GET['sucursal_id'] ?? $_SESSION['sucursal_id']);
     $stmt = $pdo->prepare("
-        SELECT producto_id, codigo, nombre_producto, precio_venta,
-               precio_mayoreo, precio_compra, stock_actual, tipo_venta, unidad_medida
-        FROM productos
-        WHERE sucursal_id = ? AND activo = 1
-          AND (codigo LIKE ? OR nombre_producto LIKE ?)
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta,
+               p.precio_mayoreo, p.precio_compra, ss.stock_actual, p.tipo_venta, p.unidad_medida
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        WHERE p.activo = 1 AND ss.activo = 1
+          AND (p.codigo LIKE ? OR p.nombre_producto LIKE ?)
         LIMIT 10
     ");
     $stmt->execute([$sucursal_id, '%'.$termino.'%', '%'.$termino.'%']);
@@ -254,10 +260,11 @@ if (isset($_GET['scan_codigo'])) {
     $codigo      = trim($_GET['scan_codigo']);
     $sucursal_id = $_SESSION['sucursal_id'];
     $stmt = $pdo->prepare("
-        SELECT producto_id, codigo, nombre_producto, precio_venta,
-               stock_actual, tipo_venta
-        FROM productos
-        WHERE sucursal_id = ? AND activo = 1 AND codigo = ?
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta,
+               ss.stock_actual, p.tipo_venta
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        WHERE p.activo = 1 AND ss.activo = 1 AND p.codigo = ?
         LIMIT 1
     ");
     $stmt->execute([$sucursal_id, $codigo]);
@@ -271,10 +278,10 @@ if (isset($_GET['scan_codigo'])) {
 if (isset($_GET['inventario_sucursal'])) {
     $sucursal_id = intval($_GET['inventario_sucursal']);
     $buscar      = trim($_GET['buscar_inv'] ?? '');
-    $where       = "WHERE sucursal_id = ? AND activo = 1";
+    $where       = "WHERE p.activo = 1 AND ss.activo = 1 AND ss.sucursal_id = ?";
     $params      = [$sucursal_id];
-    if ($buscar) { $where .= " AND (nombre_producto LIKE ? OR codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
-    $stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_venta, precio_compra, tipo_venta, unidad_medida FROM productos $where ORDER BY nombre_producto ASC LIMIT 50");
+    if ($buscar) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
+    $stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_venta, p.precio_compra, p.tipo_venta, p.unidad_medida FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id $where ORDER BY p.nombre_producto ASC LIMIT 50");
     $stmt->execute($params);
     header('Content-Type: application/json');
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
@@ -396,9 +403,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,precio_final,descuento,subtotal,paquete_id,nota_ajuste) VALUES (?,?,?,?,?,0,?,?,?)")
                     ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$precioOrig,$precioFinal,$subtotalItem,$paqId,$notaAjuste ?: null]);
 
-                // Bloquear la fila del producto para evitar condición de carrera
-                $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? FOR UPDATE");
-                $stmtS->execute([$item['producto_id']]);
+                // Bloquear la fila del stock para evitar condición de carrera
+                $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtS->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
                 $stockAnterior = floatval($stmtS->fetchColumn());
 
                 // Validar stock en servidor antes de descontar
@@ -407,7 +414,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 }
 
                 $stockNuevo = $stockAnterior - $item['cantidad'];
-                $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo,$item['producto_id']]);
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $item['producto_id'], $_SESSION['sucursal_id']]);
 
                 $motivoMovimiento = 'Venta';
                 if ($notaAjuste) {

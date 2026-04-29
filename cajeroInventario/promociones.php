@@ -14,7 +14,8 @@ $stmt = $pdo->prepare("
            p.nombre_producto, p.codigo, p.precio_venta, p.tipo_venta
     FROM promociones pr
     JOIN productos p ON pr.producto_id = p.producto_id
-    WHERE p.sucursal_id = ?
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE 1=1
     ORDER BY
         CASE
             WHEN pr.activo = 1 AND ? BETWEEN pr.fecha_inicio AND pr.fecha_fin THEN 0

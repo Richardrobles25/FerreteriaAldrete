@@ -16,14 +16,24 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
     if ($accion === 'editar_cantidad') {
         $nuevaCantidad = floatval($_POST['nueva_cantidad'] ?? 0);
         if ($nuevaCantidad > 0) {
-            // Validar tipo_venta: si es Unidad, forzar entero
-            $stmtTV = $pdo->prepare("SELECT p.tipo_venta FROM transferencias t JOIN productos p ON t.producto_id = p.producto_id WHERE t.transferencias_id = ?");
+            // Validar tipo_venta y obtener stock actual del origen en un solo query
+            $stmtTV = $pdo->prepare("
+                SELECT p.tipo_venta, ss.stock_actual AS stock_origen
+                FROM transferencias t
+                JOIN productos p ON t.producto_id = p.producto_id
+                LEFT JOIN stock_sucursal ss ON ss.producto_id = t.producto_id AND ss.sucursal_id = t.sucursal_origen_id
+                WHERE t.transferencias_id = ?
+            ");
             $stmtTV->execute([$id]);
             $tvRow = $stmtTV->fetch(PDO::FETCH_ASSOC);
             if ($tvRow && $tvRow['tipo_venta'] !== 'Suelto') {
                 $nuevaCantidad = floor($nuevaCantidad);
             }
             if ($nuevaCantidad <= 0) { header('Location: transferencias.php?msg=cantidad_editada'); exit(); }
+            // Validar que la nueva cantidad no supere el stock disponible en origen
+            if ($tvRow && $tvRow['stock_origen'] !== null && $nuevaCantidad > floatval($tvRow['stock_origen'])) {
+                header('Location: transferencias.php?msg=error_stock_editar'); exit();
+            }
 
             // Obtener cantidad anterior para la nota
             $stmtOld = $pdo->prepare("SELECT cantidad FROM transferencias WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?");
@@ -123,15 +133,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         foreach ($items as $item) {
-            $prodId  = intval($item['id']);
+            $prodId   = intval($item['id']);
             $cantidad = floatval($item['cantidad']);
             // Validar tipo_venta en backend
-            $stmtTV2 = $pdo->prepare("SELECT tipo_venta FROM productos WHERE producto_id = ?");
-            $stmtTV2->execute([$prodId]);
+            $stmtTV2 = $pdo->prepare("SELECT p.tipo_venta, p.nombre_producto, ss.stock_actual FROM productos p LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
+            $stmtTV2->execute([$sucursal_origen_id, $prodId]);
             $tvRow2 = $stmtTV2->fetch(PDO::FETCH_ASSOC);
             if ($tvRow2 && $tvRow2['tipo_venta'] !== 'Suelto') {
                 $cantidad = floor($cantidad);
             }
+            if ($cantidad <= 0) continue;
+            // Validar que la cantidad no supere el stock real en la sucursal origen
+            $stockOrigen = $tvRow2 ? floatval($tvRow2['stock_actual']) : 0;
+            if ($cantidad > $stockOrigen) {
+                $nombreProd  = $tvRow2['nombre_producto'] ?? "Producto #$prodId";
+                $errores[] = "\"$nombreProd\": se solicitaron " . number_format($cantidad, 2) . " pero la sucursal origen solo tiene " . number_format($stockOrigen, 2) . " disponibles.";
+            }
+        }
+    }
+
+    if (empty($errores)) {
+        foreach ($items as $item) {
+            $prodId   = intval($item['id']);
+            $cantidad = floatval($item['cantidad']);
+            $stmtTV3  = $pdo->prepare("SELECT tipo_venta FROM productos WHERE producto_id = ?");
+            $stmtTV3->execute([$prodId]);
+            $tvRow3 = $stmtTV3->fetch(PDO::FETCH_ASSOC);
+            if ($tvRow3 && $tvRow3['tipo_venta'] !== 'Suelto') { $cantidad = floor($cantidad); }
             if ($cantidad <= 0) continue;
             $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado) VALUES (?,?,?,?,?,?,'Pendiente')")
                 ->execute([$prodId, $sucursal_origen_id, $_SESSION['sucursal_id'], $_SESSION['usuario_id'], $cantidad, $notas]);
@@ -158,7 +186,8 @@ $stmt = $pdo->prepare("
         so.nombre AS sucursal_origen,
         sd.nombre AS sucursal_destino,
         us.nombre_completo AS solicitante,
-        ua.nombre_completo AS aprobador
+        ua.nombre_completo AS aprobador,
+        (SELECT ss.stock_actual FROM stock_sucursal ss WHERE ss.producto_id = t.producto_id AND ss.sucursal_id = t.sucursal_origen_id LIMIT 1) AS stock_origen
     FROM transferencias t
     JOIN productos p ON t.producto_id = p.producto_id
     JOIN sucursales so ON t.sucursal_origen_id = so.sucursal_id
@@ -390,6 +419,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                     'cantidad_editada'       => 'Cantidad modificada. La sucursal destino debe confirmar el cambio.',
                     'aceptar_modificacion'  => 'Cambio de cantidad aceptado. La transferencia continua como Aprobada.',
                     'rechazar_modificacion' => 'Cambio de cantidad rechazado. La transferencia volvio a estado Pendiente.',
+                    'error_stock_editar'    => 'No se puede guardar: la cantidad ingresada supera el stock disponible en la sucursal origen.',
                 ]; ?>
                 <div class="msg msg-exito"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>
@@ -460,12 +490,15 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     <?php
                                     $tvJs = $t['tipo_venta'] === 'Suelto' ? 'Suelto' : 'Unidad';
                                 ?>
+                                <?php
+                                    $stockOrigenJs = floatval($t['stock_origen'] ?? 0);
+                                ?>
                                 <?php if ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
                                         <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</a>
                                         <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Rechazar esta solicitud de transferencia?')">Rechazar</a>
-                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>')">Editar cantidad</button>
+                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
-                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>')">Editar cantidad</button>
+                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
                                         <a class="btn-accion btn-enviar" href="transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Confirmar que ya enviaste los productos?')">Marcar enviado</a>
                                     <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
                                         <a class="btn-accion btn-aceptar-mod"
@@ -563,9 +596,10 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 
 <script>
 const prodsBySucursal = <?= json_encode($prodsBySucursal) ?>;
-let itemsTransf = [];
+let itemsTransf  = [];
 let prodSelId    = null;
 let prodSelTipo  = 'Unidad'; // 'Suelto' o 'Unidad'
+let prodSelStock = 0;        // stock disponible en sucursal origen del producto seleccionado
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
@@ -618,8 +652,8 @@ function renderSug(prods) {
                 ${esSuelto ? '<span style="font-size:10px;color:#888;margin-left:4px;">granel</span>' : ''}
             </div>
             <div class="sug-stocks">
-                <span class="sug-stock-row sug-stock-orig">Mi Sucursal: ${stockFmt}</span>
-                <span class="sug-stock-row sug-stock-dest">Sucursal Externa: ${miStockFmt}</span>
+                <span class="sug-stock-row sug-stock-orig">Origen: ${stockFmt}</span>
+                <span class="sug-stock-row sug-stock-dest">Tu sucursal: ${miStockFmt}</span>
             </div>
         </div>`;
     }).join('');
@@ -629,8 +663,9 @@ function renderSug(prods) {
 function hideSug() { document.getElementById('sugerencias').style.display = 'none'; }
 
 function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta) {
-    prodSelId   = id;
-    prodSelTipo = tipoVenta || 'Unidad';
+    prodSelId    = id;
+    prodSelTipo  = tipoVenta || 'Unidad';
+    prodSelStock = parseFloat(stock) || 0;
     const esSuelto = prodSelTipo === 'Suelto';
 
     document.getElementById('busquedaProd').value = nombre;
@@ -667,6 +702,14 @@ function agregarItem() {
             return;
         }
         cant = Math.floor(cant);
+    }
+    // Validar que la cantidad no supere el stock disponible en la sucursal origen
+    if (cant > prodSelStock) {
+        const stockFmt = esSuelto
+            ? parseFloat(prodSelStock).toFixed(3).replace(/\.?0+$/, '')
+            : Math.floor(prodSelStock);
+        alert('No se puede pedir ' + cant + ' unidades. La sucursal origen solo tiene ' + stockFmt + ' disponibles.');
+        return;
     }
 
     const nombre = document.getElementById('prodSelNombre').textContent;
@@ -717,10 +760,12 @@ document.getElementById('busquedaProd').addEventListener('blur', function() {
 });
 
 // ── Editar cantidad transferencia ────────────────────────────────────────────
-let _modalEditTipoVenta = 'Unidad';
+let _modalEditTipoVenta  = 'Unidad';
+let _modalEditStockOrigen = 0;
 
-function abrirModalEditarCantidad(id, cantActual, tipoVenta) {
-    _modalEditTipoVenta = tipoVenta || 'Unidad';
+function abrirModalEditarCantidad(id, cantActual, tipoVenta, stockOrigen) {
+    _modalEditTipoVenta   = tipoVenta   || 'Unidad';
+    _modalEditStockOrigen = parseFloat(stockOrigen) || 0;
     const esSuelto = _modalEditTipoVenta === 'Suelto';
 
     const cantFmt = esSuelto
@@ -728,9 +773,20 @@ function abrirModalEditarCantidad(id, cantActual, tipoVenta) {
         : Math.floor(cantActual);
     document.getElementById('modalEditCantidadActual').textContent = cantFmt;
 
+    // Mostrar stock disponible en el modal
+    const stockFmt = esSuelto
+        ? _modalEditStockOrigen.toFixed(3).replace(/\.?0+$/, '')
+        : Math.floor(_modalEditStockOrigen);
+    const stockDiv = document.getElementById('modalEditStockDisponible');
+    if (stockDiv) {
+        stockDiv.textContent = 'Stock disponible en origen: ' + stockFmt;
+        stockDiv.style.display = 'block';
+    }
+
     const inp = document.getElementById('inputNuevaCantidadModal');
     inp.step        = esSuelto ? '0.001' : '1';
     inp.min         = esSuelto ? '0.001' : '1';
+    inp.max         = _modalEditStockOrigen > 0 ? _modalEditStockOrigen : '';
     inp.inputMode   = esSuelto ? 'decimal' : 'numeric';
     inp.placeholder = esSuelto ? 'Ej. 2.5' : 'Ej. 5';
     inp.value       = '';
@@ -738,8 +794,8 @@ function abrirModalEditarCantidad(id, cantActual, tipoVenta) {
     // Mostrar/ocultar aviso granel
     document.getElementById('modalEditGranelHint').style.display = esSuelto ? 'block' : 'none';
 
-    document.getElementById('inputEditarTransfId').value     = id;
-    document.getElementById('inputEditarNuevaCantidad').value = '';
+    document.getElementById('inputEditarTransfId').value      = id;
+    document.getElementById('inputEditarNuevaCantidad').value  = '';
     document.getElementById('modalEditCantidad').style.display = 'flex';
     setTimeout(() => inp.focus(), 80);
 }
@@ -758,6 +814,14 @@ function confirmarEditarCantidad() {
             return;
         }
         val = Math.floor(val);
+    }
+    // Validar contra stock disponible en origen
+    if (_modalEditStockOrigen > 0 && val > _modalEditStockOrigen) {
+        const stockFmt = esSuelto
+            ? _modalEditStockOrigen.toFixed(3).replace(/\.?0+$/, '')
+            : Math.floor(_modalEditStockOrigen);
+        alert('No se puede guardar: la cantidad (' + val + ') supera el stock disponible en la sucursal origen (' + stockFmt + ').');
+        return;
     }
     document.getElementById('inputEditarNuevaCantidad').value = val;
     document.getElementById('formEditarCantidadTransf').submit();
@@ -791,9 +855,10 @@ document.addEventListener('DOMContentLoaded', function() {
             <span style="font-size:14px;font-weight:700;color:#333;">Modificar cantidad a enviar</span>
             <button onclick="cerrarModalEditarCantidad()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;line-height:1;">×</button>
         </div>
-        <div style="font-size:13px;color:#555;margin-bottom:14px;">
+        <div style="font-size:13px;color:#555;margin-bottom:8px;">
             Cantidad actual: <strong id="modalEditCantidadActual" style="color:#1565c0;"></strong>
         </div>
+        <div id="modalEditStockDisponible" style="display:none;font-size:12px;color:#2e7d32;font-weight:600;margin-bottom:12px;"></div>
         <div style="font-size:12px;color:#888;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:14px;">
             ⚠ Al guardar, la transferencia pasará a estado <strong>Modificada</strong> y la sucursal destino deberá aceptar o rechazar el cambio.
         </div>

@@ -173,7 +173,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
 
         while (ob_get_level() > 0) ob_end_clean();
         @ini_set('zlib.output_compression', '0');
-        @apache_setenv('no-gzip', '1');
+        if (function_exists('apache_setenv')) @apache_setenv('no-gzip', '1');
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
         header('Cache-Control: max-age=0');
@@ -413,7 +413,7 @@ if (isset($_GET['plantilla'])) {
         (new Xlsx($spreadsheet))->save($tmpPlantilla);
         while (ob_get_level() > 0) ob_end_clean();
         @ini_set('zlib.output_compression', '0');
-        @apache_setenv('no-gzip', '1');
+        if (function_exists('apache_setenv')) @apache_setenv('no-gzip', '1');
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment; filename="plantilla_productos.xlsx"');
         header('Cache-Control: max-age=0');

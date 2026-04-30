@@ -54,22 +54,12 @@ function renderSucursalSwitcher(): void {
     ?>
 <div class="filtro-group">
     <label>Sucursal</label>
-    <select onchange="cambiarSucursal(this.value)">
+    <select name="sucursal">
         <option value="0"<?= $sucursalVista === 0 ? ' selected' : '' ?>>Todas las sucursales</option>
         <?php foreach ($_todasSucursales as $_s): ?>
             <option value="<?= intval($_s['sucursal_id']) ?>"<?= intval($_s['sucursal_id']) === intval($sucursalVista) ? ' selected' : '' ?>><?= htmlspecialchars($_s['nombre']) ?></option>
         <?php endforeach; ?>
     </select>
 </div>
-<script>
-if (!window._sucursalFnSet) {
-    window._sucursalFnSet = true;
-    window.cambiarSucursal = function(id) {
-        var p = new URLSearchParams(window.location.search);
-        p.set('sucursal', id);
-        window.location.search = p.toString();
-    };
-}
-</script>
     <?php
 }

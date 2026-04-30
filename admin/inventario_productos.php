@@ -143,43 +143,55 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         $filename = 'productos_' . date('Y-m-d') . '.xlsx';
     }
 
-    $spreadsheet = new Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle($vistaGlobal ? 'Catálogo Global' : 'Productos');
+    try {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle($vistaGlobal ? 'Catálogo Global' : 'Productos');
 
-    foreach ($headers as $i => $h) {
-        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-        $sheet->setCellValue("{$col}1", $h);
-        $sheet->getStyle("{$col}1")->applyFromArray([
-            'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF14ace7']],
-        ]);
-    }
-    foreach ($datos as $r => $p) {
-        $fila = $r + 2;
-        foreach ($filaFn($p) as $i => $v) {
+        foreach ($headers as $i => $h) {
             $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-            $sheet->setCellValue("{$col}{$fila}", $v);
+            $sheet->setCellValue("{$col}1", $h);
+            $sheet->getStyle("{$col}1")->applyFromArray([
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
+                'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF14ace7']],
+            ]);
         }
-    }
-    $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($headers));
-    foreach (range('A', $lastCol) as $col) {
-        $sheet->getColumnDimension($col)->setAutoSize(true);
-    }
+        foreach ($datos as $r => $p) {
+            $fila = $r + 2;
+            foreach ($filaFn($p) as $i => $v) {
+                $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                $sheet->setCellValue("{$col}{$fila}", $v);
+            }
+        }
+        $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($headers));
+        foreach (range('A', $lastCol) as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
 
-    $tmpExcel = tempnam(sys_get_temp_dir(), 'inv_') . '.xlsx';
-    (new Xlsx($spreadsheet))->save($tmpExcel);
-    while (ob_get_level() > 0) ob_end_clean();
-    @ini_set('zlib.output_compression', '0');
-    @apache_setenv('no-gzip', '1');
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="' . $filename . '"');
-    header('Cache-Control: max-age=0');
-    header('Pragma: public');
-    header('Content-Length: ' . filesize($tmpExcel));
-    readfile($tmpExcel);
-    @unlink($tmpExcel);
-    exit();
+        // Guardar en directorio del proyecto (siempre escribible)
+        $tmpDir  = __DIR__ . '/../tmp';
+        if (!is_dir($tmpDir)) @mkdir($tmpDir, 0755, true);
+        $tmpExcel = $tmpDir . '/export_' . uniqid() . '.xlsx';
+        (new Xlsx($spreadsheet))->save($tmpExcel);
+
+        while (ob_get_level() > 0) ob_end_clean();
+        @ini_set('zlib.output_compression', '0');
+        @apache_setenv('no-gzip', '1');
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+        header('Pragma: public');
+        header('Content-Length: ' . filesize($tmpExcel));
+        readfile($tmpExcel);
+        @unlink($tmpExcel);
+        exit();
+    } catch (\Throwable $e) {
+        error_log('[Excel export] ' . $e->getMessage() . ' en ' . $e->getFile() . ':' . $e->getLine());
+        file_put_contents(__DIR__ . '/../tmp/excel_error.log', date('Y-m-d H:i:s') . ' ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n\n", FILE_APPEND);
+        while (ob_get_level() > 0) ob_end_clean();
+        http_response_code(500);
+        die('Error al generar Excel: ' . htmlspecialchars($e->getMessage()));
+    }
 }
 
 // Importar desde Excel
@@ -384,37 +396,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
 // Descargar plantilla
 if (isset($_GET['plantilla'])) {
-    $spreadsheet = new Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle('Plantilla');
-    $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
-    foreach ($headers as $i => $h) {
-        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-        $sheet->setCellValue("{$col}1", $h);
-        $sheet->getStyle("{$col}1")->getFont()->setBold(true);
+    try {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Plantilla');
+        $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
+        foreach ($headers as $i => $h) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+            $sheet->setCellValue("{$col}1", $h);
+            $sheet->getStyle("{$col}1")->getFont()->setBold(true);
+        }
+        $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional','pieza'];
+        foreach ($ejemplo as $i => $v) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+            $sheet->setCellValue("{$col}2", $v);
+        }
+        foreach (range('A','L') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+        $tmpDir = __DIR__ . '/../tmp';
+        if (!is_dir($tmpDir)) @mkdir($tmpDir, 0755, true);
+        $tmpPlantilla = $tmpDir . '/plantilla_' . uniqid() . '.xlsx';
+        (new Xlsx($spreadsheet))->save($tmpPlantilla);
+        while (ob_get_level() > 0) ob_end_clean();
+        @ini_set('zlib.output_compression', '0');
+        @apache_setenv('no-gzip', '1');
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="plantilla_productos.xlsx"');
+        header('Cache-Control: max-age=0');
+        header('Pragma: public');
+        header('Content-Length: ' . filesize($tmpPlantilla));
+        readfile($tmpPlantilla);
+        @unlink($tmpPlantilla);
+        exit();
+    } catch (\Throwable $e) {
+        error_log('[Plantilla export] ' . $e->getMessage());
+        file_put_contents(__DIR__ . '/../tmp/excel_error.log', date('Y-m-d H:i:s') . ' [plantilla] ' . $e->getMessage() . "\n", FILE_APPEND);
+        while (ob_get_level() > 0) ob_end_clean();
+        http_response_code(500);
+        die('Error al generar plantilla: ' . htmlspecialchars($e->getMessage()));
     }
-    // Fila de ejemplo
-    $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional','pieza'];
-    foreach ($ejemplo as $i => $v) {
-        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-        $sheet->setCellValue("{$col}2", $v);
-    }
-    foreach (range('A','L') as $col) {
-        $sheet->getColumnDimension($col)->setAutoSize(true);
-    }
-    $tmpPlantilla = tempnam(sys_get_temp_dir(), 'inv_plt_') . '.xlsx';
-    (new Xlsx($spreadsheet))->save($tmpPlantilla);
-    while (ob_get_level() > 0) ob_end_clean();
-    @ini_set('zlib.output_compression', '0');
-    @apache_setenv('no-gzip', '1');
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="plantilla_productos.xlsx"');
-    header('Cache-Control: max-age=0');
-    header('Pragma: public');
-    header('Content-Length: ' . filesize($tmpPlantilla));
-    readfile($tmpPlantilla);
-    @unlink($tmpPlantilla);
-    exit();
 }
 
 // Eliminar producto con motivo

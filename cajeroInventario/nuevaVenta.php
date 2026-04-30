@@ -2000,6 +2000,11 @@ function recalcularTodo() {
         calcularMixto();
         return; // calcularMixto ya llama verificarCobrar
     }
+    // Efectivo: recalcular cambio si ya hay monto ingresado
+    if (metodoPago === 'Efectivo') {
+        calcularCambio();
+        return; // calcularCambio ya llama verificarCobrar
+    }
     verificarCobrar();
 }
 

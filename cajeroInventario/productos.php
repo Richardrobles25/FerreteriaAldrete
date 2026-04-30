@@ -117,13 +117,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         ->execute([$unidad_medida, $_SESSION['sucursal_id']]);
                 }
 
-                // Buscar categoría por nombre
+                // Buscar o crear categoría por nombre (sin duplicados)
                 $categoria_id = null;
                 if (!empty($row[2])) {
+                    $nombreCat = trim($row[2]);
                     $stmtCat = $pdo->prepare("SELECT categoria_id FROM categorias WHERE nombre = ? LIMIT 1");
-                    $stmtCat->execute([trim($row[2])]);
-                    $cat = $stmtCat->fetchColumn();
-                    if ($cat) $categoria_id = $cat;
+                    $stmtCat->execute([$nombreCat]);
+                    $categoria_id = $stmtCat->fetchColumn() ?: null;
+                    if (!$categoria_id) {
+                        $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)")->execute([$nombreCat]);
+                        $categoria_id = $pdo->lastInsertId();
+                    }
                 }
 
                 // Verificar si el código ya existe en el catálogo
@@ -133,12 +137,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
                 if ($existente) {
                     $producto_id = $existente['producto_id'];
-                    // Actualizar catálogo
+                    // Actualizar catálogo compartido
                     $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
                         ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $producto_id]);
-                    // Actualizar stock de esta sucursal
-                    $pdo->prepare("UPDATE stock_sucursal SET stock_minimo=?, stock_maximo=? WHERE producto_id=? AND sucursal_id=?")
-                        ->execute([$stock_minimo, $stock_maximo, $producto_id, $_SESSION['sucursal_id']]);
+                    // Crear o actualizar stock de esta sucursal
+                    // Si ya existe el registro → solo actualiza mínimo/máximo (preserva stock_actual)
+                    // Si no existe → lo crea con el stock_actual del Excel
+                    $pdo->prepare("
+                        INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                        VALUES (?, ?, ?, ?, ?, 1)
+                        ON DUPLICATE KEY UPDATE
+                            stock_minimo = VALUES(stock_minimo),
+                            stock_maximo = VALUES(stock_maximo),
+                            activo       = 1
+                    ")->execute([$producto_id, $_SESSION['sucursal_id'], $stock_actual, $stock_minimo, $stock_maximo]);
                     $omitidos++;
                 } else {
                     // Insertar en catálogo

@@ -752,9 +752,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 </div>
                 <?php if ($stock_bajo): ?><input type="hidden" name="stock_bajo" value="1"><?php endif; ?>
                 <?php renderSucursalSwitcher(); ?>
-                <?php if ($busqueda || $categoria || $stock_bajo): ?>
-                    <a class="btn-limpiar" href="inventario_productos.php">Limpiar</a>
-                <?php endif; ?>
+                <a class="btn-limpiar" href="inventario_productos.php">Limpiar</a>
                 <?php if (!$vistaGlobal): ?>
                 <a class="btn-stock-bajo <?= $stock_bajo?'activo':'' ?>" href="inventario_productos.php?stock_bajo=1">
                     Stock bajo (<?= $totalStockBajo ?>)

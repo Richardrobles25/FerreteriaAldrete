@@ -168,10 +168,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 
-        // Guardar en directorio del proyecto (siempre escribible)
-        $tmpDir  = __DIR__ . '/../tmp';
-        if (!is_dir($tmpDir)) @mkdir($tmpDir, 0755, true);
-        $tmpExcel = $tmpDir . '/export_' . uniqid() . '.xlsx';
+        $tmpExcel = sys_get_temp_dir() . '/inv_' . uniqid() . '.xlsx';
         (new Xlsx($spreadsheet))->save($tmpExcel);
 
         while (ob_get_level() > 0) ob_end_clean();
@@ -186,8 +183,6 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         @unlink($tmpExcel);
         exit();
     } catch (\Throwable $e) {
-        error_log('[Excel export] ' . $e->getMessage() . ' en ' . $e->getFile() . ':' . $e->getLine());
-        file_put_contents(__DIR__ . '/../tmp/excel_error.log', date('Y-m-d H:i:s') . ' ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n\n", FILE_APPEND);
         while (ob_get_level() > 0) ob_end_clean();
         http_response_code(500);
         die('Error al generar Excel: ' . htmlspecialchars($e->getMessage()));
@@ -414,9 +409,7 @@ if (isset($_GET['plantilla'])) {
         foreach (range('A','L') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
-        $tmpDir = __DIR__ . '/../tmp';
-        if (!is_dir($tmpDir)) @mkdir($tmpDir, 0755, true);
-        $tmpPlantilla = $tmpDir . '/plantilla_' . uniqid() . '.xlsx';
+        $tmpPlantilla = sys_get_temp_dir() . '/plt_' . uniqid() . '.xlsx';
         (new Xlsx($spreadsheet))->save($tmpPlantilla);
         while (ob_get_level() > 0) ob_end_clean();
         @ini_set('zlib.output_compression', '0');
@@ -430,8 +423,6 @@ if (isset($_GET['plantilla'])) {
         @unlink($tmpPlantilla);
         exit();
     } catch (\Throwable $e) {
-        error_log('[Plantilla export] ' . $e->getMessage());
-        file_put_contents(__DIR__ . '/../tmp/excel_error.log', date('Y-m-d H:i:s') . ' [plantilla] ' . $e->getMessage() . "\n", FILE_APPEND);
         while (ob_get_level() > 0) ob_end_clean();
         http_response_code(500);
         die('Error al generar plantilla: ' . htmlspecialchars($e->getMessage()));

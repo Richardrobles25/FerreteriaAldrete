@@ -841,37 +841,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <div style="font-size:22px;font-weight:700;color:#2e7d32;" id="resAhorroTotal">$0.00</div>
                 </div>
 
-                <!-- Cliente -->
-                <div style="border-top:1px solid #eee;margin-top:12px;padding-top:12px;">
-                    <div style="font-size:12px;font-weight:600;color:#555;margin-bottom:7px;">Cliente <span style="font-weight:400;color:#aaa;">(opcional)</span></div>
-                    <div class="busqueda-wrap">
-                        <input type="text" id="inputCliente"
-                            placeholder="Buscar por nombre o teléfono..."
-                            autocomplete="off"
-                            style="font-size:13px;">
-                        <div class="dropdown-resultados" id="dropdownClientes"></div>
-                    </div>
-                    <div class="cliente-seleccionado" id="clienteSeleccionado">
-                        <div>
-                            <strong id="clienteNombre"></strong>
-                            <span id="clienteTelefono" style="font-size:12px;color:#999;margin-left:8px;"></span>
-                            <span id="clienteDescuento" style="font-size:12px;color:#14ace7;margin-left:8px;"></span>
-                        </div>
-                        <button class="btn-quitar-cliente" onclick="quitarCliente()">Quitar</button>
-                    </div>
-                    <div id="clienteDescuentoConfig" style="display:none;margin-top:8px;padding:8px 10px;background:#f8fbff;border:1px solid #dbeafe;border-radius:6px;">
-                        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#444;margin-bottom:6px;">
-                            <input type="checkbox" id="aplicarDescCliente" checked onchange="recalcularTodo()">
-                            Aplicar descuento del cliente
-                        </label>
-                        <div style="display:flex;gap:8px;align-items:center;">
-                            <span style="font-size:12px;color:#666;">Porcentaje</span>
-                            <input type="number" id="porcDescCliente" value="" placeholder="0" min="0" step="0.1" style="width:80px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;" oninput="ajustarDescuentoCliente()" onblur="clampearDescuentoCliente()">
-                            <span id="clienteDescMax" style="font-size:12px;color:#888;"></span>
-                        </div>
-                    </div>
-                </div>
-
                 <div style="margin-top:14px;">
                     <div class="form-group-sm">
                         <label>Método de pago</label>
@@ -1027,6 +996,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                                 Quitar ajuste de este producto
                             </button>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cliente -->
+            <div class="card">
+                <h3>Cliente (opcional)</h3>
+                <div class="busqueda-wrap">
+                    <input type="text" id="inputCliente"
+                        placeholder="Buscar por nombre..."
+                        autocomplete="off">
+                    <div class="dropdown-resultados" id="dropdownClientes"></div>
+                </div>
+                <div class="cliente-seleccionado" id="clienteSeleccionado">
+                    <div>
+                        <strong id="clienteNombre"></strong>
+                        <span id="clienteTelefono" style="font-size:12px;color:#999;margin-left:8px;"></span>
+                        <span id="clienteDescuento" style="font-size:12px;color:#14ace7;margin-left:8px;"></span>
+                    </div>
+                    <button class="btn-quitar-cliente" onclick="quitarCliente()">Quitar</button>
+                </div>
+                <div id="clienteDescuentoConfig" style="display:none;margin-top:10px;padding:10px 12px;background:#f8fbff;border:1px solid #dbeafe;border-radius:6px;">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#444;margin-bottom:8px;">
+                        <input type="checkbox" id="aplicarDescCliente" checked onchange="recalcularTodo()">
+                        Aplicar descuento del cliente
+                    </label>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span style="font-size:12px;color:#666;">Porcentaje a aplicar</span>
+                        <input type="number" id="porcDescCliente" value="" placeholder="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()" onblur="clampearDescuentoCliente()">
+                        <span id="clienteDescMax" style="font-size:12px;color:#888;"></span>
                     </div>
                 </div>
             </div>

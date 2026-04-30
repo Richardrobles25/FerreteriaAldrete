@@ -1,4 +1,5 @@
-﻿<?php
+<?php
+ob_start();
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -91,6 +92,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     }
 
     $resumen = [['label' => 'Total Productos', 'valor' => count($datos)]];
+    while (ob_get_level() > 0) ob_end_clean();
     exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
 }
 
@@ -165,10 +167,18 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
 
+    $tmpExcel = tempnam(sys_get_temp_dir(), 'inv_') . '.xlsx';
+    (new Xlsx($spreadsheet))->save($tmpExcel);
+    while (ob_get_level() > 0) ob_end_clean();
+    @ini_set('zlib.output_compression', '0');
+    @apache_setenv('no-gzip', '1');
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: max-age=0');
-    (new Xlsx($spreadsheet))->save('php://output');
+    header('Pragma: public');
+    header('Content-Length: ' . filesize($tmpExcel));
+    readfile($tmpExcel);
+    @unlink($tmpExcel);
     exit();
 }
 
@@ -392,10 +402,18 @@ if (isset($_GET['plantilla'])) {
     foreach (range('A','L') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
+    $tmpPlantilla = tempnam(sys_get_temp_dir(), 'inv_plt_') . '.xlsx';
+    (new Xlsx($spreadsheet))->save($tmpPlantilla);
+    while (ob_get_level() > 0) ob_end_clean();
+    @ini_set('zlib.output_compression', '0');
+    @apache_setenv('no-gzip', '1');
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="plantilla_productos.xlsx"');
-    $writer = new Xlsx($spreadsheet);
-    $writer->save('php://output');
+    header('Cache-Control: max-age=0');
+    header('Pragma: public');
+    header('Content-Length: ' . filesize($tmpPlantilla));
+    readfile($tmpPlantilla);
+    @unlink($tmpPlantilla);
     exit();
 }
 

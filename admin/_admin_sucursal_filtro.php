@@ -23,8 +23,11 @@ if (isset($_GET['sucursal']) && $_SESSION['rol'] === 'Administrador') {
 }
 
 // Definir $sucursalVista  (0 = todas las sucursales, solo Administrador)
-if ($_SESSION['rol'] === 'Administrador' && isset($_SESSION['admin_sucursal_filtro'])) {
-    $sucursalVista = intval($_SESSION['admin_sucursal_filtro']);
+if ($_SESSION['rol'] === 'Administrador') {
+    // Default para admin: "Todas las sucursales" (0), a menos que haya elegido una específica
+    $sucursalVista = isset($_SESSION['admin_sucursal_filtro'])
+        ? intval($_SESSION['admin_sucursal_filtro'])
+        : 0;
 } else {
     $sucursalVista = intval($_SESSION['sucursal_id']);
 }
@@ -54,7 +57,7 @@ function renderSucursalSwitcher(): void {
     ?>
 <div class="filtro-group">
     <label>Sucursal</label>
-    <select name="sucursal">
+    <select name="sucursal" onchange="this.form.submit()">
         <option value="0"<?= $sucursalVista === 0 ? ' selected' : '' ?>>Todas las sucursales</option>
         <?php foreach ($_todasSucursales as $_s): ?>
             <option value="<?= intval($_s['sucursal_id']) ?>"<?= intval($_s['sucursal_id']) === intval($sucursalVista) ? ' selected' : '' ?>><?= htmlspecialchars($_s['nombre']) ?></option>

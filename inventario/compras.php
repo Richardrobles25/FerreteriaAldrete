@@ -66,12 +66,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
                 ->execute([$compra_id, $item['producto_id'], $item['cantidad'], $item['precio_unitario'], $subtotal]);
 
-            $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-            $stmtS->execute([$item['producto_id']]);
+            $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+            $stmtS->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
             $stockAnterior = $stmtS->fetchColumn();
             $stockNuevo    = $stockAnterior + $item['cantidad'];
 
-            $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
+            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $item['producto_id'], $_SESSION['sucursal_id']]);
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
                 ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
         }
@@ -104,7 +104,7 @@ $compras = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Datos para el formulario
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo = 1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
-$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, stock_actual, precio_compra FROM productos WHERE sucursal_id = ? AND activo = 1 ORDER BY nombre_producto ASC");
+$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_compra FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.activo = 1 AND ss.activo = 1 ORDER BY p.nombre_producto ASC");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>

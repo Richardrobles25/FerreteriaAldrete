@@ -77,7 +77,7 @@
         descripcion TEXT,
         precio_compra DECIMAL(10,2) NOT NULL DEFAULT 0,
         precio_venta DECIMAL(10,2) NOT NULL DEFAULT 0,
-        precio_mayoreo DECIMAL(10,2) DEFAULT 0,
+        precio_mayoreo DECIMAL(10,2) DEFAULT 0, 
         tipo_venta ENUM('Unidad', 'Suelto') DEFAULT 'Unidad',
         unidad_medida VARCHAR(30) NULL DEFAULT NULL,
         activo boolean DEFAULT true,

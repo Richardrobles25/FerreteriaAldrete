@@ -24,12 +24,12 @@ if (isset($_GET['cancelar'])) {
     $productos = $stmtProd->fetchAll(PDO::FETCH_ASSOC);
 
     foreach ($productos as $p) {
-        $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-        $stmtS->execute([$p['producto_id']]);
+        $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+        $stmtS->execute([$p['producto_id'], $_SESSION['sucursal_id']]);
         $stockAnterior = $stmtS->fetchColumn();
         $stockNuevo = $stockAnterior + $p['cantidad'];
 
-        $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $p['producto_id']]);
+        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $p['producto_id'], $_SESSION['sucursal_id']]);
         $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,?,?,'Cancelación venta pendiente')")
             ->execute([$p['producto_id'], $_SESSION['usuario_id'], $p['cantidad'], $stockAnterior, $stockNuevo]);
     }
@@ -66,11 +66,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $item['precio'], $subtotalItem]);
 
                 // Descontar stock
-                $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-                $stmtS->execute([$item['producto_id']]);
+                $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+                $stmtS->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
                 $stockAnterior = $stmtS->fetchColumn();
                 $stockNuevo = $stockAnterior - $item['cantidad'];
-                $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $item['producto_id'], $_SESSION['sucursal_id']]);
                 $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
                     ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
             }
@@ -94,7 +94,7 @@ $stmt->execute([$_SESSION['usuario_id']]);
 $pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos para agregar
-$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, precio_venta, stock_actual FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto");
+$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.activo = 1 AND ss.activo = 1 AND ss.stock_actual > 0 ORDER BY p.nombre_producto");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 

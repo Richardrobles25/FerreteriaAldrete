@@ -27,8 +27,8 @@ function normalizarNumeroFormulario($valor): string {
 }
 
 if ($esEdicion) {
-    $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-    $stmt->execute([intval($_GET['id']), $_SESSION['sucursal_id']]);
+    $stmt = $pdo->prepare("SELECT p.*, ss.stock_actual, ss.stock_minimo, ss.stock_maximo FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ? AND p.activo = 1");
+    $stmt->execute([$_SESSION['sucursal_id'], intval($_GET['id'])]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$editando) { header('Location: productos.php'); exit(); }
 
@@ -73,8 +73,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($codigo) {
-        $stmtCheck = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ? AND producto_id != ?");
-        $stmtCheck->execute([$codigo, $_SESSION['sucursal_id'], $producto_id]);
+        $stmtCheck = $pdo->prepare("SELECT p.producto_id FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.codigo = ? AND p.producto_id != ?");
+        $stmtCheck->execute([$_SESSION['sucursal_id'], $codigo, $producto_id]);
         if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en esta sucursal.';
     }
 
@@ -82,23 +82,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($producto_id) {
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
-                precio_compra=?,precio_venta=?,precio_mayoreo=?,stock_minimo=?,stock_maximo=?,tipo_venta=?
+                precio_compra=?,precio_venta=?,precio_mayoreo=?,tipo_venta=?
                 WHERE producto_id=? AND sucursal_id=?
             ")->execute([$codigo,$nombre_producto,$descripcion,$categoria_id,
                          $precio_compra,$precio_venta,$precio_mayoreo,
-                         $stock_minimo,$stock_maximo,$tipo_venta,
+                         $tipo_venta,
                          $producto_id,$_SESSION['sucursal_id']]);
+            $pdo->prepare("
+                UPDATE stock_sucursal SET stock_minimo=?,stock_maximo=?
+                WHERE producto_id=? AND sucursal_id=?
+            ")->execute([$stock_minimo,$stock_maximo,$producto_id,$_SESSION['sucursal_id']]);
         } else {
             $pdo->prepare("
                 INSERT INTO productos
                 (sucursal_id,categoria_id,codigo,nombre_producto,descripcion,
-                 precio_compra,precio_venta,precio_mayoreo,stock_actual,
-                 stock_minimo,stock_maximo,tipo_venta,activo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)
+                 precio_compra,precio_venta,precio_mayoreo,tipo_venta,activo)
+                VALUES (?,?,?,?,?,?,?,?,?,1)
             ")->execute([$_SESSION['sucursal_id'],$categoria_id,$codigo,$nombre_producto,
                          $descripcion,$precio_compra,$precio_venta,$precio_mayoreo,
-                         $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta]);
+                         $tipo_venta]);
             $producto_id = $pdo->lastInsertId();
+
+            $pdo->prepare("
+                INSERT INTO stock_sucursal
+                (producto_id,sucursal_id,stock_actual,stock_minimo,stock_maximo,activo)
+                VALUES (?,?,?,?,?,1)
+            ")->execute([$producto_id,$_SESSION['sucursal_id'],$cantidad_inicial,$stock_minimo,$stock_maximo]);
 
             if ($cantidad_inicial > 0) {
                 $pdo->prepare("

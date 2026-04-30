@@ -36,24 +36,25 @@ if (isset($_GET['accion']) && isset($_GET['id'])) {
         $transf = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($transf && $transf['estado'] === 'En tránsito' && $transf['sucursal_destino_id'] == $miSucursal) {
-            $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ? AND sucursal_id = ?");
+            $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
             $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
             $prodOrigen = $stmtOrigen->fetch(PDO::FETCH_ASSOC);
 
             if ($prodOrigen && $prodOrigen['stock_actual'] >= $transf['cantidad']) {
                 $stockAntOrigen   = $prodOrigen['stock_actual'];
                 $stockNuevoOrigen = $stockAntOrigen - $transf['cantidad'];
-                $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                     ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
                 $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Transferencia',?,?,?,'Transferencia enviada')")
                     ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
 
                 // Buscar producto destino por codigo (los producto_id difieren entre sucursales)
                 $stmtDest = $pdo->prepare("
-                    SELECT p2.producto_id, p2.stock_actual
+                    SELECT p2.producto_id, ss2.stock_actual
                     FROM productos p1
                     JOIN productos p2 ON p1.codigo = p2.codigo
-                        AND p2.sucursal_id = ? AND p2.activo = 1
+                        AND p2.activo = 1
+                    JOIN stock_sucursal ss2 ON ss2.producto_id = p2.producto_id AND ss2.sucursal_id = ?
                     WHERE p1.producto_id = ?
                     LIMIT 1
                 ");
@@ -64,8 +65,8 @@ if (isset($_GET['accion']) && isset($_GET['id'])) {
                     $destProdId     = $prodDest['producto_id'];
                     $stockAntDest   = $prodDest['stock_actual'];
                     $stockNuevoDest = $stockAntDest + $transf['cantidad'];
-                    $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")
-                        ->execute([$stockNuevoDest, $destProdId]);
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                        ->execute([$stockNuevoDest, $destProdId, $transf['sucursal_destino_id']]);
                     $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Transferencia',?,?,?,'Transferencia recibida')")
                         ->execute([$destProdId, $_SESSION['usuario_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
                 }
@@ -131,18 +132,19 @@ $stmt = $pdo->prepare("
         po.producto_id,
         po.codigo,
         po.nombre_producto,
-        po.stock_actual,
-        po.sucursal_id,
-        pm.stock_actual AS mi_stock,
-        (pm.stock_actual < pm.stock_minimo AND pm.stock_minimo > 0) AS bajo
+        sso.stock_actual,
+        sso.sucursal_id,
+        ssm.stock_actual AS mi_stock,
+        (ssm.stock_actual < ssm.stock_minimo AND ssm.stock_minimo > 0) AS bajo
     FROM productos po
+    INNER JOIN stock_sucursal sso ON sso.producto_id = po.producto_id AND sso.activo = 1
     INNER JOIN productos pm
         ON po.codigo = pm.codigo
-        AND pm.sucursal_id = ?
         AND pm.activo = 1
-    WHERE po.sucursal_id != ?
+    INNER JOIN stock_sucursal ssm ON ssm.producto_id = pm.producto_id AND ssm.sucursal_id = ?
+    WHERE sso.sucursal_id != ?
       AND po.activo = 1
-      AND po.stock_actual > 0
+      AND sso.stock_actual > 0
     ORDER BY bajo DESC, po.nombre_producto ASC
 ");
 $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);

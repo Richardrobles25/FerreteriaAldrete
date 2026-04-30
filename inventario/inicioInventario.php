@@ -8,10 +8,11 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 // Productos con stock bajo
 $stmtBajo = $pdo->prepare("
-    SELECT producto_id, codigo, nombre_producto, stock_actual, stock_minimo
-    FROM productos
-    WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo
-    ORDER BY (stock_actual / NULLIF(stock_minimo,0)) ASC
+    SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, ss.stock_minimo
+    FROM productos p
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE p.activo = 1 AND ss.activo = 1 AND ss.stock_actual <= ss.stock_minimo
+    ORDER BY (ss.stock_actual / NULLIF(ss.stock_minimo,0)) ASC
     LIMIT 10
 ");
 $stmtBajo->execute([$_SESSION['sucursal_id']]);
@@ -21,11 +22,12 @@ $stockBajo = $stmtBajo->fetchAll(PDO::FETCH_ASSOC);
 $stmtStats = $pdo->prepare("
     SELECT
         COUNT(*) AS total_productos,
-        SUM(CASE WHEN stock_actual <= stock_minimo THEN 1 ELSE 0 END) AS con_stock_bajo,
-        SUM(CASE WHEN stock_actual = 0 THEN 1 ELSE 0 END) AS sin_stock,
-        COALESCE(SUM(stock_actual * precio_compra), 0) AS valor_inventario
-    FROM productos
-    WHERE sucursal_id = ? AND activo = 1
+        SUM(CASE WHEN ss.stock_actual <= ss.stock_minimo THEN 1 ELSE 0 END) AS con_stock_bajo,
+        SUM(CASE WHEN ss.stock_actual = 0 THEN 1 ELSE 0 END) AS sin_stock,
+        COALESCE(SUM(ss.stock_actual * p.precio_compra), 0) AS valor_inventario
+    FROM productos p
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE p.activo = 1 AND ss.activo = 1
 ");
 $stmtStats->execute([$_SESSION['sucursal_id']]);
 $stats = $stmtStats->fetch(PDO::FETCH_ASSOC);
@@ -35,7 +37,7 @@ $stmtMov = $pdo->prepare("
     SELECT m.tipo, m.cantidad, m.created_at, p.nombre_producto, m.motivo
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    WHERE p.sucursal_id = ?
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     ORDER BY m.created_at DESC
     LIMIT 8
 ");
@@ -49,16 +51,16 @@ $mySuc = $_SESSION['sucursal_id'];
 $stmt = $pdo->prepare("
     SELECT t.transferencias_id, t.cantidad,
            COALESCE(p.nombre_producto,'?') AS nombre_producto,
-           COALESCE(mp.stock_actual,0) AS mi_stock,
+           COALESCE(ss.stock_actual,0) AS mi_stock,
            sd.nombre AS sucursal_destino
     FROM transferencias t
-    LEFT JOIN productos p ON t.producto_id = p.producto_id AND p.sucursal_id = ?
-    LEFT JOIN productos mp ON t.producto_id = mp.producto_id AND mp.sucursal_id = ?
+    LEFT JOIN productos p ON t.producto_id = p.producto_id
+    LEFT JOIN stock_sucursal ss ON ss.producto_id = t.producto_id AND ss.sucursal_id = ?
     JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
     WHERE t.sucursal_origen_id = ? AND t.estado = 'Pendiente'
     ORDER BY t.created_at ASC LIMIT 5
 ");
-$stmt->execute([$mySuc, $mySuc, $mySuc]);
+$stmt->execute([$mySuc, $mySuc]);
 $solicitudesPendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $transfParaAprobar = count($solicitudesPendientes);
 

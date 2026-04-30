@@ -16,11 +16,12 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 if (isset($_GET['exportar'])) {
     $stmt = $pdo->prepare("
         SELECT p.codigo, p.nombre_producto, c.nombre as categoria, p.precio_compra,
-               p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo,
-               p.stock_maximo, p.tipo_venta, p.descripcion
+               p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
+               ss.stock_maximo, p.tipo_venta, p.descripcion
         FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        WHERE p.sucursal_id = ? AND p.activo = 1
+        WHERE p.activo = 1 AND ss.activo = 1
         ORDER BY p.nombre_producto ASC
     ");
     $stmt->execute([$_SESSION['sucursal_id']]);
@@ -179,21 +180,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     }
                 }
 
-                $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ?");
-                $check->execute([$codigo, $_SESSION['sucursal_id']]);
+                $check = $pdo->prepare("SELECT p.producto_id FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.codigo = ?");
+                $check->execute([$_SESSION['sucursal_id'], $codigo]);
 
-                if ($check->fetch()) {
+                $existingRow = $check->fetch();
+                if ($existingRow) {
+                    $existingProdId = $existingRow['producto_id'];
                     if ($categoria_id !== null) {
-                        $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
-                            ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                        $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
+                            ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
                     } else {
-                        $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
-                            ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
+                        $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=? WHERE codigo=? AND sucursal_id=?")
+                            ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $codigo, $_SESSION['sucursal_id']]);
                     }
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_minimo=?, stock_maximo=? WHERE producto_id=? AND sucursal_id=?")
+                        ->execute([$stock_minimo, $stock_maximo, $existingProdId, $_SESSION['sucursal_id']]);
                     $omitidos++;
                 } else {
-                    $pdo->prepare("INSERT INTO productos (sucursal_id, categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, tipo_venta, activo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)")
-                        ->execute([$_SESSION['sucursal_id'], $categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta]);
+                    $pdo->prepare("INSERT INTO productos (sucursal_id, categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, tipo_venta, activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
+                        ->execute([$_SESSION['sucursal_id'], $categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta]);
+                    $newProdId = $pdo->lastInsertId();
+                    $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
+                        ->execute([$newProdId, $_SESSION['sucursal_id'], $stock_actual, $stock_minimo, $stock_maximo]);
                     $importados++;
                 }
             }
@@ -240,8 +248,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
     $motivo = trim($_POST['motivo_eliminacion'] ?? '');
 
     if ($id && $motivo !== '') {
-        $stmtProd = $pdo->prepare("SELECT producto_id, stock_actual FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-        $stmtProd->execute([$id, $_SESSION['sucursal_id']]);
+        $stmtProd = $pdo->prepare("SELECT p.producto_id, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ? AND p.activo = 1");
+        $stmtProd->execute([$_SESSION['sucursal_id'], $id]);
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
         if ($productoEliminar) {
@@ -279,20 +287,20 @@ $busqueda   = trim($_GET['buscar'] ?? '');
 $categoria  = intval($_GET['categoria'] ?? 0);
 $stock_bajo = isset($_GET['stock_bajo']);
 
-$where  = "WHERE p.sucursal_id = ? AND p.activo = 1";
+$where  = "WHERE p.activo = 1 AND ss.activo = 1";
 $params = [$sucursal_consulta];
 
 if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
-if ($stock_bajo) { $where .= " AND p.stock_actual <= p.stock_minimo"; }
+if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
 
-$stmt = $pdo->prepare("SELECT p.*, c.nombre as nombre_categoria FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.categoria_id $where ORDER BY p.stock_actual <= p.stock_minimo DESC, p.nombre_producto ASC");
+$stmt = $pdo->prepare("SELECT p.*, ss.stock_actual, ss.stock_minimo, ss.stock_maximo, c.nombre as nombre_categoria FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? LEFT JOIN categorias c ON p.categoria_id = c.categoria_id $where ORDER BY ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC");
 $stmt->execute($params);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-$stmtBajo = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
+$stmtBajo = $pdo->prepare("SELECT COUNT(*) FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.activo = 1 AND ss.activo = 1 AND ss.stock_actual <= ss.stock_minimo");
 $stmtBajo->execute([$sucursal_consulta]);
 $totalStockBajo = $stmtBajo->fetchColumn();
 ?>

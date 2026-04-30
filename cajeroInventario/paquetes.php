@@ -29,17 +29,12 @@ if (isset($_GET['editar'])) {
     if ($editando) {
         $stmtPP = $pdo->prepare("
             SELECT pp.producto_id, pp.cantidad,
-                   p.nombre_producto, p.codigo,
-                   COALESCE(px.precio_venta, 0) AS precio_venta
+                   p.nombre_producto, p.codigo, p.precio_venta
             FROM paquete_productos pp
-            JOIN (
-                SELECT producto_id, MIN(nombre_producto) AS nombre_producto, MIN(codigo) AS codigo
-                FROM productos WHERE activo = 1 GROUP BY producto_id
-            ) p ON pp.producto_id = p.producto_id
-            LEFT JOIN productos px ON pp.producto_id = px.producto_id AND px.sucursal_id = ?
+            JOIN productos p ON pp.producto_id = p.producto_id AND p.activo = 1
             WHERE pp.paquete_id = ?
         ");
-        $stmtPP->execute([$_SESSION['sucursal_id'], $editando['paquete_id']]);
+        $stmtPP->execute([$editando['paquete_id']]);
         $prodsPaquete = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
     }
 }
@@ -93,10 +88,11 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos de esta sucursal para el formulario
 $stmtProds = $pdo->prepare("
-    SELECT producto_id, codigo, nombre_producto, precio_venta
-    FROM productos
-    WHERE sucursal_id = ? AND activo = 1
-    ORDER BY nombre_producto ASC
+    SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta
+    FROM productos p
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE p.activo = 1 AND ss.activo = 1
+    ORDER BY p.nombre_producto ASC
 ");
 $stmtProds->execute([$_SESSION['sucursal_id']]);
 $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
@@ -268,17 +264,13 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                 <?php foreach ($paquetes as $paq):
                     $stmtPP = $pdo->prepare("
                         SELECT pp.cantidad,
-                               COALESCE(p2.nombre_producto, p1.nombre_producto) AS nombre_producto,
-                               COALESCE(p2.precio_venta, 0) AS precio_venta
+                               p.nombre_producto,
+                               p.precio_venta
                         FROM paquete_productos pp
-                        JOIN (
-                            SELECT producto_id, MIN(nombre_producto) AS nombre_producto
-                            FROM productos WHERE activo = 1 GROUP BY producto_id
-                        ) p1 ON pp.producto_id = p1.producto_id
-                        LEFT JOIN productos p2 ON pp.producto_id = p2.producto_id AND p2.sucursal_id = ?
+                        JOIN productos p ON pp.producto_id = p.producto_id AND p.activo = 1
                         WHERE pp.paquete_id = ?
                     ");
-                    $stmtPP->execute([$_SESSION['sucursal_id'], $paq['paquete_id']]);
+                    $stmtPP->execute([$paq['paquete_id']]);
                     $prods = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
                     $precioSeparado = array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_venta'], $prods));
                     $ahorro = $precioSeparado > 0 ? $precioSeparado - $paq['precio_paquete'] : 0;

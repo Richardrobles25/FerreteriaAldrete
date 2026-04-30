@@ -430,11 +430,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
 
             $pdo->commit();
+            // AJAX: retornar JSON en lugar de redirigir
+            if (!empty($_POST['_ajax'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => true, 'venta_id' => $venta_id]);
+                exit();
+            }
             header('Location: nuevaVenta.php?msg=exito&venta_id='.$venta_id);
             exit();
 
         } catch (Exception $e) {
             $pdo->rollBack();
+            if (!empty($_POST['_ajax'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+                exit();
+            }
             $errorVenta = $e->getMessage();
         }
     }
@@ -2122,6 +2133,71 @@ function prepararVenta() {
     document.getElementById('inputItems').value = JSON.stringify(itemsExpandidos);
     return true;
 }
+
+// ── Envío AJAX del formulario de venta (evita recargar la página y el catálogo) ─
+document.getElementById('formVenta').addEventListener('submit', function(e) {
+    e.preventDefault();
+    if (!prepararVenta()) return;
+
+    const btn = document.getElementById('btnCobrar');
+    btn.disabled = true;
+    btn.textContent = 'Procesando...';
+
+    const fd = new FormData(this);
+    fd.append('_ajax', '1');
+
+    fetch('nuevaVenta.php', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+            if (!res.ok) throw new Error(res.error || 'Error desconocido');
+
+            // Actualizar stock en productosGlobales para que refleje la venta
+            const itemsVendidos = JSON.parse(document.getElementById('inputItems').value || '[]');
+            itemsVendidos.forEach(item => {
+                const prod = productosGlobales.find(p => p.producto_id === parseInt(item.producto_id));
+                if (prod) prod.stock_actual = Math.max(0, prod.stock_actual - parseFloat(item.cantidad));
+            });
+
+            // Mostrar notificación de éxito
+            let notif = document.getElementById('_notifVentaOk');
+            if (!notif) {
+                notif = document.createElement('div');
+                notif.id = '_notifVentaOk';
+                notif.className = 'msg-exito';
+                notif.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9999;min-width:320px;';
+                document.body.appendChild(notif);
+            }
+            notif.innerHTML = `<span>✅ Venta registrada correctamente.</span>
+                <button class="btn-print-ticket" onclick="imprimirTicket(${res.venta_id})">🖨 Imprimir ticket</button>`;
+            notif.style.display = 'flex';
+            setTimeout(() => { notif.style.display = 'none'; }, 12000);
+
+            // Imprimir ticket automáticamente
+            imprimirTicket(res.venta_id);
+
+            // Limpiar carrito sin pedir confirmación
+            carrito = []; clienteActual = null; metodoPago = null; idxAjusteActual = -1;
+            renderCarrito(); recalcularTodo(); quitarCliente();
+            document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
+            document.querySelectorAll('.campos-pago').forEach(c => c.classList.remove('visible'));
+            document.getElementById('recPaquetes').style.display = 'none';
+            const chk = document.getElementById('chkAjusteDano');
+            if (chk) { chk.checked = false; }
+            const panelAdj = document.getElementById('panelAjusteDano');
+            if (panelAdj) panelAdj.style.display = 'none';
+            const panelCamp = document.getElementById('panelCamposAjuste');
+            if (panelCamp) panelCamp.style.display = 'none';
+            document.getElementById('inputProducto').focus();
+        })
+        .catch(err => {
+            const msg = err.message || 'No se pudo procesar la venta.';
+            alert('⚠ ' + msg);
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.textContent = 'Cobrar';
+        });
+});
 
 // ── Ticket de impresión ──────────────────────────────────────────────────────
 function imprimirTicket(ventaId) {

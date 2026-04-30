@@ -748,14 +748,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     </div>
 
     <div class="content">
-        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito'): ?>
-            <div class="msg-exito">
-                <span>Venta registrada correctamente. <a href="nuevaVenta.php" style="color:#2e7d32;font-weight:600;">Nueva venta</a></span>
-                <button class="btn-print-ticket" onclick="imprimirTicket(<?= intval($_GET['venta_id'] ?? 0) ?>)">
-                    🖨 Imprimir ticket
-                </button>
-            </div>
-        <?php endif; ?>
         <?php if ($errorVenta): ?>
             <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;border-left:3px solid #c0392b;grid-column:span 2;margin-bottom:4px;">
                 ⚠ <?= htmlspecialchars($errorVenta) ?>
@@ -830,14 +822,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 </div>
             </div>
 
+        </div>
+
+        <!-- Panel derecho: resumen y pago -->
+        <div class="panel-der">
             <!-- Cliente -->
-            <div class="card">
-                <h3>Cliente (opcional)</h3>
-                <div class="busqueda-wrap">
-                    <input type="text" id="inputCliente"
-                        placeholder="Buscar por nombre..."
-                        autocomplete="off">
-                    <div class="dropdown-resultados" id="dropdownClientes"></div>
+            <div class="card" style="padding:12px 14px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <span style="font-size:13px;font-weight:600;color:#333;">Cliente <span style="font-weight:400;color:#aaa;font-size:12px;">(opcional)</span></span>
+                    <span id="clienteNombreTag" style="display:none;font-size:12px;font-weight:600;color:#14ace7;"></span>
+                </div>
+                <div id="clienteBuscadorWrap">
+                    <div class="busqueda-wrap">
+                        <input type="text" id="inputCliente"
+                            placeholder="Buscar por nombre o teléfono..."
+                            autocomplete="off"
+                            style="font-size:13px;">
+                        <div class="dropdown-resultados" id="dropdownClientes"></div>
+                    </div>
                 </div>
                 <div class="cliente-seleccionado" id="clienteSeleccionado">
                     <div>
@@ -847,22 +849,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     </div>
                     <button class="btn-quitar-cliente" onclick="quitarCliente()">Quitar</button>
                 </div>
-                <div id="clienteDescuentoConfig" style="display:none;margin-top:10px;padding:10px 12px;background:#f8fbff;border:1px solid #dbeafe;border-radius:6px;">
-                    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#444;margin-bottom:8px;">
+                <div id="clienteDescuentoConfig" style="display:none;margin-top:8px;padding:8px 10px;background:#f8fbff;border:1px solid #dbeafe;border-radius:6px;">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#444;margin-bottom:6px;">
                         <input type="checkbox" id="aplicarDescCliente" checked onchange="recalcularTodo()">
                         Aplicar descuento del cliente
                     </label>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <span style="font-size:12px;color:#666;">Porcentaje a aplicar</span>
-                        <input type="number" id="porcDescCliente" value="" placeholder="0" min="0" step="0.1" style="width:90px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;" oninput="ajustarDescuentoCliente()" onblur="clampearDescuentoCliente()">
+                        <span style="font-size:12px;color:#666;">Porcentaje</span>
+                        <input type="number" id="porcDescCliente" value="" placeholder="0" min="0" step="0.1" style="width:80px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;" oninput="ajustarDescuentoCliente()" onblur="clampearDescuentoCliente()">
                         <span id="clienteDescMax" style="font-size:12px;color:#888;"></span>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Panel derecho: resumen y pago -->
-        <div class="panel-der">
             <div class="resumen">
                 <h3>Resumen</h3>
                 <div class="resumen-fila"><span>Subtotal</span><span id="resSubtotal">$0.00</span></div>
@@ -2438,12 +2437,6 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// ── Auto-imprimir si viene de venta exitosa ──────────────────────────────────
-<?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito' && isset($_GET['venta_id'])): ?>
-    window.addEventListener('load', () => {
-        imprimirTicket(<?= intval($_GET['venta_id']) ?>);
-    });
-<?php endif; ?>
 
 // ── Utilidad ─────────────────────────────────────────────────────────────────
 function esc(str) {

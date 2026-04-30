@@ -1,4 +1,5 @@
-﻿<?php
+<?php
+ob_start();
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -12,12 +13,12 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx as ReaderXlsx;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
-// Exportar a Excel
-if (isset($_GET['exportar'])) {
+// Exportar PDF
+if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
+    require_once __DIR__ . '/../admin/export_helper.php';
     $stmt = $pdo->prepare("
-        SELECT p.codigo, p.nombre_producto, c.nombre as categoria, p.precio_compra,
-               p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
-               ss.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida
+        SELECT p.codigo, p.nombre_producto, c.nombre as categoria,
+               p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo, p.tipo_venta, p.unidad_medida
         FROM productos p
         INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
@@ -26,48 +27,74 @@ if (isset($_GET['exportar'])) {
     ");
     $stmt->execute([$_SESSION['sucursal_id']]);
     $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $columnas = ['Código','Nombre','Categoría','P. Venta','P. Mayoreo','Stock','Mín.','Tipo','Unidad'];
+    $filas = array_map(fn($p) => [
+        $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
+        '$' . number_format($p['precio_venta'], 2),
+        '$' . number_format($p['precio_mayoreo'], 2),
+        $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'], $p['unidad_medida'] ?? '—',
+    ], $datos);
+    $resumen = [['label' => 'Total Productos', 'valor' => count($datos)]];
+    while (ob_get_level() > 0) ob_end_clean();
+    exportarPDF('Inventario de Productos', 'Productos activos — ' . ($nombreSucursal ?? ''), $columnas, $filas, $resumen, 'L');
+}
 
-    $spreadsheet = new Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle('Productos');
+// Exportar Excel
+if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT p.codigo, p.nombre_producto, c.nombre as categoria,
+                   p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
+                   ss.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida
+            FROM productos p
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+            WHERE p.activo = 1 AND ss.activo = 1
+            ORDER BY p.nombre_producto ASC
+        ");
+        $stmt->execute([$_SESSION['sucursal_id']]);
+        $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Encabezados
-    $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
-    $sheet->fromArray($headers, null, 'A1');
-    $sheet->getStyle('A1:L1')->getFont()->setBold(true);
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Productos');
 
-    // Datos
-    $rowIndex = 2;
-    foreach ($datos as $p) {
-        $sheet->fromArray([
-            $p['codigo'],
-            $p['nombre_producto'],
-            $p['categoria'] ?? '',
-            $p['precio_compra'],
-            $p['precio_venta'],
-            $p['precio_mayoreo'],
-            $p['stock_actual'],
-            $p['stock_minimo'],
-            $p['stock_maximo'],
-            $p['tipo_venta'],
-            $p['descripcion'] ?? '',
-            $p['unidad_medida'] ?? '',
-        ], null, 'A' . $rowIndex);
-        $rowIndex++;
+        $headers = ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
+        $sheet->fromArray($headers, null, 'A1');
+        $sheet->getStyle('A1:K1')->getFont()->setBold(true);
+
+        $rowIndex = 2;
+        foreach ($datos as $p) {
+            $sheet->fromArray([
+                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '',
+                $p['precio_venta'], $p['precio_mayoreo'],
+                $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'],
+                $p['tipo_venta'], $p['descripcion'] ?? '', $p['unidad_medida'] ?? '',
+            ], null, 'A' . $rowIndex);
+            $rowIndex++;
+        }
+        foreach (range('A','K') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+
+        $tmpFile = sys_get_temp_dir() . '/inv_' . uniqid() . '.xlsx';
+        (new Xlsx($spreadsheet))->save($tmpFile);
+        while (ob_get_level() > 0) ob_end_clean();
+        @ini_set('zlib.output_compression', '0');
+        if (function_exists('apache_setenv')) @apache_setenv('no-gzip', '1');
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="productos_' . date('Y-m-d') . '.xlsx"');
+        header('Cache-Control: max-age=0');
+        header('Pragma: public');
+        header('Content-Length: ' . filesize($tmpFile));
+        readfile($tmpFile);
+        @unlink($tmpFile);
+        exit();
+    } catch (\Throwable $e) {
+        while (ob_get_level() > 0) ob_end_clean();
+        http_response_code(500);
+        die('Error al generar Excel: ' . htmlspecialchars($e->getMessage()));
     }
-
-    // Auto ancho
-    foreach (range('A','L') as $col) {
-        $sheet->getColumnDimension($col)->setAutoSize(true);
-    }
-
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="productos_' . date('Y-m-d') . '.xlsx"');
-    header('Cache-Control: max-age=0');
-
-    $writer = new Xlsx($spreadsheet);
-    $writer->save('php://output');
-    exit();
 }
 
 // Importar desde Excel
@@ -175,23 +202,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
 // Descargar plantilla
 if (isset($_GET['plantilla'])) {
-    $spreadsheet = new Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle('Plantilla');
-    $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
-    $sheet->fromArray($headers, null, 'A1');
-    $sheet->getStyle('A1:L1')->getFont()->setBold(true);
-    // Fila de ejemplo
-    $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional','pieza'];
-    $sheet->fromArray($ejemplo, null, 'A2');
-    foreach (range('A','L') as $col) {
-        $sheet->getColumnDimension($col)->setAutoSize(true);
+    try {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Plantilla');
+        $headers = ['Código*','Nombre*','Categoría','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
+        $sheet->fromArray($headers, null, 'A1');
+        $sheet->getStyle('A1:K1')->getFont()->setBold(true);
+        $ejemplo = ['PROD001','Ejemplo producto','Herrería','100','80','10','5','100','Unidad','Descripción opcional','pieza'];
+        $sheet->fromArray($ejemplo, null, 'A2');
+        foreach (range('A','K') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+        $tmpFile = sys_get_temp_dir() . '/plt_' . uniqid() . '.xlsx';
+        (new Xlsx($spreadsheet))->save($tmpFile);
+        while (ob_get_level() > 0) ob_end_clean();
+        @ini_set('zlib.output_compression', '0');
+        if (function_exists('apache_setenv')) @apache_setenv('no-gzip', '1');
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="plantilla_productos.xlsx"');
+        header('Cache-Control: max-age=0');
+        header('Pragma: public');
+        header('Content-Length: ' . filesize($tmpFile));
+        readfile($tmpFile);
+        @unlink($tmpFile);
+        exit();
+    } catch (\Throwable $e) {
+        while (ob_get_level() > 0) ob_end_clean();
+        http_response_code(500);
+        die('Error al generar plantilla: ' . htmlspecialchars($e->getMessage()));
     }
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="plantilla_productos.xlsx"');
-    $writer = new Xlsx($spreadsheet);
-    $writer->save('php://output');
-    exit();
 }
 
 // Eliminar producto con motivo
@@ -356,6 +396,8 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
     .btn-agregar:hover { background: #1196cb; }
     .btn-excel-export { background: #1b5e20; color: white; border: none; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; text-decoration: none; display: inline-block; }
     .btn-excel-export:hover { background: #145214; }
+    .btn-pdf-export { background: #b71c1c; color: white; border: none; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; text-decoration: none; display: inline-block; }
+    .btn-pdf-export:hover { background: #7f0000; }
     .btn-excel-import { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; text-decoration: none; display: inline-block; }
     .btn-excel-import:hover { background: #c8e6c9; }
     .btn-plantilla { background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; text-decoration: none; display: inline-block; }
@@ -519,7 +561,8 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 <?php if (!$soloLectura): ?>
                 <a class="btn-plantilla" href="productos.php?plantilla=1">Descargar plantilla</a>
                 <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
-                <a class="btn-excel-export" href="productos.php?exportar=1">Exportar Excel</a>
+                <a class="btn-excel-export" href="productos.php?exportar=excel">Exportar Excel</a>
+                <a class="btn-pdf-export" href="productos.php?exportar=pdf">Exportar PDF</a>
                 <button class="btn-agregar" onclick="abrirModalCatalogo()">+ Agregar del catálogo</button>
                 <?php endif; ?>
             </div>

@@ -207,8 +207,8 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
         </form>
 
         <div class="stats">
-            <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'],2) ?></h3></div>
-            <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'],2) ?></h3></div>
+            <div class="stat"><p>Entradas</p><h3><?= number_format(floatval($resumen['total_entradas']),2) ?></h3></div>
+            <div class="stat"><p>Salidas</p><h3><?= number_format(floatval($resumen['total_salidas']),2) ?></h3></div>
             <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?></h3></div>
             <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transferencias'] ?></h3></div>
         </div>

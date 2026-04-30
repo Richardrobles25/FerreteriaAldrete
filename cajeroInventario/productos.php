@@ -60,8 +60,14 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         $sheet->setTitle('Productos');
 
         $headers = ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
-        $sheet->fromArray($headers, null, 'A1');
-        $sheet->getStyle('A1:K1')->getFont()->setBold(true);
+        foreach ($headers as $i => $h) {
+            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+            $sheet->setCellValue("{$col}1", $h);
+            $sheet->getStyle("{$col}1")->applyFromArray([
+                'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
+                'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF14ace7']],
+            ]);
+        }
 
         $rowIndex = 2;
         foreach ($datos as $p) {
@@ -558,11 +564,9 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <div class="content-header">
             <h1>Inventario de productos</h1>
             <div class="acciones-header">
-                <?php if (!$soloLectura): ?>
-                <a class="btn-plantilla" href="productos.php?plantilla=1">Descargar plantilla</a>
-                <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
                 <a class="btn-excel-export" href="productos.php?exportar=excel">Exportar Excel</a>
                 <a class="btn-pdf-export" href="productos.php?exportar=pdf">Exportar PDF</a>
+                <?php if (!$soloLectura): ?>
                 <button class="btn-agregar" onclick="abrirModalCatalogo()">+ Agregar del catálogo</button>
                 <?php endif; ?>
             </div>

@@ -96,13 +96,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         // Auto-insertar unidad en sucursal(es) afectadas
-        if ($unidad_medida !== '') {
-            $branchesUnd = $todasSucursales
-                ? $pdo->query("SELECT sucursal_id FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_COLUMN)
-                : [$sucursalEdit];
-            foreach ($branchesUnd as $sid) {
-                $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")->execute([$unidad_medida, $sid]);
-            }
+        if ($unidad_medida !== '' && !$todasSucursales) {
+            $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")->execute([$unidad_medida, $sucursalEdit]);
         }
 
         if ($producto_id) {
@@ -129,18 +124,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                          $tipo_venta,$unidad_medida ?: null]);
             $producto_id = (int)$pdo->lastInsertId();
 
-            // Insertar stock para la(s) sucursal(es)
-            $branchesStock = $todasSucursales
-                ? $pdo->query("SELECT sucursal_id FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_COLUMN)
-                : [$sucursalEdit];
-            foreach ($branchesStock as $sid) {
+            // Solo insertar stock si es para una sucursal específica (no catálogo global)
+            if (!$todasSucursales) {
                 $pdo->prepare("INSERT INTO stock_sucursal (producto_id,sucursal_id,stock_actual,stock_minimo,stock_maximo,activo) VALUES (?,?,?,?,?,1)")
-                    ->execute([$producto_id,$sid,$cantidad_inicial,$stock_minimo,$stock_maximo]);
-            }
-
-            if ($cantidad_inicial > 0) {
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Entrada',?,0,?,'Inventario inicial')")
-                    ->execute([$producto_id,$_SESSION['usuario_id'],$cantidad_inicial,$cantidad_inicial]);
+                    ->execute([$producto_id,$sucursalEdit,$cantidad_inicial,$stock_minimo,$stock_maximo]);
+                if ($cantidad_inicial > 0) {
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Entrada',?,0,?,'Inventario inicial')")
+                        ->execute([$producto_id,$_SESSION['usuario_id'],$cantidad_inicial,$cantidad_inicial]);
+                }
             }
         }
 
@@ -293,7 +284,7 @@ if ($editando && $editando['categoria_id']) {
             <p><?= $editando ? 'Modifica los datos del producto.' : 'Completa el formulario para agregar un producto al inventario.' ?></p>
             <?php if ($todasSucursales): ?>
             <div style="background:#e3f2fd;color:#1565c0;border-left:3px solid #1565c0;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:18px;">
-                ✦ El producto se creará en el catálogo global y se activará en <strong>todas las sucursales</strong> con el stock inicial y límites que ingreses.
+                ✦ El producto se agregará al <strong>catálogo global</strong>. Para agregarlo a una sucursal específica, usa el botón <em>"Agregar del catálogo"</em> desde el inventario de esa sucursal.
             </div>
             <?php endif; ?>
 
@@ -379,22 +370,35 @@ if ($editando && $editando['categoria_id']) {
                                 oninput="calcularMargen()">
                         </div>
                         <div class="form-group">
+                            <label>Precio de mayoreo</label>
+                            <input type="number" name="precio_mayoreo" id="inputPrecioMayoreo"
+                                value="<?= $_POST['precio_mayoreo'] ?? $editando['precio_mayoreo'] ?? 0 ?>"
+                                class="js-zero-default"
+                                step="0.01" min="0" placeholder="0.00">
+                            <div class="hint">Precio para venta al por mayor.</div>
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;align-items:start;margin-top:4px;">
+                        <div class="form-group" style="margin-bottom:0;">
                             <label>Margen ganancia (%)</label>
                             <input type="number" name="margen_ganancia" id="inputMargenGanancia"
                                 value=""
                                 step="0.1" min="0" placeholder="0.0"
                                 oninput="calcularPrecioDesdeMargen()">
-                            <div class="hint">Ingresa % para calcular precio automáticamente.</div>
+                            <div class="hint">Cambia el % y se actualiza el precio de venta, o viceversa.</div>
                         </div>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                        <div class="margen-preview" id="margenPreview"></div>
-                        <div class="margen-preview" id="margenInfo" style="display:none;"></div>
+                        <div>
+                            <div class="margen-preview" id="margenPreview" style="margin-top:22px;"></div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- ── STOCK ── -->
+                <?php if ($todasSucursales): ?>
+                <div class="seccion" style="display:none;">
+                <?php else: ?>
                 <div class="seccion">
+                <?php endif; ?>
                     <div class="seccion-titulo">Control de stock</div>
                     <div class="form-row-3">
                         <?php if (!$editando): ?>
@@ -668,9 +672,10 @@ document.addEventListener('click', function(e) {
 
 // ── Margen de ganancia ─────────────────────────────────────────────────────
 function calcularMargen() {
-    const compra  = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
-    const venta   = parseFloat(document.getElementById('inputPrecioVenta').value) || 0;
-    const preview = document.getElementById('margenPreview');
+    const compra      = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
+    const venta       = parseFloat(document.getElementById('inputPrecioVenta').value) || 0;
+    const preview     = document.getElementById('margenPreview');
+    const margenInput = document.getElementById('inputMargenGanancia');
 
     if (compra > 0 && venta > 0) {
         const utilidad = venta - compra;
@@ -680,26 +685,27 @@ function calcularMargen() {
         preview.textContent = utilidad >= 0
             ? `✅ Utilidad: $${utilidad.toFixed(2)} · Margen: ${margen}%`
             : `⚠ Precio de venta menor al costo · Pérdida: $${Math.abs(utilidad).toFixed(2)}`;
+        // Actualizar el campo % solo si el usuario no lo está editando en este momento
+        if (document.activeElement !== margenInput) {
+            margenInput.value = margen;
+        }
     } else {
         preview.style.display = 'none';
+        if (document.activeElement !== margenInput) margenInput.value = '';
     }
 }
 
 function calcularPrecioDesdeMargen() {
     const margenInput = document.getElementById('inputMargenGanancia');
-    const margenPct = parseFloat(margenInput.value) || 0;
-    const compra = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
-    const margenInfo = document.getElementById('margenInfo');
+    const margenPct   = parseFloat(margenInput.value) || 0;
+    const compra      = parseFloat(document.getElementById('inputPrecioCompra').value) || 0;
 
     if (margenPct > 0 && compra > 0) {
         const precioVentaNuevo = (compra * (1 + margenPct / 100)).toFixed(2);
         document.getElementById('inputPrecioVenta').value = precioVentaNuevo;
-        margenInfo.style.display = 'block';
-        margenInfo.className = 'margen-preview positivo';
-        margenInfo.textContent = `💡 Precio calculado: $${precioVentaNuevo}`;
         calcularMargen();
-    } else if (margenPct <= 0) {
-        margenInfo.style.display = 'none';
+    } else if (!margenInput.value) {
+        document.getElementById('margenPreview').style.display = 'none';
     }
 }
 
@@ -716,10 +722,10 @@ function actualizarModoCantidades() {
     const permiteDecimal = tipoVenta === 'Suelto';
     document.querySelectorAll('.js-stock-control').forEach((input) => {
         input.step = permiteDecimal ? '0.001' : '1';
+        input.setAttribute('step', permiteDecimal ? '0.001' : '1');
         input.dataset.decimales = permiteDecimal ? 'si' : 'no';
         if (!permiteDecimal && String(input.value).includes('.')) {
-            const entero = Math.floor(parseFloat(input.value) || 0);
-            input.value = String(entero);
+            input.value = String(Math.floor(parseFloat(input.value) || 0));
         }
     });
 }
@@ -767,20 +773,17 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
 
 document.querySelectorAll('.js-stock-control').forEach((input) => {
     input.addEventListener('input', function() {
-        if (this.dataset.decimales === 'si') {
-            this.value = this.value.replace(/[^0-9.,]/g, '');
-            this.value = this.value.replace(',', '.');
-            const partes = this.value.split('.');
-            if (partes.length > 2) {
-                this.value = partes.shift() + '.' + partes.join('');
-            }
-            if (this.value.includes('.')) {
-                const [entera, decimal = ''] = this.value.split('.');
-                this.value = entera + '.' + decimal.slice(0, 3);
-            }
-            return;
+        // En modo decimal, type="number" con step="0.001" lo maneja el navegador.
+        // No manipular this.value aquí porque en estados intermedios (ej. "5.")
+        // el navegador devuelve "" y se borraría lo que el usuario está escribiendo.
+        if (this.dataset.decimales === 'si') return;
+        // Modo entero: solo dígitos
+        const pos = this.selectionStart;
+        const clean = this.value.replace(/[^\d]/g, '');
+        if (clean !== this.value) {
+            this.value = clean;
+            try { this.setSelectionRange(pos - 1, pos - 1); } catch(e) {}
         }
-        this.value = this.value.replace(/[^\d]/g, '');
     });
 });
 

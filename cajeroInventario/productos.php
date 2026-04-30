@@ -861,5 +861,6 @@ document.getElementById('modalCatalogo').addEventListener('click', function(e) {
     if (e.target === this) cerrarModalCatalogo();
 });
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>

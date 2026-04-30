@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -17,113 +17,133 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 // Exportar PDF
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     require_once __DIR__ . '/export_helper.php';
-    $esAdmin   = $_SESSION['rol'] === 'Administrador';
+    $esAdmin     = $_SESSION['rol'] === 'Administrador';
     $vistaGlobal = $esAdmin && $sucursalVista === 0;
 
     if ($vistaGlobal) {
-        $sqlJoinSS = "JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1";
-        $sqlJoinS  = "JOIN sucursales s ON ss.sucursal_id = s.sucursal_id";
-        $sqlWhere  = "WHERE p.activo = 1";
-        $sqlSelS   = ", s.nombre AS sucursal_nombre";
-        $paramsPdf = [];
+        // Catálogo global: sin stock ni sucursal
+        $sqlSelC = $esAdmin ? ", p.precio_compra" : "";
+        $stmt = $pdo->prepare("
+            SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
+                   p.precio_venta, p.precio_mayoreo, p.tipo_venta, p.unidad_medida
+            FROM productos p
+            LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+            WHERE p.activo = 1
+            ORDER BY p.nombre_producto ASC
+        ");
+        $stmt->execute([]);
+        $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if ($esAdmin) {
+            $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Tipo','Unidad'];
+            $filas = array_map(fn($p) => [
+                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
+                '$' . number_format($p['precio_compra'], 2),
+                '$' . number_format($p['precio_venta'], 2),
+                '$' . number_format($p['precio_mayoreo'], 2),
+                $p['tipo_venta'], $p['unidad_medida'] ?? '—',
+            ], $datos);
+        } else {
+            $columnas = ['Código','Nombre','Categoría','P. Venta','P. Mayoreo','Tipo','Unidad'];
+            $filas = array_map(fn($p) => [
+                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
+                '$' . number_format($p['precio_venta'], 2),
+                '$' . number_format($p['precio_mayoreo'], 2),
+                $p['tipo_venta'], $p['unidad_medida'] ?? '—',
+            ], $datos);
+        }
+        $titulo    = 'Catálogo Global de Productos';
+        $subtitulo = 'Todos los productos del catálogo';
     } else {
-        $sqlJoinSS = "INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1";
-        $sqlJoinS  = "";
-        $sqlWhere  = "WHERE p.activo = 1";
-        $sqlSelS   = "";
-        $paramsPdf = [$sucursalVista];
-    }
-    $sqlSelC = $esAdmin ? ", p.precio_compra" : "";
+        $sqlSelC   = $esAdmin ? ", p.precio_compra" : "";
+        $stmt = $pdo->prepare("
+            SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
+                   p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo, p.tipo_venta, p.unidad_medida
+            FROM productos p
+            LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+            WHERE p.activo = 1
+            ORDER BY p.nombre_producto ASC
+        ");
+        $stmt->execute([$sucursalVista]);
+        $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $stmt = $pdo->prepare("
-        SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
-               p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo, p.tipo_venta,
-               p.unidad_medida{$sqlSelS}
-        FROM productos p
-        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        {$sqlJoinSS}
-        {$sqlJoinS}
-        {$sqlWhere}
-        ORDER BY " . ($vistaGlobal ? "s.nombre ASC, " : "") . "p.nombre_producto ASC
-    ");
-    $stmt->execute($paramsPdf);
-    $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    if ($esAdmin) {
-        $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Stock','Mín.','Tipo','Unidad'];
-        if ($vistaGlobal) $columnas[] = 'Sucursal';
-        $filas = array_map(function($p) use ($vistaGlobal) {
-            $row = [
+        if ($esAdmin) {
+            $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Stock','Mín.','Tipo','Unidad'];
+            $filas = array_map(fn($p) => [
                 $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
                 '$' . number_format($p['precio_compra'], 2),
                 '$' . number_format($p['precio_venta'], 2),
                 '$' . number_format($p['precio_mayoreo'], 2),
                 $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'], $p['unidad_medida'] ?? '—',
-            ];
-            if ($vistaGlobal) $row[] = $p['sucursal_nombre'] ?? '—';
-            return $row;
-        }, $datos);
-    } else {
-        $columnas = ['Código','Nombre','Categoría','P. Venta','P. Mayoreo','Stock','Mín.','Tipo','Unidad'];
-        $filas = array_map(fn($p) => [
-            $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
-            '$' . number_format($p['precio_venta'], 2),
-            '$' . number_format($p['precio_mayoreo'], 2),
-            $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'], $p['unidad_medida'] ?? '—',
-        ], $datos);
+            ], $datos);
+        } else {
+            $columnas = ['Código','Nombre','Categoría','P. Venta','P. Mayoreo','Stock','Mín.','Tipo','Unidad'];
+            $filas = array_map(fn($p) => [
+                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
+                '$' . number_format($p['precio_venta'], 2),
+                '$' . number_format($p['precio_mayoreo'], 2),
+                $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'], $p['unidad_medida'] ?? '—',
+            ], $datos);
+        }
+        $titulo    = 'Inventario de Productos';
+        $subtitulo = 'Productos activos — ' . $nombreSucursalVista;
     }
 
-    $titulo    = $vistaGlobal ? 'Inventario Global de Productos' : 'Inventario de Productos';
-    $subtitulo = $vistaGlobal ? 'Todas las sucursales' : 'Productos activos — ' . $nombreSucursalVista;
-    $resumen   = [['label' => 'Total Productos', 'valor' => count($datos)]];
+    $resumen = [['label' => 'Total Productos', 'valor' => count($datos)]];
     exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
 }
 
-// Exportar a Excel (formato limpio para reimportación)
+// Exportar a Excel
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
     $esAdmin     = $_SESSION['rol'] === 'Administrador';
     $vistaGlobal = $esAdmin && $sucursalVista === 0;
+    $sqlSelC     = $esAdmin ? ", p.precio_compra" : "";
 
     if ($vistaGlobal) {
-        $xlsJoinSS = "JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1";
-        $xlsJoinS  = "JOIN sucursales s ON ss.sucursal_id = s.sucursal_id";
-        $sqlSelS   = ", s.nombre AS sucursal_nombre";
-        $sqlWhere  = "WHERE p.activo = 1";
-        $paramsXls = [];
+        // Catálogo global: sin stock ni sucursal
+        $stmt = $pdo->prepare("
+            SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
+                   p.precio_venta, p.precio_mayoreo, p.tipo_venta, p.descripcion, p.unidad_medida
+            FROM productos p
+            LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+            WHERE p.activo = 1
+            ORDER BY p.nombre_producto ASC
+        ");
+        $stmt->execute([]);
+        $datos   = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $headers = $esAdmin
+            ? ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Tipo venta','Descripción','Unidad de medida']
+            : ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Tipo venta','Descripción','Unidad de medida'];
+        $filaFn  = $esAdmin
+            ? fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_compra'],$p['precio_venta'],$p['precio_mayoreo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??'']
+            : fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_venta'],$p['precio_mayoreo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''];
+        $filename = 'catalogo_global_' . date('Y-m-d') . '.xlsx';
     } else {
-        $xlsJoinSS = "INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1";
-        $xlsJoinS  = "";
-        $sqlSelS   = "";
-        $sqlWhere  = "WHERE p.activo = 1";
-        $paramsXls = [$sucursalVista];
+        $stmt = $pdo->prepare("
+            SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
+                   p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
+                   ss.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida
+            FROM productos p
+            LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+            WHERE p.activo = 1
+            ORDER BY p.nombre_producto ASC
+        ");
+        $stmt->execute([$sucursalVista]);
+        $datos   = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $headers = $esAdmin
+            ? ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida']
+            : ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
+        $filaFn  = $esAdmin
+            ? fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_compra'],$p['precio_venta'],$p['precio_mayoreo'],$p['stock_actual'],$p['stock_minimo'],$p['stock_maximo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??'']
+            : fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_venta'],$p['precio_mayoreo'],$p['stock_actual'],$p['stock_minimo'],$p['stock_maximo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''];
+        $filename = 'productos_' . date('Y-m-d') . '.xlsx';
     }
-    $sqlSelC = $esAdmin ? ", p.precio_compra" : "";
-
-    $stmt = $pdo->prepare("
-        SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
-               p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
-               ss.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida{$sqlSelS}
-        FROM productos p
-        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        {$xlsJoinSS}
-        {$xlsJoinS}
-        {$sqlWhere}
-        ORDER BY " . ($vistaGlobal ? "s.nombre ASC, " : "") . "p.nombre_producto ASC
-    ");
-    $stmt->execute($paramsXls);
-    $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle('Productos');
-
-    // Cabeceras según rol y vista
-    if ($esAdmin) {
-        $headers = ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
-    } else {
-        $headers = ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
-    }
-    if ($vistaGlobal) $headers[] = 'Sucursal';
+    $sheet->setTitle($vistaGlobal ? 'Catálogo Global' : 'Productos');
 
     foreach ($headers as $i => $h) {
         $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
@@ -133,28 +153,20 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
             'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF14ace7']],
         ]);
     }
-
     foreach ($datos as $r => $p) {
         $fila = $r + 2;
-        if ($esAdmin) {
-            $vals = [$p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '', $p['precio_compra'], $p['precio_venta'], $p['precio_mayoreo'], $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'], $p['tipo_venta'], $p['descripcion'] ?? '', $p['unidad_medida'] ?? ''];
-        } else {
-            $vals = [$p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '', $p['precio_venta'], $p['precio_mayoreo'], $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'], $p['tipo_venta'], $p['descripcion'] ?? '', $p['unidad_medida'] ?? ''];
-        }
-        if ($vistaGlobal) $vals[] = $p['sucursal_nombre'] ?? '';
-        foreach ($vals as $i => $v) {
+        foreach ($filaFn($p) as $i => $v) {
             $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
             $sheet->setCellValue("{$col}{$fila}", $v);
         }
     }
-
     $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($headers));
     foreach (range('A', $lastCol) as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
 
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="productos_' . date('Y-m-d') . '.xlsx"');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: max-age=0');
     (new Xlsx($spreadsheet))->save('php://output');
     exit();
@@ -445,22 +457,30 @@ if (isset($_GET['catalogo_disponible'])) {
 
 // POST: agregar producto del catálogo a una sucursal específica
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admin'])) {
-    $producto_id     = intval($_POST['producto_id']      ?? 0);
     $sucursalDestino = intval($_POST['sucursal_destino'] ?? 0);
-    $stock_actual    = floatval($_POST['stock_actual']   ?? 0);
-    $stock_minimo    = floatval($_POST['stock_minimo']   ?? 0);
-    $stock_maximo    = floatval($_POST['stock_maximo']   ?? 0);
+    $productos_ids   = $_POST['producto_id']   ?? [];
+    $stocks_actual   = $_POST['stock_actual']  ?? [];
+    $stocks_minimo   = $_POST['stock_minimo']  ?? [];
+    $stocks_maximo   = $_POST['stock_maximo']  ?? [];
 
-    if ($producto_id && $sucursalDestino) {
-        $pdo->prepare("
+    if ($sucursalDestino && is_array($productos_ids)) {
+        $stmtUpsert = $pdo->prepare("
             INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
             VALUES (?, ?, ?, ?, ?, 1)
             ON DUPLICATE KEY UPDATE activo=1, stock_actual=VALUES(stock_actual), stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)
-        ")->execute([$producto_id, $sucursalDestino, $stock_actual, $stock_minimo, $stock_maximo]);
-
-        if ($stock_actual > 0) {
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,0,?,'Alta de producto en sucursal')")
-                ->execute([$producto_id, $_SESSION['usuario_id'], $stock_actual, $stock_actual]);
+        ");
+        $stmtMov = $pdo->prepare("
+            INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+            VALUES (?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
+        ");
+        foreach ($productos_ids as $i => $pid) {
+            $pid    = intval($pid);
+            $actual = floatval($stocks_actual[$i] ?? 0);
+            $minimo = floatval($stocks_minimo[$i] ?? 0);
+            $maximo = floatval($stocks_maximo[$i] ?? 0);
+            if (!$pid) continue;
+            $stmtUpsert->execute([$pid, $sucursalDestino, $actual, $minimo, $maximo]);
+            if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $actual, $actual]);
         }
     }
     header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=agregado_catalogo');
@@ -475,46 +495,36 @@ $esAdmin     = $_SESSION['rol'] === 'Administrador';
 $vistaGlobal = $esAdmin && $sucursalVista === 0;
 
 if ($vistaGlobal) {
-    $joinSS    = "JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1";
-    $joinSuc   = "JOIN sucursales s ON ss.sucursal_id = s.sucursal_id";
-    $selectSuc = ", s.nombre AS nombre_sucursal, ss.sucursal_id AS sucursal_id_stock";
-    $where     = "WHERE p.activo = 1";
-    $params    = [];
-    $orderBy   = "ss.stock_actual <= ss.stock_minimo DESC, s.nombre ASC, p.nombre_producto ASC";
+    // Vista global: catálogo puro, sin JOIN a stock_sucursal
+    $where   = "WHERE p.activo = 1";
+    $params  = [];
+    $orderBy = "p.nombre_producto ASC";
+    if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+    if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
+    $stmt = $pdo->prepare("
+        SELECT p.*, c.nombre as nombre_categoria
+        FROM productos p
+        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        {$where}
+        ORDER BY {$orderBy}
+    ");
+    $stmt->execute($params);
+    $totalStockBajo = 0;
 } else {
-    $joinSS    = "INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1";
-    $joinSuc   = "";
-    $selectSuc = "";
-    $where     = "WHERE p.activo = 1";
-    $params    = [$sucursalVista];
-    $orderBy   = "ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC";
-}
-
-if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
-if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
-if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
-
-$stmt = $pdo->prepare("
-    SELECT p.*, c.nombre as nombre_categoria, ss.stock_actual, ss.stock_minimo, ss.stock_maximo{$selectSuc}
-    FROM productos p
-    LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-    {$joinSS}
-    {$joinSuc}
-    {$where}
-    ORDER BY {$orderBy}
-");
-$stmt->execute($params);
-$productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
-
-if ($vistaGlobal) {
-    $totalStockBajo = $pdo->query("
-        SELECT COUNT(DISTINCT p.producto_id) FROM productos p
-        JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1
-        WHERE p.activo = 1 AND ss.stock_actual <= ss.stock_minimo
-    ")->fetchColumn();
-} else {
+    $where   = "WHERE p.activo = 1";
+    $params  = [$sucursalVista];
+    $orderBy = "ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC";
+    if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+    if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
+    if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
+    $stmt = $pdo->prepare("
+        SELECT p.*, c.nombre as nombre_categoria, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
+        FROM productos p
+        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+        {$where}
+        ORDER BY {$orderBy}
+    ");
     $stmtBajo = $pdo->prepare("
         SELECT COUNT(*) FROM productos p
         INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
@@ -523,6 +533,10 @@ if ($vistaGlobal) {
     $stmtBajo->execute([$sucursalVista]);
     $totalStockBajo = $stmtBajo->fetchColumn();
 }
+$stmt->execute($params);
+$productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -700,14 +714,23 @@ if ($vistaGlobal) {
             </div>
         <?php endif; ?>
 
-        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'eliminado'): ?>
-            <div class="msg msg-exito">Producto eliminado correctamente.</div>
-        <?php endif; ?>
-        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_eliminar'): ?>
-            <div class="msg msg-error">No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.</div>
-        <?php endif; ?>
-        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'agregado_catalogo'): ?>
-            <div class="msg msg-exito">Producto agregado a la sucursal correctamente.</div>
+        <?php
+        $msgTextos = [
+            'creado'           => '✅ Producto registrado correctamente en el catálogo.',
+            'editado'          => '✅ Producto actualizado correctamente.',
+            'eliminado'        => '✅ Producto eliminado correctamente.',
+            'agregado_catalogo'=> '✅ Producto(s) agregado(s) a la sucursal correctamente.',
+            'error_eliminar'   => '❌ No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
+        ];
+        $msgActual = $_GET['msg'] ?? '';
+        if (isset($msgTextos[$msgActual])):
+            $esMsgError = str_starts_with($msgActual, 'error');
+        ?>
+        <div class="msg <?= $esMsgError ? 'msg-error' : 'msg-exito' ?>" id="msgNotificacion" style="display:flex;justify-content:space-between;align-items:center;">
+            <span><?= $msgTextos[$msgActual] ?></span>
+            <button onclick="this.parentElement.style.display='none'" style="background:none;border:none;font-size:18px;color:inherit;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>
+        </div>
+        <script>setTimeout(()=>{const m=document.getElementById('msgNotificacion');if(m)m.style.display='none';},10000);</script>
         <?php endif; ?>
 
         <form method="GET" action="inventario_productos.php">
@@ -733,9 +756,11 @@ if ($vistaGlobal) {
                 <?php if ($busqueda || $categoria || $stock_bajo): ?>
                     <a class="btn-limpiar" href="inventario_productos.php">Limpiar</a>
                 <?php endif; ?>
+                <?php if (!$vistaGlobal): ?>
                 <a class="btn-stock-bajo <?= $stock_bajo?'activo':'' ?>" href="inventario_productos.php?stock_bajo=1">
                     Stock bajo (<?= $totalStockBajo ?>)
                 </a>
+                <?php endif; ?>
             </div>
         </form>
 
@@ -747,9 +772,10 @@ if ($vistaGlobal) {
                         <th>Código</th>
                         <th>Nombre</th>
                         <th>Categoría</th>
-                        <?php if ($vistaGlobal): ?><th>Sucursal</th><?php endif; ?>
                         <th>Tipo</th>
+                        <?php if (!$vistaGlobal): ?>
                         <th>Stock</th>
+                        <?php endif; ?>
                         <th>P. Venta</th>
                         <th>P. Mayoreo</th>
                         <th>Acciones</th>
@@ -757,7 +783,7 @@ if ($vistaGlobal) {
                 </thead>
                 <tbody id="tablaFiltrable">
                     <?php foreach ($productos as $p):
-                        $esStockBajo = $p['stock_actual'] <= $p['stock_minimo'];
+                        $esStockBajo = !$vistaGlobal && isset($p['stock_actual']) && $p['stock_actual'] <= $p['stock_minimo'];
                     ?>
                     <tr class="<?= $esStockBajo?'stock-bajo':'' ?>">
                         <td style="color:#aaa;font-size:12px;"><?= htmlspecialchars($p['codigo']) ?></td>
@@ -768,24 +794,25 @@ if ($vistaGlobal) {
                             <?php endif; ?>
                         </td>
                         <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
-                        <?php if ($vistaGlobal): ?>
-                        <td style="font-size:12px;color:#1565c0;"><?= htmlspecialchars($p['nombre_sucursal']??'—') ?></td>
-                        <?php endif; ?>
                         <td>
                             <span class="badge-tipo <?= $p['tipo_venta']==='Unidad'?'tipo-unidad':'tipo-suelto' ?>">
                                 <?= $p['tipo_venta'] ?>
                             </span>
                         </td>
+                        <?php if (!$vistaGlobal): ?>
                         <td class="<?= $esStockBajo?'stock-alerta':'stock-ok' ?>">
                             <?= number_format($p['stock_actual'],2) ?>
                             <span style="font-size:11px;color:#aaa;">/ mín <?= number_format($p['stock_minimo'],2) ?></span>
                         </td>
+                        <?php endif; ?>
                         <td>$<?= number_format($p['precio_venta'],2) ?></td>
                         <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
                         <td>
                             <div class="acciones">
-                                <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?>&sucursal=<?= $vistaGlobal ? ($p['sucursal_id_stock'] ?? $sucursalVista) : $sucursalVista ?>">Editar</a>
+                                <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?><?= $vistaGlobal ? '' : '&sucursal='.$sucursalVista ?>">Editar</a>
+                                <?php if (!$vistaGlobal): ?>
                                 <a class="btn-accion btn-entrada" href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
+                                <?php endif; ?>
                                 <button class="btn-accion btn-eliminar" type="button" onclick="confirmarEliminacion(<?= $p['producto_id'] ?>, <?= json_encode($p['nombre_producto']) ?>)">Eliminar</button>
                             </div>
                         </td>
@@ -814,28 +841,28 @@ if ($vistaGlobal) {
         <div style="padding:14px 20px;border-bottom:1px solid #f0f0f0;">
             <input type="text" id="searchCatalogo" placeholder="Buscar por nombre o código..." oninput="buscarCatalogo(this.value)" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
         </div>
-        <div id="listaCatalogo" style="flex:1;overflow-y:auto;padding:8px 0;min-height:200px;">
+        <div id="listaCatalogo" style="flex:1;overflow-y:auto;padding:8px 0;min-height:160px;">
             <div style="text-align:center;padding:40px;color:#aaa;font-size:13px;">Cargando productos...</div>
         </div>
-        <div id="formCatalogo" style="padding:16px 20px;border-top:1px solid #eee;background:#f9f9f9;display:none;">
-            <h4 id="nombreProductoSeleccionado" style="font-size:13px;font-weight:700;color:#333;margin:0 0 12px;"></h4>
-            <div style="display:flex;gap:10px;margin-bottom:12px;">
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#888;font-weight:600;flex:1;">
-                    Stock inicial
-                    <input type="number" id="inputStockActual" value="0" min="0" step="0.01" style="padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
-                </label>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#888;font-weight:600;flex:1;">
-                    Stock mínimo
-                    <input type="number" id="inputStockMinimo" value="0" min="0" step="0.01" style="padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
-                </label>
-                <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#888;font-weight:600;flex:1;">
-                    Stock máximo
-                    <input type="number" id="inputStockMaximo" value="0" min="0" step="0.01" style="padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
-                </label>
+        <!-- Panel de productos seleccionados -->
+        <div id="seccionSeleccionados" style="display:none;border-top:2px solid #14ace7;background:#f0f9ff;flex-shrink:0;">
+            <div style="padding:10px 20px 4px;">
+                <span style="font-size:12px;font-weight:700;color:#0277bd;text-transform:uppercase;letter-spacing:.5px;">
+                    Productos a agregar (<span id="conteoSeleccionados">0</span>)
+                </span>
             </div>
-            <div style="display:flex;gap:8px;justify-content:flex-end;">
-                <button onclick="cancelarSeleccionCatalogo()" style="background:white;color:#666;border:1px solid #ddd;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;">Cancelar</button>
-                <button onclick="confirmarAgregarCatalogo()" style="background:#14ace7;color:white;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;">Agregar a esta sucursal</button>
+            <!-- Encabezados de columnas alineados con los inputs -->
+            <div style="display:flex;align-items:center;gap:8px;padding:2px 20px 4px;">
+                <span style="flex:1;"></span>
+                <span style="width:68px;text-align:center;font-size:10px;font-weight:700;color:#0277bd;text-transform:uppercase;">Inicial</span>
+                <span style="width:68px;text-align:center;font-size:10px;font-weight:700;color:#0277bd;text-transform:uppercase;">Mínimo</span>
+                <span style="width:68px;text-align:center;font-size:10px;font-weight:700;color:#0277bd;text-transform:uppercase;">Máximo</span>
+                <span style="width:24px;"></span>
+            </div>
+            <div id="listaSeleccionados" style="max-height:220px;overflow-y:auto;padding:0 20px 6px;"></div>
+            <div style="padding:10px 20px 14px;display:flex;justify-content:flex-end;gap:8px;">
+                <button onclick="cerrarModalCatalogo()" style="background:white;color:#666;border:1px solid #ddd;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;">Cancelar</button>
+                <button onclick="confirmarAgregarCatalogo()" id="btnConfirmarAgregar" style="background:#14ace7;color:white;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;">Agregar a esta sucursal</button>
             </div>
         </div>
     </div>
@@ -843,10 +870,6 @@ if ($vistaGlobal) {
 <form method="POST" id="formAgregarCatalogoAdmin" style="display:none;">
     <input type="hidden" name="agregar_catalogo_admin" value="1">
     <input type="hidden" name="sucursal_destino" value="<?= $sucursalVista ?>">
-    <input type="hidden" name="producto_id"   id="inputCatProdId">
-    <input type="hidden" name="stock_actual"  id="inputCatStockActual">
-    <input type="hidden" name="stock_minimo"  id="inputCatStockMinimo">
-    <input type="hidden" name="stock_maximo"  id="inputCatStockMaximo">
 </form>
 <?php endif; ?>
 
@@ -936,13 +959,13 @@ document.addEventListener('keydown', function(e) {
 
 // ---- Modal catálogo global (admin vista-sucursal) ----
 let catalogoTimeout = null;
-let productoCatSeleccionado = null;
 
 function abrirModalCatalogo() {
     document.getElementById('modalCatalogo').classList.add('visible');
     document.getElementById('searchCatalogo').value = '';
-    document.getElementById('formCatalogo').style.display = 'none';
-    productoCatSeleccionado = null;
+    document.getElementById('listaSeleccionados').innerHTML = '';
+    document.getElementById('seccionSeleccionados').style.display = 'none';
+    document.getElementById('conteoSeleccionados').textContent = '0';
     cargarCatalogo('');
     setTimeout(() => document.getElementById('searchCatalogo').focus(), 100);
 }
@@ -950,7 +973,6 @@ function abrirModalCatalogo() {
 function cerrarModalCatalogo() {
     const modal = document.getElementById('modalCatalogo');
     if (modal) modal.classList.remove('visible');
-    productoCatSeleccionado = null;
 }
 
 function buscarCatalogo(q) {
@@ -966,18 +988,29 @@ function cargarCatalogo(q) {
         .then(r => r.json())
         .then(data => {
             if (data.length === 0) {
-                lista.innerHTML = '<div style="text-align:center;padding:40px;color:#aaa;font-size:13px;">No hay productos disponibles en el catálogo para agregar.<br><small>Todos los productos ya están en esta sucursal.</small></div>';
+                lista.innerHTML = '<div style="text-align:center;padding:40px;color:#aaa;font-size:13px;">No hay productos disponibles para agregar.<br><small>Todos los del catálogo ya están en esta sucursal.</small></div>';
                 return;
             }
+            // Mantener marcados los que ya están en la lista de seleccionados
+            const yaSeleccionados = new Set([...document.querySelectorAll('.sel-item')].map(e => e.dataset.id));
             lista.innerHTML = data.map(p => {
-                const cat  = p.categoria ? ' &middot; ' + p.categoria : '';
+                const cat    = p.categoria ? ' · ' + p.categoria : '';
                 const precio = parseFloat(p.precio_venta || 0).toFixed(2);
-                return `<div class="cat-item" style="display:flex;justify-content:space-between;align-items:center;padding:10px 20px;cursor:pointer;border-bottom:1px solid #f5f5f5;transition:background .15s;" onclick="seleccionarProductoCat(${p.producto_id}, ${JSON.stringify(p.nombre_producto)}, this)">
-                    <div>
+                const nombre = p.nombre_producto.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+                const enLista = yaSeleccionados.has(String(p.producto_id));
+                const btnStyle = enLista
+                    ? 'background:#388e3c;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;'
+                    : 'background:#14ace7;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;';
+                const btnText = enLista ? '✓ En lista' : '+ Seleccionar';
+                return `<div class="cat-item" data-id="${p.producto_id}" data-nombre="${nombre}" style="display:flex;justify-content:space-between;align-items:center;padding:10px 20px;border-bottom:1px solid #f5f5f5;">
+                    <div style="flex:1;">
                         <div style="font-weight:600;font-size:13px;">${p.nombre_producto}</div>
                         <div style="font-size:11px;color:#888;">${p.codigo}${cat}</div>
                     </div>
-                    <div style="font-size:13px;color:#1565c0;font-weight:600;">$${precio}</div>
+                    <div style="display:flex;align-items:center;gap:14px;">
+                        <span style="font-size:13px;color:#1565c0;font-weight:600;">$${precio}</span>
+                        <button class="btn-cat-sel" onclick="seleccionarProductoCat(this)" style="${btnStyle}">${btnText}</button>
+                    </div>
                 </div>`;
             }).join('');
         })
@@ -986,39 +1019,94 @@ function cargarCatalogo(q) {
         });
 }
 
-function seleccionarProductoCat(id, nombre, el) {
-    productoCatSeleccionado = id;
-    document.getElementById('nombreProductoSeleccionado').textContent = 'Stock para: ' + nombre;
-    document.getElementById('inputStockActual').value = '0';
-    document.getElementById('inputStockMinimo').value = '0';
-    document.getElementById('inputStockMaximo').value = '0';
-    document.getElementById('formCatalogo').style.display = 'block';
-    document.querySelectorAll('.cat-item').forEach(e => e.style.background = '');
-    if (el) el.style.background = '#e3f2fd';
-    setTimeout(() => document.getElementById('inputStockActual').focus(), 50);
+function seleccionarProductoCat(btn) {
+    const catItem = btn.closest('.cat-item');
+    const id      = catItem.dataset.id;
+    const nombre  = catItem.dataset.nombre;
+
+    // Si ya está en la lista, quitarlo
+    const existente = document.querySelector(`.sel-item[data-id="${id}"]`);
+    if (existente) {
+        existente.remove();
+        btn.textContent = '+ Seleccionar';
+        btn.style.background = '#14ace7';
+        actualizarSeccionSeleccionados();
+        return;
+    }
+
+    // Agregar a la lista de seleccionados
+    const inpStyle = 'width:68px;padding:5px 6px;border:1px solid #b0d8f0;border-radius:5px;font-size:12px;text-align:center;';
+    const fila = document.createElement('div');
+    fila.className = 'sel-item';
+    fila.dataset.id = id;
+    fila.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #d0eaf8;';
+    fila.innerHTML = `
+        <span style="flex:1;font-size:12px;font-weight:600;color:#222;">${nombre}</span>
+        <input type="number" class="inp-stock-actual" value="0" min="0" step="0.01" placeholder="Inicial" style="${inpStyle}" title="Stock inicial">
+        <input type="number" class="inp-stock-min"    value="0" min="0" step="0.01" placeholder="Mín"     style="${inpStyle}" title="Stock mínimo">
+        <input type="number" class="inp-stock-max"    value="0" min="0" step="0.01" placeholder="Máx"     style="${inpStyle}" title="Stock máximo">
+        <button onclick="quitarSeleccionado(this)" title="Quitar" style="background:none;border:none;color:#e53935;font-size:18px;line-height:1;cursor:pointer;padding:0 2px;">✕</button>`;
+    document.getElementById('listaSeleccionados').appendChild(fila);
+
+    btn.textContent = '✓ En lista';
+    btn.style.background = '#388e3c';
+
+    actualizarSeccionSeleccionados();
+
+    // Enfocar primer input del nuevo elemento
+    setTimeout(() => fila.querySelector('.inp-stock-actual').focus(), 50);
 }
 
-function cancelarSeleccionCatalogo() {
-    productoCatSeleccionado = null;
-    document.getElementById('formCatalogo').style.display = 'none';
-    document.querySelectorAll('.cat-item').forEach(e => e.style.background = '');
+function quitarSeleccionado(removeBtn) {
+    const selItem = removeBtn.closest('.sel-item');
+    const id = selItem.dataset.id;
+    selItem.remove();
+    // Resetear botón en la lista del catálogo
+    const catBtn = document.querySelector(`.cat-item[data-id="${id}"] .btn-cat-sel`);
+    if (catBtn) { catBtn.textContent = '+ Seleccionar'; catBtn.style.background = '#14ace7'; }
+    actualizarSeccionSeleccionados();
+}
+
+function actualizarSeccionSeleccionados() {
+    const items = document.querySelectorAll('.sel-item');
+    const n = items.length;
+    document.getElementById('seccionSeleccionados').style.display = n > 0 ? 'block' : 'none';
+    document.getElementById('conteoSeleccionados').textContent = n;
+    document.getElementById('btnConfirmarAgregar').textContent =
+        'Agregar ' + n + ' producto' + (n !== 1 ? 's' : '') + ' a esta sucursal';
+    if (n > 0) {
+        setTimeout(() => document.getElementById('seccionSeleccionados')
+            .scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
+    }
 }
 
 function confirmarAgregarCatalogo() {
-    if (!productoCatSeleccionado) return;
-    document.getElementById('inputCatProdId').value       = productoCatSeleccionado;
-    document.getElementById('inputCatStockActual').value  = document.getElementById('inputStockActual').value;
-    document.getElementById('inputCatStockMinimo').value  = document.getElementById('inputStockMinimo').value;
-    document.getElementById('inputCatStockMaximo').value  = document.getElementById('inputStockMaximo').value;
-    document.getElementById('formAgregarCatalogoAdmin').submit();
+    const items = document.querySelectorAll('.sel-item');
+    if (!items.length) return;
+    const form = document.getElementById('formAgregarCatalogoAdmin');
+    // Limpiar inputs dinámicos previos
+    form.querySelectorAll('.inp-din').forEach(e => e.remove());
+    const add = (name, val) => {
+        const i = document.createElement('input');
+        i.type = 'hidden'; i.name = name; i.value = val; i.className = 'inp-din';
+        form.appendChild(i);
+    };
+    items.forEach(item => {
+        add('producto_id[]',  item.dataset.id);
+        add('stock_actual[]', item.querySelector('.inp-stock-actual').value);
+        add('stock_minimo[]', item.querySelector('.inp-stock-min').value);
+        add('stock_maximo[]', item.querySelector('.inp-stock-max').value);
+    });
+    form.submit();
 }
 
-// Cerrar modal catálogo al hacer clic fuera
+// Cerrar al hacer clic fuera del modal
 (function() {
     const m = document.getElementById('modalCatalogo');
     if (m) m.addEventListener('click', function(e) { if (e.target === this) cerrarModalCatalogo(); });
 })();
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>
 

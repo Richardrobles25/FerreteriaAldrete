@@ -618,5 +618,6 @@ document.addEventListener('click', function(e) {
     }
 });
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>

@@ -268,5 +268,6 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>

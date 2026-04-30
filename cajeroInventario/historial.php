@@ -272,5 +272,6 @@ function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
 }
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>

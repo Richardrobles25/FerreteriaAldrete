@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -326,6 +326,7 @@ if ($verCorte) {
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>
 

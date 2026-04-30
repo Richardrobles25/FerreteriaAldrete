@@ -405,5 +405,6 @@ function agregarArea(id) {
 // Inicializar tags al cargar
 document.addEventListener('DOMContentLoaded', renderAreasTags);
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>

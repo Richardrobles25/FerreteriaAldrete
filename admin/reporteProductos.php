@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -362,6 +362,7 @@ function filtrarTabla(q) {
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function togglePersonalizado(val) { document.getElementById('campoPers').classList.toggle('visible', val === 'personalizado'); }
 </script>
+<script src="../includes/auto_filter.js"></script>
 </body>
 </html>
 

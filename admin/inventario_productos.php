@@ -676,7 +676,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             <h3>Importar productos desde Excel</h3>
             <?php if ($vistaGlobal): ?>
                 <div class="msg" style="background:#fff8e1;color:#e65100;border-left:3px solid #e65100;margin-bottom:10px;">
-                    Estás en vista global. La importación se realizará a tu sucursal propia. Selecciona una sucursal específica para importar a otra.
+                    Estás en el inventario global. La importación se realizará a el catalogo global.
                 </div>
             <?php endif; ?>
             <?php if (!empty($erroresImport)): ?>

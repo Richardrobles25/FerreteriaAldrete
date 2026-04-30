@@ -2173,6 +2173,17 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
             renderCarrito(); recalcularTodo(); quitarCliente();
             document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
             document.querySelectorAll('.campos-pago').forEach(c => c.classList.remove('visible'));
+            // Reiniciar campos de pago
+            const _montoEf = document.getElementById('montoEfectivo');
+            if (_montoEf) _montoEf.value = '';
+            const _resCambio = document.getElementById('resCambio');
+            if (_resCambio) _resCambio.textContent = '$0.00';
+            const _transferRef = document.getElementById('transferReferencia');
+            if (_transferRef) _transferRef.value = '';
+            const _mixtoEf = document.getElementById('mixtoEfectivo');
+            if (_mixtoEf) _mixtoEf.value = '';
+            const _mixtoTerm = document.getElementById('mixtoTerminal');
+            if (_mixtoTerm) _mixtoTerm.value = '';
             document.getElementById('recPaquetes').style.display = 'none';
             const chk = document.getElementById('chkAjusteDano');
             if (chk) { chk.checked = false; }

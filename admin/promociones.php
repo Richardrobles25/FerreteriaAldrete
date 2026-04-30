@@ -17,11 +17,12 @@ if (isset($_GET['buscar_prods'])) {
     if (!$sucursalId) { echo json_encode([]); exit(); }
     $like = '%' . $q . '%';
     $stmt = $pdo->prepare("
-        SELECT producto_id, codigo, nombre_producto, precio_venta, tipo_venta
-        FROM productos
-        WHERE sucursal_id = ? AND activo = 1
-          AND (nombre_producto LIKE ? OR codigo LIKE ?)
-        ORDER BY nombre_producto ASC LIMIT 30
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.tipo_venta
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+        WHERE p.activo = 1
+          AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)
+        ORDER BY p.nombre_producto ASC LIMIT 30
     ");
     $stmt->execute([$sucursalId, $like, $like]);
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
@@ -81,7 +82,7 @@ $filtroEstado   = $_GET['estado_f'] ?? 'todas';
 
 $where  = '1=1';
 $params = [];
-if ($filtroSucursal) { $where .= ' AND p.sucursal_id = ?'; $params[] = $filtroSucursal; }
+if ($filtroSucursal) { $where .= ' AND u.sucursal_id = ?'; $params[] = $filtroSucursal; }
 if ($filtroEstado === 'activas') {
     $where .= " AND pr.activo = 1 AND CURDATE() BETWEEN pr.fecha_inicio AND pr.fecha_fin";
 } elseif ($filtroEstado === 'proximas') {
@@ -98,8 +99,8 @@ $stmtList = $pdo->prepare("
            u.nombre_completo AS creador
     FROM promociones pr
     JOIN productos p   ON pr.producto_id = p.producto_id
-    JOIN sucursales s  ON p.sucursal_id   = s.sucursal_id
     JOIN usuarios u    ON pr.usuario_id   = u.usuario_id
+    JOIN sucursales s  ON u.sucursal_id   = s.sucursal_id
     WHERE $where
     ORDER BY pr.created_at DESC
     LIMIT 200

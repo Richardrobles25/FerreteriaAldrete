@@ -95,10 +95,11 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos de esta sucursal para el formulario
 $stmtProds = $pdo->prepare("
-    SELECT producto_id, codigo, nombre_producto, precio_venta
-    FROM productos
-    WHERE sucursal_id = ? AND activo = 1
-    ORDER BY nombre_producto ASC
+    SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta
+    FROM productos p
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+    WHERE p.activo = 1
+    ORDER BY p.nombre_producto ASC
 ");
 $stmtProds->execute([$sucursalVista]);
 $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);

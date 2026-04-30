@@ -16,7 +16,7 @@ $busqueda    = trim($_GET['buscar']  ?? '');
 $where  = "WHERE 1=1";
 $params = [];
 
-if ($sucursal)                      { $where .= " AND p.sucursal_id = ?";                        $params[] = $sucursal; }
+if ($sucursal)                      { $where .= " AND u.sucursal_id = ?";                        $params[] = $sucursal; }
 if ($fechaInicio && $fechaFin)      { $where .= " AND DATE(m.created_at) BETWEEN ? AND ?";       $params[] = $fechaInicio; $params[] = $fechaFin; }
 elseif ($fechaInicio)               { $where .= " AND DATE(m.created_at) >= ?";                  $params[] = $fechaInicio; }
 elseif ($fechaFin)                  { $where .= " AND DATE(m.created_at) <= ?";                  $params[] = $fechaFin; }
@@ -32,7 +32,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
         JOIN usuarios u ON m.usuario_id = u.usuario_id
-        JOIN sucursales s ON p.sucursal_id = s.sucursal_id
+        JOIN sucursales s ON u.sucursal_id = s.sucursal_id
         $where
         ORDER BY m.created_at DESC
     ");
@@ -74,7 +74,7 @@ $stmt = $pdo->prepare("
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
-    JOIN sucursales s ON p.sucursal_id = s.sucursal_id
+    JOIN sucursales s ON u.sucursal_id = s.sucursal_id
     $where
     ORDER BY m.created_at DESC
     LIMIT 300
@@ -91,6 +91,7 @@ $stmtRes = $pdo->prepare("
         COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) AS total_transf
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
+    JOIN usuarios u ON m.usuario_id = u.usuario_id
     $where
 ");
 $stmtRes->execute($params);

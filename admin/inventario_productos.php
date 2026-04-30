@@ -20,18 +20,28 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     $esAdmin   = $_SESSION['rol'] === 'Administrador';
     $vistaGlobal = $esAdmin && $sucursalVista === 0;
 
-    $sqlWhere  = $vistaGlobal ? "WHERE p.activo = 1"                        : "WHERE p.sucursal_id = ? AND p.activo = 1";
-    $sqlJoinS  = $vistaGlobal ? "JOIN sucursales s ON s.sucursal_id = p.sucursal_id" : "";
-    $sqlSelS   = $vistaGlobal ? ", s.nombre AS sucursal_nombre"              : "";
-    $sqlSelC   = $esAdmin     ? ", p.precio_compra"                          : "";
-    $paramsPdf = $vistaGlobal ? [] : [$sucursalVista];
+    if ($vistaGlobal) {
+        $sqlJoinSS = "JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1";
+        $sqlJoinS  = "JOIN sucursales s ON ss.sucursal_id = s.sucursal_id";
+        $sqlWhere  = "WHERE p.activo = 1";
+        $sqlSelS   = ", s.nombre AS sucursal_nombre";
+        $paramsPdf = [];
+    } else {
+        $sqlJoinSS = "INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1";
+        $sqlJoinS  = "";
+        $sqlWhere  = "WHERE p.activo = 1";
+        $sqlSelS   = "";
+        $paramsPdf = [$sucursalVista];
+    }
+    $sqlSelC = $esAdmin ? ", p.precio_compra" : "";
 
     $stmt = $pdo->prepare("
         SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
-               p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.tipo_venta,
+               p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo, p.tipo_venta,
                p.unidad_medida{$sqlSelS}
         FROM productos p
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        {$sqlJoinSS}
         {$sqlJoinS}
         {$sqlWhere}
         ORDER BY " . ($vistaGlobal ? "s.nombre ASC, " : "") . "p.nombre_producto ASC
@@ -74,19 +84,29 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
     $esAdmin     = $_SESSION['rol'] === 'Administrador';
     $vistaGlobal = $esAdmin && $sucursalVista === 0;
 
-    $sqlWhere   = $vistaGlobal ? "WHERE p.activo = 1"                          : "WHERE p.sucursal_id = ? AND p.activo = 1";
-    $sqlJoinS   = $vistaGlobal ? "JOIN sucursales s ON s.sucursal_id = p.sucursal_id" : "";
-    $sqlSelS    = $vistaGlobal ? ", s.nombre AS sucursal_nombre"                : "";
-    $sqlSelC    = $esAdmin     ? ", p.precio_compra"                            : "";
-    $paramsXls  = $vistaGlobal ? [] : [$sucursalVista];
+    if ($vistaGlobal) {
+        $xlsJoinSS = "JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1";
+        $xlsJoinS  = "JOIN sucursales s ON ss.sucursal_id = s.sucursal_id";
+        $sqlSelS   = ", s.nombre AS sucursal_nombre";
+        $sqlWhere  = "WHERE p.activo = 1";
+        $paramsXls = [];
+    } else {
+        $xlsJoinSS = "INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1";
+        $xlsJoinS  = "";
+        $sqlSelS   = "";
+        $sqlWhere  = "WHERE p.activo = 1";
+        $paramsXls = [$sucursalVista];
+    }
+    $sqlSelC = $esAdmin ? ", p.precio_compra" : "";
 
     $stmt = $pdo->prepare("
         SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
-               p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo,
-               p.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida{$sqlSelS}
+               p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
+               ss.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida{$sqlSelS}
         FROM productos p
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        {$sqlJoinS}
+        {$xlsJoinSS}
+        {$xlsJoinS}
         {$sqlWhere}
         ORDER BY " . ($vistaGlobal ? "s.nombre ASC, " : "") . "p.nombre_producto ASC
     ");
@@ -289,21 +309,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         }
                     }
 
-                    $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ?");
-                    $check->execute([$codigo, $sucursalImport]);
+                    // Buscar el producto globalmente por código (catálogo compartido)
+                    $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ?");
+                    $check->execute([$codigo]);
+                    $productoExistente = $check->fetch(PDO::FETCH_ASSOC);
 
-                    if ($check->fetch()) {
+                    if ($productoExistente) {
+                        $prodId = $productoExistente['producto_id'];
+                        // Actualizar catálogo global (sin stock ni sucursal_id)
                         if ($categoria_id !== null) {
-                            $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE codigo=? AND sucursal_id=?")
-                                ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $unidad_medida ?: null, $codigo, $sucursalImport]);
+                            $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                                ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
                         } else {
-                            $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, stock_minimo=?, stock_maximo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE codigo=? AND sucursal_id=?")
-                                ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $stock_minimo, $stock_maximo, $tipo_venta, $descripcion, $unidad_medida ?: null, $codigo, $sucursalImport]);
+                            $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                                ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
                         }
+                        // Upsert stock de la sucursal
+                        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                            VALUES (?,?,?,?,?,1)
+                            ON DUPLICATE KEY UPDATE stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)")
+                            ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
                         $omitidos++;
                     } else {
-                        $pdo->prepare("INSERT INTO productos (sucursal_id, categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, tipo_venta, unidad_medida, activo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)")
-                            ->execute([$sucursalImport, $categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $stock_actual, $stock_minimo, $stock_maximo, $tipo_venta, $unidad_medida ?: null]);
+                        // Insertar en catálogo global (sin sucursal_id, sin stock)
+                        $pdo->prepare("INSERT INTO productos (categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, tipo_venta, unidad_medida, activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
+                            ->execute([$categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $unidad_medida ?: null]);
+                        $prodId = (int)$pdo->lastInsertId();
+                        // Insertar stock para la sucursal
+                        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
+                            ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
                         $importados++;
                     }
                 } catch (Exception $eRow) {
@@ -359,12 +393,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
     $motivo = trim($_POST['motivo_eliminacion'] ?? '');
 
     if ($id && $motivo !== '') {
-        $stmtProd = $pdo->prepare("SELECT producto_id, stock_actual FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-        $stmtProd->execute([$id, $sucursalVista]);
+        $stmtProd = $pdo->prepare("SELECT p.producto_id, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
+        $stmtProd->execute([$sucursalVista, $id]);
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
         if ($productoEliminar) {
-            $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
+            $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
             $pdo->prepare("
                 INSERT INTO movimientos_inventario
                 (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
@@ -385,6 +419,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
     exit();
 }
 
+// AJAX: catálogo global — productos que la sucursal seleccionada aún no tiene
+if (isset($_GET['catalogo_disponible'])) {
+    header('Content-Type: application/json');
+    $sucursalFiltro = intval($_GET['sucursal'] ?? 0);
+    if (!$sucursalFiltro) { echo json_encode([]); exit(); }
+    $busq   = trim($_GET['q'] ?? '');
+    $where  = "WHERE p.activo = 1 AND (ss.producto_id IS NULL OR ss.activo = 0)";
+    $params = [$sucursalFiltro];
+    if ($busq) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busq.'%'; $params[] = '%'.$busq.'%'; }
+    $stmt = $pdo->prepare("
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.precio_mayoreo,
+               c.nombre AS categoria
+        FROM productos p
+        LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        $where
+        ORDER BY p.nombre_producto ASC
+        LIMIT 80
+    ");
+    $stmt->execute($params);
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
+// POST: agregar producto del catálogo a una sucursal específica
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admin'])) {
+    $producto_id     = intval($_POST['producto_id']      ?? 0);
+    $sucursalDestino = intval($_POST['sucursal_destino'] ?? 0);
+    $stock_actual    = floatval($_POST['stock_actual']   ?? 0);
+    $stock_minimo    = floatval($_POST['stock_minimo']   ?? 0);
+    $stock_maximo    = floatval($_POST['stock_maximo']   ?? 0);
+
+    if ($producto_id && $sucursalDestino) {
+        $pdo->prepare("
+            INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+            VALUES (?, ?, ?, ?, ?, 1)
+            ON DUPLICATE KEY UPDATE activo=1, stock_actual=VALUES(stock_actual), stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)
+        ")->execute([$producto_id, $sucursalDestino, $stock_actual, $stock_minimo, $stock_maximo]);
+
+        if ($stock_actual > 0) {
+            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,0,?,'Alta de producto en sucursal')")
+                ->execute([$producto_id, $_SESSION['usuario_id'], $stock_actual, $stock_actual]);
+        }
+    }
+    header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=agregado_catalogo');
+    exit();
+}
+
 // Filtros
 $busqueda    = trim($_GET['buscar'] ?? '');
 $categoria   = intval($_GET['categoria'] ?? 0);
@@ -393,32 +475,51 @@ $esAdmin     = $_SESSION['rol'] === 'Administrador';
 $vistaGlobal = $esAdmin && $sucursalVista === 0;
 
 if ($vistaGlobal) {
-    $where  = "WHERE p.activo = 1";
-    $params = [];
+    $joinSS    = "JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1";
+    $joinSuc   = "JOIN sucursales s ON ss.sucursal_id = s.sucursal_id";
+    $selectSuc = ", s.nombre AS nombre_sucursal, ss.sucursal_id AS sucursal_id_stock";
+    $where     = "WHERE p.activo = 1";
+    $params    = [];
+    $orderBy   = "ss.stock_actual <= ss.stock_minimo DESC, s.nombre ASC, p.nombre_producto ASC";
 } else {
-    $where  = "WHERE p.sucursal_id = ? AND p.activo = 1";
-    $params = [$sucursalVista];
+    $joinSS    = "INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1";
+    $joinSuc   = "";
+    $selectSuc = "";
+    $where     = "WHERE p.activo = 1";
+    $params    = [$sucursalVista];
+    $orderBy   = "ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC";
 }
 
 if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
-if ($stock_bajo) { $where .= " AND p.stock_actual <= p.stock_minimo"; }
+if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
 
-$joinSucursal = $vistaGlobal ? "JOIN sucursales s ON s.sucursal_id = p.sucursal_id" : "";
-$selectSuc    = $vistaGlobal ? ", s.nombre AS nombre_sucursal" : "";
-$orderBy      = $vistaGlobal ? "p.stock_actual <= p.stock_minimo DESC, s.nombre ASC, p.nombre_producto ASC"
-                              : "p.stock_actual <= p.stock_minimo DESC, p.nombre_producto ASC";
-
-$stmt = $pdo->prepare("SELECT p.*, c.nombre as nombre_categoria{$selectSuc} FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.categoria_id {$joinSucursal} {$where} ORDER BY {$orderBy}");
+$stmt = $pdo->prepare("
+    SELECT p.*, c.nombre as nombre_categoria, ss.stock_actual, ss.stock_minimo, ss.stock_maximo{$selectSuc}
+    FROM productos p
+    LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+    {$joinSS}
+    {$joinSuc}
+    {$where}
+    ORDER BY {$orderBy}
+");
 $stmt->execute($params);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 if ($vistaGlobal) {
-    $totalStockBajo = $pdo->query("SELECT COUNT(*) FROM productos WHERE activo = 1 AND stock_actual <= stock_minimo")->fetchColumn();
+    $totalStockBajo = $pdo->query("
+        SELECT COUNT(DISTINCT p.producto_id) FROM productos p
+        JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1
+        WHERE p.activo = 1 AND ss.stock_actual <= ss.stock_minimo
+    ")->fetchColumn();
 } else {
-    $stmtBajo = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual <= stock_minimo");
+    $stmtBajo = $pdo->prepare("
+        SELECT COUNT(*) FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+        WHERE p.activo = 1 AND ss.stock_actual <= ss.stock_minimo
+    ");
     $stmtBajo->execute([$sucursalVista]);
     $totalStockBajo = $stmtBajo->fetchColumn();
 }
@@ -548,7 +649,11 @@ if ($vistaGlobal) {
                 <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
                 <a style="background:#c0392b;color:white;border:none;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;" href="inventario_productos.php?exportar=pdf">⬇ PDF</a>
                 <a class="btn-excel-export" href="inventario_productos.php?exportar=excel">⬇ Excel</a>
-                <a class="btn-agregar" href="inventario_formProducto.php">+ Agregar producto</a>
+                <?php if ($vistaGlobal): ?>
+                    <a class="btn-agregar" href="inventario_formProducto.php?todas=1">+ Nuevo producto (todas las sucursales)</a>
+                <?php else: ?>
+                    <button class="btn-agregar" type="button" onclick="abrirModalCatalogo()">+ Agregar del catálogo</button>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -600,6 +705,9 @@ if ($vistaGlobal) {
         <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_eliminar'): ?>
             <div class="msg msg-error">No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.</div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'agregado_catalogo'): ?>
+            <div class="msg msg-exito">Producto agregado a la sucursal correctamente.</div>
         <?php endif; ?>
 
         <form method="GET" action="inventario_productos.php">
@@ -676,7 +784,7 @@ if ($vistaGlobal) {
                         <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
                         <td>
                             <div class="acciones">
-                                <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?>">Editar</a>
+                                <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?>&sucursal=<?= $vistaGlobal ? ($p['sucursal_id_stock'] ?? $sucursalVista) : $sucursalVista ?>">Editar</a>
                                 <a class="btn-accion btn-entrada" href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
                                 <button class="btn-accion btn-eliminar" type="button" onclick="confirmarEliminacion(<?= $p['producto_id'] ?>, <?= json_encode($p['nombre_producto']) ?>)">Eliminar</button>
                             </div>
@@ -691,6 +799,56 @@ if ($vistaGlobal) {
         </div>
     </div>
 </div>
+
+<!-- Modal: Agregar del catálogo global (solo en vista de sucursal específica) -->
+<?php if (!$vistaGlobal): ?>
+<div class="modal-overlay" id="modalCatalogo" style="z-index:1001;">
+    <div style="background:white;border-radius:10px;width:660px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.18);">
+        <div style="padding:18px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h3 style="font-size:15px;font-weight:700;color:#222;margin:0;">Agregar del catálogo global</h3>
+                <p style="font-size:12px;color:#888;margin:3px 0 0;">Sucursal: <strong><?= htmlspecialchars($nombreSucursalVista) ?></strong> — Solo productos que aún no están en esta sucursal</p>
+            </div>
+            <button onclick="cerrarModalCatalogo()" style="background:none;border:none;font-size:22px;color:#aaa;cursor:pointer;">&times;</button>
+        </div>
+        <div style="padding:14px 20px;border-bottom:1px solid #f0f0f0;">
+            <input type="text" id="searchCatalogo" placeholder="Buscar por nombre o código..." oninput="buscarCatalogo(this.value)" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+        </div>
+        <div id="listaCatalogo" style="flex:1;overflow-y:auto;padding:8px 0;min-height:200px;">
+            <div style="text-align:center;padding:40px;color:#aaa;font-size:13px;">Cargando productos...</div>
+        </div>
+        <div id="formCatalogo" style="padding:16px 20px;border-top:1px solid #eee;background:#f9f9f9;display:none;">
+            <h4 id="nombreProductoSeleccionado" style="font-size:13px;font-weight:700;color:#333;margin:0 0 12px;"></h4>
+            <div style="display:flex;gap:10px;margin-bottom:12px;">
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#888;font-weight:600;flex:1;">
+                    Stock inicial
+                    <input type="number" id="inputStockActual" value="0" min="0" step="0.01" style="padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#888;font-weight:600;flex:1;">
+                    Stock mínimo
+                    <input type="number" id="inputStockMinimo" value="0" min="0" step="0.01" style="padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#888;font-weight:600;flex:1;">
+                    Stock máximo
+                    <input type="number" id="inputStockMaximo" value="0" min="0" step="0.01" style="padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                </label>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button onclick="cancelarSeleccionCatalogo()" style="background:white;color:#666;border:1px solid #ddd;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;">Cancelar</button>
+                <button onclick="confirmarAgregarCatalogo()" style="background:#14ace7;color:white;border:none;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;">Agregar a esta sucursal</button>
+            </div>
+        </div>
+    </div>
+</div>
+<form method="POST" id="formAgregarCatalogoAdmin" style="display:none;">
+    <input type="hidden" name="agregar_catalogo_admin" value="1">
+    <input type="hidden" name="sucursal_destino" value="<?= $sucursalVista ?>">
+    <input type="hidden" name="producto_id"   id="inputCatProdId">
+    <input type="hidden" name="stock_actual"  id="inputCatStockActual">
+    <input type="hidden" name="stock_minimo"  id="inputCatStockMinimo">
+    <input type="hidden" name="stock_maximo"  id="inputCatStockMaximo">
+</form>
+<?php endif; ?>
 
 <form method="POST" id="formEliminarProducto" style="display:none;">
     <input type="hidden" name="eliminar_producto" value="1">
@@ -770,8 +928,96 @@ document.getElementById('modalEliminarProducto').addEventListener('click', funct
     if (e.target === this) cerrarModalEliminacion();
 });
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') cerrarModalEliminacion();
+    if (e.key === 'Escape') {
+        cerrarModalEliminacion();
+        cerrarModalCatalogo();
+    }
 });
+
+// ---- Modal catálogo global (admin vista-sucursal) ----
+let catalogoTimeout = null;
+let productoCatSeleccionado = null;
+
+function abrirModalCatalogo() {
+    document.getElementById('modalCatalogo').classList.add('visible');
+    document.getElementById('searchCatalogo').value = '';
+    document.getElementById('formCatalogo').style.display = 'none';
+    productoCatSeleccionado = null;
+    cargarCatalogo('');
+    setTimeout(() => document.getElementById('searchCatalogo').focus(), 100);
+}
+
+function cerrarModalCatalogo() {
+    const modal = document.getElementById('modalCatalogo');
+    if (modal) modal.classList.remove('visible');
+    productoCatSeleccionado = null;
+}
+
+function buscarCatalogo(q) {
+    clearTimeout(catalogoTimeout);
+    catalogoTimeout = setTimeout(() => cargarCatalogo(q), 300);
+}
+
+function cargarCatalogo(q) {
+    const lista = document.getElementById('listaCatalogo');
+    lista.innerHTML = '<div style="text-align:center;padding:40px;color:#aaa;font-size:13px;">Cargando...</div>';
+    const sucursal = <?= intval($sucursalVista) ?>;
+    fetch('inventario_productos.php?catalogo_disponible&sucursal=' + sucursal + '&q=' + encodeURIComponent(q))
+        .then(r => r.json())
+        .then(data => {
+            if (data.length === 0) {
+                lista.innerHTML = '<div style="text-align:center;padding:40px;color:#aaa;font-size:13px;">No hay productos disponibles en el catálogo para agregar.<br><small>Todos los productos ya están en esta sucursal.</small></div>';
+                return;
+            }
+            lista.innerHTML = data.map(p => {
+                const cat  = p.categoria ? ' &middot; ' + p.categoria : '';
+                const precio = parseFloat(p.precio_venta || 0).toFixed(2);
+                return `<div class="cat-item" style="display:flex;justify-content:space-between;align-items:center;padding:10px 20px;cursor:pointer;border-bottom:1px solid #f5f5f5;transition:background .15s;" onclick="seleccionarProductoCat(${p.producto_id}, ${JSON.stringify(p.nombre_producto)}, this)">
+                    <div>
+                        <div style="font-weight:600;font-size:13px;">${p.nombre_producto}</div>
+                        <div style="font-size:11px;color:#888;">${p.codigo}${cat}</div>
+                    </div>
+                    <div style="font-size:13px;color:#1565c0;font-weight:600;">$${precio}</div>
+                </div>`;
+            }).join('');
+        })
+        .catch(() => {
+            lista.innerHTML = '<div style="text-align:center;padding:40px;color:#c00;font-size:13px;">Error al cargar el catálogo. Intenta de nuevo.</div>';
+        });
+}
+
+function seleccionarProductoCat(id, nombre, el) {
+    productoCatSeleccionado = id;
+    document.getElementById('nombreProductoSeleccionado').textContent = 'Stock para: ' + nombre;
+    document.getElementById('inputStockActual').value = '0';
+    document.getElementById('inputStockMinimo').value = '0';
+    document.getElementById('inputStockMaximo').value = '0';
+    document.getElementById('formCatalogo').style.display = 'block';
+    document.querySelectorAll('.cat-item').forEach(e => e.style.background = '');
+    if (el) el.style.background = '#e3f2fd';
+    setTimeout(() => document.getElementById('inputStockActual').focus(), 50);
+}
+
+function cancelarSeleccionCatalogo() {
+    productoCatSeleccionado = null;
+    document.getElementById('formCatalogo').style.display = 'none';
+    document.querySelectorAll('.cat-item').forEach(e => e.style.background = '');
+}
+
+function confirmarAgregarCatalogo() {
+    if (!productoCatSeleccionado) return;
+    document.getElementById('inputCatProdId').value       = productoCatSeleccionado;
+    document.getElementById('inputCatStockActual').value  = document.getElementById('inputStockActual').value;
+    document.getElementById('inputCatStockMinimo').value  = document.getElementById('inputStockMinimo').value;
+    document.getElementById('inputCatStockMaximo').value  = document.getElementById('inputStockMaximo').value;
+    document.getElementById('formAgregarCatalogoAdmin').submit();
+}
+
+// Cerrar modal catálogo al hacer clic fuera
+(function() {
+    const m = document.getElementById('modalCatalogo');
+    if (m) m.addEventListener('click', function(e) { if (e.target === this) cerrarModalCatalogo(); });
+})();
 </script>
 </body>
 </html>

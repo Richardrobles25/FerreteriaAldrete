@@ -17,8 +17,8 @@ if (isset($_GET['eliminar'])) {
     $u->execute([$id]);
     $unidadRow = $u->fetch(PDO::FETCH_ASSOC);
     if ($unidadRow) {
-        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND sucursal_id = ? AND activo = 1");
-        $check->execute([$unidadRow['nombre'], $unidadRow['sucursal_id']]);
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.unidad_medida = ? AND p.activo = 1 AND ss.activo = 1");
+        $check->execute([$unidadRow['sucursal_id'], $unidadRow['nombre']]);
         if ($check->fetchColumn() > 0) {
             header('Location: inventario_unidades.php?msg=error_productos');
             exit();
@@ -57,10 +57,11 @@ if ($esAdmin && $sucursalVista === 0) {
     if ($busqueda) {
         $stmt = $pdo->prepare("
             SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(p.producto_id) AS total_productos
+                   COUNT(DISTINCT pss.producto_id) AS total_productos
             FROM unidades_medida u
             LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
+            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
             WHERE u.nombre LIKE ?
             GROUP BY u.unidad_id
             ORDER BY s.nombre ASC, u.nombre ASC
@@ -69,10 +70,11 @@ if ($esAdmin && $sucursalVista === 0) {
     } else {
         $stmt = $pdo->query("
             SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(p.producto_id) AS total_productos
+                   COUNT(DISTINCT pss.producto_id) AS total_productos
             FROM unidades_medida u
             LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
+            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
             GROUP BY u.unidad_id
             ORDER BY s.nombre ASC, u.nombre ASC
         ");
@@ -82,10 +84,11 @@ if ($esAdmin && $sucursalVista === 0) {
     if ($busqueda) {
         $stmt = $pdo->prepare("
             SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(p.producto_id) AS total_productos
+                   COUNT(DISTINCT pss.producto_id) AS total_productos
             FROM unidades_medida u
             LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
+            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
             WHERE u.sucursal_id = ? AND u.nombre LIKE ?
             GROUP BY u.unidad_id
             ORDER BY u.nombre ASC
@@ -94,10 +97,11 @@ if ($esAdmin && $sucursalVista === 0) {
     } else {
         $stmt = $pdo->prepare("
             SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(p.producto_id) AS total_productos
+                   COUNT(DISTINCT pss.producto_id) AS total_productos
             FROM unidades_medida u
             LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.sucursal_id = u.sucursal_id AND p.activo = 1
+            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
+            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
             WHERE u.sucursal_id = ?
             GROUP BY u.unidad_id
             ORDER BY u.nombre ASC

@@ -18,7 +18,8 @@ $stmt = $pdo->query("
         COUNT(DISTINCT p.producto_id) AS total_productos
     FROM sucursales s
     LEFT JOIN usuarios u ON s.sucursal_id = u.sucursal_id AND u.activo = 1
-    LEFT JOIN productos p ON s.sucursal_id = p.sucursal_id AND p.activo = 1
+    LEFT JOIN stock_sucursal sp ON sp.sucursal_id = s.sucursal_id AND sp.activo = 1
+    LEFT JOIN productos p ON p.producto_id = sp.producto_id AND p.activo = 1
     GROUP BY s.sucursal_id
     ORDER BY s.activo DESC, s.nombre ASC
 ");

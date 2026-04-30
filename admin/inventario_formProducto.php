@@ -13,6 +13,12 @@ $esEdicion = isset($_GET['id']);
 $proveedoresProducto = [];
 $esAdmin = $_SESSION['rol'] === 'Administrador';
 
+// ?todas=1  → crear producto en TODAS las sucursales (solo admin)
+$todasSucursales = !$esEdicion && $esAdmin && isset($_GET['todas']);
+// Sucursal de contexto para stock en edición / unidades de medida
+$sucursalEdit = intval($_GET['sucursal'] ?? 0) ?: intval($_SESSION['sucursal_id']);
+$stockEdicion = ['stock_actual' => 0, 'stock_minimo' => 0, 'stock_maximo' => 0];
+
 function esValorEnteroValido($valor): bool {
     if ($valor === null || $valor === '') {
         return true;
@@ -29,15 +35,16 @@ function normalizarNumeroFormulario($valor): string {
 }
 
 if ($esEdicion) {
-    if ($esAdmin) {
-        $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ?");
-        $stmt->execute([intval($_GET['id'])]);
-    } else {
-        $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ? AND sucursal_id = ?");
-        $stmt->execute([intval($_GET['id']), $_SESSION['sucursal_id']]);
-    }
+    $stmt = $pdo->prepare("SELECT * FROM productos WHERE producto_id = ?");
+    $stmt->execute([intval($_GET['id'])]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$editando) { header('Location: inventario_productos.php'); exit(); }
+
+    // Cargar stock de la sucursal de contexto
+    $stmtSS = $pdo->prepare("SELECT stock_actual, stock_minimo, stock_maximo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+    $stmtSS->execute([$editando['producto_id'], $sucursalEdit]);
+    $ssData = $stmtSS->fetch(PDO::FETCH_ASSOC);
+    if ($ssData) $stockEdicion = $ssData;
 
     $stmtPP = $pdo->prepare("
         SELECT pp.proveedor_id, pp.codigo_proveedor, p.nombre AS nombre_proveedor
@@ -48,9 +55,6 @@ if ($esEdicion) {
     $stmtPP->execute([$editando['producto_id']]);
     $proveedoresProducto = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
 }
-
-// Sucursal efectiva: la del producto al editar, la propia al crear
-$sucursalActiva = $editando ? intval($editando['sucursal_id']) : intval($_SESSION['sucursal_id']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $codigo           = strtoupper(trim($_POST['codigo'] ?? ''));
@@ -83,46 +87,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Código único en el catálogo global
     if ($codigo) {
-        $stmtCheck = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND sucursal_id = ? AND producto_id != ?");
-        $stmtCheck->execute([$codigo, $sucursalActiva, $producto_id]);
-        if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en esta sucursal.';
+        $stmtCheck = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ? AND producto_id != ?");
+        $stmtCheck->execute([$codigo, $producto_id]);
+        if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en el catálogo.';
     }
 
     if (empty($errores)) {
-        // Auto-insertar unidad en la tabla si no existe aún
+        // Auto-insertar unidad en sucursal(es) afectadas
         if ($unidad_medida !== '') {
-            $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                ->execute([$unidad_medida, $sucursalActiva]);
+            $branchesUnd = $todasSucursales
+                ? $pdo->query("SELECT sucursal_id FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_COLUMN)
+                : [$sucursalEdit];
+            foreach ($branchesUnd as $sid) {
+                $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")->execute([$unidad_medida, $sid]);
+            }
         }
 
         if ($producto_id) {
+            // Actualizar catálogo global (sin stock ni sucursal_id)
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
-                precio_compra=?,precio_venta=?,precio_mayoreo=?,stock_minimo=?,stock_maximo=?,tipo_venta=?,unidad_medida=?
-                WHERE producto_id=? AND sucursal_id=?
+                precio_compra=?,precio_venta=?,precio_mayoreo=?,tipo_venta=?,unidad_medida=?
+                WHERE producto_id=?
             ")->execute([$codigo,$nombre_producto,$descripcion,$categoria_id,
                          $precio_compra,$precio_venta,$precio_mayoreo,
-                         $stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null,
-                         $producto_id,$sucursalActiva]);
+                         $tipo_venta,$unidad_medida ?: null,$producto_id]);
+            // Actualizar límites de stock de la sucursal de contexto
+            $pdo->prepare("UPDATE stock_sucursal SET stock_minimo=?, stock_maximo=? WHERE producto_id=? AND sucursal_id=?")
+                ->execute([$stock_minimo,$stock_maximo,$producto_id,$sucursalEdit]);
         } else {
+            // Insertar en catálogo global (sin sucursal_id, sin stock)
             $pdo->prepare("
                 INSERT INTO productos
-                (sucursal_id,categoria_id,codigo,nombre_producto,descripcion,
-                 precio_compra,precio_venta,precio_mayoreo,stock_actual,
-                 stock_minimo,stock_maximo,tipo_venta,unidad_medida,activo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)
-            ")->execute([$sucursalActiva,$categoria_id,$codigo,$nombre_producto,
-                         $descripcion,$precio_compra,$precio_venta,$precio_mayoreo,
-                         $cantidad_inicial,$stock_minimo,$stock_maximo,$tipo_venta,$unidad_medida ?: null]);
-            $producto_id = $pdo->lastInsertId();
+                (categoria_id,codigo,nombre_producto,descripcion,
+                 precio_compra,precio_venta,precio_mayoreo,tipo_venta,unidad_medida,activo)
+                VALUES (?,?,?,?,?,?,?,?,?,1)
+            ")->execute([$categoria_id,$codigo,$nombre_producto,$descripcion,
+                         $precio_compra,$precio_venta,$precio_mayoreo,
+                         $tipo_venta,$unidad_medida ?: null]);
+            $producto_id = (int)$pdo->lastInsertId();
+
+            // Insertar stock para la(s) sucursal(es)
+            $branchesStock = $todasSucursales
+                ? $pdo->query("SELECT sucursal_id FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_COLUMN)
+                : [$sucursalEdit];
+            foreach ($branchesStock as $sid) {
+                $pdo->prepare("INSERT INTO stock_sucursal (producto_id,sucursal_id,stock_actual,stock_minimo,stock_maximo,activo) VALUES (?,?,?,?,?,1)")
+                    ->execute([$producto_id,$sid,$cantidad_inicial,$stock_minimo,$stock_maximo]);
+            }
 
             if ($cantidad_inicial > 0) {
-                $pdo->prepare("
-                    INSERT INTO movimientos_inventario
-                    (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
-                    VALUES (?,?,'Entrada',?,0,?,'Inventario inicial')
-                ")->execute([$producto_id,$_SESSION['usuario_id'],$cantidad_inicial,$cantidad_inicial]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Entrada',?,0,?,'Inventario inicial')")
+                    ->execute([$producto_id,$_SESSION['usuario_id'],$cantidad_inicial,$cantidad_inicial]);
             }
         }
 
@@ -143,7 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $categorias  = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $stmtUnd = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE sucursal_id = ? ORDER BY nombre ASC");
-$stmtUnd->execute([$sucursalActiva]);
+$stmtUnd->execute([$sucursalEdit]);
 $unidadesMedida = $stmtUnd->fetchAll(PDO::FETCH_COLUMN);
 
 // Categoría actual para pre-llenar el autocomplete
@@ -261,7 +279,7 @@ if ($editando && $editando['categoria_id']) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2><?= $editando?'Editar producto':'Nuevo producto' ?></h2>
+            <h2><?= $editando ? 'Editar producto' : ($todasSucursales ? 'Nuevo producto (global)' : 'Nuevo producto') ?></h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
@@ -271,8 +289,13 @@ if ($editando && $editando['categoria_id']) {
 
     <div class="content">
         <div class="form-card">
-            <h1><?= $editando?'Editar producto':'Registrar nuevo producto' ?></h1>
-            <p><?= $editando?'Modifica los datos del producto.':'Completa el formulario para agregar un producto al inventario.' ?></p>
+            <h1><?= $editando ? 'Editar producto' : ($todasSucursales ? 'Nuevo producto — Todas las sucursales' : 'Registrar nuevo producto') ?></h1>
+            <p><?= $editando ? 'Modifica los datos del producto.' : 'Completa el formulario para agregar un producto al inventario.' ?></p>
+            <?php if ($todasSucursales): ?>
+            <div style="background:#e3f2fd;color:#1565c0;border-left:3px solid #1565c0;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:18px;">
+                ✦ El producto se creará en el catálogo global y se activará en <strong>todas las sucursales</strong> con el stock inicial y límites que ingreses.
+            </div>
+            <?php endif; ?>
 
             <?php if (!empty($errores)): ?>
                 <div class="errores">
@@ -387,7 +410,7 @@ if ($editando && $editando['categoria_id']) {
                         <div class="form-group">
                             <label>Stock mínimo</label>
                             <input type="number" name="stock_minimo"
-                                value="<?= $_POST['stock_minimo'] ?? $editando['stock_minimo'] ?? 0 ?>"
+                                value="<?= $_POST['stock_minimo'] ?? $stockEdicion['stock_minimo'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0">
                             <div class="hint">Dispara alerta de reabasto.</div>
@@ -395,7 +418,7 @@ if ($editando && $editando['categoria_id']) {
                         <div class="form-group">
                             <label>Stock máximo</label>
                             <input type="number" name="stock_maximo"
-                                value="<?= $_POST['stock_maximo'] ?? $editando['stock_maximo'] ?? 0 ?>"
+                                value="<?= $_POST['stock_maximo'] ?? $stockEdicion['stock_maximo'] ?? 0 ?>"
                                 class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0">
                         </div>

@@ -9,6 +9,13 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 $editando  = null;
 $errores   = [];
 $esEdicion = isset($_GET['id']);
+
+// En cajeroInventario no se pueden crear productos nuevos al catálogo global.
+// Solo el administrador puede crear productos; aquí solo se editan los existentes.
+if (!$esEdicion) {
+    header('Location: productos.php?msg=solo_catalogo');
+    exit();
+}
 $proveedoresProducto = [];
 
 function esValorEnteroValido($valor): bool {

@@ -807,8 +807,7 @@ document.getElementById('inputProducto').addEventListener('input', function() {
     toProd = setTimeout(() => {
         const q = normalizar(val);
         const productos = productosGlobales.filter(p =>
-            p.sucursal_id == miSucursalId &&
-            (normalizar(p.nombre_producto).includes(q) || normalizar(p.codigo).includes(q))
+            normalizar(p.nombre_producto).includes(q) || normalizar(p.codigo).includes(q)
         ).slice(0, 30);
         const paquetes = paquetesGlobales.filter(paq =>
             normalizar(paq.nombre).includes(q) || normalizar(paq.codigo).includes(q)

@@ -48,11 +48,12 @@ $cajasAbiertas = $stmtCajas->fetchAll(PDO::FETCH_ASSOC);
 
 // Stock bajo global
 $stmtStock = $pdo->query("
-    SELECT p.nombre_producto, p.stock_actual, p.stock_minimo, s.nombre AS sucursal
+    SELECT p.nombre_producto, ss.stock_actual, ss.stock_minimo, s.nombre AS sucursal
     FROM productos p
-    JOIN sucursales s ON p.sucursal_id = s.sucursal_id
-    WHERE p.activo = 1 AND p.stock_actual <= p.stock_minimo
-    ORDER BY (p.stock_actual / NULLIF(p.stock_minimo,0)) ASC
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1
+    JOIN sucursales s ON ss.sucursal_id = s.sucursal_id
+    WHERE p.activo = 1 AND ss.stock_actual <= ss.stock_minimo
+    ORDER BY (ss.stock_actual / NULLIF(ss.stock_minimo,0)) ASC
     LIMIT 8
 ");
 $stockBajo = $stmtStock->fetchAll(PDO::FETCH_ASSOC);

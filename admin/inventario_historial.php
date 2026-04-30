@@ -12,7 +12,7 @@ $fecha    = $_GET['fecha'] ?? '';
 $tipo     = $_GET['tipo'] ?? '';
 $busqueda = trim($_GET['buscar'] ?? '');
 
-$where  = "WHERE p.sucursal_id = ?";
+$where  = "WHERE ss.sucursal_id = ?";
 $params = [$sucursalVista];
 
 if ($fecha) { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
@@ -27,6 +27,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
+        JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
         JOIN usuarios u ON m.usuario_id = u.usuario_id
         $where
         ORDER BY m.created_at DESC
@@ -65,6 +66,7 @@ $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
     $where
     ORDER BY m.created_at DESC
@@ -82,6 +84,7 @@ $stmtRes = $pdo->prepare("
         COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     $where
 ");
 $stmtRes->execute($params);
@@ -203,10 +206,10 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
         </form>
 
         <div class="stats">
-            <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'],2) ?></h3></div>
-            <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'],2) ?></h3></div>
-            <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?></h3></div>
-            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transferencias'] ?></h3></div>
+            <div class="stat"><p>Entradas</p><h3><?= number_format($resumen['total_entradas'] ?? 0, 2) ?></h3></div>
+            <div class="stat"><p>Salidas</p><h3><?= number_format($resumen['total_salidas'] ?? 0, 2) ?></h3></div>
+            <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?? 0 ?></h3></div>
+            <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transferencias'] ?? 0 ?></h3></div>
         </div>
 
         <div class="tabla-wrapper">

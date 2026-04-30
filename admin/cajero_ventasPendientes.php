@@ -95,7 +95,7 @@ $stmt->execute([$_SESSION['usuario_id']]);
 $pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos para agregar
-$stmt = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, precio_venta, stock_actual FROM productos WHERE sucursal_id = ? AND activo = 1 AND stock_actual > 0 ORDER BY nombre_producto");
+$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 AND ss.stock_actual > 0 ORDER BY p.nombre_producto");
 $stmt->execute([$_SESSION['sucursal_id']]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 

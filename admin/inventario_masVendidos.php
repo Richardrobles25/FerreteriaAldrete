@@ -29,16 +29,16 @@ $stmt = $pdo->prepare("
         SUM(vp.cantidad) AS total_vendido,
         SUM(vp.subtotal) AS total_ingresos,
         COUNT(DISTINCT vp.venta_id) AS num_ventas,
-        p.stock_actual,
+        ss.stock_actual,
         p.precio_venta
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
     JOIN productos p ON vp.producto_id = p.producto_id
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-    WHERE p.sucursal_id = ?
-      AND v.estado = 'Completada'
+    WHERE v.estado = 'Completada'
       AND DATE(v.created_at) >= ?
-    GROUP BY p.producto_id
+    GROUP BY p.producto_id, ss.stock_actual
     ORDER BY total_vendido DESC
     LIMIT $limite
 ");
@@ -51,7 +51,8 @@ $stmtTotal = $pdo->prepare("
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
     JOIN productos p ON vp.producto_id = p.producto_id
-    WHERE p.sucursal_id = ? AND v.estado = 'Completada' AND DATE(v.created_at) >= ?
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
 ");
 $stmtTotal->execute([$sucursal, $fechaDesde]);
 $totalUnidades = $stmtTotal->fetchColumn() ?: 1;
@@ -66,13 +67,14 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         SELECT p.codigo, p.nombre_producto, c.nombre AS categoria,
                SUM(vp.cantidad) AS total_vendido,
                SUM(vp.subtotal) AS total_ingresos,
-               p.stock_actual
+               ss.stock_actual
         FROM venta_productos vp
         JOIN ventas v ON vp.venta_id = v.venta_id
         JOIN productos p ON vp.producto_id = p.producto_id
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        WHERE p.sucursal_id = ? AND v.estado = 'Completada' AND DATE(v.created_at) >= ?
-        GROUP BY p.producto_id
+        WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
+        GROUP BY p.producto_id, ss.stock_actual
         ORDER BY total_vendido DESC
     ");
     $stmtExp->execute([$sucursal, $fechaDesde]);

@@ -1069,9 +1069,9 @@ function seleccionarProductoCat(btn) {
     fila.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #d0eaf8;';
     fila.innerHTML = `
         <span style="flex:1;font-size:12px;font-weight:600;color:#222;">${nombre}</span>
-        <input type="number" class="inp-stock-actual" value="0" min="0" step="0.01" placeholder="Inicial" style="${inpStyle}" title="Stock inicial">
-        <input type="number" class="inp-stock-min"    value="0" min="0" step="0.01" placeholder="Mín"     style="${inpStyle}" title="Stock mínimo">
-        <input type="number" class="inp-stock-max"    value="0" min="0" step="0.01" placeholder="Máx"     style="${inpStyle}" title="Stock máximo">
+        <input type="number" class="inp-stock-actual" min="0" step="0.01" placeholder="Inicial" style="${inpStyle}" title="Stock inicial">
+        <input type="number" class="inp-stock-min"    min="0" step="0.01" placeholder="Mín"     style="${inpStyle}" title="Stock mínimo">
+        <input type="number" class="inp-stock-max"    min="0" step="0.01" placeholder="Máx"     style="${inpStyle}" title="Stock máximo">
         <button onclick="quitarSeleccionado(this)" title="Quitar" style="background:none;border:none;color:#e53935;font-size:18px;line-height:1;cursor:pointer;padding:0 2px;">✕</button>`;
     document.getElementById('listaSeleccionados').appendChild(fila);
 

@@ -6,8 +6,6 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
-require_once __DIR__ . '/_admin_sucursal_filtro.php';
-
 if (isset($_GET['toggle'])) {
     $pdo->prepare("UPDATE paquetes SET activo = NOT activo WHERE paquete_id = ?")->execute([intval($_GET['toggle'])]);
     header('Location: inventario_paquetes.php'); exit();
@@ -31,17 +29,12 @@ if (isset($_GET['editar'])) {
     if ($editando) {
         $stmtPP = $pdo->prepare("
             SELECT pp.producto_id, pp.cantidad,
-                   p.nombre_producto, p.codigo,
-                   COALESCE(px.precio_venta, 0) AS precio_venta
+                   p.nombre_producto, p.codigo, p.precio_venta, p.precio_compra
             FROM paquete_productos pp
-            JOIN (
-                SELECT producto_id, MIN(nombre_producto) AS nombre_producto, MIN(codigo) AS codigo
-                FROM productos WHERE activo = 1 GROUP BY producto_id
-            ) p ON pp.producto_id = p.producto_id
-            LEFT JOIN productos px ON pp.producto_id = px.producto_id AND px.sucursal_id = ?
+            JOIN productos p ON pp.producto_id = p.producto_id AND p.activo = 1
             WHERE pp.paquete_id = ?
         ");
-        $stmtPP->execute([$sucursalVista, $editando['paquete_id']]);
+        $stmtPP->execute([$editando['paquete_id']]);
         $prodsPaquete = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
     }
 }
@@ -93,15 +86,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $stmt     = $pdo->query("SELECT * FROM paquetes ORDER BY activo DESC, nombre ASC");
 $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Productos de esta sucursal para el formulario
-$stmtProds = $pdo->prepare("
-    SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta
-    FROM productos p
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
-    WHERE p.activo = 1
-    ORDER BY p.nombre_producto ASC
+// Todos los productos activos para el formulario
+$stmtProds = $pdo->query("
+    SELECT producto_id, codigo, nombre_producto, precio_venta, precio_compra
+    FROM productos
+    WHERE activo = 1
+    ORDER BY nombre_producto ASC
 ");
-$stmtProds->execute([$sucursalVista]);
 $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -172,9 +163,14 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
     .codigo-row input { flex: 1; }
     .btn-generar { background: #f0f0f0; color: #555; border: none; padding: 9px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
     .btn-generar:hover { background: #e0e0e0; }
-    .agregar-prod-row { display: flex; gap: 6px; margin-bottom: 10px; align-items: center; }
-    .agregar-prod-row select { flex: 1; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; }
-    .agregar-prod-row select:focus { outline: none; border-color: #14ace7; }
+    .agregar-prod-row { display: flex; gap: 6px; margin-bottom: 10px; align-items: flex-start; }
+    .buscar-prod-wrap { flex: 1; position: relative; }
+    .buscar-prod-wrap input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .buscar-prod-wrap input[type=text]:focus { outline: none; border-color: #14ace7; }
+    .prod-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-top: none; border-radius: 0 0 6px 6px; max-height: 200px; overflow-y: auto; z-index: 200; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .prod-resultado { padding: 8px 12px; font-size: 13px; cursor: pointer; color: #444; border-bottom: 0.5px solid #f5f5f5; }
+    .prod-resultado:last-child { border-bottom: none; }
+    .prod-resultado:hover { background: #eef8ff; color: #14ace7; }
     .agregar-prod-row input[type=number] { width: 72px; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; text-align: center; }
     .agregar-prod-row input[type=number]:focus { outline: none; border-color: #14ace7; }
     .btn-add-prod { background: #14ace7; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 700; flex-shrink: 0; }
@@ -186,17 +182,13 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
     .paq-item-sub { font-size: 11px; color: #aaa; margin-top: 2px; }
     .paq-vacio { text-align: center; color: #aaa; font-size: 12px; padding: 16px; }
     .btn-quitar-paq { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 4px; flex-shrink: 0; }
-    .precio-hint { background: #f9f9f9; border-radius: 6px; padding: 10px 12px; font-size: 12px; margin-bottom: 13px; }
+    .precio-hint { background: #f9f9f9; border-radius: 6px; padding: 10px 12px; font-size: 12px; margin-bottom: 13px; margin-top: 0; }
     .precio-hint.con-ahorro { background: #e8f5e9; color: #2e7d32; }
-    .precio-hint.sin-ahorro { background: #fff8e1; color: #1565c0; }
+    .precio-hint.sin-ahorro { background: #fff8e1; color: #e65100; }
+    .precio-hint.precio-error { background: #fdecea; color: #c0392b; font-weight: 600; }
     .btn-guardar { width: 100%; background: #14ace7; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar-edit { width: 100%; background: white; color: #666; border: 1px solid #ddd; padding: 9px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-top: 8px; text-decoration: none; display: block; text-align: center; }
-    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
-    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
-    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
-    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
 </style>
 
 <?php renderAdminSidebar('inventario_paquetes'); ?>
@@ -213,12 +205,6 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
         </div>
     </div>
 
-    <div style="padding: 14px 20px 0;">
-        <div class="filtros">
-            <?php renderSucursalSwitcher(); ?>
-        </div>
-    </div>
-
     <div class="content">
         <!-- Lista -->
         <div>
@@ -231,17 +217,13 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                 <?php foreach ($paquetes as $paq):
                     $stmtPP = $pdo->prepare("
                         SELECT pp.cantidad,
-                               COALESCE(p2.nombre_producto, p1.nombre_producto) AS nombre_producto,
-                               COALESCE(p2.precio_venta, 0) AS precio_venta
+                               p.nombre_producto,
+                               p.precio_venta
                         FROM paquete_productos pp
-                        JOIN (
-                            SELECT producto_id, MIN(nombre_producto) AS nombre_producto
-                            FROM productos WHERE activo = 1 GROUP BY producto_id
-                        ) p1 ON pp.producto_id = p1.producto_id
-                        LEFT JOIN productos p2 ON pp.producto_id = p2.producto_id AND p2.sucursal_id = ?
+                        JOIN productos p ON pp.producto_id = p.producto_id AND p.activo = 1
                         WHERE pp.paquete_id = ?
                     ");
-                    $stmtPP->execute([$sucursalVista, $paq['paquete_id']]);
+                    $stmtPP->execute([$paq['paquete_id']]);
                     $prods = $stmtPP->fetchAll(PDO::FETCH_ASSOC);
                     $precioSeparado = array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_venta'], $prods));
                     $ahorro = $precioSeparado > 0 ? $precioSeparado - $paq['precio_paquete'] : 0;
@@ -344,21 +326,16 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                             oninput="actualizarHintAhorro()">
                     </div>
 
-                    <div class="precio-hint" id="hintAhorro" style="display:none;"></div>
-
                     <div class="form-group">
                         <label>Productos del paquete</label>
                         <div class="agregar-prod-row">
-                            <select id="selPaqProd">
-                                <option value="">-- Selecciona un producto --</option>
-                                <?php foreach ($productos as $p): ?>
-                                    <option value="<?= $p['producto_id'] ?>"
-                                        data-nombre="<?= htmlspecialchars($p['nombre_producto']) ?>"
-                                        data-precio="<?= $p['precio_venta'] ?>">
-                                        <?= htmlspecialchars($p['nombre_producto']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <div class="buscar-prod-wrap">
+                                <input type="text" id="buscarProd" placeholder="Buscar producto..."
+                                       autocomplete="off"
+                                       oninput="filtrarProductos(this.value)"
+                                       onfocus="filtrarProductos(this.value)">
+                                <div class="prod-dropdown" id="prodDropdown"></div>
+                            </div>
                             <input type="number" id="cantPaq" placeholder="Cant." step="1" min="1">
                             <button type="button" class="btn-add-prod" onclick="agregarProdPaquete()">+</button>
                         </div>
@@ -367,7 +344,9 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                     </div>
 
-                    <button class="btn-guardar" type="submit" onclick="return prepararPaquete()">
+                    <div class="precio-hint" id="hintAhorro" style="display:none;"></div>
+
+                    <button class="btn-guardar" id="btnGuardar" type="submit" onclick="return prepararPaquete()">
                         <?= $editando ? 'Guardar cambios' : 'Crear paquete global' ?>
                     </button>
                     <?php if ($editando): ?>
@@ -384,8 +363,50 @@ let itemsPaquete = <?= json_encode(array_map(fn($p) => [
     'producto_id' => intval($p['producto_id']),
     'nombre'      => $p['nombre_producto'],
     'cantidad'    => floatval($p['cantidad']),
-    'precio'      => floatval($p['precio_venta'])
+    'precio'      => floatval($p['precio_venta']),
+    'costo'       => floatval($p['precio_compra'])
 ], $prodsPaquete)) ?>;
+
+const prodsCatalogo = <?= json_encode(array_values(array_map(fn($p) => [
+    'producto_id'    => intval($p['producto_id']),
+    'nombre_producto'=> $p['nombre_producto'],
+    'precio_venta'   => floatval($p['precio_venta']),
+    'precio_compra'  => floatval($p['precio_compra'])
+], $productos))) ?>;
+
+let prodSelId = null, prodSelNombre = '', prodSelPrecio = 0, prodSelCosto = 0;
+
+const prodsMap = {};
+prodsCatalogo.forEach(p => prodsMap[p.producto_id] = p);
+
+function filtrarProductos(q) {
+    const drop = document.getElementById('prodDropdown');
+    const term = q.trim().toLowerCase();
+    if (!term) { drop.style.display = 'none'; return; }
+    const matches = prodsCatalogo.filter(p => p.nombre_producto.toLowerCase().includes(term)).slice(0, 25);
+    if (!matches.length) { drop.style.display = 'none'; return; }
+    drop.innerHTML = matches.map(p =>
+        `<div class="prod-resultado" onmousedown="seleccionarProd(${p.producto_id})">${esc(p.nombre_producto)}</div>`
+    ).join('');
+    drop.style.display = 'block';
+}
+
+function seleccionarProd(id) {
+    const p       = prodsMap[id];
+    prodSelId     = p.producto_id;
+    prodSelNombre = p.nombre_producto;
+    prodSelPrecio = p.precio_venta;
+    prodSelCosto  = p.precio_compra;
+    document.getElementById('buscarProd').value           = p.nombre_producto;
+    document.getElementById('prodDropdown').style.display = 'none';
+    document.getElementById('cantPaq').focus();
+}
+
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.buscar-prod-wrap')) {
+        document.getElementById('prodDropdown').style.display = 'none';
+    }
+});
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
@@ -411,22 +432,17 @@ function sugerirCodigo(nombre) {
 }
 
 function agregarProdPaquete() {
-    const sel  = document.getElementById('selPaqProd');
     const cant = parseInt(document.getElementById('cantPaq').value) || 0;
-    if (!sel.value) { alert('Selecciona un producto.'); return; }
+    if (!prodSelId) { alert('Selecciona un producto.'); return; }
     if (cant < 1)   { alert('La cantidad debe ser al menos 1.'); return; }
 
-    const opt    = sel.options[sel.selectedIndex];
-    const id     = parseInt(sel.value);
-    const nombre = opt.dataset.nombre;
-    const precio = parseFloat(opt.dataset.precio) || 0;
-
-    const existe = itemsPaquete.find(i => i.producto_id === id);
+    const existe = itemsPaquete.find(i => i.producto_id === prodSelId);
     if (existe) { existe.cantidad = cant; }
-    else { itemsPaquete.push({ producto_id: id, nombre, cantidad: cant, precio }); }
+    else { itemsPaquete.push({ producto_id: prodSelId, nombre: prodSelNombre, cantidad: cant, precio: prodSelPrecio, costo: prodSelCosto }); }
 
-    sel.value = '';
-    document.getElementById('cantPaq').value = '';
+    document.getElementById('buscarProd').value = '';
+    document.getElementById('cantPaq').value    = '';
+    prodSelId = null; prodSelNombre = ''; prodSelPrecio = 0;
     renderListaPaq();
     actualizarHintAhorro();
 }
@@ -454,25 +470,75 @@ function quitarProdPaq(idx) {
 }
 
 function actualizarHintAhorro() {
-    const totalSeparado = itemsPaquete.reduce((s, i) => s + i.cantidad * i.precio, 0);
+    const totalSeparado = itemsPaquete.reduce((s, i) => s + i.cantidad * (i.precio || 0), 0);
+    const totalCosto    = itemsPaquete.reduce((s, i) => s + i.cantidad * (i.costo  || 0), 0);
     const precioPaq     = parseFloat(document.getElementById('inputPrecio').value) || 0;
     const hint          = document.getElementById('hintAhorro');
-    if (totalSeparado <= 0) { hint.style.display = 'none'; return; }
-    hint.style.display = 'block';
-    const ahorro = totalSeparado - precioPaq;
-    if (ahorro > 0.01) {
-        hint.className = 'precio-hint con-ahorro';
-        hint.textContent = `✅ Precio individual: $${totalSeparado.toFixed(2)} · Ahorro: $${ahorro.toFixed(2)}`;
-    } else {
-        hint.className = 'precio-hint sin-ahorro';
-        hint.textContent = `⚠ Precio individual: $${totalSeparado.toFixed(2)} — revisa el precio del paquete`;
+    const btn           = document.getElementById('btnGuardar');
+
+    if (!itemsPaquete.length) {
+        hint.style.display = 'none';
+        if (btn) btn.disabled = false;
+        return;
     }
+
+    hint.style.display = 'block';
+
+    const lines = [];
+    if (totalCosto    > 0) lines.push(`Costo: $${totalCosto.toFixed(2)}`);
+    if (totalSeparado > 0) lines.push(`Precio individual: $${totalSeparado.toFixed(2)}`);
+
+    // Precio menor al costo → bloquear
+    if (precioPaq > 0 && totalCosto > 0 && precioPaq < totalCosto) {
+        hint.className   = 'precio-hint precio-error';
+        hint.textContent = `⛔ El precio ($${precioPaq.toFixed(2)}) es menor al costo ($${totalCosto.toFixed(2)}). No se puede guardar. · ${lines.join(' · ')}`;
+        if (btn) btn.disabled = true;
+        return;
+    }
+
+    // Precio mayor al precio normal → bloquear
+    if (precioPaq > 0 && totalSeparado > 0 && precioPaq > totalSeparado) {
+        hint.className   = 'precio-hint precio-error';
+        hint.textContent = `⛔ El precio ($${precioPaq.toFixed(2)}) supera el precio individual ($${totalSeparado.toFixed(2)}). El paquete debe ser más barato. · ${lines.join(' · ')}`;
+        if (btn) btn.disabled = true;
+        return;
+    }
+
+    if (btn) btn.disabled = false;
+
+    const ahorro = totalSeparado - precioPaq;
+    if (precioPaq > 0 && totalSeparado > 0) {
+        if (ahorro > 0.01) {
+            hint.className = 'precio-hint con-ahorro';
+            lines.push(`Ahorro para el cliente: $${ahorro.toFixed(2)}`);
+        } else {
+            hint.className = 'precio-hint';
+            lines.push(`Sin ahorro vs precio individual`);
+        }
+    } else {
+        hint.className = 'precio-hint';
+    }
+
+    hint.textContent = lines.join(' · ');
 }
 
 document.getElementById('inputPrecio').addEventListener('input', actualizarHintAhorro);
 
 function prepararPaquete() {
     if (!itemsPaquete.length) { alert('Agrega al menos un producto.'); return false; }
+    const totalCosto = itemsPaquete.reduce((s, i) => s + i.cantidad * (i.costo || 0), 0);
+    const precioPaq  = parseFloat(document.getElementById('inputPrecio').value) || 0;
+    if (totalCosto > 0 && precioPaq < totalCosto) {
+        alert(`El precio ($${precioPaq.toFixed(2)}) es menor al costo total ($${totalCosto.toFixed(2)}). Ajusta el precio.`);
+        document.getElementById('inputPrecio').focus();
+        return false;
+    }
+    const totalSeparado = itemsPaquete.reduce((s, i) => s + i.cantidad * (i.precio || 0), 0);
+    if (totalSeparado > 0 && precioPaq > totalSeparado) {
+        alert(`El precio ($${precioPaq.toFixed(2)}) supera el precio individual ($${totalSeparado.toFixed(2)}). El paquete debe ser más barato que comprar por separado.`);
+        document.getElementById('inputPrecio').focus();
+        return false;
+    }
     document.getElementById('inputItemsPaquete').value = JSON.stringify(
         itemsPaquete.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad }))
     );

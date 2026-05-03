@@ -294,23 +294,31 @@ if (isset($_GET['catalogo_disponible'])) {
     exit();
 }
 
-// POST: agregar producto del catálogo a esta sucursal
+// POST: agregar producto(s) del catálogo a esta sucursal
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) {
-    $producto_id  = intval($_POST['producto_id'] ?? 0);
-    $stock_actual = floatval($_POST['stock_actual'] ?? 0);
-    $stock_minimo = floatval($_POST['stock_minimo'] ?? 0);
-    $stock_maximo = floatval($_POST['stock_maximo'] ?? 0);
+    $productos_ids  = $_POST['producto_id']  ?? [];
+    $stocks_actual  = $_POST['stock_actual'] ?? [];
+    $stocks_minimo  = $_POST['stock_minimo'] ?? [];
+    $stocks_maximo  = $_POST['stock_maximo'] ?? [];
 
-    if ($producto_id) {
-        $pdo->prepare("
+    if (is_array($productos_ids)) {
+        $stmtUpsert = $pdo->prepare("
             INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
             VALUES (?, ?, ?, ?, ?, 1)
-            ON DUPLICATE KEY UPDATE activo = 1, stock_minimo = VALUES(stock_minimo), stock_maximo = VALUES(stock_maximo)
-        ")->execute([$producto_id, $_SESSION['sucursal_id'], $stock_actual, $stock_minimo, $stock_maximo]);
-
-        if ($stock_actual > 0) {
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,0,?,'Alta de producto en sucursal')")
-                ->execute([$producto_id, $_SESSION['usuario_id'], $stock_actual, $stock_actual]);
+            ON DUPLICATE KEY UPDATE activo = 1, stock_actual = VALUES(stock_actual), stock_minimo = VALUES(stock_minimo), stock_maximo = VALUES(stock_maximo)
+        ");
+        $stmtMov = $pdo->prepare("
+            INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+            VALUES (?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
+        ");
+        foreach ($productos_ids as $i => $pid) {
+            $pid    = intval($pid);
+            $actual = floatval($stocks_actual[$i] ?? 0);
+            $minimo = floatval($stocks_minimo[$i] ?? 0);
+            $maximo = floatval($stocks_maximo[$i] ?? 0);
+            if (!$pid) continue;
+            $stmtUpsert->execute([$pid, $_SESSION['sucursal_id'], $actual, $minimo, $maximo]);
+            if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $actual, $actual]);
         }
     }
     header('Location: productos.php?msg=agregado_catalogo');
@@ -426,31 +434,34 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
     /* Modal catálogo */
     .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center; }
     .modal-overlay.visible { display:flex; }
-    .modal { background:white; border-radius:10px; width:640px; max-width:95vw; max-height:85vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.18); }
-    .modal-header { padding:18px 20px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; }
+    .modal { background:white; border-radius:10px; width:680px; max-width:95vw; max-height:88vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.18); }
+    .modal-header { padding:18px 20px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
     .modal-header h3 { font-size:15px; font-weight:700; color:#222; margin:0; }
     .modal-close { background:none; border:none; font-size:22px; color:#aaa; cursor:pointer; line-height:1; }
     .modal-close:hover { color:#333; }
-    .modal-search { padding:14px 20px; border-bottom:1px solid #f0f0f0; }
+    .modal-search { padding:12px 20px; border-bottom:1px solid #f0f0f0; flex-shrink:0; }
     .modal-search input { width:100%; padding:9px 12px; border:1px solid #ddd; border-radius:6px; font-size:13px; }
     .modal-search input:focus { outline:none; border-color:#14ace7; }
-    .modal-lista { flex:1; overflow-y:auto; padding:8px 0; min-height:200px; }
-    .cat-item { padding:12px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:0.5px solid #f5f5f5; cursor:pointer; transition:background 0.1s; }
-    .cat-item:hover { background:#eef8ff; }
-    .cat-item-info { flex:1; }
+    .modal-lista { flex:1; overflow-y:auto; min-height:120px; }
+    .cat-item { padding:10px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:0.5px solid #f5f5f5; }
+    .cat-item:hover { background:#fafafa; }
     .cat-item-nombre { font-size:13px; font-weight:600; color:#333; }
     .cat-item-sub { font-size:11px; color:#999; margin-top:2px; }
-    .cat-item-precio { font-size:13px; font-weight:700; color:#14ace7; }
+    .cat-item-precio { font-size:13px; color:#1565c0; font-weight:600; }
     .cat-empty { text-align:center; padding:40px; color:#aaa; font-size:13px; }
-    .modal-form { padding:16px 20px; border-top:1px solid #eee; background:#f9f9f9; display:none; }
-    .modal-form.visible { display:block; }
-    .modal-form h4 { font-size:13px; font-weight:700; color:#333; margin:0 0 12px; }
-    .stock-inputs { display:flex; gap:10px; margin-bottom:12px; }
-    .stock-inputs label { display:flex; flex-direction:column; gap:4px; font-size:11px; color:#888; font-weight:600; flex:1; }
-    .stock-inputs input { padding:8px 10px; border:1px solid #ddd; border-radius:6px; font-size:13px; }
-    .modal-btns { display:flex; gap:8px; justify-content:flex-end; }
-    .btn-cancelar-modal { background:white; color:#666; border:1px solid #ddd; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:13px; }
-    .btn-confirmar-modal { background:#14ace7; color:white; border:none; padding:8px 18px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:700; }
+    .btn-cat-sel { border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:700; white-space:nowrap; }
+    /* Sección seleccionados */
+    .seccion-sel { flex-shrink:0; border-top:2px solid #e3f2fd; background:#f0f8ff; padding:12px 20px; max-height:280px; overflow-y:auto; display:none; }
+    .seccion-sel-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .seccion-sel-header span { font-size:13px; font-weight:700; color:#1565c0; }
+    .sel-cols { display:grid; grid-template-columns:1fr 72px 72px 72px 28px; gap:6px; align-items:center; padding:4px 0; font-size:11px; color:#888; font-weight:600; border-bottom:1px solid #cde; padding-bottom:6px; margin-bottom:4px; }
+    .sel-item { display:grid; grid-template-columns:1fr 72px 72px 72px 28px; gap:6px; align-items:center; padding:5px 0; border-bottom:0.5px solid #d0eaf8; }
+    .sel-item:last-child { border-bottom:none; }
+    .sel-item input { padding:5px 6px; border:1px solid #b0d8f0; border-radius:5px; font-size:12px; text-align:center; width:100%; }
+    .sel-item input:focus { outline:none; border-color:#14ace7; }
+    .sel-footer { padding:12px 20px; border-top:1px solid #e0e0e0; background:#fff; display:flex; justify-content:flex-end; gap:8px; flex-shrink:0; }
+    .btn-cancelar-modal { background:white; color:#666; border:1px solid #ddd; padding:9px 16px; border-radius:6px; cursor:pointer; font-size:13px; }
+    .btn-confirmar-modal { background:#14ace7; color:white; border:none; padding:9px 20px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:700; }
     .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     .msg-error { background: #fdecea; color: #c0392b; border-left: 3px solid #c0392b; }
@@ -729,7 +740,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 <div class="modal-overlay" id="modalCatalogo">
     <div class="modal">
         <div class="modal-header">
-            <h3>Agregar producto del catálogo</h3>
+            <h3>Agregar productos del catálogo</h3>
             <button class="modal-close" onclick="cerrarModalCatalogo()">&times;</button>
         </div>
         <div class="modal-search">
@@ -738,27 +749,25 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <div class="modal-lista" id="listaCatalogo">
             <div class="cat-empty">Cargando productos...</div>
         </div>
-        <div class="modal-form" id="formCatalogo">
-            <h4 id="nombreProductoSeleccionado"></h4>
-            <div class="stock-inputs">
-                <label>Stock inicial<input type="number" id="inputStockActual" value="0" min="0" step="0.01"></label>
-                <label>Stock mínimo<input type="number" id="inputStockMinimo" value="0" min="0" step="0.01"></label>
-                <label>Stock máximo<input type="number" id="inputStockMaximo" value="0" min="0" step="0.01"></label>
+        <!-- Sección de seleccionados -->
+        <div class="seccion-sel" id="seccionSeleccionados">
+            <div class="seccion-sel-header">
+                <span>Productos seleccionados: <span id="conteoSeleccionados">0</span></span>
             </div>
-            <div class="modal-btns">
-                <button class="btn-cancelar-modal" onclick="cancelarSeleccion()">Cancelar</button>
-                <button class="btn-confirmar-modal" onclick="confirmarAgregarCatalogo()">Agregar a mi sucursal</button>
+            <div class="sel-cols">
+                <span>Producto</span><span style="text-align:center;">Inicial</span><span style="text-align:center;">Mín</span><span style="text-align:center;">Máx</span><span></span>
             </div>
+            <div id="listaSeleccionados"></div>
+        </div>
+        <div class="sel-footer">
+            <button class="btn-cancelar-modal" onclick="cerrarModalCatalogo()">Cancelar</button>
+            <button class="btn-confirmar-modal" id="btnConfirmarAgregar" onclick="confirmarAgregarCatalogo()">Agregar a mi sucursal</button>
         </div>
     </div>
 </div>
 
 <form method="POST" id="formAgregarCatalogo" style="display:none;">
     <input type="hidden" name="agregar_catalogo" value="1">
-    <input type="hidden" name="producto_id" id="inputCatalogoProductoId">
-    <input type="hidden" name="stock_actual" id="inputCatalogoStockActual">
-    <input type="hidden" name="stock_minimo" id="inputCatalogoStockMinimo">
-    <input type="hidden" name="stock_maximo" id="inputCatalogoStockMaximo">
 </form>
 
 <form method="POST" id="formEliminarProducto" style="display:none;">
@@ -828,20 +837,19 @@ document.addEventListener('keydown', function(e) {
 
 // ---- Modal catálogo global ----
 let catalogoTimeout = null;
-let productoSeleccionado = null;
 
 function abrirModalCatalogo() {
     document.getElementById('modalCatalogo').classList.add('visible');
     document.getElementById('searchCatalogo').value = '';
-    document.getElementById('formCatalogo').classList.remove('visible');
-    productoSeleccionado = null;
+    document.getElementById('listaSeleccionados').innerHTML = '';
+    document.getElementById('seccionSeleccionados').style.display = 'none';
+    document.getElementById('conteoSeleccionados').textContent = '0';
     cargarCatalogo('');
     setTimeout(() => document.getElementById('searchCatalogo').focus(), 100);
 }
 
 function cerrarModalCatalogo() {
     document.getElementById('modalCatalogo').classList.remove('visible');
-    productoSeleccionado = null;
 }
 
 function buscarCatalogo(q) {
@@ -859,15 +867,24 @@ function cargarCatalogo(q) {
                 lista.innerHTML = '<div class="cat-empty">No hay productos disponibles en el catálogo para agregar.<br><small>Todos los productos del catálogo ya están en tu sucursal.</small></div>';
                 return;
             }
+            const yaSeleccionados = new Set([...document.querySelectorAll('.sel-item')].map(e => e.dataset.id));
             lista.innerHTML = data.map(p => {
-                const cat = p.categoria ? ' &middot; ' + p.categoria : '';
+                const esc   = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+                const cat   = p.categoria ? ' · ' + p.categoria : '';
                 const precio = parseFloat(p.precio_venta || 0).toFixed(2);
-                return `<div class="cat-item" onclick="seleccionarProducto(${p.producto_id}, ${JSON.stringify(p.nombre_producto)})">
-                    <div class="cat-item-info">
-                        <div class="cat-item-nombre">${p.nombre_producto}</div>
-                        <div class="cat-item-sub">${p.codigo}${cat}</div>
+                const enLista = yaSeleccionados.has(String(p.producto_id));
+                const btnBg  = enLista ? '#388e3c' : '#14ace7';
+                const btnTxt = enLista ? '✓ En lista' : '+ Seleccionar';
+                return `<div class="cat-item" data-id="${p.producto_id}" data-nombre="${esc(p.nombre_producto)}">
+                    <div style="flex:1;">
+                        <div class="cat-item-nombre">${esc(p.nombre_producto)}</div>
+                        <div class="cat-item-sub">${esc(p.codigo)}${cat}</div>
                     </div>
-                    <div class="cat-item-precio">$${precio}</div>
+                    <div style="display:flex;align-items:center;gap:14px;">
+                        <span class="cat-item-precio">$${precio}</span>
+                        <button class="btn-cat-sel" onclick="seleccionarProductoCat(this)"
+                                style="background:${btnBg};color:white;">${btnTxt}</button>
+                    </div>
                 </div>`;
             }).join('');
         })
@@ -876,32 +893,76 @@ function cargarCatalogo(q) {
         });
 }
 
-function seleccionarProducto(id, nombre) {
-    productoSeleccionado = id;
-    document.getElementById('nombreProductoSeleccionado').textContent = 'Configurar stock para: ' + nombre;
-    document.getElementById('inputStockActual').value = '0';
-    document.getElementById('inputStockMinimo').value = '0';
-    document.getElementById('inputStockMaximo').value = '0';
-    document.getElementById('formCatalogo').classList.add('visible');
-    // Resaltar el item seleccionado
-    document.querySelectorAll('.cat-item').forEach(el => el.style.background = '');
-    event.currentTarget.style.background = '#e3f2fd';
-    setTimeout(() => document.getElementById('inputStockActual').focus(), 50);
+function seleccionarProductoCat(btn) {
+    const catItem = btn.closest('.cat-item');
+    const id      = catItem.dataset.id;
+    const nombre  = catItem.dataset.nombre;
+
+    // Si ya está en la lista, quitarlo
+    const existente = document.querySelector(`.sel-item[data-id="${id}"]`);
+    if (existente) {
+        existente.remove();
+        btn.textContent = '+ Seleccionar';
+        btn.style.background = '#14ace7';
+        actualizarSeccionSeleccionados();
+        return;
+    }
+
+    // Agregar a la lista con inputs de stock
+    const fila = document.createElement('div');
+    fila.className = 'sel-item';
+    fila.dataset.id = id;
+    fila.innerHTML = `
+        <span style="font-size:12px;font-weight:600;color:#222;">${nombre}</span>
+        <input type="number" class="inp-stock-actual" min="0" step="0.01" placeholder="Inicial" title="Stock inicial">
+        <input type="number" class="inp-stock-min"    min="0" step="0.01" placeholder="Mín"     title="Stock mínimo">
+        <input type="number" class="inp-stock-max"    min="0" step="0.01" placeholder="Máx"     title="Stock máximo">
+        <button onclick="quitarSeleccionado(this)" title="Quitar"
+                style="background:none;border:none;color:#e53935;font-size:18px;line-height:1;cursor:pointer;padding:0;">✕</button>`;
+    document.getElementById('listaSeleccionados').appendChild(fila);
+
+    btn.textContent = '✓ En lista';
+    btn.style.background = '#388e3c';
+
+    actualizarSeccionSeleccionados();
+    setTimeout(() => fila.querySelector('.inp-stock-actual').focus(), 50);
 }
 
-function cancelarSeleccion() {
-    productoSeleccionado = null;
-    document.getElementById('formCatalogo').classList.remove('visible');
-    document.querySelectorAll('.cat-item').forEach(el => el.style.background = '');
+function quitarSeleccionado(removeBtn) {
+    const selItem = removeBtn.closest('.sel-item');
+    const id = selItem.dataset.id;
+    selItem.remove();
+    const catBtn = document.querySelector(`.cat-item[data-id="${id}"] .btn-cat-sel`);
+    if (catBtn) { catBtn.textContent = '+ Seleccionar'; catBtn.style.background = '#14ace7'; }
+    actualizarSeccionSeleccionados();
+}
+
+function actualizarSeccionSeleccionados() {
+    const items = document.querySelectorAll('.sel-item');
+    const n = items.length;
+    document.getElementById('seccionSeleccionados').style.display = n > 0 ? 'block' : 'none';
+    document.getElementById('conteoSeleccionados').textContent = n;
+    document.getElementById('btnConfirmarAgregar').textContent =
+        'Agregar ' + n + ' producto' + (n !== 1 ? 's' : '') + ' a mi sucursal';
 }
 
 function confirmarAgregarCatalogo() {
-    if (!productoSeleccionado) return;
-    document.getElementById('inputCatalogoProductoId').value = productoSeleccionado;
-    document.getElementById('inputCatalogoStockActual').value = document.getElementById('inputStockActual').value;
-    document.getElementById('inputCatalogoStockMinimo').value = document.getElementById('inputStockMinimo').value;
-    document.getElementById('inputCatalogoStockMaximo').value = document.getElementById('inputStockMaximo').value;
-    document.getElementById('formAgregarCatalogo').submit();
+    const items = document.querySelectorAll('.sel-item');
+    if (!items.length) { alert('Selecciona al menos un producto.'); return; }
+    const form = document.getElementById('formAgregarCatalogo');
+    form.querySelectorAll('.inp-din').forEach(e => e.remove());
+    const add = (name, val) => {
+        const i = document.createElement('input');
+        i.type = 'hidden'; i.name = name; i.value = val; i.className = 'inp-din';
+        form.appendChild(i);
+    };
+    items.forEach(item => {
+        add('producto_id[]',  item.dataset.id);
+        add('stock_actual[]', item.querySelector('.inp-stock-actual').value);
+        add('stock_minimo[]', item.querySelector('.inp-stock-min').value);
+        add('stock_maximo[]', item.querySelector('.inp-stock-max').value);
+    });
+    form.submit();
 }
 
 document.getElementById('modalCatalogo').addEventListener('click', function(e) {

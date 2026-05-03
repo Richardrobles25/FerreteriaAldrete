@@ -79,14 +79,6 @@ $totales = $pdo->query("
     WHERE cr.estado IN ('Activo', 'Vencido')
 ")->fetch(PDO::FETCH_ASSOC);
 
-// Lista de clientes para el panel abonar (dropdown JSON)
-$clientesAbonar = $pdo->query("
-    SELECT DISTINCT c.cliente_id, c.nombre_completo
-    FROM creditos cr
-    JOIN clientes c ON cr.cliente_id = c.cliente_id
-    WHERE cr.estado IN ('Activo', 'Vencido')
-    ORDER BY c.nombre_completo
-")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -120,7 +112,7 @@ $clientesAbonar = $pdo->query("
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
-    .content { flex: 1; padding: 20px; overflow-y: auto; display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-content: start; }
+    .content { flex: 1; padding: 20px; overflow-y: auto; }
 
     /* Stats */
     .stats { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 4px; }
@@ -129,7 +121,7 @@ $clientesAbonar = $pdo->query("
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
 
     /* Lista de clientes */
-    .col-lista { display: flex; flex-direction: column; gap: 0; }
+    .col-lista { display: flex; flex-direction: column; gap: 0; max-width: 900px; }
     .buscar-clientes { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; margin-bottom: 12px; background: white; }
     .buscar-clientes:focus { outline: none; border-color: #14ace7; }
     .cliente-card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; transition: box-shadow 0.15s; }
@@ -148,34 +140,8 @@ $clientesAbonar = $pdo->query("
     .badge-vencido { display: inline-block; background: #fdecea; color: #c0392b; border-radius: 99px; padding: 1px 7px; font-size: 10px; font-weight: 700; margin-left: 6px; }
     .sin-resultados { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
 
-    /* Panel Abonar */
-    .col-abonar { position: sticky; top: 0; }
-    .card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 18px; }
-    .card h3 { font-size: 14px; font-weight: 700; color: #333; margin: 0 0 14px; }
-    .form-group { margin-bottom: 12px; }
-    .form-group label { display: block; font-size: 12px; color: #666; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.3px; }
-    .drop-wrap { position: relative; }
-    .drop-wrap input { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .drop-wrap input:focus { outline: none; border-color: #14ace7; }
-    .drop-list { display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e0e0e0; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-top: 2px; }
-    .drop-list.visible { display: block; }
-    .drop-item { padding: 9px 12px; cursor: pointer; font-size: 13px; border-bottom: 0.5px solid #f5f5f5; }
-    .drop-item:hover { background: #eef8ff; color: #14ace7; }
-    .drop-item:last-child { border-bottom: none; }
-    .cliente-sel-panel { display: none; background: #f0f9ff; border: 1px solid #dbeafe; border-radius: 6px; padding: 8px 12px; margin-top: 6px; align-items: center; gap: 8px; }
-    .cliente-sel-panel.visible { display: flex; }
-    .cliente-sel-nombre { flex: 1; font-size: 13px; font-weight: 700; color: #1565c0; }
-    .btn-quitar-cliente { background: none; border: none; color: #aaa; font-size: 16px; cursor: pointer; line-height: 1; }
-    .creditos-abonar { margin-top: 10px; display: none; }
-    .creditos-abonar.visible { display: block; }
-    .credito-abonar-item { border: 0.5px solid #eee; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
-    .credito-abonar-item:last-child { margin-bottom: 0; }
-    .cred-folio { font-size: 12px; font-weight: 700; color: #333; margin-bottom: 2px; }
-    .cred-fecha { font-size: 11px; color: #aaa; }
-    .cred-saldo { font-size: 15px; font-weight: 700; color: #c0392b; margin-top: 4px; }
-    .btn-ir-abonar { display: block; width: 100%; background: #2e7d32; color: white; border: none; padding: 8px; border-radius: 5px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; text-decoration: none; margin-top: 8px; }
-    .btn-ir-abonar:hover { background: #1b5e20; }
-    .abonar-cargando { text-align: center; color: #aaa; font-size: 13px; padding: 16px 0; }
+    .btn-abonar-directo { background: #2e7d32; color: white; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+    .btn-abonar-directo:hover { background: #1b5e20; }
 
     /* Modal detalles */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; align-items: center; justify-content: center; }
@@ -267,8 +233,6 @@ $clientesAbonar = $pdo->query("
     </div>
 
     <div class="content">
-
-        <!-- Stats -->
         <div class="stats">
             <div class="stat">
                 <p>Clientes con deuda</p>
@@ -316,47 +280,14 @@ $clientesAbonar = $pdo->query("
                         <div class="etiq">pendiente</div>
                     </div>
                     <div class="cliente-acciones">
-                        <button class="btn-detalles" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">
-                            Detalles
-                        </button>
+                        <button class="btn-detalles" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver créditos</button>
+                        <a class="btn-abonar-directo" href="abonos.php?cliente=<?= $cl['cliente_id'] ?>">Cobrar →</a>
                     </div>
                 </div>
                 <?php endforeach; ?>
             <?php else: ?>
                 <div class="sin-resultados">No hay clientes con crédito pendiente.</div>
             <?php endif; ?>
-        </div>
-
-        <!-- Panel Abonar -->
-        <div class="col-abonar">
-            <div class="card">
-                <h3>Registrar abono</h3>
-
-                <div class="form-group">
-                    <label>Buscar cliente</label>
-                    <div class="drop-wrap">
-                        <input type="text" id="buscarClienteAbonar" placeholder="Nombre del cliente..."
-                            autocomplete="off"
-                            oninput="filtrarDropAbonar(this.value)"
-                            onfocus="filtrarDropAbonar(this.value)"
-                            onblur="setTimeout(ocultarDropAbonar, 200)">
-                        <div class="drop-list" id="dropAbonar"></div>
-                    </div>
-                    <div class="cliente-sel-panel" id="clienteSelAbonar">
-                        <span class="cliente-sel-nombre" id="clienteSelNombreAbonar"></span>
-                        <button class="btn-quitar-cliente" onclick="quitarClienteAbonar()">✕</button>
-                    </div>
-                </div>
-
-                <div class="creditos-abonar" id="creditosAbonarPanel">
-                    <div style="font-size:12px;color:#888;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:8px;">Créditos activos</div>
-                    <div id="creditosAbonarLista"><div class="abonar-cargando">Cargando...</div></div>
-                </div>
-
-                <div id="abonarVacio" style="display:none;text-align:center;color:#aaa;font-size:13px;padding:20px 0;">
-                    Selecciona un cliente para ver sus créditos.
-                </div>
-            </div>
         </div>
 
     </div>
@@ -451,84 +382,6 @@ function formatFecha(str) {
     if (!str) return '';
     const d = new Date(str);
     return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-/* ── Panel Abonar: buscador de clientes ── */
-const clientesAbonar = <?= json_encode(array_values(array_map(fn($c) => [
-    'id'     => (int)$c['cliente_id'],
-    'nombre' => $c['nombre_completo'],
-    'texto'  => mb_strtolower($c['nombre_completo']),
-], $clientesAbonar))) ?>;
-
-let clienteAbonarActual = null;
-
-function filtrarDropAbonar(q) {
-    const drop = document.getElementById('dropAbonar');
-    const qn = normalizar(q);
-    const res = qn ? clientesAbonar.filter(c => normalizar(c.texto).includes(qn)) : clientesAbonar.slice(0, 30);
-    if (!res.length) {
-        drop.innerHTML = '<div style="padding:10px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
-    } else {
-        drop.innerHTML = res.map(c => `
-            <div class="drop-item" onclick="seleccionarClienteAbonar(${c.id})">${c.nombre}</div>
-        `).join('');
-    }
-    drop.classList.add('visible');
-}
-
-function ocultarDropAbonar() {
-    document.getElementById('dropAbonar').classList.remove('visible');
-}
-
-function seleccionarClienteAbonar(id) {
-    clienteAbonarActual = clientesAbonar.find(c => c.id === id);
-    if (!clienteAbonarActual) return;
-    ocultarDropAbonar();
-    document.getElementById('buscarClienteAbonar').value = '';
-    document.getElementById('clienteSelNombreAbonar').textContent = clienteAbonarActual.nombre;
-    document.getElementById('clienteSelAbonar').classList.add('visible');
-    document.getElementById('abonarVacio').style.display = 'none';
-    cargarCreditosAbonar(id);
-}
-
-function quitarClienteAbonar() {
-    clienteAbonarActual = null;
-    document.getElementById('clienteSelAbonar').classList.remove('visible');
-    document.getElementById('buscarClienteAbonar').value = '';
-    document.getElementById('creditosAbonarPanel').classList.remove('visible');
-    document.getElementById('abonarVacio').style.display = 'none';
-}
-
-function cargarCreditosAbonar(clienteId) {
-    const panel = document.getElementById('creditosAbonarPanel');
-    const lista = document.getElementById('creditosAbonarLista');
-    panel.classList.add('visible');
-    lista.innerHTML = '<div class="abonar-cargando">Cargando...</div>';
-
-    fetch('creditos.php?get_creditos_cliente=' + clienteId)
-        .then(r => r.json())
-        .then(creditos => {
-            if (!creditos || !creditos.length) {
-                lista.innerHTML = '<div style="text-align:center;color:#aaa;font-size:13px;padding:12px 0;">Sin créditos activos.</div>';
-                return;
-            }
-            lista.innerHTML = creditos.map(cr => {
-                const folio = cr.folio ? 'Folio ' + cr.folio : 'Crédito #' + cr.credito_id;
-                const badgeColor = cr.estado === 'Vencido' ? '#c0392b' : '#2e7d32';
-                return `<div class="credito-abonar-item">
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <div class="cred-folio">${folio}</div>
-                        <span style="font-size:10px;font-weight:700;color:${badgeColor};">${cr.estado}</span>
-                    </div>
-                    <div class="cred-fecha">${formatFecha(cr.fecha_venta)}</div>
-                    <div class="cred-saldo">$${parseFloat(cr.saldo_pendiente).toFixed(2)} pendiente</div>
-                    <a class="btn-ir-abonar" href="abonos.php?credito_id=${cr.credito_id}">Registrar abono →</a>
-                </div>`;
-            }).join('');
-        })
-        .catch(() => {
-            lista.innerHTML = '<div style="text-align:center;color:#c0392b;font-size:13px;padding:12px 0;">Error al cargar.</div>';
-        });
 }
 
 /* Cerrar modal con Escape */

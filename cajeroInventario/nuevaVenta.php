@@ -583,7 +583,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .msg-mov-ok.retiro { background: #fdecea; color: #c0392b; border-left-color: #c0392b; }
     .msg-mov-err { background: #fdecea; color: #c0392b; padding: 9px 14px; border-radius: 6px; font-size: 12px; border-left: 3px solid #c0392b; margin-bottom: 10px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; padding: 12px 16px; border-radius: 6px; font-size: 13px; border-left: 3px solid #2e7d32; grid-column: span 2; display: flex; justify-content: space-between; align-items: center; }
-    .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 7px 16px; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 5px 11px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; margin-left: 10px; }
+    #_notifVentaOk { padding: 8px 12px !important; font-size: 12px !important; gap: 0; }
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; align-items: center; justify-content: center; }
     .modal-overlay.visible { display: flex; }
     .modal { background: white; border-radius: 10px; width: 90%; max-width: 700px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -1712,6 +1713,7 @@ function cambiarCantidad(i, val) {
     }
     carrito[i].cantidad = qty;
     renderCarrito(); recalcularTodo();
+    verificarRecomendaciones();
 }
 
 function eliminarItem(i) {
@@ -1773,22 +1775,25 @@ function verificarRecomendaciones() {
     paquetesGlobales.forEach(paq => {
         if (carrito.some(i => i.paquete_id === parseInt(paq.paquete_id))) return;
 
-        let cubiertos = 0;
-        const faltantes = [];
-        let hayAlguno   = false;
+        let cubiertos    = 0;
+        let progressSum  = 0;
+        const faltantes  = [];
+        let hayAlguno    = false;
 
         paq.productos.forEach(prod => {
             const pid       = parseInt(prod.producto_id);
             const enCar     = enCarrito[pid] || 0;
             const necesaria = parseFloat(prod.cantidad_requerida);
             if (enCar > 0) hayAlguno = true;
+            const ratio = necesaria > 0 ? Math.min(enCar / necesaria, 1) : 0;
+            progressSum += ratio;
             if (enCar >= necesaria) { cubiertos++; }
             else { faltantes.push({ nombre: prod.nombre_producto, falta: +(necesaria - enCar).toFixed(3) }); }
         });
 
         if (!hayAlguno) return;
         const total      = paq.productos.length;
-        const porcentaje = Math.round((cubiertos / total) * 100);
+        const porcentaje = Math.round((progressSum / total) * 100);
         recs.push({ paq, cubiertos, total, faltantes, porcentaje });
     });
 
@@ -1993,7 +1998,7 @@ function recalcularTodo() {
         document.getElementById('inputMontoTerminal').value = total.toFixed(2);
         document.getElementById('inputMontoEfectivo').value = '0.00';
         document.getElementById('inputCambio').value = '0.00';
-        document.getElementById('resCambio').textContent = '$0.00';
+        document.getElementById('resCambio').textContent = '$0.00'; document.getElementById('resCambio').style.color = '#2e7d32'; if (document.getElementById('resCambio').previousElementSibling) { document.getElementById('resCambio').previousElementSibling.textContent = 'Cambio'; document.getElementById('resCambio').previousElementSibling.style.color = ''; }
     }
     // Mixto: recalcular el split efectivo/terminal con los nuevos valores base
     if (metodoPago === 'Mixto') {
@@ -2009,10 +2014,23 @@ function recalcularTodo() {
 }
 
 function calcularCambio() {
-    const total    = parseFloat(document.getElementById('inputTotal').value)||0;
+    const total    = parseFloat(document.getElementById('resTotal').textContent.replace(/[^0-9.]/g,''))||0;
     const recibido = parseFloat(document.getElementById('montoEfectivo').value)||0;
-    const cambio   = Math.max(0, recibido-total);
-    document.getElementById('resCambio').textContent     = '$'+cambio.toFixed(2);
+    const falta    = total - recibido;
+    const cambio   = recibido >= total ? recibido - total : 0;
+    const elCambio = document.getElementById('resCambio');
+    const elLabel  = elCambio.previousElementSibling; // <span>Cambio</span>
+    if (recibido > 0 && falta > 0) {
+        elCambio.textContent = '-$' + falta.toFixed(2);
+        elCambio.style.color = '#c0392b';
+        if (elLabel) { elLabel.textContent = 'Falta'; elLabel.style.color = '#c0392b'; }
+    } else {
+        elCambio.textContent = '$' + cambio.toFixed(2);
+        elCambio.style.color = '#2e7d32';
+        if (elLabel) { elLabel.textContent = 'Cambio'; elLabel.style.color = ''; }
+    }
+    // actualizar inputTotal con el valor real para que el backend lo reciba bien
+    document.getElementById('inputTotal').value          = total.toFixed(2);
     document.getElementById('inputMontoEfectivo').value  = recibido.toFixed(2);
     document.getElementById('inputCambio').value         = cambio.toFixed(2);
     verificarCobrar();
@@ -2056,7 +2074,13 @@ function verificarCobrar() {
         const ef = parseFloat(document.getElementById('mixtoEfectivo').value) || 0;
         mixtoOk = ef > 0;
     }
-    document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago && referenciaOk && mixtoOk);
+    let efectivoOk = true;
+    if (metodoPago === 'Efectivo') {
+        const total    = parseFloat(document.getElementById('resTotal').textContent.replace(/[^0-9.]/g,'')) || 0;
+        const recibido = parseFloat(document.getElementById('montoEfectivo').value) || 0;
+        efectivoOk = total > 0 && recibido >= total;
+    }
+    document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago && referenciaOk && mixtoOk && efectivoOk);
 }
 
 // ── Preparar y enviar venta ──────────────────────────────────────────────────
@@ -2089,6 +2113,15 @@ function prepararVenta() {
                 tiene_promo:  item.tiene_promo ? 1 : 0,
                 promo_desc:   item.promo_desc || ''
             });
+        }
+    }
+    if (metodoPago === 'Efectivo') {
+        const total    = parseFloat(document.getElementById('resTotal').textContent.replace(/[^0-9.]/g,'')) || 0;
+        const recibido = parseFloat(document.getElementById('montoEfectivo').value) || 0;
+        if (recibido < total) {
+            alert('La cantidad recibida ($' + recibido.toFixed(2) + ') es menor al total ($' + total.toFixed(2) + '). No se puede procesar la venta.');
+            document.getElementById('montoEfectivo').focus();
+            return false;
         }
     }
     if (metodoPago === 'Transferencia' && String(document.getElementById('transferReferencia').value || '').trim() === '') {
@@ -2162,7 +2195,7 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
                 notif = document.createElement('div');
                 notif.id = '_notifVentaOk';
                 notif.className = 'msg-exito';
-                notif.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9999;min-width:320px;';
+                notif.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:9999;white-space:nowrap;';
                 document.body.appendChild(notif);
             }
             notif.innerHTML = `<span>✅ Venta registrada correctamente.</span>

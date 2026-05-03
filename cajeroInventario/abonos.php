@@ -107,17 +107,43 @@ if ($credito_id) {
     $abonos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Si no hay crédito específico, mostrar lista de créditos activos
-$creditosActivos = [];
+// Si no hay crédito específico, mostrar lista de clientes con deuda
+$porCliente    = [];
+$statsAbonos   = null;
+$clienteFiltro = intval($_GET['cliente'] ?? 0);
+
 if (!$credito_id) {
+    $statsAbonos = $pdo->query("
+        SELECT
+            COALESCE(SUM(CASE WHEN DATE(a.created_at) = CURDATE() THEN a.monto ELSE 0 END), 0)  AS cobrado_hoy,
+            COALESCE(SUM(CASE WHEN YEAR(a.created_at) = YEAR(NOW()) AND MONTH(a.created_at) = MONTH(NOW()) THEN a.monto ELSE 0 END), 0) AS cobrado_mes
+        FROM abonos a
+    ")->fetch(PDO::FETCH_ASSOC);
+
     $stmt = $pdo->query("
-        SELECT cr.*, c.nombre_completo
+        SELECT cr.credito_id, cr.monto_total, cr.saldo_pendiente, cr.estado, cr.created_at,
+               v.folio,
+               c.cliente_id, c.nombre_completo, c.telefono
         FROM creditos cr
         JOIN clientes c ON cr.cliente_id = c.cliente_id
-        WHERE cr.estado = 'Activo'
-        ORDER BY cr.created_at ASC
+        LEFT JOIN ventas v ON cr.venta_id = v.venta_id
+        WHERE cr.estado IN ('Activo', 'Vencido')
+        ORDER BY c.nombre_completo ASC, cr.created_at ASC
     ");
-    $creditosActivos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $cr) {
+        $cid = $cr['cliente_id'];
+        if (!isset($porCliente[$cid])) {
+            $porCliente[$cid] = [
+                'info'    => ['id' => $cid, 'nombre' => $cr['nombre_completo'], 'telefono' => $cr['telefono']],
+                'creditos'=> [],
+                'total'   => 0,
+                'vencido' => false,
+            ];
+        }
+        $porCliente[$cid]['creditos'][] = $cr;
+        $porCliente[$cid]['total']     += floatval($cr['saldo_pendiente']);
+        if ($cr['estado'] === 'Vencido') $porCliente[$cid]['vencido'] = true;
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -192,10 +218,35 @@ if (!$credito_id) {
     .dato-banco { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin-bottom: 6px; }
     .dato-banco span:first-child { color: #888; }
     .dato-banco span:last-child { font-weight: 600; }
-    .lista-creditos { display: flex; flex-direction: column; gap: 10px; }
-    .credito-item { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
-    .credito-item:hover { border-color: #14ace7; }
-    .btn-seleccionar { background: #14ace7; color: white; border: none; padding: 7px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+    /* Landing — cobrar */
+    .landing-wrap { max-width: 820px; }
+    .landing-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+    .lstat { background: white; border-radius: 8px; padding: 14px 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #2e7d32; }
+    .lstat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+    .lstat h3 { font-size: 20px; font-weight: 700; color: #2e7d32; margin: 0; }
+    .lstat.neutral h3 { color: #222; }
+    .search-cobrar { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; margin-bottom: 12px; background: white; }
+    .search-cobrar:focus { outline: none; border-color: #2e7d32; }
+    .cliente-bloque { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; margin-bottom: 10px; overflow: hidden; }
+    .cliente-bloque.vencido { border-left: 3px solid #c0392b; }
+    .cliente-bloque-header { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 0.5px solid #f0f0f0; background: #fafafa; }
+    .cbloque-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    .cbloque-nombre { font-size: 14px; font-weight: 700; color: #222; }
+    .cbloque-tel { font-size: 11px; color: #aaa; }
+    .cbloque-total { font-size: 14px; font-weight: 700; color: #c0392b; white-space: nowrap; flex-shrink: 0; }
+    .badge-venc { background: #fdecea; color: #c0392b; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
+    .credito-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 0.5px solid #f5f5f5; gap: 10px; }
+    .credito-row:last-child { border-bottom: none; }
+    .credito-row.row-vencido { background: #fffaf9; }
+    .crow-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .crow-folio { font-size: 13px; font-weight: 600; color: #333; }
+    .crow-fecha { font-size: 11px; color: #aaa; }
+    .badge-estado-activo { background: #e8f5e9; color: #2e7d32; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
+    .badge-estado-vencido { background: #fdecea; color: #c0392b; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
+    .crow-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .crow-saldo { font-size: 13px; font-weight: 700; color: #c0392b; white-space: nowrap; }
+    .btn-abonar-ir { background: #2e7d32; color: white; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+    .btn-abonar-ir:hover { background: #1b5e20; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -253,7 +304,7 @@ if (!$credito_id) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Abonos a créditos</h2>
+            <h2><?= $credito_id ? 'Registrar abono' : 'Cobrar créditos' ?></h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
@@ -409,27 +460,66 @@ if (!$credito_id) {
     </div>
 
     <?php else: ?>
-    <!-- Lista de créditos activos para seleccionar -->
     <div class="content-full">
-        <h1 style="font-size:20px;font-weight:600;color:#222;margin:0 0 20px;">Selecciona un crédito</h1>
-        <?php if (count($creditosActivos) > 0): ?>
-            <div class="lista-creditos">
-                <?php foreach ($creditosActivos as $cr): ?>
-                <div class="credito-item">
-                    <div>
-                        <strong><?= htmlspecialchars($cr['nombre_completo']) ?></strong>
-                        <div style="font-size:12px;color:#aaa;margin-top:2px;">
-                            Pendiente: <strong style="color:#c0392b;">$<?= number_format($cr['saldo_pendiente'],2) ?></strong>
-                            de $<?= number_format($cr['monto_total'],2) ?>
-                        </div>
-                    </div>
-                    <a class="btn-seleccionar" href="abonos.php?credito_id=<?= $cr['credito_id'] ?>">Abonar</a>
+        <div class="landing-wrap">
+            <!-- Stats -->
+            <div class="landing-stats">
+                <div class="lstat">
+                    <p>Cobrado hoy</p>
+                    <h3>$<?= number_format($statsAbonos['cobrado_hoy'] ?? 0, 2) ?></h3>
                 </div>
-                <?php endforeach; ?>
+                <div class="lstat">
+                    <p>Cobrado este mes</p>
+                    <h3>$<?= number_format($statsAbonos['cobrado_mes'] ?? 0, 2) ?></h3>
+                </div>
+                <div class="lstat neutral">
+                    <p>Clientes pendientes</p>
+                    <h3><?= count($porCliente) ?></h3>
+                </div>
             </div>
-        <?php else: ?>
-            <div class="sin-resultados" style="background:white;border-radius:8px;border:0.5px solid #e8e8e8;">No hay créditos activos.</div>
-        <?php endif; ?>
+
+            <?php if (!empty($porCliente)): ?>
+                <input type="text" class="search-cobrar" id="searchCobrar"
+                       placeholder="Buscar cliente..." autocomplete="off"
+                       oninput="filtrarCobrar(this.value)">
+
+                <div id="listaCobrar">
+                    <?php foreach ($porCliente as $cid => $grupo): ?>
+                    <div class="cliente-bloque <?= $grupo['vencido'] ? 'vencido' : '' ?>"
+                         id="cliente-<?= $cid ?>"
+                         data-nombre="<?= htmlspecialchars(mb_strtolower($grupo['info']['nombre'] . ' ' . ($grupo['info']['telefono'] ?? ''))) ?>">
+                        <div class="cliente-bloque-header">
+                            <div class="cbloque-info">
+                                <span class="cbloque-nombre"><?= htmlspecialchars($grupo['info']['nombre']) ?></span>
+                                <?php if ($grupo['vencido']): ?><span class="badge-venc">Vencido</span><?php endif; ?>
+                                <?php if ($grupo['info']['telefono']): ?>
+                                    <span class="cbloque-tel"><?= htmlspecialchars($grupo['info']['telefono']) ?></span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="cbloque-total">$<?= number_format($grupo['total'], 2) ?> pendiente</div>
+                        </div>
+                        <?php foreach ($grupo['creditos'] as $cr): ?>
+                        <div class="credito-row <?= $cr['estado'] === 'Vencido' ? 'row-vencido' : '' ?>">
+                            <div class="crow-info">
+                                <span class="crow-folio"><?= $cr['folio'] ? htmlspecialchars('Folio '.$cr['folio']) : 'Crédito #'.$cr['credito_id'] ?></span>
+                                <span class="crow-fecha"><?= date('d/m/Y', strtotime($cr['created_at'])) ?></span>
+                                <span class="badge-estado-<?= strtolower($cr['estado']) ?>"><?= $cr['estado'] ?></span>
+                            </div>
+                            <div class="crow-right">
+                                <span class="crow-saldo">$<?= number_format($cr['saldo_pendiente'], 2) ?></span>
+                                <a class="btn-abonar-ir" href="abonos.php?credito_id=<?= $cr['credito_id'] ?>">Abonar →</a>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php else: ?>
+                <div class="sin-resultados" style="background:white;border-radius:8px;border:0.5px solid #e8e8e8;margin-top:4px;">
+                    No hay créditos activos para cobrar.
+                </div>
+            <?php endif; ?>
+        </div>
     </div>
     <?php endif; ?>
 </div>
@@ -473,6 +563,30 @@ function actualizarComision() {
     document.getElementById('montoComision').textContent = '$' + comision.toFixed(2);
     document.getElementById('totalTerminal').textContent  = '$' + total.toFixed(2);
 }
+
+// Landing: filtrar clientes
+function filtrarCobrar(q) {
+    const qn = q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+    document.querySelectorAll('#listaCobrar .cliente-bloque').forEach(el => {
+        el.style.display = (el.dataset.nombre||'').includes(qn) ? '' : 'none';
+    });
+}
+
+// Aplicar filtro si viene ?cliente=X
+(function() {
+    const clienteId = <?= $clienteFiltro ?>;
+    if (!clienteId) return;
+    const el = document.getElementById('cliente-' + clienteId);
+    if (!el) return;
+    // Hide everything else
+    document.querySelectorAll('#listaCobrar .cliente-bloque').forEach(b => {
+        b.style.display = b.id === 'cliente-' + clienteId ? '' : 'none';
+    });
+    // Show name in search box
+    const nombre = el.querySelector('.cbloque-nombre');
+    const search = document.getElementById('searchCobrar');
+    if (search && nombre) search.value = nombre.textContent.trim();
+})();
 
 // Recalcular al cambiar el monto
 document.querySelector('input[name="monto"]')?.addEventListener('input', actualizarComision);

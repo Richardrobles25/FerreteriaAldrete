@@ -134,8 +134,26 @@ $stmtMov = $pdo->prepare("
 $stmtMov->execute($paramsM);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
-$totalIngresos = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo']==='Ingreso'), 'monto'));
-$totalRetiros  = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo']==='Retiro'),  'monto'));
+// Separar: abonos de crédito vs movimientos regulares
+// str_starts_with evita problemas de multibyte con regex sin /u
+$esAbono = fn($m) => str_starts_with($m['nota'], 'Pago crédito') || str_starts_with($m['nota'], 'Abono de crédito');
+$movAbonos    = array_values(array_filter($movimientos,  $esAbono));
+$movRegulares = array_values(array_filter($movimientos, fn($m) => !$esAbono($m)));
+
+// Totales regulares (retiros/ingresos manuales, sin abonos)
+$totalIngresos = array_sum(array_column(array_filter($movRegulares, fn($m) => $m['tipo']==='Ingreso'), 'monto'));
+$totalRetiros  = array_sum(array_column(array_filter($movRegulares, fn($m) => $m['tipo']==='Retiro'),  'monto'));
+
+// Desglose de abonos de crédito por método
+$totalAbonosEf    = array_sum(array_column(array_filter($movAbonos, fn($m) =>  str_ends_with($m['nota'], '[Efectivo]')),      'monto'));
+$totalAbonosTerm  = array_sum(array_column(array_filter($movAbonos, fn($m) =>  str_ends_with($m['nota'], '[Terminal]')),      'monto'));
+$totalAbonosTrans = array_sum(array_column(array_filter($movAbonos, fn($m) =>  str_ends_with($m['nota'], '[Transferencia]')), 'monto'));
+$totalAbonosOtros = array_sum(array_column(array_filter($movAbonos, fn($m) =>
+    !str_ends_with($m['nota'], '[Efectivo]') &&
+    !str_ends_with($m['nota'], '[Terminal]') &&
+    !str_ends_with($m['nota'], '[Transferencia]')
+), 'monto'));
+$totalAbonos = $totalAbonosEf + $totalAbonosTerm + $totalAbonosTrans + $totalAbonosOtros;
 
 // ── Datos de sucursal para el ticket ────────────────────────────────────────
 $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
@@ -229,6 +247,14 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     .mov-stat.ing strong { color: #2e7d32; font-size: 15px; font-weight: 700; }
     .mov-stat.ret strong { color: #c0392b; font-size: 15px; font-weight: 700; }
     .sin-mov { padding: 32px; text-align: center; color: #bbb; font-size: 13px; }
+    .abonos-resumen { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; border-top: 3px solid #2e7d32; padding: 14px 16px; margin-bottom: 10px; }
+    .abonos-resumen-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .abonos-resumen-titulo { font-size: 13px; font-weight: 700; color: #2e7d32; text-transform: uppercase; letter-spacing: 0.5px; }
+    .abonos-resumen-total { font-size: 16px; font-weight: 700; color: #2e7d32; }
+    .abonos-stats { display: flex; gap: 8px; flex-wrap: wrap; }
+    .abono-stat { background: #f9f9f9; border-radius: 6px; padding: 8px 14px; border: 0.5px solid #eee; min-width: 110px; }
+    .abono-stat span { display: block; font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+    .abono-stat strong { font-size: 14px; font-weight: 700; }
     .btn-accion { border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .btn-detalle { background: #e3f2fd; color: #1565c0; }
     .btn-detalle:hover { background: #bbdefb; }
@@ -325,7 +351,6 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
         <a class="menu-item" href="creditos.php">Créditos</a>
-        <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
 
         <div class="menu-label">Inventario</div>
@@ -539,19 +564,97 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
         <div class="seccion-mov">
             <div class="seccion-mov-header">
                 <h2>Movimientos de caja</h2>
-                <div class="seccion-mov-stats">
-                    <div class="mov-stat ing">
-                        <span>Ingresos</span>
-                        <strong>+$<?= number_format($totalIngresos, 2) ?></strong>
+            </div>
+
+            <!-- Desglose abonos de crédito -->
+            <?php if ($totalAbonos > 0): ?>
+            <div class="abonos-resumen">
+                <div class="abonos-resumen-header">
+                    <div class="abonos-resumen-titulo">Abonos de crédito</div>
+                    <div class="abonos-resumen-total">+$<?= number_format($totalAbonos, 2) ?></div>
+                </div>
+                <div class="abonos-stats">
+                    <?php if ($totalAbonosEf > 0): ?>
+                    <div class="abono-stat">
+                        <span>Efectivo</span>
+                        <strong style="color:#2e7d32;">$<?= number_format($totalAbonosEf, 2) ?></strong>
                     </div>
-                    <div class="mov-stat ret">
-                        <span>Retiros</span>
-                        <strong>-$<?= number_format($totalRetiros, 2) ?></strong>
+                    <?php endif; ?>
+                    <?php if ($totalAbonosTerm > 0): ?>
+                    <div class="abono-stat">
+                        <span>Terminal</span>
+                        <strong style="color:#1565c0;">$<?= number_format($totalAbonosTerm, 2) ?></strong>
                     </div>
+                    <?php endif; ?>
+                    <?php if ($totalAbonosTrans > 0): ?>
+                    <div class="abono-stat">
+                        <span>Transferencia</span>
+                        <strong style="color:#e65100;">$<?= number_format($totalAbonosTrans, 2) ?></strong>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </div>
+            <?php endif; ?>
+
+            <!-- Tabla: abonos de crédito -->
+            <?php if (count($movAbonos) > 0): ?>
+            <div class="tabla-wrapper" style="margin-bottom:12px;">
+                <div class="tabla-info" style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;font-weight:700;color:#2e7d32;text-transform:uppercase;letter-spacing:.4px;">Abonos de crédito</span>
+                    <span style="color:#ccc;">·</span>
+                    <span><?= count($movAbonos) ?> movimiento(s)</span>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Método</th>
+                            <th>Monto</th>
+                            <th>Nota / Cliente</th>
+                            <th>Cajero</th>
+                            <th>Fecha/Hora</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($movAbonos as $m):
+                            if      (str_ends_with($m['nota'], '[Efectivo]'))      { $metTag = 'Efectivo';      $metColor = '#2e7d32'; }
+                            elseif  (str_ends_with($m['nota'], '[Terminal]'))      { $metTag = 'Terminal';      $metColor = '#1565c0'; }
+                            elseif  (str_ends_with($m['nota'], '[Transferencia]')) { $metTag = 'Transferencia'; $metColor = '#e65100'; }
+                            else                                                   { $metTag = '—';             $metColor = '#aaa'; }
+                            $notaLimpia = rtrim(preg_replace('/\s*\[(Efectivo|Terminal|Transferencia)\]$/', '', $m['nota']));
+                        ?>
+                        <tr>
+                            <td>
+                                <span class="badge" style="background:<?= $metColor ?>22;color:<?= $metColor ?>;"><?= $metTag ?></span>
+                            </td>
+                            <td style="font-weight:700;color:#2e7d32;">+$<?= number_format($m['monto'], 2) ?></td>
+                            <td>
+                                <div class="mov-nota"><?= htmlspecialchars($notaLimpia) ?></div>
+                            </td>
+                            <td style="font-size:12px;"><?= htmlspecialchars($m['cajero'] ?? '—') ?></td>
+                            <td style="color:#aaa;font-size:12px;white-space:nowrap;">
+                                <?= date('d/m/Y H:i', strtotime($m['created_at'])) ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+
+            <!-- Tabla: movimientos regulares (ingresos/retiros manuales) -->
             <div class="tabla-wrapper">
-                <?php if (count($movimientos) > 0): ?>
+                <?php if (count($movRegulares) > 0): ?>
+                <div class="tabla-info" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                    <span style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.4px;">Retiros e ingresos manuales</span>
+                    <div style="display:flex;gap:8px;">
+                        <?php if ($totalIngresos > 0): ?>
+                        <span style="background:#e8f5e9;color:#2e7d32;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;">Ingresos +$<?= number_format($totalIngresos,2) ?></span>
+                        <?php endif; ?>
+                        <?php if ($totalRetiros > 0): ?>
+                        <span style="background:#fdecea;color:#c0392b;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;">Retiros -$<?= number_format($totalRetiros,2) ?></span>
+                        <?php endif; ?>
+                    </div>
+                </div>
                 <table>
                     <thead>
                         <tr>
@@ -563,7 +666,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($movimientos as $m): ?>
+                        <?php foreach ($movRegulares as $m): ?>
                         <tr>
                             <td>
                                 <span class="badge badge-<?= strtolower($m['tipo']) ?>">
@@ -584,8 +687,10 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                         <?php endforeach; ?>
                     </tbody>
                 </table>
-                <?php else: ?>
+                <?php elseif (count($movAbonos) === 0): ?>
                     <div class="sin-mov">No hay movimientos de caja en este período.</div>
+                <?php else: ?>
+                    <div class="sin-mov" style="padding:16px;">No hay retiros ni ingresos manuales en este período.</div>
                 <?php endif; ?>
             </div>
         </div>

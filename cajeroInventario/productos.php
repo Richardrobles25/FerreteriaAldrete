@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 ob_start();
 session_start();
 require_once '../includes/auth.php';
@@ -527,7 +527,6 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
         <a class="menu-item" href="creditos.php">Créditos</a>
-        <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
 
         <div class="menu-label">Inventario</div>

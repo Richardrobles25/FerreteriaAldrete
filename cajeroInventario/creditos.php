@@ -6,7 +6,141 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-// AJAX: créditos activos de un cliente (para modal de detalles y panel abonar)
+// Datos bancarios de la sucursal
+$sucursalInfo = $pdo->prepare("SELECT banco, titular_cuenta, numero_cuenta, clabe_interbancaria, alias_tarjeta, comision_terminal_pct FROM sucursales WHERE sucursal_id = ?");
+$sucursalInfo->execute([$_SESSION['sucursal_id']]);
+$datosBanco  = $sucursalInfo->fetch(PDO::FETCH_ASSOC);
+$comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
+
+// Caja abierta del usuario actual
+$stmtCajaCheck = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
+$stmtCajaCheck->execute([$_SESSION['usuario_id']]);
+$cajaAbiertaId = $stmtCajaCheck->fetchColumn() ?: null;
+
+// AJAX: historial de pagos de un cliente (todos sus créditos)
+if (isset($_GET['get_abonos_cliente'])) {
+    header('Content-Type: application/json');
+    $cliente_id = intval($_GET['get_abonos_cliente']);
+    $stmt = $pdo->prepare("
+        SELECT a.abono_id, a.monto, a.comision_terminal, a.metodo_pago, a.notas, a.created_at,
+               u.nombre_completo AS cajero,
+               COALESCE(v.folio, CONCAT('Crédito #', cr.credito_id)) AS folio
+        FROM abonos a
+        JOIN creditos cr ON a.credito_id = cr.credito_id
+        JOIN usuarios u  ON a.usuario_id = u.usuario_id
+        LEFT JOIN ventas v ON cr.venta_id = v.venta_id
+        WHERE cr.cliente_id = ?
+        ORDER BY a.created_at DESC
+        LIMIT 60
+    ");
+    $stmt->execute([$cliente_id]);
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit();
+}
+
+// AJAX: registrar pago (distribuye automáticamente a créditos del más antiguo al más reciente)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'registrar_abono') {
+    header('Content-Type: application/json');
+    try {
+        // Caja abierta obligatoria
+        $stmtCajaAb = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
+        $stmtCajaAb->execute([$_SESSION['usuario_id']]);
+        $cajaIdAb = $stmtCajaAb->fetchColumn();
+        if (!$cajaIdAb) throw new Exception('No hay caja abierta. Abre la caja antes de registrar un pago.');
+
+        $cliente_id = intval($_POST['cliente_id'] ?? 0);
+        $monto      = floatval($_POST['monto'] ?? 0);
+        $metodo     = $_POST['metodo_pago'] ?? '';
+        $notas      = trim($_POST['notas'] ?? '');
+        $referencia = trim($_POST['referencia'] ?? '');
+        $monto_ef   = floatval($_POST['monto_efectivo'] ?? 0);
+        $monto_term = floatval($_POST['monto_terminal'] ?? 0);
+
+        if ($monto <= 0) throw new Exception('El monto debe ser mayor a 0.');
+        if (!in_array($metodo, ['Efectivo','Terminal','Transferencia','Mixto'])) throw new Exception('Selecciona el método de pago.');
+        if ($metodo === 'Transferencia' && $referencia === '') throw new Exception('Ingresa la referencia de la transferencia.');
+        if ($metodo === 'Mixto' && $monto_ef <= 0) throw new Exception('Ingresa el monto en efectivo para el pago mixto.');
+
+        $stmtCl = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE cliente_id = ?");
+        $stmtCl->execute([$cliente_id]);
+        $clienteNombre = $stmtCl->fetchColumn();
+        if (!$clienteNombre) throw new Exception('Cliente no encontrado.');
+
+        // Créditos del cliente, del más antiguo al más reciente
+        $stmtCrs = $pdo->prepare("
+            SELECT credito_id, saldo_pendiente
+            FROM creditos
+            WHERE cliente_id = ? AND estado IN ('Activo', 'Vencido')
+            ORDER BY created_at ASC
+        ");
+        $stmtCrs->execute([$cliente_id]);
+        $creditsRows = $stmtCrs->fetchAll(PDO::FETCH_ASSOC);
+
+        $totalPendiente = array_sum(array_column($creditsRows, 'saldo_pendiente'));
+        if ($monto > $totalPendiente + 0.001) {
+            throw new Exception('El monto excede el total pendiente ($'.number_format($totalPendiente,2).').');
+        }
+
+        // Calcular comisión según método
+        $comisionTotal = 0;
+        if ($metodo === 'Terminal' && $comisionPct > 0) {
+            $comisionTotal = round($monto * $comisionPct / 100, 2);
+        }
+        if ($metodo === 'Mixto' && $comisionPct > 0 && $monto_ef < $monto) {
+            $baseTerminal  = $monto - $monto_ef;
+            $comisionTotal = round($baseTerminal * $comisionPct / 100, 2);
+        }
+        if ($metodo === 'Transferencia' && $referencia !== '') {
+            $notas = 'Ref: ' . $referencia . ($notas !== '' ? ' — ' . $notas : '');
+        }
+
+        $pdo->beginTransaction();
+
+        // Aplicar FIFO: liquidar créditos del más antiguo al más reciente
+        $restante = $monto;
+        foreach ($creditsRows as $cr) {
+            if ($restante <= 0.001) break;
+            $pagoEste    = min($restante, floatval($cr['saldo_pendiente']));
+            $nuevoSaldo  = max(0, floatval($cr['saldo_pendiente']) - $pagoEste);
+            $nuevoEstado = $nuevoSaldo <= 0.001 ? 'Liquidado' : 'Activo';
+            $comisionEste = ($monto > 0 && $comisionTotal > 0) ? round($comisionTotal * $pagoEste / $monto, 2) : 0;
+
+            $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
+                ->execute([$cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $comisionEste, $metodo, $notas]);
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
+                ->execute([$nuevoSaldo, $nuevoEstado, $cr['credito_id']]);
+
+            $restante -= $pagoEste;
+        }
+
+        // Movimientos de caja — Mixto genera dos entradas (efectivo + terminal)
+        $notaBase = 'Pago crédito — ' . $clienteNombre . ($notas !== '' ? ': ' . $notas : '');
+        if ($metodo === 'Mixto') {
+            if ($monto_ef > 0) {
+                $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,'Ingreso',?,?)")
+                    ->execute([$cajaIdAb, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $monto_ef, $notaBase . ' [Efectivo]']);
+            }
+            if ($monto_term > 0) {
+                $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,'Ingreso',?,?)")
+                    ->execute([$cajaIdAb, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $monto_term, $notaBase . ' [Terminal]']);
+            }
+        } else {
+            // Terminal: registrar lo que el cliente paga (monto + comisión)
+            $montoMov  = ($metodo === 'Terminal') ? $monto + $comisionTotal : $monto;
+            $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,'Ingreso',?,?)")
+                ->execute([$cajaIdAb, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $montoMov, $notaBase . ' [' . $metodo . ']']);
+        }
+
+        $pdo->commit();
+        echo json_encode(['ok' => true]);
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit();
+}
+
+// AJAX: créditos activos de un cliente
 if (isset($_GET['get_creditos_cliente'])) {
     header('Content-Type: application/json');
     try {
@@ -140,9 +274,6 @@ $totales = $pdo->query("
     .badge-vencido { display: inline-block; background: #fdecea; color: #c0392b; border-radius: 99px; padding: 1px 7px; font-size: 10px; font-weight: 700; margin-left: 6px; }
     .sin-resultados { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
 
-    .btn-abonar-directo { background: #2e7d32; color: white; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
-    .btn-abonar-directo:hover { background: #1b5e20; }
-
     /* Modal detalles */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; align-items: center; justify-content: center; }
     .modal-overlay.visible { display: flex; }
@@ -169,10 +300,75 @@ $totales = $pdo->query("
     .prod-det-cant { color: #888; font-size: 12px; margin: 0 10px; white-space: nowrap; }
     .prod-det-precio { font-weight: 600; color: #14ace7; white-space: nowrap; }
     .credito-det-footer { padding: 8px 14px; border-top: 0.5px solid #eee; display: flex; justify-content: space-between; align-items: center; }
-    .btn-abonar-modal { background: #2e7d32; color: white; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn-abonar-modal { background: #2e7d32; color: white; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
     .btn-abonar-modal:hover { background: #1b5e20; }
     .modal-sin-creditos { text-align: center; color: #aaa; padding: 32px; font-size: 13px; }
     .det-cargando { text-align: center; color: #aaa; padding: 40px; font-size: 13px; }
+
+    /* Modal abonar */
+    .modal-ab-overlay { z-index: 600; }
+    .modal-ab { background: white; border-radius: 10px; width: 580px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+    .ab-info { background: #f0f9e8; border: 1px solid #c8e6c9; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .ab-info-cliente { font-size: 14px; font-weight: 700; color: #222; }
+    .ab-info-folio { font-size: 11px; color: #666; margin-top: 2px; }
+    .ab-saldo-lbl { font-size: 11px; color: #666; text-align: right; }
+    .ab-saldo-val { font-size: 18px; font-weight: 700; color: #c0392b; white-space: nowrap; }
+    .ab-msg-ok { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; display: none; }
+    .ab-msg-err { background: #fdecea; color: #c0392b; border-left: 3px solid #c0392b; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; display: none; }
+    .ab-fg { margin-bottom: 12px; }
+    .ab-fg label { display: block; font-size: 12px; color: #555; margin-bottom: 5px; font-weight: 600; }
+    .ab-fg input, .ab-fg select { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: Arial, sans-serif; }
+    .ab-fg input:focus, .ab-fg select:focus { outline: none; border-color: #2e7d32; }
+    .btn-ab-submit { width: 100%; background: #2e7d32; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .btn-ab-submit:hover { background: #1b5e20; }
+    .btn-ab-submit:disabled { background: #aaa; cursor: not-allowed; }
+    .ab-divider { border: none; border-top: 1px solid #eee; margin: 16px 0 12px; }
+    .ab-hist-titulo { font-size: 12px; font-weight: 700; color: #777; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+    .tabla-abonos { width: 100%; border-collapse: collapse; }
+    .tabla-abonos th { padding: 7px 10px; text-align: left; font-size: 11px; color: #999; font-weight: 600; text-transform: uppercase; border-bottom: 1px solid #eee; }
+    .tabla-abonos td { padding: 7px 10px; font-size: 12px; color: #444; border-bottom: 0.5px solid #f5f5f5; }
+    .tabla-abonos tr:last-child td { border-bottom: none; }
+    .ab-panel { display: none; border-radius: 8px; padding: 11px 14px; margin-bottom: 12px; }
+    .ab-panel.visible { display: block; }
+    .ab-panel-terminal { background: #e3f2fd; border: 1px solid #90caf9; }
+    .ab-panel-trans { background: #f0f9ff; border: 1px solid #b3e0f7; }
+    .ab-panel h4 { font-size: 12px; font-weight: 700; margin: 0 0 8px; }
+    .ab-panel-terminal h4 { color: #1565c0; }
+    .ab-panel-trans h4 { color: #0077a8; }
+    .ab-dato { display: flex; justify-content: space-between; font-size: 12px; color: #444; margin-bottom: 4px; }
+    .ab-dato span:first-child { color: #888; }
+    .ab-dato span:last-child { font-weight: 600; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    .badge-efectivo { background: #e8f5e9; color: #2e7d32; }
+    .badge-terminal { background: #e3f2fd; color: #1565c0; }
+    .badge-transferencia { background: #fff8e1; color: #e65100; }
+    .badge-mixto { background: #f3e5f5; color: #6a1b9a; }
+
+    /* Footer sticky del modal de detalles */
+    .modal-footer-pago { padding: 12px 20px; border-top: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; background: white; }
+    .modal-footer-total { font-size: 13px; color: #555; }
+    .modal-footer-total strong { color: #c0392b; font-size: 15px; }
+
+    /* Método de pago buttons */
+    .ab-metodos { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 0; }
+    .ab-metodo-btn { padding: 8px; border: 2px solid #e8e8e8; border-radius: 6px; text-align: center; cursor: pointer; font-size: 13px; color: #555; background: white; transition: all 0.15s; }
+    .ab-metodo-btn:hover { border-color: #2e7d32; color: #2e7d32; }
+    .ab-metodo-btn.selected { border-color: #2e7d32; background: #f0f9e8; color: #2e7d32; font-weight: 600; }
+    .ab-campos-pago { display: none; }
+    .ab-campos-pago.visible { display: block; }
+    .ab-cambio-fila { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0 2px; }
+    .ab-cambio-fila span:first-child { color: #888; }
+    .ab-cambio-fila span:last-child { font-weight: 600; }
+
+    /* Lista FIFO de créditos en el modal de pago */
+    .ab-fifo-titulo { font-size: 11px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px; }
+    .ab-cred-row { border: 0.5px solid #eee; border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
+    .ab-cred-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #fafafa; gap: 8px; }
+    .ab-cred-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ab-cred-folio { font-size: 12px; font-weight: 700; color: #333; }
+    .ab-cred-fecha { font-size: 11px; color: #aaa; }
+    .ab-cred-saldo { font-size: 13px; font-weight: 700; color: #c0392b; white-space: nowrap; flex-shrink: 0; }
+    .ab-cred-prods { padding: 0; }
 </style>
 
 <div class="sidebar" id="sidebar">
@@ -197,7 +393,6 @@ $totales = $pdo->query("
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
         <a class="menu-item active" href="creditos.php">Créditos</a>
-        <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
         <div class="menu-label">Inventario</div>
         <a class="menu-item" href="productos.php">Productos</a>
@@ -280,8 +475,7 @@ $totales = $pdo->query("
                         <div class="etiq">pendiente</div>
                     </div>
                     <div class="cliente-acciones">
-                        <button class="btn-detalles" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver créditos</button>
-                        <a class="btn-abonar-directo" href="abonos.php?cliente=<?= $cl['cliente_id'] ?>">Cobrar →</a>
+                        <button class="btn-detalles" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver / Cobrar</button>
                     </div>
                 </div>
                 <?php endforeach; ?>
@@ -293,7 +487,7 @@ $totales = $pdo->query("
     </div>
 </div>
 
-<!-- Modal detalles -->
+<!-- Modal detalles (ver créditos) -->
 <div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)cerrarModal()">
     <div class="modal">
         <div class="modal-header">
@@ -306,12 +500,153 @@ $totales = $pdo->query("
         <div class="modal-body" id="modalBody">
             <div class="det-cargando">Cargando...</div>
         </div>
+        <div class="modal-footer-pago" id="modalFooterPago" style="display:none;">
+            <div class="modal-footer-total" id="modalFooterTotal"></div>
+            <button class="btn-abonar-modal" style="padding:8px 20px;font-size:13px;" onclick="abrirAbonar()">Registrar pago →</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal abonar -->
+<div class="modal-overlay modal-ab-overlay" id="modalAbonarOverlay" onclick="if(event.target===this)cerrarAbonar()">
+    <div class="modal modal-ab">
+        <div class="modal-header">
+            <div>
+                <h3>Registrar pago</h3>
+                <div class="modal-subtitulo" id="abSubtitulo"></div>
+            </div>
+            <button class="modal-close" onclick="cerrarAbonar()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="ab-info">
+                <div>
+                    <div class="ab-info-cliente" id="abCliente"></div>
+                    <div style="font-size:11px;color:#888;margin-top:2px;">Se liquidarán del crédito más antiguo al más reciente</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                    <div class="ab-saldo-lbl">Total pendiente</div>
+                    <div class="ab-saldo-val" id="abSaldo"></div>
+                </div>
+            </div>
+
+            <!-- Lista FIFO de créditos -->
+            <div class="ab-fifo-titulo">Créditos pendientes</div>
+            <div id="abCreditosList" style="margin-bottom:14px;"></div>
+
+            <div class="ab-msg-ok" id="abMsgOk">Abono registrado correctamente. Actualizando...</div>
+            <div class="ab-msg-err" id="abMsgErr"></div>
+
+            <form id="formAbono" onsubmit="submitAbono(event)">
+                <div id="abCajaCerrada" style="<?= $cajaAbiertaId ? 'display:none;' : '' ?>background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#e65100;">
+                    Sin caja abierta. <a href="abrirCaja.php" style="color:#e65100;font-weight:700;">Abrir caja →</a>
+                </div>
+
+                <div class="ab-fg">
+                    <label>Monto del abono *</label>
+                    <input type="number" name="monto" id="abMonto" placeholder="0.00" step="0.01" min="0.01" required oninput="verificarPagoAb()">
+                    <small id="abMontoError" style="color:#c0392b;font-size:11px;display:none;margin-top:3px;display:none;"></small>
+                </div>
+
+                <div class="ab-fg">
+                    <label>Método de pago</label>
+                    <div class="ab-metodos">
+                        <button type="button" class="ab-metodo-btn" onclick="seleccionarMetodoAb('Efectivo',this)">Efectivo</button>
+                        <button type="button" class="ab-metodo-btn" onclick="seleccionarMetodoAb('Terminal',this)">Terminal</button>
+                        <button type="button" class="ab-metodo-btn" onclick="seleccionarMetodoAb('Transferencia',this)">Transferencia</button>
+                        <button type="button" class="ab-metodo-btn" onclick="seleccionarMetodoAb('Mixto',this)">Mixto</button>
+                    </div>
+                    <input type="hidden" name="metodo_pago" id="abMetodoPago">
+                </div>
+
+                <!-- Efectivo -->
+                <div class="ab-campos-pago" id="abCamposEfectivo">
+                    <div class="ab-fg">
+                        <label>Cantidad recibida</label>
+                        <input type="number" id="abRecibido" placeholder="0.00" step="0.01" oninput="calcularCambioAb()">
+                    </div>
+                    <div class="ab-cambio-fila"><span id="abCambioLabel">Cambio</span><span id="abCambioVal" style="color:#2e7d32;">$0.00</span></div>
+                </div>
+
+                <!-- Terminal -->
+                <div class="ab-panel ab-panel-terminal ab-campos-pago" id="abCamposTerminal">
+                    <h4>💳 Comisión de terminal</h4>
+                    <?php if ($comisionPct > 0): ?>
+                        <div class="ab-dato"><span>Porcentaje</span><span style="color:#1565c0;"><?= number_format($comisionPct,2) ?>%</span></div>
+                        <div class="ab-dato"><span>Comisión (cargo extra)</span><span id="abComisionMonto" style="color:#c0392b;">$0.00</span></div>
+                        <div style="border-top:1px dashed #90caf9;margin:6px 0;"></div>
+                        <div class="ab-dato" style="font-size:13px;"><span><strong>Total que paga el cliente</strong></span><span id="abTotalTerminal" style="color:#1565c0;font-weight:700;">$0.00</span></div>
+                        <div style="font-size:11px;color:#666;margin-top:4px;">El abono al crédito es solo el monto base.</div>
+                    <?php else: ?>
+                        <div style="font-size:12px;color:#888;">Sin comisión de terminal configurada para esta sucursal.</div>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Transferencia -->
+                <div class="ab-campos-pago" id="abCamposTransferencia">
+                    <div class="ab-panel-trans" style="border-radius:8px;padding:11px 14px;margin-bottom:10px;">
+                        <h4>📋 Datos para transferencia</h4>
+                        <?php if (!empty($datosBanco['banco'])): ?>
+                            <div class="ab-dato"><span>Banco</span><span><?= htmlspecialchars($datosBanco['banco']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['titular_cuenta'])): ?>
+                            <div class="ab-dato"><span>Titular</span><span><?= htmlspecialchars($datosBanco['titular_cuenta']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['numero_cuenta'])): ?>
+                            <div class="ab-dato"><span>N° cuenta</span><span><?= htmlspecialchars($datosBanco['numero_cuenta']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['clabe_interbancaria'])): ?>
+                            <div class="ab-dato"><span>CLABE</span><span><?= htmlspecialchars($datosBanco['clabe_interbancaria']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['alias_tarjeta'])): ?>
+                            <div class="ab-dato"><span>Alias / tarjeta</span><span><?= htmlspecialchars($datosBanco['alias_tarjeta']) ?></span></div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="ab-fg">
+                        <label>Referencia de transferencia *</label>
+                        <input type="text" name="referencia" id="abCampoRef" placeholder="Número de folio o referencia..." oninput="verificarPagoAb()">
+                    </div>
+                </div>
+
+                <!-- Mixto -->
+                <div class="ab-campos-pago" id="abCamposMixto">
+                    <div class="ab-dato" style="font-size:13px;font-weight:600;padding:6px 0 10px;border-bottom:1px solid #eee;margin-bottom:10px;">
+                        <span style="color:#555;">Total del abono</span>
+                        <span id="abMixtoTotalRef" style="color:#c0392b;">$0.00</span>
+                    </div>
+                    <div class="ab-fg">
+                        <label>Monto en efectivo</label>
+                        <input type="number" id="abMixtoEf" placeholder="0.00" step="0.01" oninput="calcularMixtoAb()">
+                    </div>
+                    <div class="ab-fg">
+                        <label>Cargo a terminal <span style="font-size:11px;color:#888;font-weight:400;">(resto + comisión)</span></label>
+                        <input type="number" id="abMixtoTerm" placeholder="0.00" readonly style="background:#f5f5f5;color:#555;cursor:not-allowed;">
+                    </div>
+                    <?php if ($comisionPct > 0): ?>
+                        <div class="ab-dato" style="font-size:12px;padding:2px 0 6px;"><span>Comisión terminal</span><span id="abMixtoComision" style="color:#c0392b;">$0.00</span></div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="ab-fg">
+                    <label>Notas (opcional)</label>
+                    <input type="text" name="notas" placeholder="Observaciones del abono...">
+                </div>
+
+                <input type="hidden" name="monto_efectivo" id="abHiddenEf" value="0">
+                <input type="hidden" name="monto_terminal" id="abHiddenTerm" value="0">
+
+                <button class="btn-ab-submit" type="submit" id="btnSubmitAbono" disabled>Registrar pago</button>
+            </form>
+
+            <hr class="ab-divider">
+            <div class="ab-hist-titulo">Historial de abonos</div>
+            <div id="historialAbonosCont"><div style="text-align:center;color:#aaa;font-size:13px;padding:12px;">Cargando...</div></div>
+        </div>
     </div>
 </div>
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
 
 /* ── Filtro lista clientes ── */
 function filtrarClientes(q) {
@@ -321,24 +656,33 @@ function filtrarClientes(q) {
     });
 }
 
-/* ── Modal detalles ── */
+/* ── Modal detalles (ver créditos) ── */
+let _clienteIdActual  = null;
+let _creditosActuales = [];
+
 function abrirDetalles(clienteId, nombre) {
-    document.getElementById('modalTitulo').textContent = nombre;
+    _clienteIdActual = clienteId;
+    document.getElementById('modalTitulo').textContent    = nombre;
     document.getElementById('modalSubtitulo').textContent = 'Créditos y productos pendientes de pago';
-    document.getElementById('modalBody').innerHTML = '<div class="det-cargando">Cargando...</div>';
+    document.getElementById('modalBody').innerHTML        = '<div class="det-cargando">Cargando...</div>';
+    document.getElementById('modalFooterPago').style.display = 'none';
     document.getElementById('modalOverlay').classList.add('visible');
 
     fetch('creditos.php?get_creditos_cliente=' + clienteId)
         .then(r => r.json())
         .then(creditos => {
+            _creditosActuales = creditos || [];
             if (!creditos || !creditos.length) {
                 document.getElementById('modalBody').innerHTML = '<div class="modal-sin-creditos">No hay créditos activos para este cliente.</div>';
                 return;
             }
             let html = '';
+            let totalPend = 0;
             creditos.forEach(cr => {
                 const badgeClass = cr.estado === 'Vencido' ? 'badge-vencido2' : 'badge-activo';
                 const folio = cr.folio ? 'Folio ' + cr.folio : 'Venta #' + cr.credito_id;
+                const saldo = parseFloat(cr.saldo_pendiente);
+                totalPend += saldo;
                 html += `<div class="credito-det">
                     <div class="credito-det-header">
                         <div>
@@ -346,28 +690,29 @@ function abrirDetalles(clienteId, nombre) {
                             <div class="credito-det-fecha">${formatFecha(cr.fecha_venta)}</div>
                         </div>
                         <span class="credito-det-badge ${badgeClass}">${cr.estado}</span>
-                        <div class="credito-det-saldo">$${parseFloat(cr.saldo_pendiente).toFixed(2)}</div>
+                        <div class="credito-det-saldo">$${saldo.toFixed(2)}</div>
                     </div>`;
-
                 if (cr.productos && cr.productos.length) {
                     html += '<div class="credito-det-prods">';
                     cr.productos.forEach(p => {
                         const cant = Number.isInteger(p.cantidad) ? p.cantidad : parseFloat(p.cantidad).toFixed(2).replace(/\.?0+$/,'');
                         html += `<div class="prod-det-row">
                             <span class="prod-det-nombre">${p.nombre}</span>
-                            <span class="prod-det-cant">× ${cant}</span>
+                            <span class="prod-det-cant">x ${cant}</span>
                             <span class="prod-det-precio">$${(p.cantidad * p.precio).toFixed(2)}</span>
                         </div>`;
                     });
                     html += '</div>';
                 }
-
                 html += `<div class="credito-det-footer">
                     <span style="font-size:12px;color:#888;">Monto original: $${parseFloat(cr.monto_total).toFixed(2)}</span>
-                    <a class="btn-abonar-modal" href="abonos.php?credito_id=${cr.credito_id}">Abonar</a>
+                    ${saldo <= 0 ? '<span style="font-size:12px;color:#2e7d32;font-weight:600;">Liquidado</span>' : ''}
                 </div></div>`;
             });
             document.getElementById('modalBody').innerHTML = html;
+            document.getElementById('modalFooterTotal').innerHTML =
+                'Total pendiente: <strong>$' + totalPend.toFixed(2) + '</strong>';
+            document.getElementById('modalFooterPago').style.display = 'flex';
         })
         .catch(() => {
             document.getElementById('modalBody').innerHTML = '<div class="modal-sin-creditos">Error al cargar los créditos.</div>';
@@ -384,8 +729,236 @@ function formatFecha(str) {
     return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-/* Cerrar modal con Escape */
-document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarModal(); });
+/* ── Modal Pago (FIFO automatico) ── */
+const COMISION_PCT  = <?= $comisionPct ?>;
+const CAJA_ABIERTA  = <?= $cajaAbiertaId ? 'true' : 'false' ?>;
+let   _metodoPagoAb = null;
+
+function abrirAbonar() {
+    const totalPend = _creditosActuales.reduce((s, c) => s + parseFloat(c.saldo_pendiente||0), 0);
+    const nombre    = document.getElementById('modalTitulo').textContent;
+
+    document.getElementById('abCliente').textContent      = nombre;
+    document.getElementById('abSubtitulo').textContent    = nombre;
+    document.getElementById('abSaldo').textContent        = '$' + totalPend.toFixed(2);
+    document.getElementById('abMonto').max                = totalPend;
+    document.getElementById('abMsgOk').style.display      = 'none';
+    document.getElementById('abMsgErr').style.display     = 'none';
+    document.getElementById('formAbono').reset();
+    document.querySelectorAll('.ab-metodo-btn').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.ab-campos-pago').forEach(c => c.classList.remove('visible'));
+    document.getElementById('abMetodoPago').value         = '';
+    document.getElementById('abHiddenEf').value           = '0';
+    document.getElementById('abHiddenTerm').value         = '0';
+    document.getElementById('abCajaCerrada').style.display = CAJA_ABIERTA ? 'none' : 'block';
+    document.getElementById('btnSubmitAbono').disabled    = true;
+    document.getElementById('btnSubmitAbono').textContent = 'Registrar pago';
+    _metodoPagoAb = null;
+
+    // Lista FIFO de creditos con productos
+    let listHtml = '';
+    _creditosActuales.forEach(cr => {
+        const folio      = cr.folio ? 'Folio ' + cr.folio : 'Credito #' + cr.credito_id;
+        const badgeClass = cr.estado === 'Vencido' ? 'badge-vencido2' : 'badge-activo';
+        listHtml += `<div class="ab-cred-row">
+            <div class="ab-cred-head">
+                <div class="ab-cred-left">
+                    <span class="ab-cred-folio">${folio}</span>
+                    <span class="credito-det-badge ${badgeClass}">${cr.estado}</span>
+                    <span class="ab-cred-fecha">${formatFecha(cr.fecha_venta)}</span>
+                </div>
+                <span class="ab-cred-saldo">$${parseFloat(cr.saldo_pendiente).toFixed(2)}</span>
+            </div>`;
+        if (cr.productos && cr.productos.length) {
+            listHtml += '<div class="credito-det-prods">';
+            cr.productos.forEach(p => {
+                const cant = Number.isInteger(p.cantidad) ? p.cantidad : parseFloat(p.cantidad).toFixed(2).replace(/\.?0+$/,'');
+                listHtml += `<div class="prod-det-row">
+                    <span class="prod-det-nombre">${p.nombre}</span>
+                    <span class="prod-det-cant">× ${cant}</span>
+                    <span class="prod-det-precio">$${(p.cantidad * p.precio).toFixed(2)}</span>
+                </div>`;
+            });
+            listHtml += '</div>';
+        }
+        listHtml += '</div>';
+    });
+    document.getElementById('abCreditosList').innerHTML = listHtml;
+
+    document.getElementById('modalAbonarOverlay').classList.add('visible');
+    cargarHistorialPagos(_clienteIdActual);
+    setTimeout(() => document.getElementById('abMonto').focus(), 100);
+}
+
+function cerrarAbonar() {
+    document.getElementById('modalAbonarOverlay').classList.remove('visible');
+}
+
+function cargarHistorialPagos(clienteId) {
+    const cont = document.getElementById('historialAbonosCont');
+    cont.innerHTML = '<div style="text-align:center;color:#aaa;font-size:13px;padding:12px;">Cargando...</div>';
+    fetch('creditos.php?get_abonos_cliente=' + clienteId)
+        .then(r => r.json())
+        .then(abonos => {
+            if (!abonos.length) {
+                cont.innerHTML = '<div style="text-align:center;color:#aaa;font-size:12px;padding:12px;">Sin pagos registrados.</div>';
+                return;
+            }
+            const badges = { Efectivo:'badge-efectivo', Terminal:'badge-terminal', Transferencia:'badge-transferencia', Mixto:'badge-mixto' };
+            cont.innerHTML = '<table class="tabla-abonos"><thead><tr><th>Monto</th><th>Metodo</th><th>Folio</th><th>Cajero</th><th>Fecha</th></tr></thead><tbody>' +
+                abonos.map(a => {
+                    const com = parseFloat(a.comision_terminal||0);
+                    return `<tr>
+                        <td><span style="font-weight:700;color:#2e7d32;">$${parseFloat(a.monto).toFixed(2)}</span>${com>0?'<br><span style="font-size:11px;color:#1565c0;">+$'+com.toFixed(2)+' com.</span>':''}</td>
+                        <td><span class="badge ${badges[a.metodo_pago]||''}">${a.metodo_pago}</span></td>
+                        <td style="font-size:11px;color:#888;">${a.folio||'&mdash;'}</td>
+                        <td style="font-size:11px;">${a.cajero}</td>
+                        <td style="font-size:11px;color:#aaa;">${formatFecha(a.created_at)}</td>
+                    </tr>`;
+                }).join('') + '</tbody></table>';
+        })
+        .catch(() => { cont.innerHTML = '<div style="text-align:center;color:#c0392b;font-size:12px;padding:12px;">Error al cargar.</div>'; });
+}
+
+function seleccionarMetodoAb(metodo, btn) {
+    _metodoPagoAb = metodo;
+    document.getElementById('abMetodoPago').value = metodo;
+    document.querySelectorAll('.ab-metodo-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.querySelectorAll('.ab-campos-pago').forEach(c => c.classList.remove('visible'));
+    document.getElementById('abHiddenEf').value   = '0';
+    document.getElementById('abHiddenTerm').value = '0';
+    if (metodo === 'Efectivo')      document.getElementById('abCamposEfectivo').classList.add('visible');
+    if (metodo === 'Terminal')      document.getElementById('abCamposTerminal').classList.add('visible');
+    if (metodo === 'Transferencia') document.getElementById('abCamposTransferencia').classList.add('visible');
+    if (metodo === 'Mixto') {
+        document.getElementById('abCamposMixto').classList.add('visible');
+        document.getElementById('abMixtoEf').value   = '';
+        document.getElementById('abMixtoTerm').value = '0.00';
+    }
+    actualizarComisionAb();
+    verificarPagoAb();
+}
+
+function calcularCambioAb() {
+    const monto    = parseFloat(document.getElementById('abMonto').value) || 0;
+    const recibido = parseFloat(document.getElementById('abRecibido').value) || 0;
+    const falta    = monto - recibido;
+    const labelEl  = document.getElementById('abCambioLabel');
+    const valEl    = document.getElementById('abCambioVal');
+    if (recibido <= 0) {
+        labelEl.textContent = 'Cambio'; valEl.textContent = '$0.00'; valEl.style.color = '#2e7d32';
+    } else if (falta > 0.001) {
+        labelEl.textContent = 'Falta'; valEl.textContent = '$' + falta.toFixed(2); valEl.style.color = '#c0392b';
+    } else {
+        labelEl.textContent = 'Cambio'; valEl.textContent = '$' + Math.abs(falta).toFixed(2); valEl.style.color = '#2e7d32';
+    }
+    document.getElementById('abHiddenEf').value = recibido.toFixed(2);
+    verificarPagoAb();
+}
+
+function calcularMixtoAb() {
+    const monto = parseFloat(document.getElementById('abMonto').value) || 0;
+    const ef    = parseFloat(document.getElementById('abMixtoEf').value) || 0;
+    let termDisplay = 0, com = 0;
+    if (ef > 0 && ef < monto) {
+        const resto = monto - ef;
+        com         = resto * (COMISION_PCT / 100);
+        termDisplay = resto + com;
+    }
+    document.getElementById('abMixtoTerm').value = termDisplay.toFixed(2);
+    const totalRefEl = document.getElementById('abMixtoTotalRef');
+    if (totalRefEl) totalRefEl.textContent = '$' + monto.toFixed(2);
+    const comEl = document.getElementById('abMixtoComision');
+    if (comEl) comEl.textContent = '$' + com.toFixed(2);
+    document.getElementById('abHiddenEf').value   = ef.toFixed(2);
+    document.getElementById('abHiddenTerm').value = termDisplay.toFixed(2);
+    // Update button directly — do NOT call verificarPagoAb (evita recursión infinita)
+    const maxMonto = parseFloat(document.getElementById('abMonto').max) || 0;
+    document.getElementById('btnSubmitAbono').disabled =
+        !CAJA_ABIERTA || monto <= 0 || ef <= 0 || ef >= monto || (maxMonto > 0 && monto > maxMonto + 0.001);
+}
+
+function actualizarComisionAb() {
+    if (COMISION_PCT <= 0 || _metodoPagoAb !== 'Terminal') return;
+    const monto = parseFloat(document.getElementById('abMonto').value) || 0;
+    const com   = Math.round(monto * COMISION_PCT / 100 * 100) / 100;
+    const comEl = document.getElementById('abComisionMonto');
+    const totEl = document.getElementById('abTotalTerminal');
+    if (comEl) comEl.textContent = '$' + com.toFixed(2);
+    if (totEl) totEl.textContent = '$' + (monto + com).toFixed(2);
+}
+
+function verificarPagoAb() {
+    actualizarComisionAb();
+    const btn      = document.getElementById('btnSubmitAbono');
+    const errEl    = document.getElementById('abMontoError');
+    const monto    = parseFloat(document.getElementById('abMonto').value) || 0;
+    const maxMonto = parseFloat(document.getElementById('abMonto').max) || 0;
+
+    // Validar que no exceda el total pendiente
+    if (maxMonto > 0 && monto > maxMonto + 0.001) {
+        if (errEl) { errEl.textContent = 'Excede el total pendiente ($' + maxMonto.toFixed(2) + ')'; errEl.style.display = 'block'; }
+        btn.disabled = true;
+        return;
+    }
+    if (errEl) errEl.style.display = 'none';
+
+    if (!CAJA_ABIERTA || !_metodoPagoAb || monto <= 0) { btn.disabled = true; return; }
+
+    if (_metodoPagoAb === 'Efectivo') {
+        const recibido = parseFloat(document.getElementById('abRecibido').value) || 0;
+        btn.disabled = recibido < monto - 0.001;
+        return;
+    }
+    if (_metodoPagoAb === 'Transferencia') {
+        btn.disabled = String(document.getElementById('abCampoRef').value || '').trim() === '';
+        return;
+    }
+    if (_metodoPagoAb === 'Mixto') {
+        calcularMixtoAb(); // seguro — calcularMixtoAb ya no llama verificarPagoAb
+        return;
+    }
+    btn.disabled = false; // Terminal
+}
+
+function submitAbono(e) {
+    e.preventDefault();
+    const btn  = document.getElementById('btnSubmitAbono');
+    const data = new FormData(document.getElementById('formAbono'));
+    data.append('action', 'registrar_abono');
+    data.append('cliente_id', _clienteIdActual);
+    btn.disabled = true;
+    btn.textContent = 'Registrando...';
+    document.getElementById('abMsgErr').style.display = 'none';
+
+    fetch('creditos.php', { method: 'POST', body: data })
+        .then(r => r.json())
+        .then(res => {
+            if (res.ok) {
+                document.getElementById('abMsgOk').style.display = 'block';
+                setTimeout(() => location.reload(), 1400);
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Registrar pago';
+                document.getElementById('abMsgErr').textContent = res.error || 'Error al registrar.';
+                document.getElementById('abMsgErr').style.display = 'block';
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.textContent = 'Registrar pago';
+            document.getElementById('abMsgErr').textContent = 'Error de conexion.';
+            document.getElementById('abMsgErr').style.display = 'block';
+        });
+}
+
+/* Cerrar modales con Escape */
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('modalAbonarOverlay').classList.contains('visible')) { cerrarAbonar(); return; }
+    cerrarModal();
+});
 </script>
 </body>
 </html>

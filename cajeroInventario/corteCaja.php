@@ -47,14 +47,19 @@ $stmtMov = $pdo->prepare("
 $stmtMov->execute([$caja['caja_id']]);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
-$totalIngresos = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso'), 'monto'));
-$totalRetiros  = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro'),  'monto'));
+// Separar ingresos: efectivo vs terminal/transferencia (no cuentan como físico en caja)
+$ingresosCash   = array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso' && !preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota']));
+$ingresosNoCash = array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso' &&  preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota']));
+$totalIngresosCash   = array_sum(array_column(array_values($ingresosCash),   'monto'));
+$totalIngresosNoCash = array_sum(array_column(array_values($ingresosNoCash), 'monto'));
+$totalIngresos       = $totalIngresosCash + $totalIngresosNoCash;
+$totalRetiros        = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro'), 'monto'));
 
-// Efectivo esperado = apertura + ventas en efectivo + ingresos - retiros
+// Efectivo esperado = apertura + ventas en efectivo + ingresos en efectivo - retiros
 $efectivoEsperado = floatval($caja['monto_apertura'])
                   + floatval($resumen['ef'])
                   + floatval($resumen['mixto_ef'])
-                  + $totalIngresos
+                  + $totalIngresosCash
                   - $totalRetiros;
 
 // Procesar cierre
@@ -171,7 +176,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="menu-label">Clientes</div>
         <a class="menu-item" href="clientes.php">Clientes</a>
         <a class="menu-item" href="creditos.php">Créditos</a>
-        <a class="menu-item" href="abonos.php">Abonos</a>
         <div class="divider"></div>
 
         <div class="menu-label">Inventario</div>
@@ -281,8 +285,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>Monto de apertura</span><span>$<?= number_format($caja['monto_apertura'],2) ?></span></div>
                     <div class="fila"><span>+ Ventas en efectivo</span><span>$<?= number_format($resumen['ef'],2) ?></span></div>
                     <div class="fila"><span>+ Efectivo de pagos mixtos</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
-                    <?php if ($totalIngresos > 0): ?>
-                    <div class="fila positivo"><span>+ Ingresos a caja</span><span>+$<?= number_format($totalIngresos,2) ?></span></div>
+                    <?php if ($totalIngresosCash > 0): ?>
+                    <div class="fila positivo"><span>+ Ingresos en efectivo</span><span>+$<?= number_format($totalIngresosCash,2) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($totalIngresosNoCash > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;"><span>↗ Pagos crédito terminal/transferencia <em style="font-size:11px;">(no afectan caja física)</em></span><span>$<?= number_format($totalIngresosNoCash,2) ?></span></div>
                     <?php endif; ?>
                     <?php if ($totalRetiros > 0): ?>
                     <div class="fila negativo"><span>- Retiros de caja</span><span>-$<?= number_format($totalRetiros,2) ?></span></div>

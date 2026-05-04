@@ -41,16 +41,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
-if ($busqueda) {
-    $stmt = $pdo->prepare("SELECT c.*, COUNT(p.producto_id) as total_productos FROM categorias c LEFT JOIN productos p ON c.categoria_id = p.categoria_id AND p.activo = 1 WHERE c.nombre LIKE ? GROUP BY c.categoria_id ORDER BY c.categoria_id ASC");
-    $stmt->execute(['%' . $busqueda . '%']);
-} else {
-    $stmt = $pdo->query("SELECT c.*, COUNT(p.producto_id) as total_productos FROM categorias c LEFT JOIN productos p ON c.categoria_id = p.categoria_id AND p.activo = 1 GROUP BY c.categoria_id ORDER BY c.categoria_id ASC");
-}
+$stmt = $pdo->query("SELECT c.*, COUNT(p.producto_id) as total_productos FROM categorias c LEFT JOIN productos p ON c.categoria_id = p.categoria_id AND p.activo = 1 GROUP BY c.categoria_id ORDER BY c.nombre ASC");
 $categorias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Categoría a editar
 $editando = null;
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM categorias WHERE categoria_id = ?");
@@ -98,8 +91,6 @@ if (isset($_GET['editar'])) {
     .barra-busqueda { display: flex; gap: 10px; margin-bottom: 16px; }
     .barra-busqueda input { flex: 1; padding: 9px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .barra-busqueda input:focus { outline: none; border-color: #14ace7; }
-    .btn-buscar { background: #14ace7; color: white; border: none; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
-    .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     .msg-error { background: #fdecea; color: #c0392b; border-left: 3px solid #c0392b; }
@@ -206,31 +197,28 @@ if (isset($_GET['editar'])) {
                 <?php endif; ?>
             <?php endif; ?>
 
-            <form method="GET" action="categorias.php">
-                <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar categoría..." value="<?= htmlspecialchars($busqueda) ?>">
-                    <button class="btn-buscar" type="submit">Buscar</button>
-                    <?php if ($busqueda): ?>
-                        <a class="btn-limpiar" href="categorias.php">Limpiar</a>
-                    <?php endif; ?>
-                </div>
-            </form>
+            <div class="barra-busqueda">
+                <input type="text" id="inputBuscar" placeholder="Buscar categoría..." oninput="filtrar(this.value)">
+            </div>
 
             <div class="card" style="padding:0;">
                 <?php if (count($categorias) > 0): ?>
                 <table>
+                    <colgroup>
+                        <col>
+                        <col style="width:130px;">
+                        <col style="width:150px;">
+                    </colgroup>
                     <thead>
                         <tr>
-                            <th>ID</th>
                             <th>Nombre</th>
                             <th>Productos</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($categorias as $c): ?>
                         <tr>
-                            <td style="color:#aaa;"><?= $c['categoria_id'] ?></td>
                             <td><strong><?= htmlspecialchars($c['nombre']) ?></strong></td>
                             <td><span class="badge-count"><?= $c['total_productos'] ?> productos</span></td>
                             <td>
@@ -243,6 +231,7 @@ if (isset($_GET['editar'])) {
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+                <div id="sinResultadosFiltro" class="sin-resultados" style="display:none;">Sin resultados para tu búsqueda.</div>
                 <?php else: ?>
                     <div class="sin-resultados">No hay categorías registradas.</div>
                 <?php endif; ?>
@@ -272,9 +261,21 @@ if (isset($_GET['editar'])) {
 </div>
 
 <script>
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('collapsed');
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function filtrar(q) {
+    const texto = q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    let visibles = 0;
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        const celda = tr.querySelector('td strong');
+        if (!celda) return;
+        const nombre = celda.textContent.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const mostrar = nombre.includes(texto);
+        tr.style.display = mostrar ? '' : 'none';
+        if (mostrar) visibles++;
+    });
+    document.getElementById('sinResultadosFiltro').style.display = visibles === 0 ? '' : 'none';
 }
+
 </script>
 </body>
 </html>

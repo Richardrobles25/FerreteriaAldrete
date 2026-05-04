@@ -347,12 +347,11 @@ function filtrarTabla(q) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
 }
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('collapsed');
-}
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleCredito(checked) {
     document.getElementById('creditoCampos').classList.toggle('visible', checked);
 }
+
 </script>
 </body>
 </html>

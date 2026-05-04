@@ -751,9 +751,7 @@ const datosTicket = <?= json_encode([
 
 let ventaActualId = null;
 
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('collapsed');
-}
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
 // ── Ver detalle ──────────────────────────────────────────────────────────────
 function verDetalle(ventaId) {
@@ -970,6 +968,7 @@ function fmt(n) { return parseFloat(n||0).toFixed(2); }
 function esc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+
 </script>
 <script src="../includes/auto_filter.js"></script>
 </body>

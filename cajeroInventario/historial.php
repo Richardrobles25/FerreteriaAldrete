@@ -267,9 +267,8 @@ function filtrarTabla(q) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
 }
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('collapsed');
-}
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
 </script>
 <script src="../includes/auto_filter.js"></script>
 </body>

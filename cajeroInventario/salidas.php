@@ -97,6 +97,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+    .topbar-right form { display: contents; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
     .content { flex: 1; padding: 24px; overflow-y: auto; display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
@@ -192,8 +193,10 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2>Salidas y mermas</h2>
         </div>
         <div class="topbar-right">
-            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style=”opacity:.75;font-size:12px;”>— <?= htmlspecialchars($nombreSucursal) ?></span></span>
-            <form method=”POST” action=”/logout.php”><button class=”logout-btn” type=”submit”>Cerrar sesión</button></form>
+            <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
+            <form method="POST" action="/logout.php">
+                <button class="logout-btn" type="submit">Cerrar sesión</button>
+            </form>
         </div>
     </div>
 

@@ -204,9 +204,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
 </div>
 
 <script>
-function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('collapsed');
-}
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
 </script>
 </body>
 </html>

@@ -164,7 +164,23 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     .btn-guardar { width: 100%; background: #14ace7; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-guardar:hover { background: #1196cb; }
     .sin-pendientes { text-align: center; color: #aaa; padding: 40px; font-size: 13px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
-</style>
+    @media (max-width: 768px) {
+        body { overflow-x: hidden; }
+        .sidebar { position: fixed; top: 0; left: 0; height: 100%; z-index: 300; width: 0; transition: width 0.3s; }
+        .sidebar.collapsed { width: 260px; box-shadow: 4px 0 16px rgba(0,0,0,.15); }
+        .main { width: 100%; }
+        .topbar { padding: 0 12px; height: 48px; }
+        .topbar h2 { font-size: 13px; }
+        .topbar-right { gap: 8px; font-size: 12px; }
+        .topbar-right > span { display: none; }
+        .content { padding: 12px !important; display: block !important; }
+        .content > div + div { margin-top: 12px; }
+        .card { overflow-x: auto; }
+        th, td { padding: 8px 10px; font-size: 12px; }
+        .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
+        .logout-btn { padding: 5px 10px; font-size: 11px; }
+    }
+    </style>
 
 <?php renderAdminSidebar('cajero_ventas_pendientes'); ?>
 

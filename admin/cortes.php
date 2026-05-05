@@ -109,7 +109,23 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
     .dif-pos { color: #1565c0; font-weight: 600; }
     .desglose { font-size: 10px; color: #aaa; margin-top: 2px; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
-</style>
+    @media (max-width: 768px) {
+        body { overflow-x: hidden; }
+        .sidebar { position: fixed; top: 0; left: 0; height: 100%; z-index: 300; width: 0; transition: width 0.3s; }
+        .sidebar.collapsed { width: 260px; box-shadow: 4px 0 16px rgba(0,0,0,.15); }
+        .main { width: 100%; }
+        .topbar { padding: 0 12px; height: 48px; }
+        .topbar h2 { font-size: 13px; }
+        .topbar-right { gap: 8px; font-size: 12px; }
+        .topbar-right > span { display: none; }
+        .content { padding: 12px !important; display: block !important; }
+        .content > div + div { margin-top: 12px; }
+        .card { overflow-x: auto; }
+        th, td { padding: 8px 10px; font-size: 12px; }
+        .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
+        .logout-btn { padding: 5px 10px; font-size: 11px; }
+    }
+    </style>
 
 <?php renderAdminSidebar('cortes_admin'); ?>
 

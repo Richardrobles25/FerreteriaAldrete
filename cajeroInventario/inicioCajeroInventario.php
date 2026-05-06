@@ -35,8 +35,8 @@ $stmtStock = $pdo->prepare("
 $stmtStock->execute([$_SESSION['sucursal_id']]);
 $stockBajo = $stmtStock->fetchColumn();
 
-// Créditos activos
-$stmtCred = $pdo->query("SELECT COUNT(*) FROM creditos WHERE estado = 'Activo'");
+// Clientes con deuda (igual que creditos.php)
+$stmtCred = $pdo->query("SELECT COUNT(DISTINCT cliente_id) FROM creditos WHERE estado IN ('Activo', 'Vencido')");
 $creditosActivos = $stmtCred->fetchColumn();
 
 // Notificaciones de transferencias
@@ -355,9 +355,9 @@ if ($cajaActual) {
                 <small>Por entregar</small>
             </div>
             <div class="stat">
-                <p>Créditos activos</p>
+                <p>Clientes con deuda</p>
                 <h3><?= $creditosActivos ?></h3>
-                <small>Global</small>
+                <small>Con crédito pendiente</small>
             </div>
             <div class="stat">
                 <p>Stock bajo</p>

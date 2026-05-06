@@ -7,21 +7,23 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-if (isset($_GET['toggle'])) {
-    $pdo->prepare("UPDATE sucursales SET activo = NOT activo WHERE sucursal_id = ?")->execute([intval($_GET['toggle'])]);
-    header('Location: sucursales.php'); exit();
+if (isset($_GET['eliminar'])) {
+    $sid = intval($_GET['eliminar']);
+    $stmtChk = $pdo->prepare("SELECT COUNT(*) FROM stock_sucursal WHERE sucursal_id = ? AND stock_actual > 0");
+    $stmtChk->execute([$sid]);
+    if ($stmtChk->fetchColumn() > 0) {
+        header('Location: sucursales.php?error=con_stock'); exit();
+    }
+    $pdo->prepare("DELETE FROM sucursales WHERE sucursal_id = ?")->execute([$sid]);
+    header('Location: sucursales.php?msg=eliminado'); exit();
 }
 
 $stmt = $pdo->query("
     SELECT s.*,
-        COUNT(DISTINCT u.usuario_id) AS total_usuarios,
-        COUNT(DISTINCT p.producto_id) AS total_productos
+        (SELECT COUNT(*) FROM usuarios u WHERE u.sucursal_id = s.sucursal_id AND u.activo = 1) AS total_usuarios,
+        (SELECT COUNT(*) FROM stock_sucursal ss WHERE ss.sucursal_id = s.sucursal_id AND ss.stock_actual > 0) AS con_stock
     FROM sucursales s
-    LEFT JOIN usuarios u ON s.sucursal_id = u.sucursal_id AND u.activo = 1
-    LEFT JOIN stock_sucursal sp ON sp.sucursal_id = s.sucursal_id AND sp.activo = 1
-    LEFT JOIN productos p ON p.producto_id = sp.producto_id AND p.activo = 1
-    GROUP BY s.sucursal_id
-    ORDER BY s.activo DESC, s.nombre ASC
+    ORDER BY s.nombre ASC
 ");
 $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -63,12 +65,9 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .btn-nuevo:hover { background: #1196cb; }
     .sucursales-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px,1fr)); gap: 16px; }
     .suc-card { background: white; border-radius: 10px; border: 0.5px solid #e8e8e8; padding: 20px; }
-    .suc-card.inactiva { opacity: 0.6; }
     .suc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
     .suc-nombre { font-size: 16px; font-weight: 700; color: #222; margin: 0 0 4px; }
     .suc-rfc { font-size: 12px; color: #aaa; font-family: monospace; }
-    .badge-activa { background: #e8f5e9; color: #2e7d32; font-size: 11px; padding: 3px 10px; border-radius: 99px; font-weight: 600; }
-    .badge-inactiva { background: #f0f0f0; color: #999; font-size: 11px; padding: 3px 10px; border-radius: 99px; font-weight: 600; }
     .suc-info { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
     .suc-dato { font-size: 12px; color: #555; }
     .suc-dato span { display: block; font-size: 10px; color: #aaa; text-transform: uppercase; margin-bottom: 2px; }
@@ -80,8 +79,9 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .btn-accion { padding: 7px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-block; }
     .btn-editar { background: #e3f2fd; color: #1565c0; flex: 1; text-align: center; }
     .btn-editar:hover { background: #bbdefb; }
-    .btn-activar { background: #e8f5e9; color: #2e7d32; }
-    .btn-desactivar { background: #fff8e1; color: #1565c0; }
+    .btn-eliminar { background: #fdecea; color: #c0392b; }
+    .btn-eliminar:hover { background: #ffcdd2; }
+    .btn-eliminar-disabled { background: #f5f5f5; color: #bbb; cursor: not-allowed; }
     .ticket-preview { background: #f9f9f9; border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #666; margin-bottom: 14px; font-family: monospace; line-height: 1.6; max-height: 80px; overflow: hidden; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
     @media (max-width: 768px) {
@@ -123,22 +123,26 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <?php if (isset($_GET['msg'])): ?>
-            <?php $msgs=['creado'=>'Sucursal creada.','editado'=>'Sucursal actualizada.']; ?>
+            <?php $msgs = ['creado' => 'Sucursal creada.', 'editado' => 'Sucursal actualizada.', 'eliminado' => 'Sucursal eliminada correctamente.']; ?>
             <div style="background:#e8f5e9;color:#2e7d32;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #2e7d32;">
-                <?= $msgs[$_GET['msg']] ?? '' ?>
+                <?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_GET['error']) && $_GET['error'] === 'con_stock'): ?>
+            <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #c0392b;">
+                No se puede eliminar la sucursal porque aun tiene productos con stock. Retira o transfiere el stock primero.
             </div>
         <?php endif; ?>
 
         <?php if (count($sucursales) > 0): ?>
         <div class="sucursales-grid">
             <?php foreach ($sucursales as $s): ?>
-            <div class="suc-card <?= !$s['activo']?'inactiva':'' ?>">
+            <div class="suc-card">
                 <div class="suc-header">
                     <div>
                         <div class="suc-nombre"><?= htmlspecialchars($s['nombre']) ?></div>
                         <?php if ($s['rfc']): ?><div class="suc-rfc"><?= htmlspecialchars($s['rfc']) ?></div><?php endif; ?>
                     </div>
-                    <span class="<?= $s['activo']?'badge-activa':'badge-inactiva' ?>"><?= $s['activo']?'Activa':'Inactiva' ?></span>
                 </div>
 
                 <div class="suc-info">
@@ -152,16 +156,18 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                 <div class="suc-stats">
                     <div class="suc-stat"><strong><?= $s['total_usuarios'] ?></strong><span>Usuarios</span></div>
-                    <div class="suc-stat"><strong><?= $s['total_productos'] ?></strong><span>Productos</span></div>
+                    <div class="suc-stat"><strong><?= intval($s['con_stock']) ?></strong><span>Productos en stock</span></div>
                 </div>
 
                 <div class="suc-acciones">
                     <a class="btn-accion btn-editar" href="formSucursal.php?id=<?= $s['sucursal_id'] ?>">Editar datos</a>
-                    <a class="btn-accion <?= $s['activo']?'btn-desactivar':'btn-activar' ?>"
-                       href="sucursales.php?toggle=<?= $s['sucursal_id'] ?>"
-                       onclick="return confirm('¿Cambiar estado de la sucursal?')">
-                        <?= $s['activo']?'Desactivar':'Activar' ?>
-                    </a>
+                    <?php if (intval($s['con_stock']) > 0): ?>
+                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: la sucursal tiene <?= intval($s['con_stock']) ?> producto(s) en stock">Eliminar</span>
+                    <?php else: ?>
+                        <a class="btn-accion btn-eliminar"
+                           href="sucursales.php?eliminar=<?= $s['sucursal_id'] ?>"
+                           onclick="return confirm('¿Eliminar la sucursal <?= htmlspecialchars($s['nombre'], ENT_QUOTES) ?>? Esta accion no se puede deshacer.')">Eliminar</a>
+                    <?php endif; ?>
                 </div>
             </div>
             <?php endforeach; ?>

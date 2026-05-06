@@ -39,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$nombre_usuario)  $errores[] = 'El nombre de usuario es obligatorio.';
     if (!$rol)             $errores[] = 'El rol es obligatorio.';
     if (!$sucursal_id)     $errores[] = 'La sucursal es obligatoria.';
+    if ($telefono !== '' && !preg_match('/^\d{10}$/', $telefono)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     if (!$esEdicion && !$contrasena) $errores[] = 'La contraseña es obligatoria.';
     if ($contrasena && $contrasena !== $confirmar) $errores[] = 'Las contraseñas no coinciden.';
     if ($contrasena && strlen($contrasena) < 6) $errores[] = 'La contraseña debe tener al menos 6 caracteres.';
@@ -150,9 +151,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-row">
                     <div class="form-group">
                         <label>Teléfono</label>
-                        <input type="text" name="telefono"
+                        <input type="tel" name="telefono"
                             value="<?= htmlspecialchars($_POST['telefono'] ?? $usuario['telefono'] ?? '') ?>"
-                            placeholder="10 dígitos">
+                            placeholder="10 dígitos"
+                            maxlength="10"
+                            pattern="\d{10}"
+                            inputmode="numeric"
+                            oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"
+                            title="Ingresa exactamente 10 dígitos numéricos">
                     </div>
                     <div class="form-group">
                         <label>Domicilio</label>

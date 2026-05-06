@@ -33,6 +33,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $sucursal_id           = intval($_POST['sucursal_id']         ?? 0);
 
     if (!$nombre) $errores[] = 'El nombre de la sucursal es obligatorio.';
+    if ($telefono !== '' && !preg_match('/^\d{10}$/', $telefono))
+        $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
+    if ($numero_cuenta !== '' && !preg_match('/^\d{1,10}$/', $numero_cuenta))
+        $errores[] = 'El número de cuenta debe contener solo dígitos (máximo 10).';
     if ($clabe_interbancaria && strlen($clabe_interbancaria) !== 18)
         $errores[] = 'La CLABE interbancaria debe tener exactamente 18 dígitos.';
 
@@ -163,9 +167,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                     <div class="form-group">
                         <label>Teléfono</label>
-                        <input type="text" name="telefono"
+                        <input type="tel" name="telefono"
                             value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>"
-                            placeholder="10 dígitos">
+                            placeholder="10 dígitos"
+                            maxlength="10"
+                            pattern="\d{10}"
+                            inputmode="numeric"
+                            oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"
+                            title="Ingresa exactamente 10 dígitos numéricos">
                     </div>
                 </div>
 
@@ -195,8 +204,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div class="form-group">
                         <label>% Comisión de terminal</label>
+                        <?php
+                            $comVal = $_POST['comision_terminal_pct'] ?? $editando['comision_terminal_pct'] ?? '';
+                            $comVal = (floatval($comVal) == 0 && !isset($_POST['comision_terminal_pct'])) ? '' : $comVal;
+                        ?>
                         <input type="number" name="comision_terminal_pct" step="0.01" min="0" max="100"
-                            value="<?= htmlspecialchars($_POST['comision_terminal_pct'] ?? $editando['comision_terminal_pct'] ?? '0') ?>"
+                            value="<?= htmlspecialchars($comVal) ?>"
                             placeholder="Ej. 3.5">
                         <div class="hint">Se suma automáticamente cuando el cliente paga con terminal en ventas y abonos.</div>
                     </div>
@@ -222,7 +235,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <input type="text" name="numero_cuenta"
                                 value="<?= htmlspecialchars($_POST['numero_cuenta'] ?? $editando['numero_cuenta'] ?? '') ?>"
                                 placeholder="10 dígitos"
-                                maxlength="20">
+                                maxlength="10"
+                                inputmode="numeric"
+                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"
+                                title="Solo dígitos, máximo 10">
                         </div>
                         <div class="form-group">
                             <label>CLABE interbancaria</label>

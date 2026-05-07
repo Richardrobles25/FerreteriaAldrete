@@ -85,13 +85,14 @@ $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Resumen
 $stmtRes = $pdo->prepare("
     SELECT
-        SUM(CASE WHEN m.tipo='Entrada' THEN m.cantidad ELSE 0 END) AS total_entradas,
-        SUM(CASE WHEN m.tipo='Salida' THEN m.cantidad ELSE 0 END) AS total_salidas,
+        SUM(CASE WHEN m.tipo='Entrada' OR (m.tipo='Ajuste' AND m.stock_nuevo > m.stock_anterior) THEN m.cantidad ELSE 0 END) AS total_entradas,
+        SUM(CASE WHEN m.tipo='Salida' OR (m.tipo='Ajuste' AND m.stock_nuevo < m.stock_anterior) THEN m.cantidad ELSE 0 END) AS total_salidas,
         COUNT(CASE WHEN m.tipo='Ajuste' THEN 1 END) AS total_ajustes,
         COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) AS total_transf
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
+    JOIN sucursales s ON m.sucursal_id = s.sucursal_id
     $where
 ");
 $stmtRes->execute($params);

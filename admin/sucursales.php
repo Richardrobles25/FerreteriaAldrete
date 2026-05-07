@@ -9,19 +9,76 @@ verificarRol(['Administrador']);
 
 if (isset($_GET['eliminar'])) {
     $sid = intval($_GET['eliminar']);
-    $stmtChk = $pdo->prepare("SELECT COUNT(*) FROM stock_sucursal WHERE sucursal_id = ? AND stock_actual > 0");
+
+    // 1. Bloquear si hay stock real activo
+    $stmtChk = $pdo->prepare("
+        SELECT COUNT(*) FROM stock_sucursal ss
+        JOIN productos p ON p.producto_id = ss.producto_id AND p.activo = 1
+        WHERE ss.sucursal_id = ? AND ss.activo = 1 AND ss.stock_actual > 0
+    ");
     $stmtChk->execute([$sid]);
     if ($stmtChk->fetchColumn() > 0) {
         header('Location: sucursales.php?error=con_stock'); exit();
     }
-    $pdo->prepare("DELETE FROM sucursales WHERE sucursal_id = ?")->execute([$sid]);
-    header('Location: sucursales.php?msg=eliminado'); exit();
+
+    // 2. Bloquear si hay usuarios activos asignados
+    $stmtU = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE sucursal_id = ? AND activo = 1");
+    $stmtU->execute([$sid]);
+    if ($stmtU->fetchColumn() > 0) {
+        header('Location: sucursales.php?error=con_usuarios'); exit();
+    }
+
+    // 3. Bloquear si hay ventas reales registradas en cajas de esta sucursal
+    $stmtVentas = $pdo->prepare("
+        SELECT COUNT(*) FROM ventas v
+        JOIN cajas c ON v.caja_id = c.caja_id
+        WHERE c.sucursal_id = ?
+    ");
+    $stmtVentas->execute([$sid]);
+    if ($stmtVentas->fetchColumn() > 0) {
+        header('Location: sucursales.php?error=con_ventas'); exit();
+    }
+
+    // 4. Eliminar registros dependientes sin historial real y luego la sucursal
+    try {
+        $pdo->beginTransaction();
+        // movimientos_caja (no tiene FK real, solo índice — borrar por sucursal_id directo)
+        $pdo->prepare("DELETE FROM movimientos_caja WHERE sucursal_id = ?")->execute([$sid]);
+        // cajas sin ventas (primero antes de usuarios, porque cajas.usuario_id → usuarios)
+        $pdo->prepare("DELETE FROM cajas WHERE sucursal_id = ?")->execute([$sid]);
+        // usuarios inactivos: no se pueden eliminar si tienen movimientos_inventario u otros registros históricos.
+        // Se reasignan a otra sucursal activa para liberar el FK sin perder el historial.
+        $stmtOtra = $pdo->prepare("SELECT sucursal_id FROM sucursales WHERE sucursal_id != ? AND activo = 1 LIMIT 1");
+        $stmtOtra->execute([$sid]);
+        $otraSuc = $stmtOtra->fetchColumn();
+        if ($otraSuc) {
+            $pdo->prepare("UPDATE usuarios SET sucursal_id = ? WHERE sucursal_id = ? AND activo = 0")->execute([$otraSuc, $sid]);
+        } else {
+            // No hay otra sucursal activa; eliminar solo si no tienen registros históricos
+            $pdo->prepare("DELETE FROM usuarios WHERE sucursal_id = ? AND activo = 0")->execute([$sid]);
+        }
+        // stock_sucursal (no tiene FK real, solo índice)
+        $pdo->prepare("DELETE FROM stock_sucursal WHERE sucursal_id = ?")->execute([$sid]);
+        // compras_proveedor (tiene FK a sucursales)
+        $pdo->prepare("DELETE FROM compras_proveedor WHERE sucursal_id = ?")->execute([$sid]);
+        // transferencias que involucren esta sucursal
+        $pdo->prepare("DELETE FROM transferencias WHERE sucursal_origen_id = ? OR sucursal_destino_id = ?")->execute([$sid, $sid]);
+        // unidades_medida tiene ON DELETE CASCADE, se elimina automáticamente con sucursales
+        $pdo->prepare("DELETE FROM sucursales WHERE sucursal_id = ?")->execute([$sid]);
+        $pdo->commit();
+        header('Location: sucursales.php?msg=eliminado'); exit();
+    } catch (\PDOException $e) {
+        $pdo->rollBack();
+        header('Location: sucursales.php?error=con_registros&detail=' . urlencode($e->getMessage())); exit();
+    }
 }
 
 $stmt = $pdo->query("
     SELECT s.*,
         (SELECT COUNT(*) FROM usuarios u WHERE u.sucursal_id = s.sucursal_id AND u.activo = 1) AS total_usuarios,
-        (SELECT COUNT(*) FROM stock_sucursal ss WHERE ss.sucursal_id = s.sucursal_id AND ss.stock_actual > 0) AS con_stock
+        (SELECT COUNT(*) FROM stock_sucursal ss
+         JOIN productos p ON p.producto_id = ss.producto_id AND p.activo = 1
+         WHERE ss.sucursal_id = s.sucursal_id AND ss.activo = 1 AND ss.stock_actual > 0) AS con_stock
     FROM sucursales s
     ORDER BY s.nombre ASC
 ");
@@ -128,9 +185,20 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?>
             </div>
         <?php endif; ?>
-        <?php if (isset($_GET['error']) && $_GET['error'] === 'con_stock'): ?>
+        <?php
+            $errMsgs = [
+                'con_stock'    => 'No se puede eliminar la sucursal porque aún tiene productos con stock. Retira o transfiere el stock primero.',
+                'con_usuarios' => 'No se puede eliminar la sucursal porque tiene usuarios activos asignados. Desactívalos o reasígnalos primero.',
+                'con_ventas'   => 'No se puede eliminar la sucursal porque tiene ventas registradas. No es posible eliminar sucursales con historial de ventas.',
+                'con_registros'=> 'No se puede eliminar la sucursal porque tiene registros relacionados que no se pudieron limpiar automáticamente.',
+            ];
+        ?>
+        <?php if (isset($_GET['error']) && isset($errMsgs[$_GET['error']])): ?>
             <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #c0392b;">
-                No se puede eliminar la sucursal porque aun tiene productos con stock. Retira o transfiere el stock primero.
+                <?= $errMsgs[$_GET['error']] ?>
+                <?php if (isset($_GET['detail'])): ?>
+                    <div style="margin-top:6px;font-size:11px;opacity:.8;font-family:monospace;"><?= htmlspecialchars($_GET['detail']) ?></div>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
 

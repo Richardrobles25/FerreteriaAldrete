@@ -130,7 +130,8 @@ $stmt = $pdo->query("
         (SELECT COUNT(*) FROM usuarios u WHERE u.sucursal_id = s.sucursal_id AND u.activo = 1) AS total_usuarios,
         (SELECT COUNT(*) FROM stock_sucursal ss
          JOIN productos p ON p.producto_id = ss.producto_id AND p.activo = 1
-         WHERE ss.sucursal_id = s.sucursal_id AND ss.activo = 1 AND ss.stock_actual > 0) AS con_stock
+         WHERE ss.sucursal_id = s.sucursal_id AND ss.activo = 1 AND ss.stock_actual > 0) AS con_stock,
+        (SELECT COUNT(*) FROM ventas v JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = s.sucursal_id) AS tiene_ventas
     FROM sucursales s
     ORDER BY s.nombre ASC
 ");
@@ -241,7 +242,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
             $errMsgs = [
                 'con_stock'    => 'No se puede eliminar la sucursal porque aún tiene productos con stock. Retira o transfiere el stock primero.',
                 'con_usuarios' => 'No se puede eliminar la sucursal porque tiene usuarios activos asignados. Desactívalos o reasígnalos primero.',
-                'con_ventas'   => 'No se puede eliminar la sucursal porque tiene ventas registradas. No es posible eliminar sucursales con historial de ventas.',
+                'con_ventas'   => 'La sucursal tiene ventas registradas. Usa el boton "Forzar eliminacion" en la tarjeta de la sucursal.',
                 'con_registros'=> 'No se puede eliminar la sucursal porque tiene registros relacionados que no se pudieron limpiar automáticamente.',
             ];
         ?>
@@ -250,17 +251,6 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?= $errMsgs[$_GET['error']] ?>
                 <?php if (isset($_GET['detail'])): ?>
                     <div style="margin-top:6px;font-size:11px;opacity:.8;font-family:monospace;"><?= htmlspecialchars($_GET['detail']) ?></div>
-                <?php endif; ?>
-                <?php if ($_GET['error'] === 'con_ventas' && isset($_GET['sid'])): ?>
-                    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #ffcdd2;">
-                        <strong>Eliminacion forzada</strong> — borrara permanentemente todas las ventas, creditos, abonos y devoluciones de esta sucursal. Esta accion no se puede deshacer.
-                        <br><br>
-                        <a href="sucursales.php?forzar=<?= intval($_GET['sid']) ?>"
-                           style="display:inline-block;background:#c0392b;color:white;padding:7px 16px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;"
-                           onclick="return confirm('ATENCION: Esto eliminara todas las ventas, creditos, abonos y devoluciones de esta sucursal para siempre. ¿Confirmas?')">
-                            Forzar eliminacion de todos modos
-                        </a>
-                    </div>
                 <?php endif; ?>
             </div>
         <?php endif; ?>
@@ -293,7 +283,13 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div class="suc-acciones">
                     <a class="btn-accion btn-editar" href="formSucursal.php?id=<?= $s['sucursal_id'] ?>">Editar datos</a>
                     <?php if (intval($s['con_stock']) > 0): ?>
-                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: la sucursal tiene <?= intval($s['con_stock']) ?> producto(s) en stock">Eliminar</span>
+                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene <?= intval($s['con_stock']) ?> producto(s) en stock">Eliminar</span>
+                    <?php elseif (intval($s['total_usuarios']) > 0): ?>
+                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene usuarios activos">Eliminar</span>
+                    <?php elseif (intval($s['tiene_ventas']) > 0): ?>
+                        <a class="btn-accion btn-eliminar" style="background:#7b1fa2;color:white;"
+                           href="sucursales.php?forzar=<?= $s['sucursal_id'] ?>"
+                           onclick="return confirm('ATENCION: Esto eliminara todas las ventas, creditos, abonos y devoluciones de la sucursal <?= htmlspecialchars($s['nombre'], ENT_QUOTES) ?> para siempre.\n\n¿Confirmas la eliminacion forzada?')">Forzar eliminacion</a>
                     <?php else: ?>
                         <a class="btn-accion btn-eliminar"
                            href="sucursales.php?eliminar=<?= $s['sucursal_id'] ?>"

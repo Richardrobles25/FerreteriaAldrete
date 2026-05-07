@@ -308,8 +308,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) 
             ON DUPLICATE KEY UPDATE activo = 1, stock_actual = VALUES(stock_actual), stock_minimo = VALUES(stock_minimo), stock_maximo = VALUES(stock_maximo)
         ");
         $stmtMov = $pdo->prepare("
-            INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-            VALUES (?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
+            INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+            VALUES (?, ?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
         ");
         foreach ($productos_ids as $i => $pid) {
             $pid    = intval($pid);
@@ -318,7 +318,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) 
             $maximo = floatval($stocks_maximo[$i] ?? 0);
             if (!$pid) continue;
             $stmtUpsert->execute([$pid, $_SESSION['sucursal_id'], $actual, $minimo, $maximo]);
-            if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $actual, $actual]);
+            if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $actual, $actual]);
         }
     }
     header('Location: productos.php?msg=agregado_catalogo');

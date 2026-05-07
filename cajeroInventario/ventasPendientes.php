@@ -64,8 +64,8 @@ if (isset($_GET['cancelar'])) {
         $stockNuevo = $stockAnterior + $p['cantidad'];
 
         $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $p['producto_id'], $_SESSION['sucursal_id']]);
-        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Entrada',?,?,?,'Cancelación venta pendiente')")
-            ->execute([$p['producto_id'], $_SESSION['usuario_id'], $p['cantidad'], $stockAnterior, $stockNuevo]);
+        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,'Cancelación venta pendiente')")
+            ->execute([$p['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $p['cantidad'], $stockAnterior, $stockNuevo]);
     }
 
     $pdo->prepare("UPDATE ventas SET estado = 'Cancelada' WHERE venta_id = ?")->execute([$venta_id]);
@@ -204,8 +204,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal) VALUES (?,?,?,?,?,?)")
                         ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $precioOrig, $precioFinal, $subtotalItem]);
                     $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $item['producto_id'], $_SESSION['sucursal_id']]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
-                        ->execute([$item['producto_id'], $_SESSION['usuario_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
+                        ->execute([$item['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
                 }
 
                 $pdo->commit();

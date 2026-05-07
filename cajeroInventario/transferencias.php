@@ -89,8 +89,8 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                 $stockNuevoOrigen = $stockAntOrigen - $transf['cantidad'];
                 $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                     ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Transferencia',?,?,?,'Transferencia enviada')")
-                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
+                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
 
                 // Sumar stock al destino — mismo producto_id (catálogo compartido)
                 $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
@@ -109,8 +109,8 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                         ->execute([$transf['producto_id'], $transf['sucursal_destino_id'], $stockNuevoDest]);
                     $stockAntDest = 0;
                 }
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,'Transferencia',?,?,?,'Transferencia recibida')")
-                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia recibida')")
+                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
 
                 $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
                     ->execute([$_SESSION['usuario_id'], $id]);

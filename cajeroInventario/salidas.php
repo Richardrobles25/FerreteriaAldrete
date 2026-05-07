@@ -99,7 +99,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .topbar-right form { display: contents; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
-    .logout-btn:hover { background: rgba(255,255,255,0.3); }adm9i
+    .logout-btn:hover { background: rgba(255,255,255,0.3); }
     .content { flex: 1; padding: 24px; overflow-y: auto; display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
     .card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 20px; }
     .card h3 { font-size: 15px; font-weight: 600; color: #333; margin: 0 0 16px; }

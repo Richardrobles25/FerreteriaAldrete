@@ -260,7 +260,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                         <option value="semana" <?= $periodo === 'semana' ? 'selected' : '' ?>>Ultima semana</option>
                         <option value="mes" <?= $periodo === 'mes' ? 'selected' : '' ?>>Ultimo mes</option>
                         <option value="trimestre" <?= $periodo === 'trimestre' ? 'selected' : '' ?>>Ultimo trimestre</option>
-                        <option value="anio" <?= $periodo === 'anio' ? 'selected' : '' ?>>Ultimo anio</option>
+                        <option value="anio" <?= $periodo === 'anio' ? 'selected' : '' ?>>Ultimo año</option>
                         <option value="personalizado" <?= $periodo === 'personalizado' ? 'selected' : '' ?>>Personalizado</option>
                     </select>
                 </div>

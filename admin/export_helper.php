@@ -331,9 +331,25 @@ function exportarExcel(
     }
     $sheet->getColumnDimension('A')->setWidth(max(12, $sheet->getColumnDimension('A')->getWidth()));
 
+    $tmpFile = tempnam(sys_get_temp_dir(), 'xlsx_');
+    try {
+        (new Xlsx($wb))->save($tmpFile);
+    } catch (\Throwable $e) {
+        @unlink($tmpFile);
+        while (ob_get_level()) ob_end_clean();
+        http_response_code(500);
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<pre>Error al generar Excel: ' . htmlspecialchars($e->getMessage()) . '</pre>';
+        exit();
+    }
+
+    while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header("Content-Disposition: attachment; filename=\"{$nombreArchivo}\"");
+    header('Content-Length: ' . filesize($tmpFile));
     header('Cache-Control: max-age=0');
-    (new Xlsx($wb))->save('php://output');
+    header('Pragma: public');
+    readfile($tmpFile);
+    @unlink($tmpFile);
     exit();
 }

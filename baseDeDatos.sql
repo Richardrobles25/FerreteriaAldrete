@@ -241,18 +241,20 @@
     -- 15. MOVIMIENTOS_INVENTARIO
     CREATE TABLE movimientos_inventario (
         movimientos_inventario_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        producto_id INT UNSIGNED NOT NULL,
-        usuario_id INT UNSIGNED NOT NULL,
+        producto_id   INT UNSIGNED NOT NULL,
+        usuario_id    INT UNSIGNED NOT NULL,
+        sucursal_id   INT UNSIGNED NULL DEFAULT NULL,
         tipo ENUM('Entrada', 'Salida', 'Ajuste', 'Transferencia') NOT NULL,
-        cantidad DECIMAL(10,3) NOT NULL,
+        cantidad      DECIMAL(10,3) NOT NULL,
         stock_anterior DECIMAL(10,3) NOT NULL,
-        stock_nuevo DECIMAL(10,3) NOT NULL,
-        motivo VARCHAR(255),
-        proveedor_id INT NULL DEFAULT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        stock_nuevo   DECIMAL(10,3) NOT NULL,
+        motivo        VARCHAR(255),
+        proveedor_id  INT NULL DEFAULT NULL,
+        created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         devolucion_id INT UNSIGNED NULL DEFAULT NULL,
+        KEY idx_mi_sucursal (sucursal_id),
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
-        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+        FOREIGN KEY (usuario_id)  REFERENCES usuarios(usuario_id)
     );
 
     -- 16. TRANSFERENCIAS

@@ -133,9 +133,9 @@ if (isset($_GET['cancelar_dev'])) {
             $stockAnt  = floatval($stmtS->fetchColumn());
             $stockNuevo = max(0, $stockAnt - floatval($m['cantidad']));
             $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $m['producto_id'], $_SESSION['sucursal_id']]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
-                           VALUES (?,?,'Salida',?,?,?,?)")
-                ->execute([$m['producto_id'], $_SESSION['usuario_id'], $m['cantidad'], $stockAnt, $stockNuevo,
+            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
+                           VALUES (?,?,?,'Salida',?,?,?,?)")
+                ->execute([$m['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $m['cantidad'], $stockAnt, $stockNuevo,
                            'Cancelacion devolucion #' . $devolucion_id . ($nota_cancel ? ': ' . $nota_cancel : '')]);
         }
 
@@ -286,8 +286,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stockNuevo    = $stockAnterior + $cantidad;
 
                     $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $_SESSION['sucursal_id']]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id) VALUES (?,?,'Entrada',?,?,?,?,?)")
-                        ->execute([$producto_id, $_SESSION['usuario_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id) VALUES (?,?,?,'Entrada',?,?,?,?,?)")
+                        ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id]);
                 }
 
                 // Actualizar total de la venta

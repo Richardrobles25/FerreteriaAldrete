@@ -21,10 +21,11 @@
                     el.addEventListener('change', function () { form.submit(); });
                 });
 
-            // Envío con debounce para inputs de texto
+            // Envío con debounce para inputs de texto (omite los que tengan data-no-auto)
             var timer;
             filtros.querySelectorAll('input[type="text"], input[type="search"], input[type="number"]')
                 .forEach(function (el) {
+                    if (el.hasAttribute('data-no-auto')) return;
                     el.addEventListener('input', function () {
                         clearTimeout(timer);
                         timer = setTimeout(function () { form.submit(); }, 600);

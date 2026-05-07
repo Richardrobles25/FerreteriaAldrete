@@ -420,8 +420,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 if ($notaAjuste) {
                     $motivoMovimiento = 'Venta - Ajuste por daño: ' . mb_substr($notaAjuste, 0, 120);
                 }
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Salida',?,?,?,?)")
-                    ->execute([$item['producto_id'],$_SESSION['usuario_id'],$item['cantidad'],$stockAnterior,$stockNuevo,$motivoMovimiento]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
+                    ->execute([$item['producto_id'],$_SESSION['usuario_id'],$_SESSION['sucursal_id'],$item['cantidad'],$stockAnterior,$stockNuevo,$motivoMovimiento]);
             }
 
             if ($metodo_pago === 'Credito' && $cliente_id) {

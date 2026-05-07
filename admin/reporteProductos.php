@@ -194,7 +194,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap: 12px; margin-bottom: 16px; }
     .stat { background: white; border-radius: 8px; padding: 16px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
-    .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; }
+    .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; min-height: 2.4em; }
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
     .stat small { font-size: 11px; color: #14ace7; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
@@ -294,9 +294,11 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 </div>
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Producto o codigo" oninput="filtrarTabla(this.value)">
+                    <div style="display:flex;gap:6px;">
+                        <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Producto o codigo" oninput="filtrarTabla(this.value)" data-no-auto>
+                        <button type="submit" style="background:#14ace7;color:white;border:none;padding:7px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">Buscar</button>
+                    </div>
                 </div>
-                <button class="btn-filtrar" type="submit">Aplicar</button>
                 <?php if ($sucursal || $categoria || $busqueda !== '' || $periodo !== 'mes'): ?><a class="btn-limpiar" href="reporteProductos.php">Limpiar</a><?php endif; ?>
             </div>
         </form>
@@ -305,7 +307,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
             <div class="stat"><p>Productos vendidos</p><h3><?= intval($resumen['productos_vendidos'] ?? 0) ?></h3></div>
             <div class="stat"><p>Ventas con productos</p><h3><?= intval($resumen['ventas_con_productos'] ?? 0) ?></h3></div>
             <div class="stat"><p>Piezas vendidas</p><h3><?= number_format(floatval($resumen['piezas_vendidas'] ?? 0), 0) ?></h3></div>
-            <div class="stat"><p>Ingreso generado</p><h3>$<?= number_format(floatval($resumen['ingreso_generado'] ?? 0), 0) ?></h3></div>
+            <div class="stat"><p>Ingreso generado (sin comisiones)</p><h3>$<?= number_format(floatval($resumen['ingreso_generado'] ?? 0), 0) ?></h3></div>
             <div class="stat"><p>Ticket promedio</p><h3>$<?= number_format($promedioTicket, 0) ?></h3></div>
             <div class="stat"><p>Producto lider</p><h3 style="font-size:16px;"><?= htmlspecialchars($productoTop['codigo'] ?? '-') ?></h3><small><?= htmlspecialchars($productoTop['nombre_producto'] ?? 'Sin datos') ?></small></div>
         </div>

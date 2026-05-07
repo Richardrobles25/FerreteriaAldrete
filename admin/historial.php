@@ -7,8 +7,8 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-$fechaInicio = $_GET['fecha_inicio'] ?? '';
-$fechaFin    = $_GET['fecha_fin']    ?? '';
+$fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d', strtotime('-7 days'));
+$fechaFin    = $_GET['fecha_fin']    ?? date('Y-m-d');
 $tipo        = $_GET['tipo']         ?? '';
 $sucursal    = intval($_GET['sucursal'] ?? 0);
 $busqueda    = trim($_GET['buscar']  ?? '');
@@ -16,7 +16,7 @@ $busqueda    = trim($_GET['buscar']  ?? '');
 $where  = "WHERE 1=1";
 $params = [];
 
-if ($sucursal)                      { $where .= " AND u.sucursal_id = ?";                        $params[] = $sucursal; }
+if ($sucursal)                      { $where .= " AND m.sucursal_id = ?";                        $params[] = $sucursal; }
 if ($fechaInicio && $fechaFin)      { $where .= " AND DATE(m.created_at) BETWEEN ? AND ?";       $params[] = $fechaInicio; $params[] = $fechaFin; }
 elseif ($fechaInicio)               { $where .= " AND DATE(m.created_at) >= ?";                  $params[] = $fechaInicio; }
 elseif ($fechaFin)                  { $where .= " AND DATE(m.created_at) <= ?";                  $params[] = $fechaFin; }
@@ -32,7 +32,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
         JOIN usuarios u ON m.usuario_id = u.usuario_id
-        JOIN sucursales s ON u.sucursal_id = s.sucursal_id
+        JOIN sucursales s ON m.sucursal_id = s.sucursal_id
         $where
         ORDER BY m.created_at DESC
     ");
@@ -74,7 +74,7 @@ $stmt = $pdo->prepare("
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
-    JOIN sucursales s ON u.sucursal_id = s.sucursal_id
+    JOIN sucursales s ON m.sucursal_id = s.sucursal_id
     $where
     ORDER BY m.created_at DESC
     LIMIT 300

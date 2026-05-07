@@ -9,7 +9,7 @@ $fecha    = $_GET['fecha'] ?? date('Y-m-d');
 $tipo     = $_GET['tipo'] ?? '';
 $busqueda = trim($_GET['buscar'] ?? '');
 
-$where  = "WHERE ss.sucursal_id = ?";
+$where  = "WHERE m.sucursal_id = ?";
 $params = [$_SESSION['sucursal_id']];
 
 if ($fecha) { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
@@ -22,7 +22,6 @@ $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
     $where
     ORDER BY m.created_at DESC
@@ -34,13 +33,12 @@ $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Resumen
 $stmtRes = $pdo->prepare("
     SELECT
-        SUM(CASE WHEN m.tipo='Entrada' THEN m.cantidad ELSE 0 END) as total_entradas,
-        SUM(CASE WHEN m.tipo='Salida' THEN m.cantidad ELSE 0 END) as total_salidas,
+        SUM(CASE WHEN m.tipo='Entrada' OR (m.tipo='Ajuste' AND m.stock_nuevo > m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_entradas,
+        SUM(CASE WHEN m.tipo='Salida' OR (m.tipo='Ajuste' AND m.stock_nuevo < m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_salidas,
         COUNT(CASE WHEN m.tipo='Ajuste' THEN 1 END) as total_ajustes,
         COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     $where
 ");
 $stmtRes->execute($params);

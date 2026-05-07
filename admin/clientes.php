@@ -8,7 +8,21 @@ verificarSesion();
 verificarRol(['Administrador']);
 
 if (isset($_GET['toggle'])) {
-    $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([intval($_GET['toggle'])]);
+    $cid = intval($_GET['toggle']);
+    $actual = $pdo->prepare("SELECT activo FROM clientes WHERE cliente_id = ?");
+    $actual->execute([$cid]);
+    $activo = $actual->fetchColumn();
+
+    if ($activo) {
+        $credPend = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+        $credPend->execute([$cid]);
+        if ($credPend->fetchColumn() > 0) {
+            header('Location: clientes.php?error=credito_pendiente');
+            exit();
+        }
+    }
+
+    $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$cid]);
     header('Location: clientes.php');
     exit();
 }
@@ -338,6 +352,9 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <?php if (isset($_GET['msg'])): $mensajes = ['creado' => 'Cliente registrado correctamente.', 'editado' => 'Cliente actualizado correctamente.']; ?>
                 <div class="msg msg-exito"><?= htmlspecialchars($mensajes[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>
+            <?php if (($_GET['error'] ?? '') === 'credito_pendiente'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar este cliente porque tiene un crédito pendiente de pago.</div>
+            <?php endif; ?>
 
             <div class="stats">
                 <div class="stat"><p>Total clientes</p><h3><?= intval($totales['total_clientes'] ?? 0) ?></h3></div>
@@ -391,7 +408,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                                     </td>
                                     <td style="font-size:12px;"><?= htmlspecialchars($cliente['sucursales_relacionadas'] ?: 'Sin compras registradas') ?></td>
                                     <td><span style="font-size:12px;color:<?= $cliente['activo'] ? '#2e7d32' : '#c0392b' ?>;font-weight:600;"><?= $cliente['activo'] ? 'Activo' : 'Inactivo' ?></span></td>
-                                    <td><div class="acciones"><a class="btn-accion btn-editar" href="clientes.php?editar=<?= $cliente['cliente_id'] ?>">Editar</a><a class="btn-accion <?= $cliente['activo'] ? 'btn-desactivar' : 'btn-activar' ?>" href="clientes.php?toggle=<?= $cliente['cliente_id'] ?>" onclick="return confirm('Deseas cambiar el estado de este cliente?')"><?= $cliente['activo'] ? 'Desactivar' : 'Activar' ?></a></div></td>
+                                    <td><div class="acciones"><a class="btn-accion btn-editar" href="clientes.php?editar=<?= $cliente['cliente_id'] ?>">Editar</a>
+                                        <?php if ($cliente['activo'] && $cliente['saldo_pendiente'] > 0): ?>
+                                            <span class="btn-accion" style="background:#f0f0f0;color:#aaa;cursor:not-allowed;" title="Tiene crédito pendiente de $<?= number_format($cliente['saldo_pendiente'],2) ?>">Desactivar</span>
+                                        <?php else: ?>
+                                            <a class="btn-accion <?= $cliente['activo'] ? 'btn-desactivar' : 'btn-activar' ?>" href="clientes.php?toggle=<?= $cliente['cliente_id'] ?>" onclick="return confirm('Deseas cambiar el estado de este cliente?')"><?= $cliente['activo'] ? 'Desactivar' : 'Activar' ?></a>
+                                        <?php endif; ?>
+                                    </div></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -417,7 +440,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                     <div class="form-group"><label>Correo</label><input type="email" name="correo" value="<?= htmlspecialchars($_POST['correo'] ?? $editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com"></div>
                     <div class="form-group"><label>Notas</label><textarea name="notas" rows="3" placeholder="Observaciones del cliente"><?= htmlspecialchars($_POST['notas'] ?? $editando['notas'] ?? '') ?></textarea></div>
                     <div class="check-row"><input type="checkbox" name="credito_autorizado" id="chkCredito" <?= (($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'checked' : '') ?> onchange="toggleCredito(this.checked)"><label for="chkCredito">Autorizar credito a este cliente</label></div>
-                    <div class="credito-campos <?= (($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '') ?>" id="creditoCampos"><div class="form-group"><label>Limite de credito</label><input type="number" name="limite_credito" value="<?= htmlspecialchars($_POST['limite_credito'] ?? $editando['limite_credito'] ?? 0) ?>" step="0.01" min="0"></div></div>
+                    <div class="credito-campos <?= (($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '') ?>" id="creditoCampos"><div class="form-group"><label>Limite de credito</label><input type="number" name="limite_credito" value="<?= htmlspecialchars($_POST['limite_credito'] ?? ($editando['limite_credito'] ?: '')) ?>" step="0.01" min="0" placeholder="0.00"></div></div>
                     <button class="btn-guardar" type="submit"><?= $editando ? 'Guardar cambios' : 'Registrar cliente' ?></button>
                     <?php if ($editando): ?><a class="btn-cancelar-edit" href="clientes.php">Cancelar</a><?php endif; ?>
                 </form>

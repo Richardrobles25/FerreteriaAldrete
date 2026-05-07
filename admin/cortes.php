@@ -7,8 +7,8 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
-$fechaInicio = $_GET['fecha_inicio'] ?? '';
-$fechaFin    = $_GET['fecha_fin']    ?? '';
+$fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
+$fechaFin    = $_GET['fecha_fin']    ?? date('Y-m-d');
 $sucursal    = intval($_GET['sucursal'] ?? 0);
 $usuario     = intval($_GET['usuario']  ?? 0);
 
@@ -29,7 +29,9 @@ $stmt = $pdo->prepare("
         COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo' THEN v.total ELSE 0 END),0) AS ef,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal' THEN v.total ELSE 0 END),0) AS term,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Credito' THEN v.total ELSE 0 END),0) AS cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_terminal ELSE 0 END),0) AS mixto_term,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) AS transf
     FROM cajas c
     JOIN usuarios u ON c.usuario_id = u.usuario_id
     JOIN sucursales s ON c.sucursal_id = s.sucursal_id
@@ -107,7 +109,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
     .dif-ok  { color: #2e7d32; font-weight: 600; }
     .dif-neg { color: #c0392b; font-weight: 600; }
     .dif-pos { color: #1565c0; font-weight: 600; }
-    .desglose { font-size: 10px; color: #aaa; margin-top: 2px; }
+    .desglose { font-size: 10px; color: #aaa; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
     @media (max-width: 768px) {
         body { overflow-x: hidden; }
@@ -210,7 +212,12 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
                         <td><?= $c['total_ventas'] ?></td>
                         <td>
                             $<?= number_format($c['total_cobrado'],2) ?>
-                            <div class="desglose">Ef:$<?= number_format($c['ef']+$c['mixto_ef'],0) ?> Term:$<?= number_format($c['term'],0) ?></div>
+                            <div class="desglose">
+                                Ef:$<?= number_format($c['ef']+$c['mixto_ef'],0) ?>
+                                Term:$<?= number_format($c['term']+$c['mixto_term'],0) ?>
+                                <?php if ($c['transf'] > 0): ?>Transf:$<?= number_format($c['transf'],0) ?><?php endif; ?>
+                                <?php if ($c['cred'] > 0): ?>Cred:$<?= number_format($c['cred'],0) ?><?php endif; ?>
+                            </div>
                         </td>
                         <td>$<?= number_format($c['monto_esperado']??0,2) ?></td>
                         <td>$<?= number_format($c['monto_cierre']??0,2) ?></td>

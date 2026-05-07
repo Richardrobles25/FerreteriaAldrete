@@ -85,8 +85,8 @@ $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // Resumen
 $stmtRes = $pdo->prepare("
     SELECT
-        SUM(CASE WHEN m.tipo='Entrada' OR (m.tipo='Ajuste' AND m.stock_nuevo > m.stock_anterior) THEN m.cantidad ELSE 0 END) AS total_entradas,
-        SUM(CASE WHEN m.tipo='Salida' OR (m.tipo='Ajuste' AND m.stock_nuevo < m.stock_anterior) THEN m.cantidad ELSE 0 END) AS total_salidas,
+        SUM(CASE WHEN m.tipo='Entrada' OR (m.tipo IN ('Ajuste','Transferencia') AND m.stock_nuevo > m.stock_anterior) THEN m.cantidad ELSE 0 END) AS total_entradas,
+        SUM(CASE WHEN m.tipo='Salida' OR (m.tipo IN ('Ajuste','Transferencia') AND m.stock_nuevo < m.stock_anterior) THEN m.cantidad ELSE 0 END) AS total_salidas,
         COUNT(CASE WHEN m.tipo='Ajuste' THEN 1 END) AS total_ajustes,
         COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) AS total_transf
     FROM movimientos_inventario m
@@ -258,8 +258,9 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         </td>
                         <td style="font-size:12px;"><?= htmlspecialchars($m['sucursal']) ?></td>
                         <td><span class="badge-tipo tipo-<?= strtolower($m['tipo']) ?>"><?= $m['tipo'] ?></span></td>
-                        <td class="<?= $m['tipo']==='Entrada'?'cantidad-entrada':'cantidad-salida' ?>">
-                            <?= ($m['tipo']==='Entrada'?'+':'-').number_format($m['cantidad'],3) ?>
+                        <?php $sube = $m['stock_nuevo'] >= $m['stock_anterior']; ?>
+                        <td class="<?= $sube?'cantidad-entrada':'cantidad-salida' ?>">
+                            <?= ($sube?'+':'-').number_format($m['cantidad'],3) ?>
                         </td>
                         <td><?= number_format($m['stock_anterior'],3) ?></td>
                         <td><?= number_format($m['stock_nuevo'],3) ?></td>

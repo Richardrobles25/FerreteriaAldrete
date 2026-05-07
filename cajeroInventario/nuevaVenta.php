@@ -1792,6 +1792,7 @@ function verificarRecomendaciones() {
 
         if (!hayAlguno) return;
         const total      = paq.productos.length;
+        if (cubiertos < total) return;
         const porcentaje = Math.round((progressSum / total) * 100);
         recs.push({ paq, cubiertos, total, faltantes, porcentaje });
     });
@@ -1808,16 +1809,9 @@ function verificarRecomendaciones() {
                 <span class="rec-nombre">${esc(rec.paq.nombre)}</span>
                 <span class="rec-precio">$${rec.paq.precio_paquete.toFixed(2)}</span>
             </div>
-            <div class="rec-barra-bg">
-                <div class="rec-barra" style="width:${rec.porcentaje}%;background:${color};"></div>
-            </div>
-            <div class="rec-desc">
-                ${completo
-                    ? `✅ Tienes todos los productos (${rec.total}/${rec.total})`
-                    : `${rec.cubiertos}/${rec.total} productos · Falta: ${rec.faltantes.map(f=>f.nombre+' (×'+f.falta+')').join(', ')}`}
-            </div>
-            <button class="rec-btn" style="background:${color};" onclick='agregarPaquete(${paqData})'>
-                ${completo ? '✅ Aplicar paquete al carrito' : `➕ Completar paquete (${rec.porcentaje}%)`}
+            <div class="rec-desc">✅ Tienes todos los productos del paquete (${rec.total}/${rec.total})</div>
+            <button class="rec-btn" style="background:#2e7d32;" onclick='agregarPaquete(${paqData})'>
+                ✅ Aplicar paquete al carrito
             </button>
         </div>`;
     }).join('');

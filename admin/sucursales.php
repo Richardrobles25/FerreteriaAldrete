@@ -7,6 +7,58 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
+if (isset($_GET['forzar'])) {
+    $sid = intval($_GET['forzar']);
+
+    // No permitir forzar si aún hay stock activo o usuarios activos
+    $stmtChk = $pdo->prepare("
+        SELECT COUNT(*) FROM stock_sucursal ss
+        JOIN productos p ON p.producto_id = ss.producto_id AND p.activo = 1
+        WHERE ss.sucursal_id = ? AND ss.activo = 1 AND ss.stock_actual > 0
+    ");
+    $stmtChk->execute([$sid]);
+    if ($stmtChk->fetchColumn() > 0) { header('Location: sucursales.php?error=con_stock'); exit(); }
+
+    $stmtU = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE sucursal_id = ? AND activo = 1");
+    $stmtU->execute([$sid]);
+    if ($stmtU->fetchColumn() > 0) { header('Location: sucursales.php?error=con_usuarios'); exit(); }
+
+    try {
+        $pdo->beginTransaction();
+        // abonos → creditos → ventas → cajas
+        $pdo->prepare("DELETE a FROM abonos a JOIN creditos cr ON a.credito_id = cr.credito_id JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        // creditos → ventas → cajas
+        $pdo->prepare("DELETE cr FROM creditos cr JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        // devoluciones → ventas → cajas
+        $pdo->prepare("DELETE d FROM devoluciones d JOIN ventas v ON d.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        // venta_productos → ventas → cajas
+        $pdo->prepare("DELETE vp FROM venta_productos vp JOIN ventas v ON vp.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        // ventas → cajas
+        $pdo->prepare("DELETE v FROM ventas v JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        // movimientos_caja, cajas
+        $pdo->prepare("DELETE FROM movimientos_caja WHERE sucursal_id = ?")->execute([$sid]);
+        $pdo->prepare("DELETE FROM cajas WHERE sucursal_id = ?")->execute([$sid]);
+        // usuarios inactivos: reasignar a otra sucursal para preservar movimientos_inventario
+        $stmtOtra = $pdo->prepare("SELECT sucursal_id FROM sucursales WHERE sucursal_id != ? AND activo = 1 LIMIT 1");
+        $stmtOtra->execute([$sid]);
+        $otraSuc = $stmtOtra->fetchColumn();
+        if ($otraSuc) {
+            $pdo->prepare("UPDATE usuarios SET sucursal_id = ? WHERE sucursal_id = ? AND activo = 0")->execute([$otraSuc, $sid]);
+        } else {
+            $pdo->prepare("DELETE FROM usuarios WHERE sucursal_id = ? AND activo = 0")->execute([$sid]);
+        }
+        $pdo->prepare("DELETE FROM stock_sucursal WHERE sucursal_id = ?")->execute([$sid]);
+        $pdo->prepare("DELETE FROM compras_proveedor WHERE sucursal_id = ?")->execute([$sid]);
+        $pdo->prepare("DELETE FROM transferencias WHERE sucursal_origen_id = ? OR sucursal_destino_id = ?")->execute([$sid, $sid]);
+        $pdo->prepare("DELETE FROM sucursales WHERE sucursal_id = ?")->execute([$sid]);
+        $pdo->commit();
+        header('Location: sucursales.php?msg=eliminado'); exit();
+    } catch (\PDOException $e) {
+        $pdo->rollBack();
+        header('Location: sucursales.php?error=con_registros&detail=' . urlencode($e->getMessage())); exit();
+    }
+}
+
 if (isset($_GET['eliminar'])) {
     $sid = intval($_GET['eliminar']);
 
@@ -36,7 +88,7 @@ if (isset($_GET['eliminar'])) {
     ");
     $stmtVentas->execute([$sid]);
     if ($stmtVentas->fetchColumn() > 0) {
-        header('Location: sucursales.php?error=con_ventas'); exit();
+        header('Location: sucursales.php?error=con_ventas&sid=' . $sid); exit();
     }
 
     // 4. Eliminar registros dependientes sin historial real y luego la sucursal
@@ -198,6 +250,17 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?= $errMsgs[$_GET['error']] ?>
                 <?php if (isset($_GET['detail'])): ?>
                     <div style="margin-top:6px;font-size:11px;opacity:.8;font-family:monospace;"><?= htmlspecialchars($_GET['detail']) ?></div>
+                <?php endif; ?>
+                <?php if ($_GET['error'] === 'con_ventas' && isset($_GET['sid'])): ?>
+                    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #ffcdd2;">
+                        <strong>Eliminacion forzada</strong> — borrara permanentemente todas las ventas, creditos, abonos y devoluciones de esta sucursal. Esta accion no se puede deshacer.
+                        <br><br>
+                        <a href="sucursales.php?forzar=<?= intval($_GET['sid']) ?>"
+                           style="display:inline-block;background:#c0392b;color:white;padding:7px 16px;border-radius:6px;font-size:12px;font-weight:700;text-decoration:none;"
+                           onclick="return confirm('ATENCION: Esto eliminara todas las ventas, creditos, abonos y devoluciones de esta sucursal para siempre. ¿Confirmas?')">
+                            Forzar eliminacion de todos modos
+                        </a>
+                    </div>
                 <?php endif; ?>
             </div>
         <?php endif; ?>

@@ -1792,13 +1792,10 @@ function verificarRecomendaciones() {
 
         if (!hayAlguno) return;
         const total = paq.productos.length;
-        // Solo recomendar si hay stock suficiente para completar lo que falta
+        // Solo recomendar si el stock total alcanza para cubrir el paquete completo
         let completable = true;
         paq.productos.forEach(prod => {
-            const enCar    = enCarrito[parseInt(prod.producto_id)] || 0;
-            const necesaria = parseFloat(prod.cantidad_requerida);
-            const stock    = parseFloat(prod.stock_actual);
-            if (enCar + stock < necesaria) completable = false;
+            if (parseFloat(prod.stock_actual) < parseFloat(prod.cantidad_requerida)) completable = false;
         });
         if (!completable) return;
         const porcentaje = Math.round((progressSum / total) * 100);

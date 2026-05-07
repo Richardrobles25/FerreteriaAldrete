@@ -13,11 +13,12 @@ if (isset($_GET['detalle_venta'])) {
         SELECT v.*, c.nombre_completo AS cliente, c.telefono AS tel_cliente,
                u.nombre_completo AS cajero
         FROM ventas v
+        JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
         LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
         LEFT JOIN usuarios u ON v.usuario_id = u.usuario_id
         WHERE v.venta_id = ?
     ");
-    $stmtV->execute([$venta_id]);
+    $stmtV->execute([$_SESSION['sucursal_id'], $venta_id]);
     $venta = $stmtV->fetch(PDO::FETCH_ASSOC);
     if ($venta) {
         $venta['fecha_formateada'] = date('d/m/Y H:i', strtotime($venta['created_at']));
@@ -52,8 +53,8 @@ if (!$dHasta) $fechaHasta = '';
 
 $hayFiltroFecha = ($fechaDesde !== '' || $fechaHasta !== '');
 
-$where  = "WHERE 1=1";
-$params = [];
+$where  = "WHERE ca.sucursal_id = ?";
+$params = [$_SESSION['sucursal_id']];
 
 if ($fechaDesde !== '' && $fechaHasta !== '') {
     // Rango completo
@@ -83,6 +84,7 @@ $limit = (!$hayFiltroFecha && !$buscar) ? 'LIMIT 150' : 'LIMIT 1000';
 $stmt = $pdo->prepare("
     SELECT v.*, c.nombre_completo AS cliente, u.nombre_completo AS cajero
     FROM ventas v
+    JOIN cajas ca ON v.caja_id = ca.caja_id
     LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
     LEFT JOIN usuarios u ON v.usuario_id = u.usuario_id
     $where
@@ -103,6 +105,7 @@ $stmtTot = $pdo->prepare("
         COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'     AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as mixto,
         COUNT(CASE WHEN v.estado='Cancelada' THEN 1 END) as canceladas
     FROM ventas v
+    JOIN cajas ca ON v.caja_id = ca.caja_id
     LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
     $where
 ");

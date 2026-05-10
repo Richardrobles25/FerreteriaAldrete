@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
             $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                 ->execute([$cred_id]);
         } elseif ($credito['estado'] === 'Vencido') {
-            $nuevaFecha = date('Y-m-d H:i:s', strtotime($credito['fecha_limite'] . ' +2 minutes'));
+            $nuevaFecha = date('Y-m-d H:i:s', strtotime('+3 minutes'));
             $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = ? WHERE credito_id = ?")
                 ->execute([$nuevoSaldo, $nuevaFecha, $cred_id]);
         } else {

@@ -44,6 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $cliente_id         = intval($_POST['cliente_id'] ?? 0);
 
     if (!$nombre_completo) $errores[] = 'El nombre es obligatorio.';
+    if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
 
     if (empty($errores)) {
         if ($cliente_id) {
@@ -304,7 +305,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-row">
                         <div class="form-group">
                             <label>Teléfono</label>
-                            <input type="text" name="telefono" value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>" placeholder="10 dígitos">
+                            <input type="tel" name="telefono" value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)">
                         </div>
                         <div class="form-group">
                             <label>Descuento fijo (%)</label>

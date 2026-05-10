@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
             $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                 ->execute([$cred_id]);
         } else {
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite < CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = DATE_ADD(GREATEST(fecha_limite, CURDATE()), INTERVAL 1 DAY) WHERE credito_id = ?")
                 ->execute([$nuevoSaldo, $cred_id]);
         }
 

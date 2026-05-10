@@ -425,8 +425,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
 
             if ($metodo_pago === 'Credito' && $cliente_id) {
-                $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado,fecha_limite) VALUES (?,?,?,?,'Activo',?)")
-                    ->execute([$cliente_id,$venta_id,$total,$total,date('Y-m-d', strtotime('+1 day'))]);
+                $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado,fecha_limite) VALUES (?,?,?,?,'Activo',DATE_ADD(CURDATE(), INTERVAL 1 DAY))")
+                    ->execute([$cliente_id,$venta_id,$total,$total]);
             }
 
             $pdo->commit();

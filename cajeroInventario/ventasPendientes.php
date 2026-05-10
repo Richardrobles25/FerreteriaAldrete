@@ -33,8 +33,8 @@ if (isset($_GET['liquidar'])) {
                 $stmtCheck = $pdo->prepare("SELECT credito_id FROM creditos WHERE venta_id = ? LIMIT 1");
                 $stmtCheck->execute([$venta_id]);
                 if (!$stmtCheck->fetchColumn()) {
-                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', ?)")
-                        ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total'], date('Y-m-d', strtotime('+1 day'))]);
+                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', DATE_ADD(CURDATE(), INTERVAL 1 DAY))")
+                        ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total']]);
                 }
             }
 

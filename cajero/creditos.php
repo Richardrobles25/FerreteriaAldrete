@@ -6,7 +6,7 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < NOW()");
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 
 $busqueda = trim($_GET['buscar'] ?? '');
 $estado   = $_GET['estado'] ?? '';

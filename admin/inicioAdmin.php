@@ -58,6 +58,9 @@ $stmtStock = $pdo->query("
 ");
 $stockBajo = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
 
+// Auto-marcar vencidos antes de consultar
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+
 // Créditos vencidos
 $stmtCred = $pdo->query("
     SELECT COUNT(*) AS vencidos,
@@ -66,8 +69,8 @@ $stmtCred = $pdo->query("
 ");
 $creditosVencidos = $stmtCred->fetch(PDO::FETCH_ASSOC);
 
-// Créditos activos totales
-$stmtCredAct = $pdo->query("SELECT COUNT(*), COALESCE(SUM(saldo_pendiente),0) FROM creditos WHERE estado='Activo'");
+// Créditos con saldo pendiente (activos + vencidos)
+$stmtCredAct = $pdo->query("SELECT COUNT(*), COALESCE(SUM(saldo_pendiente),0) FROM creditos WHERE estado IN ('Activo','Vencido')");
 [$credActivos, $montoActivo] = $stmtCredAct->fetch(PDO::FETCH_NUM);
 
 // Transferencias pendientes globales

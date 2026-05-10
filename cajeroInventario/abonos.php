@@ -6,7 +6,7 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < NOW()");
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 
 $credito_id = intval($_GET['credito_id'] ?? $_GET['ver'] ?? 0);
 $soloVer    = isset($_GET['ver']);
@@ -70,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
                 $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                     ->execute([$cred_id]);
             } else {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite < NOW(), DATE_ADD(CURDATE(), INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite < CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
                     ->execute([$nuevoSaldo, $cred_id]);
             }
 

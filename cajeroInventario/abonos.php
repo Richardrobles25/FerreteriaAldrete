@@ -355,7 +355,7 @@ if (!$credito_id) {
                 <div class="info-fila"><span>Estado:</span><span><?= $credito['estado'] ?></span></div>
             </div>
 
-            <?php if ($credito['estado'] === 'Activo' && !$soloVer): ?>
+            <?php if (in_array($credito['estado'], ['Activo', 'Vencido']) && !$soloVer): ?>
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>

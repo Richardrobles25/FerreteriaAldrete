@@ -12,6 +12,8 @@ $sucursalInfo->execute([$_SESSION['sucursal_id']]);
 $datosBanco  = $sucursalInfo->fetch(PDO::FETCH_ASSOC);
 $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
 
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+
 // Caja abierta del usuario actual
 $stmtCajaCheck = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
 $stmtCajaCheck->execute([$_SESSION['usuario_id']]);
@@ -55,6 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         $referencia = trim($_POST['referencia'] ?? '');
         $monto_ef   = floatval($_POST['monto_efectivo'] ?? 0);
         $monto_term = floatval($_POST['monto_terminal'] ?? 0);
+        $adelantado = ($_POST['pago_adelantado'] ?? '') === '1' ? 1 : 0;
 
         if ($monto <= 0) throw new Exception('El monto debe ser mayor a 0.');
         if (!in_array($metodo, ['Efectivo','Terminal','Transferencia','Mixto'])) throw new Exception('Selecciona el método de pago.');
@@ -107,8 +110,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
 
             $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
                 ->execute([$cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $comisionEste, $metodo, $notas]);
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
-                ->execute([$nuevoSaldo, $nuevoEstado, $cr['credito_id']]);
+            if ($nuevoEstado === 'Liquidado') {
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
+                    ->execute([$cr['credito_id']]);
+            } else {
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite < CURDATE() OR ?, DATE_ADD(GREATEST(fecha_limite, CURDATE()), INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+                    ->execute([$nuevoSaldo, $adelantado, $cr['credito_id']]);
+            }
 
             $restante -= $pagoEste;
         }
@@ -647,6 +655,13 @@ $totales = $pdo->query("
                     <input type="text" name="notas" placeholder="Observaciones del abono...">
                 </div>
 
+                <div class="ab-fg" id="abFgAdelantado" style="display:none;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;font-size:13px;">
+                        <input type="checkbox" name="pago_adelantado" value="1" id="abAdelantado">
+                        Pago por adelantado (extiende fecha límite 1 día)
+                    </label>
+                </div>
+
                 <input type="hidden" name="monto_efectivo" id="abHiddenEf" value="0">
                 <input type="hidden" name="monto_terminal" id="abHiddenTerm" value="0">
 
@@ -800,6 +815,11 @@ function abrirAbonar() {
         listHtml += '</div>';
     });
     document.getElementById('abCreditosList').innerHTML = listHtml;
+
+    const tieneActivo = _creditosActuales.some(c => c.estado !== 'Vencido');
+    const fgAd = document.getElementById('abFgAdelantado');
+    fgAd.style.display = tieneActivo ? 'block' : 'none';
+    if (!tieneActivo) document.getElementById('abAdelantado').checked = false;
 
     document.getElementById('modalAbonarOverlay').classList.add('visible');
     cargarHistorialPagos(_clienteIdActual);

@@ -6,6 +6,8 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < NOW()");
+
 $credito_id = intval($_GET['credito_id'] ?? $_GET['ver'] ?? 0);
 $soloVer    = isset($_GET['ver']);
 $credito    = null;
@@ -63,10 +65,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
                 ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $comisionMonto, $metodo, $notas]);
 
             // Actualizar saldo del crédito
-            $nuevoSaldo  = $credito['saldo_pendiente'] - $monto;
-            $nuevoEstado = $nuevoSaldo <= 0.001 ? 'Liquidado' : 'Activo';
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
-                ->execute([$nuevoSaldo > 0 ? $nuevoSaldo : 0, $nuevoEstado, $cred_id]);
+            $nuevoSaldo = $credito['saldo_pendiente'] - $monto;
+            if ($nuevoSaldo <= 0.001) {
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
+                    ->execute([$cred_id]);
+            } else {
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite < NOW(), DATE_ADD(CURDATE(), INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+                    ->execute([$nuevoSaldo, $cred_id]);
+            }
 
             // Registrar ingreso en movimientos_caja si hay caja abierta
             $stmtCaja = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");

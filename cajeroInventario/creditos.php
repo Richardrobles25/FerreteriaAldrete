@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
                 $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                     ->execute([$cr['credito_id']]);
             } else {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(GREATEST(fecha_limite, CURDATE()), INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(fecha_limite, INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
                     ->execute([$nuevoSaldo, $adelantado, $cr['credito_id']]);
             }
 
@@ -200,12 +200,13 @@ $stmt = $pdo->prepare("
            COUNT(cr.credito_id)                                      AS num_creditos,
            SUM(cr.saldo_pendiente)                                   AS total_pendiente,
            MIN(cr.created_at)                                        AS primer_credito,
-           MAX(CASE WHEN cr.estado = 'Vencido' THEN 1 ELSE 0 END)   AS tiene_vencido
+           MAX(CASE WHEN cr.estado = 'Vencido' THEN 1 ELSE 0 END)   AS tiene_vencido,
+           MIN(cr.fecha_limite)                                      AS proxima_fecha
     FROM creditos cr
     JOIN clientes c ON cr.cliente_id = c.cliente_id
     WHERE cr.estado IN ('Activo', 'Vencido')
     GROUP BY c.cliente_id
-    ORDER BY total_pendiente DESC
+    ORDER BY tiene_vencido DESC, total_pendiente DESC
 ");
 $stmt->execute();
 $clientesDeuda = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -262,25 +263,21 @@ $totales = $pdo->query("
     .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.4px; }
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
 
-    /* Lista de clientes */
-    .col-lista { display: flex; flex-direction: column; gap: 0; max-width: 900px; }
-    .buscar-clientes { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; margin-bottom: 12px; background: white; }
+    /* Tabla de clientes */
+    .tabla-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .buscar-clientes { flex: 1; padding: 9px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; background: white; }
     .buscar-clientes:focus { outline: none; border-color: #14ace7; }
-    .cliente-card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; transition: box-shadow 0.15s; }
-    .cliente-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
-    .cliente-card.vencido { border-left: 3px solid #c0392b; }
-    .cliente-info { flex: 1; min-width: 0; }
-    .cliente-nombre { font-size: 14px; font-weight: 700; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .cliente-tel { font-size: 11px; color: #aaa; margin-top: 2px; }
-    .cliente-meta { font-size: 12px; color: #888; margin-top: 4px; }
-    .cliente-saldo { text-align: right; flex-shrink: 0; }
-    .cliente-saldo .monto { font-size: 17px; font-weight: 700; color: #c0392b; }
-    .cliente-saldo .etiq { font-size: 11px; color: #aaa; }
-    .cliente-acciones { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }
-    .btn-detalles { background: #e3f2fd; color: #1565c0; border: none; padding: 6px 12px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-    .btn-detalles:hover { background: #bbdefb; }
-    .badge-vencido { display: inline-block; background: #fdecea; color: #c0392b; border-radius: 99px; padding: 1px 7px; font-size: 10px; font-weight: 700; margin-left: 6px; }
-    .sin-resultados { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
+    .tabla-wrapper { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
+    .tabla-creditos { width: 100%; border-collapse: collapse; }
+    .tabla-creditos thead th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid #eee; background: #fafafa; white-space: nowrap; }
+    .tabla-creditos tbody td { padding: 11px 14px; font-size: 13px; color: #444; border-bottom: 0.5px solid #f5f5f5; vertical-align: middle; }
+    .tabla-creditos tbody tr:last-child td { border-bottom: none; }
+    .tabla-creditos tbody tr:hover td { background: #f9fbff; }
+    .badge-vencido { display: inline-block; background: #fdecea; color: #c0392b; border-radius: 99px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+    .badge-activo-tbl { display: inline-block; background: #e8f5e9; color: #2e7d32; border-radius: 99px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+    .btn-cobrar { background: #14ace7; color: white; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .btn-cobrar:hover { background: #0d8fc0; }
+    .sin-resultados { padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
 
     /* Modal detalles */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; align-items: center; justify-content: center; }
@@ -471,41 +468,60 @@ $totales = $pdo->query("
             </div>
         </div>
 
-        <!-- Lista de clientes -->
-        <div class="col-lista">
-            <input type="text" class="buscar-clientes" placeholder="Buscar cliente..." oninput="filtrarClientes(this.value)" autocomplete="off">
-
-            <?php if (count($clientesDeuda) > 0): ?>
-                <?php foreach ($clientesDeuda as $cl): ?>
-                <div class="cliente-card <?= $cl['tiene_vencido'] ? 'vencido' : '' ?>"
-                     data-texto="<?= htmlspecialchars(mb_strtolower($cl['nombre_completo'] . ' ' . ($cl['telefono'] ?? ''))) ?>">
-                    <div class="cliente-info">
-                        <div class="cliente-nombre">
-                            <?= htmlspecialchars($cl['nombre_completo']) ?>
+        <!-- Tabla de clientes -->
+        <div class="tabla-top">
+            <input type="text" class="buscar-clientes" placeholder="Buscar cliente..." oninput="filtrarTabla(this.value)" autocomplete="off">
+        </div>
+        <div class="tabla-wrapper">
+            <table class="tabla-creditos" id="tablaFiltrable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Cliente</th>
+                        <th>Créditos</th>
+                        <th>Total pendiente</th>
+                        <th>Próximo vencimiento</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if (count($clientesDeuda) > 0): ?>
+                    <?php foreach ($clientesDeuda as $i => $cl): ?>
+                    <tr data-texto="<?= htmlspecialchars(mb_strtolower($cl['nombre_completo'] . ' ' . ($cl['telefono'] ?? ''))) ?>">
+                        <td style="color:#bbb;font-size:12px;"><?= $i + 1 ?></td>
+                        <td>
+                            <div style="font-weight:700;color:#222;"><?= htmlspecialchars($cl['nombre_completo']) ?></div>
+                            <?php if ($cl['telefono']): ?>
+                                <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($cl['telefono']) ?></div>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= intval($cl['num_creditos']) ?></td>
+                        <td style="font-weight:700;color:#c0392b;">$<?= number_format($cl['total_pendiente'], 2) ?></td>
+                        <td>
+                            <?php if ($cl['proxima_fecha']): ?>
+                                <?= date('d/m/Y', strtotime($cl['proxima_fecha'])) ?>
+                            <?php else: ?>
+                                <span style="color:#ccc;">—</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
                             <?php if ($cl['tiene_vencido']): ?>
                                 <span class="badge-vencido">Vencido</span>
+                            <?php else: ?>
+                                <span class="badge-activo-tbl">Activo</span>
                             <?php endif; ?>
-                        </div>
-                        <?php if ($cl['telefono']): ?>
-                            <div class="cliente-tel"><?= htmlspecialchars($cl['telefono']) ?></div>
-                        <?php endif; ?>
-                        <div class="cliente-meta">
-                            <?= intval($cl['num_creditos']) ?> crédito<?= $cl['num_creditos'] != 1 ? 's' : '' ?> activo<?= $cl['num_creditos'] != 1 ? 's' : '' ?>
-                            · desde <?= date('d/m/Y', strtotime($cl['primer_credito'])) ?>
-                        </div>
-                    </div>
-                    <div class="cliente-saldo">
-                        <div class="monto">$<?= number_format($cl['total_pendiente'], 2) ?></div>
-                        <div class="etiq">pendiente</div>
-                    </div>
-                    <div class="cliente-acciones">
-                        <button class="btn-detalles" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver / Cobrar</button>
-                    </div>
-                </div>
-                <?php endforeach; ?>
-            <?php else: ?>
-                <div class="sin-resultados">No hay clientes con crédito pendiente.</div>
-            <?php endif; ?>
+                        </td>
+                        <td>
+                            <button class="btn-cobrar" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver / Cobrar</button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr><td colspan="7" class="sin-resultados">No hay clientes con crédito pendiente.</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
         </div>
 
     </div>
@@ -679,11 +695,11 @@ $totales = $pdo->query("
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
 
-/* ── Filtro lista clientes ── */
-function filtrarClientes(q) {
+/* ── Filtro tabla clientes ── */
+function filtrarTabla(q) {
     q = normalizar(q);
-    document.querySelectorAll('.cliente-card').forEach(card => {
-        card.style.display = normalizar(card.dataset.texto || '').includes(q) ? '' : 'none';
+    document.querySelectorAll('#tablaFiltrable tbody tr').forEach(tr => {
+        tr.style.display = normalizar(tr.dataset.texto || '').includes(q) ? '' : 'none';
     });
 }
 

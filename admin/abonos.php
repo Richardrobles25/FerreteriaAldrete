@@ -41,11 +41,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
         $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, metodo_pago, notas) VALUES (?,?,?,?,?)")
             ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $metodo, $notas]);
 
-        $nuevoSaldo  = $credito['saldo_pendiente'] - $monto;
-        $nuevoEstado = $nuevoSaldo <= 0 ? 'Liquidado' : 'Activo';
-
-        $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
-            ->execute([$nuevoSaldo > 0 ? $nuevoSaldo : 0, $nuevoEstado, $cred_id]);
+        $nuevoSaldo = $credito['saldo_pendiente'] - $monto;
+        if ($nuevoSaldo <= 0) {
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
+                ->execute([$cred_id]);
+        } elseif ($credito['estado'] === 'Vencido') {
+            $nuevaFecha = date('Y-m-d H:i:s', strtotime($credito['fecha_limite'] . ' +2 minutes'));
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = ? WHERE credito_id = ?")
+                ->execute([$nuevoSaldo, $nuevaFecha, $cred_id]);
+        } else {
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo' WHERE credito_id = ?")
+                ->execute([$nuevoSaldo, $cred_id]);
+        }
 
         header('Location: abonos.php?ver=' . $cred_id . '&msg=abonado');
         exit();
@@ -76,8 +83,8 @@ if (!$credito_id) {
         JOIN ventas v ON cr.venta_id = v.venta_id
         JOIN cajas ca ON v.caja_id = ca.caja_id
         JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
-        WHERE cr.estado = 'Activo'
-        ORDER BY cr.created_at DESC
+        WHERE cr.estado IN ('Activo', 'Vencido')
+        ORDER BY (cr.estado = 'Vencido') DESC, cr.created_at DESC
     ")->fetchAll(PDO::FETCH_ASSOC);
 }
 ?>

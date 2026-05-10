@@ -44,10 +44,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
 
         // Actualizar saldo
         $nuevoSaldo = $credito['saldo_pendiente'] - $monto;
-        $nuevoEstado = $nuevoSaldo <= 0 ? 'Liquidado' : 'Activo';
-
-        $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
-            ->execute([$nuevoSaldo > 0 ? $nuevoSaldo : 0, $nuevoEstado, $cred_id]);
+        if ($nuevoSaldo <= 0) {
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
+                ->execute([$cred_id]);
+        } elseif ($credito['estado'] === 'Vencido') {
+            $nuevaFecha = date('Y-m-d H:i:s', strtotime($credito['fecha_limite'] . ' +2 minutes'));
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = ? WHERE credito_id = ?")
+                ->execute([$nuevoSaldo, $nuevaFecha, $cred_id]);
+        } else {
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo' WHERE credito_id = ?")
+                ->execute([$nuevoSaldo, $cred_id]);
+        }
 
         header('Location: cajero_abonos.php?ver='.$cred_id.'&msg=abonado');
         exit();
@@ -75,8 +82,8 @@ if (!$credito_id) {
         SELECT cr.*, c.nombre_completo
         FROM creditos cr
         JOIN clientes c ON cr.cliente_id = c.cliente_id
-        WHERE cr.estado = 'Activo'
-        ORDER BY cr.created_at DESC
+        WHERE cr.estado IN ('Activo', 'Vencido')
+        ORDER BY (cr.estado = 'Vencido') DESC, cr.created_at DESC
     ");
     $creditosActivos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }

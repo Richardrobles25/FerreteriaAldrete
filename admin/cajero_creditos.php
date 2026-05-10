@@ -7,6 +7,8 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < NOW()");
+
 $busqueda = trim($_GET['buscar'] ?? '');
 $estado   = $_GET['estado'] ?? '';
 
@@ -29,7 +31,7 @@ $stmt = $pdo->prepare("
     JOIN clientes c ON cr.cliente_id = c.cliente_id
     JOIN ventas v ON cr.venta_id = v.venta_id
     $where
-    ORDER BY cr.estado = 'Activo' DESC, cr.created_at DESC
+    ORDER BY (cr.estado='Vencido') DESC, (cr.estado='Activo') DESC, cr.created_at DESC
 ");
 $stmt->execute($params);
 $creditos = $stmt->fetchAll(PDO::FETCH_ASSOC);

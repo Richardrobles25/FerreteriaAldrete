@@ -31,6 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
     $metodo     = $_POST['metodo_pago'] ?? '';
     $notas      = trim($_POST['notas'] ?? '');
     $cred_id    = intval($_POST['credito_id'] ?? 0);
+    $adelantado = isset($_POST['pago_adelantado']) ? 1 : 0;
 
     if ($monto <= 0) $errores[] = 'El monto debe ser mayor a 0.';
     if (!$metodo)    $errores[] = 'Selecciona el método de pago.';
@@ -50,8 +51,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
             $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                 ->execute([$cred_id]);
         } else {
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = DATE_ADD(GREATEST(fecha_limite, CURDATE()), INTERVAL 1 DAY) WHERE credito_id = ?")
-                ->execute([$nuevoSaldo, $cred_id]);
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite < CURDATE() OR ?, DATE_ADD(GREATEST(fecha_limite, CURDATE()), INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+                ->execute([$nuevoSaldo, $adelantado, $cred_id]);
         }
 
         header('Location: cajero_abonos.php?ver='.$cred_id.'&msg=abonado');
@@ -232,6 +233,14 @@ if (!$credito_id) {
                             <label>Notas (opcional)</label>
                             <input type="text" name="notas" placeholder="Observaciones del abono...">
                         </div>
+                        <?php if ($credito['estado'] === 'Activo'): ?>
+                        <div class="form-group" style="margin-top:4px;">
+                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
+                                <input type="checkbox" name="pago_adelantado" value="1">
+                                Pago por adelantado (extiende fecha límite 1 día)
+                            </label>
+                        </div>
+                        <?php endif; ?>
                         <button class="btn-abonar" type="submit">Registrar abono</button>
                     </form>
                 </div>

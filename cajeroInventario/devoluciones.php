@@ -530,6 +530,11 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
     .prod-dev-row input[type=number] { width: 80px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px; text-align: center; }
     .btn-devolver { width: 100%; background: #c0392b; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-devolver:hover { background: #a93226; }
+    .resumen-dev { background: #fff8f5; border: 1.5px solid #f0c0b0; border-radius: 8px; padding: 14px 16px; margin-bottom: 13px; display: none; }
+    .resumen-dev-monto { font-size: 28px; font-weight: 700; color: #c0392b; line-height: 1.1; }
+    .resumen-dev-label { font-size: 11px; color: #999; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+    .resumen-dev-metodo { font-size: 12px; color: #555; margin-top: 7px; }
+    .resumen-dev-comision { font-size: 11px; color: #b06000; background: #fff3e0; border-radius: 5px; padding: 6px 10px; margin-top: 7px; line-height: 1.4; }
     .paquete-dev-group { border: 1px solid #f0c06a; border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
     .paquete-dev-header { background: #fffbf0; padding: 9px 12px; border-bottom: 1px solid #f0e0a0; font-size: 13px; }
     .paquete-dev-header label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
@@ -676,6 +681,9 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
                 <div class="prod-devolver" id="prodDevolver">
                     <div id="listaProdsDev"></div>
                 </div>
+
+                <!-- Panel resumen: se actualiza en tiempo real al seleccionar cantidades -->
+                <div class="resumen-dev" id="resumenDevolucion"></div>
 
                 <form method="POST" id="formDevolucion">
                     <input type="hidden" name="venta_id" id="inputVentaIdHidden">
@@ -867,6 +875,12 @@ function buscarVenta() {
                 lista.innerHTML = html;
             }
 
+            // Enganchar actualizarResumen() a cada input de cantidad
+            lista.querySelectorAll('input[type=number]').forEach(inp => {
+                inp.addEventListener('input', actualizarResumen);
+            });
+            actualizarResumen(); // limpiar resumen si la venta cambia
+
             document.getElementById('prodDevolver').classList.add('visible');
             document.getElementById('motivoGroup').style.display = 'block';
             document.getElementById('btnDevolver').style.display = 'block';
@@ -875,6 +889,68 @@ function buscarVenta() {
         .catch(() => {
             alert('Error de conexión. Verifica tu red e intenta de nuevo.');
         });
+}
+
+// ── Resumen en tiempo real ───────────────────────────────────────────────────
+function actualizarResumen() {
+    const resumen = document.getElementById('resumenDevolucion');
+    if (!ventaActual) { resumen.style.display = 'none'; return; }
+
+    const inputs  = document.querySelectorAll('#listaProdsDev input[type=number]');
+    const paqMap  = ventaActual._paqMap || {};
+    let totalADevolver = 0;
+
+    inputs.forEach(inp => {
+        if (inp.disabled) return;
+        const qty = parseFloat(inp.value) || 0;
+        if (qty <= 0) return;
+        const paqId = inp.dataset.paqueteId;
+        if (paqId) {
+            const paq = paqMap[paqId];
+            if (!paq) return;
+            paq.productos.forEach(p => {
+                totalADevolver += qty * (parseFloat(p.cantidad_requerida_combo) || 1) * parseFloat(p.precio_final);
+            });
+        } else {
+            totalADevolver += qty * parseFloat(inp.dataset.precio);
+        }
+    });
+
+    if (totalADevolver <= 0.001) { resumen.style.display = 'none'; return; }
+
+    // Comisión proporcional al monto seleccionado
+    const comisionTotal      = parseFloat(ventaActual.comision_terminal || 0);
+    const sumaPrecioFinalAll = (ventaActual.productos || []).reduce(
+        (s, p) => s + parseFloat(p.precio_final) * parseFloat(p.cantidad), 0
+    );
+    const comisionProp = (sumaPrecioFinalAll > 0.001 && comisionTotal > 0.001)
+        ? Math.round(comisionTotal * Math.min(1, totalADevolver / sumaPrecioFinalAll) * 100) / 100
+        : 0;
+
+    const metodo = ventaActual.metodo_pago || 'Efectivo';
+
+    // Texto de método de reembolso
+    const metodoTextos = {
+        'Efectivo':       '&#128181; Devuelve en <strong>efectivo</strong>',
+        'Terminal':       '&#128179; Devuelve por <strong>terminal o transferencia</strong>',
+        'Mixto':          '&#128181; Devuelve en <strong>efectivo o transferencia</strong>',
+        'Transferencia':  '&#128179; Devuelve por <strong>transferencia</strong>',
+        'Credito':        '&#128203; Descuenta del <strong>saldo del crédito</strong>',
+    };
+    const metodoHtml = `<div class="resumen-dev-metodo">${metodoTextos[metodo] || ('Devuelve: ' + metodo)}</div>`;
+
+    // Aviso de comisión (solo si aplica)
+    const comisionHtml = comisionProp > 0
+        ? `<div class="resumen-dev-comision">&#9888; La comisión de terminal (~$${comisionProp.toFixed(2)}) <strong>no se reembolsa</strong> — es cobrada por el banco y la absorbe el negocio.</div>`
+        : '';
+
+    resumen.innerHTML = `
+        <div class="resumen-dev-label">Monto a devolver al cliente</div>
+        <div class="resumen-dev-monto">$${totalADevolver.toFixed(2)}</div>
+        ${metodoHtml}
+        ${comisionHtml}
+    `;
+    resumen.style.display = 'block';
 }
 
 function cancelarDevolucion(id) {

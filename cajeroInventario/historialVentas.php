@@ -23,7 +23,7 @@ if (isset($_GET['detalle_venta'])) {
     if ($venta) {
         $venta['fecha_formateada'] = date('d/m/Y H:i', strtotime($venta['created_at']));
         $stmtP = $pdo->prepare("
-            SELECT vp.cantidad, vp.precio_unitario, vp.precio_final, vp.descuento, vp.subtotal, vp.nota_ajuste,
+            SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.precio_final, vp.descuento, vp.subtotal, vp.nota_ajuste,
                    p.nombre_producto, p.codigo
             FROM venta_productos vp
             JOIN productos p ON vp.producto_id = p.producto_id
@@ -31,6 +31,24 @@ if (isset($_GET['detalle_venta'])) {
         ");
         $stmtP->execute([$venta_id]);
         $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
+
+        // Cantidades devueltas activas (no canceladas) por producto
+        $stmtDev = $pdo->prepare("
+            SELECT mi.producto_id, SUM(mi.cantidad) AS cantidad_devuelta
+            FROM movimientos_inventario mi
+            JOIN devoluciones d ON mi.devolucion_id = d.devolucion_id
+            WHERE d.venta_id = ? AND mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
+            GROUP BY mi.producto_id
+        ");
+        $stmtDev->execute([$venta_id]);
+        $devueltos = [];
+        foreach ($stmtDev->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $devueltos[$row['producto_id']] = floatval($row['cantidad_devuelta']);
+        }
+        foreach ($venta['productos'] as &$prod) {
+            $prod['cantidad_devuelta'] = $devueltos[$prod['producto_id']] ?? 0;
+        }
+        unset($prod);
     }
     header('Content-Type: application/json');
     echo json_encode($venta);
@@ -797,10 +815,16 @@ function renderDetalle(v) {
 
     // Productos
     document.getElementById('detProductos').innerHTML = v.productos.map(p => {
-        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
-        const precioOrig  = parseFloat(p.precio_unitario);
-        const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
-        const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
+        const tieneAjuste  = p.nota_ajuste && p.nota_ajuste.trim() !== '';
+        const precioOrig   = parseFloat(p.precio_unitario);
+        const precioFinal  = parseFloat(p.precio_final || p.precio_unitario);
+        const tienePromo   = !tieneAjuste && precioFinal < precioOrig - 0.001;
+        const devuelta     = parseFloat(p.cantidad_devuelta || 0);
+        const cantTotal    = parseFloat(p.cantidad);
+        const todoDev      = devuelta >= cantTotal - 0.001;
+        const parcialDev   = devuelta > 0.001 && !todoDev;
+        const rowStyle     = todoDev ? 'opacity:0.55;' : '';
+        const tdLineThru   = todoDev ? 'text-decoration:line-through;color:#aaa;' : '';
 
         let precioHTML;
         if (tieneAjuste) {
@@ -812,16 +836,18 @@ function renderDetalle(v) {
         }
 
         return `
-        <tr>
-            <td style="color:#aaa;font-size:12px;font-family:monospace;">${esc(p.codigo)}</td>
+        <tr style="${rowStyle}">
+            <td style="color:#aaa;font-size:12px;font-family:monospace;${tdLineThru}">${esc(p.codigo)}</td>
             <td>
-                ${esc(p.nombre_producto)}
+                <span style="${tdLineThru}">${esc(p.nombre_producto)}</span>
+                ${todoDev   ? '<span style="background:#fdecea;color:#c0392b;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Devuelto</span>' : ''}
+                ${parcialDev ? `<span style="background:#fff3e0;color:#e65100;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Dev. parcial (${devuelta % 1 === 0 ? devuelta : devuelta.toFixed(2)})</span>` : ''}
                 ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño: ${esc(p.nota_ajuste)}</div>` : ''}
                 ${tienePromo  ? `<div style="font-size:11px;color:#2e7d32;margin-top:2px;">Precio de promoción</div>` : ''}
             </td>
-            <td style="text-align:right;">${parseFloat(p.cantidad).toFixed(2)}</td>
-            <td style="text-align:right;">${precioHTML}</td>
-            <td style="text-align:right;font-weight:600;">$${fmt(p.subtotal)}</td>
+            <td style="text-align:right;${tdLineThru}">${parseFloat(p.cantidad).toFixed(2)}</td>
+            <td style="text-align:right;${todoDev?'text-decoration:line-through;color:#aaa;':''}">${precioHTML}</td>
+            <td style="text-align:right;font-weight:600;${tdLineThru}">$${fmt(p.subtotal)}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">Sin productos registrados</td></tr>';
 
@@ -911,16 +937,21 @@ function generarTicketHTML(venta) {
         const precioOrig  = parseFloat(p.precio_unitario);
         const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
         const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
+        const devuelta    = parseFloat(p.cantidad_devuelta || 0);
+        const cantTotal   = parseFloat(p.cantidad);
+        const todoDev     = devuelta >= cantTotal - 0.001;
+        const parcialDev  = devuelta > 0.001 && !todoDev;
+        const ltStyle     = todoDev ? 'text-decoration:line-through;color:#aaa;' : '';
 
         if (tienePromo) ahorroPromoTicket += (precioOrig - precioFinal) * parseFloat(p.cantidad);
 
-        html += `<div>${esc(p.nombre_producto)}</div>`;
+        html += `<div style="${ltStyle}">${esc(p.nombre_producto)}${todoDev ? ' [DEVUELTO]' : ''}${parcialDev ? ` [Dev. ${devuelta % 1 === 0 ? devuelta : devuelta.toFixed(2)}]` : ''}</div>`;
         if (tienePromo) {
             html += `<div style="font-size:10px;text-decoration:line-through;color:#888;">$${fmt(precioOrig)}/u (precio normal)</div>`;
-            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioFinal)}</span><span>$${fmt(p.subtotal)}</span></div>`;
+            html += `<div class="t-fila" style="${ltStyle}"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioFinal)}</span><span>$${fmt(p.subtotal)}</span></div>`;
         } else {
             const precioUsado = tieneAjuste ? precioFinal : precioOrig;
-            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span><span>$${fmt(p.subtotal)}</span></div>`;
+            html += `<div class="t-fila" style="${ltStyle}"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span><span>$${fmt(p.subtotal)}</span></div>`;
             if (tieneAjuste) html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
         }
     });

@@ -344,12 +344,15 @@ if (isset($_GET['ticket_venta'])) {
     $stmtP->execute([$venta_id]);
     $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
-    // [AUTOFIX] B-08: Calcular descuento_display proporcional al subtotal actual
-    // (igual que en historialVentas.php para consistencia entre ticket y historial)
+    // [AUTOFIX] B-08 + descuento_display correcto: usar precio_unitario*cantidad como denominador
+    // (misma base que ventas.subtotal = precio bruto), no vp.subtotal (precio_final) que da ratio incorrecto
     if ($venta) {
-        $subtotalOriginal = array_sum(array_column($venta['productos'], 'subtotal'));
-        $venta['descuento_display'] = ($subtotalOriginal > 0.001)
-            ? round(floatval($venta['descuento']) * floatval($venta['subtotal']) / $subtotalOriginal, 2)
+        $subtotalOriginalBruto = array_sum(array_map(
+            fn($p) => floatval($p['precio_unitario']) * floatval($p['cantidad']),
+            $venta['productos']
+        ));
+        $venta['descuento_display'] = ($subtotalOriginalBruto > 0.001)
+            ? round(floatval($venta['descuento']) * floatval($venta['subtotal']) / $subtotalOriginalBruto, 2)
             : 0;
     }
 

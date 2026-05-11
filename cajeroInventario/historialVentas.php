@@ -50,10 +50,14 @@ if (isset($_GET['detalle_venta'])) {
         }
         unset($prod);
 
-        // Descuento proporcional: descuento × (subtotal_actual / subtotal_original)
-        $subtotalOriginal = array_sum(array_column($venta['productos'], 'subtotal'));
-        $venta['descuento_display'] = ($subtotalOriginal > 0.001)
-            ? round(floatval($venta['descuento']) * floatval($venta['subtotal']) / $subtotalOriginal, 2)
+        // [AUTOFIX] Usar precio_unitario*cantidad como denominador (misma base que ventas.subtotal = bruto)
+        // vp.subtotal usa precio_final que ya incluye promo/ajuste → ratio incorrecto cuando hay descuentos
+        $subtotalOriginalBruto = array_sum(array_map(
+            fn($p) => floatval($p['precio_unitario']) * floatval($p['cantidad']),
+            $venta['productos']
+        ));
+        $venta['descuento_display'] = ($subtotalOriginalBruto > 0.001)
+            ? round(floatval($venta['descuento']) * floatval($venta['subtotal']) / $subtotalOriginalBruto, 2)
             : 0;
     }
     header('Content-Type: application/json');
@@ -107,8 +111,11 @@ $limit = (!$hayFiltroFecha && !$buscar) ? 'LIMIT 150' : 'LIMIT 1000';
 
 $stmt = $pdo->prepare("
     SELECT v.*, c.nombre_completo AS cliente, u.nombre_completo AS cajero,
+        -- [AUTOFIX] Usar precio_unitario*cantidad como base (igual que ventas.subtotal = precio bruto)
+        -- El denominador anterior (SUM vp.subtotal = precio_final*qty) causaba un ratio > 1
+        -- cuando habia promos o ajustes de daño, inflando el descuento mostrado.
         ROUND(v.descuento * v.subtotal / NULLIF(
-            (SELECT SUM(vp2.subtotal) FROM venta_productos vp2 WHERE vp2.venta_id = v.venta_id), 0
+            (SELECT SUM(vp2.precio_unitario * vp2.cantidad) FROM venta_productos vp2 WHERE vp2.venta_id = v.venta_id), 0
         ), 2) AS descuento_display
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id

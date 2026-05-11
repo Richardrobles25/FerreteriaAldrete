@@ -139,10 +139,16 @@ if (isset($_GET['cancelar_dev'])) {
                            'Cancelacion devolucion #' . $devolucion_id . ($nota_cancel ? ': ' . $nota_cancel : '')]);
         }
 
-        // Restaurar total de la venta
+        // Restaurar total de la venta (con descuento proporcional)
         $totalDevuelto = floatval($dev['total_devuelto']);
-        $pdo->prepare("UPDATE ventas SET total = total + ?, subtotal = subtotal + ? WHERE venta_id = ?")
-            ->execute([$totalDevuelto, $totalDevuelto, $dev['venta_id']]);
+        $stmtPreC = $pdo->prepare("SELECT subtotal, descuento FROM ventas WHERE venta_id = ?");
+        $stmtPreC->execute([$dev['venta_id']]);
+        $ventaPreC = $stmtPreC->fetch(PDO::FETCH_ASSOC);
+        $descuentoRestaurar = ($ventaPreC && floatval($ventaPreC['subtotal']) > 0.001)
+            ? round(floatval($ventaPreC['descuento']) * $totalDevuelto / floatval($ventaPreC['subtotal']), 2)
+            : 0;
+        $pdo->prepare("UPDATE ventas SET total = total + ?, subtotal = subtotal + ?, descuento = descuento + ? WHERE venta_id = ?")
+            ->execute([$totalDevuelto, $totalDevuelto, $descuentoRestaurar, $dev['venta_id']]);
 
         // Estado: si quedan otras devoluciones activas → Modificado, sino → Completada
         $stmtOtras = $pdo->prepare("SELECT COUNT(*) FROM devoluciones WHERE venta_id = ? AND devolucion_id != ? AND cancelada_en IS NULL");
@@ -290,9 +296,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id]);
                 }
 
-                // Actualizar total de la venta
-                $pdo->prepare("UPDATE ventas SET subtotal = GREATEST(0, subtotal - ?), total = GREATEST(0, total - ?) WHERE venta_id = ?")
-                    ->execute([$totalDevuelto, $totalDevuelto, $venta_id]);
+                // Calcular reducción proporcional del descuento antes de modificar
+                $stmtPre = $pdo->prepare("SELECT subtotal, descuento FROM ventas WHERE venta_id = ?");
+                $stmtPre->execute([$venta_id]);
+                $ventaPre = $stmtPre->fetch(PDO::FETCH_ASSOC);
+                $descuentoReducir = ($ventaPre && floatval($ventaPre['subtotal']) > 0.001)
+                    ? round(floatval($ventaPre['descuento']) * $totalDevuelto / floatval($ventaPre['subtotal']), 2)
+                    : 0;
+
+                // Actualizar total de la venta (incluyendo descuento proporcional)
+                $pdo->prepare("UPDATE ventas SET subtotal = GREATEST(0, subtotal - ?), total = GREATEST(0, total - ?), descuento = GREATEST(0, descuento - ?) WHERE venta_id = ?")
+                    ->execute([$totalDevuelto, $totalDevuelto, $descuentoReducir, $venta_id]);
 
                 // Actualizar estado según si fue devolución total o parcial
                 $stmtNuevoTotal = $pdo->prepare("SELECT total FROM ventas WHERE venta_id = ?");

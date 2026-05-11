@@ -281,7 +281,7 @@ if (isset($_GET['inventario_sucursal'])) {
     $where       = "WHERE p.activo = 1 AND ss.activo = 1 AND ss.sucursal_id = ?";
     $params      = [$sucursal_id];
     if ($buscar) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
-    $stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_venta, p.precio_compra, p.tipo_venta, p.unidad_medida FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id $where ORDER BY p.nombre_producto ASC LIMIT 50");
+    $stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_venta, p.precio_compra, p.precio_mayoreo, p.tipo_venta, p.unidad_medida FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id $where ORDER BY p.nombre_producto ASC LIMIT 50");
     $stmt->execute($params);
     header('Content-Type: application/json');
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
@@ -1344,10 +1344,15 @@ function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, 
     const precioNormal  = parseFloat(precio);
     const precioFinal   = promo ? promo.precio_promo : precioNormal;
 
-    const existe = carrito.find(i => i.producto_id === id);
-    if (existe) {
-        if (existe.cantidad < stock) existe.cantidad++;
-        else { alert(`Stock máximo: ${stock}`); return; }
+    // Stock total ya ocupado por todas las filas de este producto en el carrito
+    const totalEnCarrito = carrito.reduce((sum, it) =>
+        it.producto_id === id ? sum + parseFloat(it.cantidad) : sum, 0);
+    if (totalEnCarrito >= stock) { alert(`Stock máximo: ${stock}`); return; }
+
+    // Incrementar solo una fila sin ajuste de daño; si todas están dañadas, crear fila nueva limpia
+    const existeLimpio = carrito.find(it => it.producto_id === id && !it.ajuste_activo);
+    if (existeLimpio) {
+        existeLimpio.cantidad++;
     } else {
         carrito.push({
             producto_id:    id,
@@ -1524,6 +1529,17 @@ function togglePanelAjuste(activo) {
     }
 }
 
+function resetPanelAjuste() {
+    // Solo limpia la UI del panel — no toca ajuste_activo de ningún item del carrito
+    idxAjusteActual = -1;
+    document.getElementById('panelCamposAjuste').style.display = 'none';
+    document.getElementById('selProductoAjuste').value         = '';
+    document.getElementById('inputPrecioAjuste').value         = '';
+    document.getElementById('inputPctAjuste').value            = '';
+    document.getElementById('inputCantAjuste').value           = '';
+    document.getElementById('textareaNotaAjuste').value        = '';
+}
+
 function actualizarSelectProductos() {
     const sel = document.getElementById('selProductoAjuste');
     const idx = idxAjusteActual;
@@ -1564,7 +1580,7 @@ function seleccionarProductoAjuste() {
     } else {
         document.getElementById('inputPrecioAjuste').value = '';
         document.getElementById('inputPctAjuste').value    = '';
-        inpCant.value = item.cantidad;
+        inpCant.value = esSuelto ? '0.001' : '1';
     }
     document.getElementById('textareaNotaAjuste').value = item.nota_ajuste || '';
 }
@@ -1699,11 +1715,16 @@ function sanitizarCantCarrito(i, inp) {
 }
 
 function cambiarCantidad(i, val) {
-    const item    = carrito[i];
+    resetPanelAjuste();
+    const item     = carrito[i];
     const esSuelto = item.tipo === 'Suelto';
     let qty = esSuelto ? parseFloat(val) : parseInt(val);
     const minQty = esSuelto ? 0.001 : 1;
-    const maxQty = esSuelto ? item.stock : Math.floor(item.stock);
+    // Stock libre = stock total menos lo que ya ocupan otras filas del mismo producto
+    const usadoOtros = carrito.reduce((sum, it, idx) =>
+        idx !== i && it.producto_id === item.producto_id ? sum + parseFloat(it.cantidad) : sum, 0);
+    const stockLibre = parseFloat((item.stock - usadoOtros).toFixed(3));
+    const maxQty = esSuelto ? stockLibre : Math.floor(stockLibre);
     if (isNaN(qty) || qty < minQty) qty = minQty;
     if (qty > maxQty) {
         const dispMax = esSuelto ? maxQty.toFixed(3).replace(/\.?0+$/,'') : maxQty;
@@ -1728,6 +1749,12 @@ function toggleMayoreo(i) {
     const item = carrito[i];
     if (!item.precio_mayoreo || item.precio_mayoreo <= 0) return;
 
+    // Precio base cambia → borrar ajuste aplicado a este item y limpiar panel
+    item.ajuste_activo = false;
+    item.precio_ajuste = null;
+    item.nota_ajuste   = '';
+    item.cant_danada   = undefined;
+    resetPanelAjuste();
     item.es_mayoreo = !item.es_mayoreo;
 
     if (item.es_mayoreo) {
@@ -2467,7 +2494,7 @@ function renderInventario(productos) {
                 <td><span class="stock-badge ${sinStock?'stock-bajo':'stock-ok'}">${parseFloat(p.stock_actual).toFixed(p.tipo_venta==='Suelto'?3:0)}</span></td>
                 <td>$${parseFloat(p.precio_venta).toFixed(2)}</td>
                 <td>${!esDif && !sinStock
-                    ? `<button class="btn-agregar-inv" onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}');cerrarInventario()">Agregar</button>`
+                    ? `<button class="btn-agregar-inv" onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${esc(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)});cerrarInventario()">Agregar</button>`
                     : `<button class="btn-agregar-inv" disabled>${esDif?'Otra suc.':'Sin stock'}</button>`
                 }</td>
             </tr>`;

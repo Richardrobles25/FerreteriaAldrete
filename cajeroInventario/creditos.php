@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
                 $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                     ->execute([$cr['credito_id']]);
             } else {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(fecha_limite, INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(fecha_limite, INTERVAL 2 DAY), fecha_limite) WHERE credito_id = ?")
                     ->execute([$nuevoSaldo, $adelantado, $cr['credito_id']]);
             }
 
@@ -673,7 +673,7 @@ $totales = $pdo->query("
 
                 <div class="ab-fg" id="abFgAdelantado" style="display:none;">
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;font-size:13px;">
-                        <input type="checkbox" name="pago_adelantado" value="1" id="abAdelantado">
+                        <input type="checkbox" name="pago_adelantado" value="1" id="abAdelantado" style="width:auto;padding:0;border:none;">
                         Pago por adelantado (extiende fecha límite 1 día)
                     </label>
                 </div>

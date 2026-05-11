@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
             $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                 ->execute([$cred_id]);
         } else {
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(fecha_limite, INTERVAL 1 DAY), fecha_limite) WHERE credito_id = ?")
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(fecha_limite, INTERVAL 2 DAY), fecha_limite) WHERE credito_id = ?")
                 ->execute([$nuevoSaldo, $adelantado, $cred_id]);
         }
 
@@ -234,9 +234,9 @@ if (!$credito_id) {
                             <input type="text" name="notas" placeholder="Observaciones del abono...">
                         </div>
                         <?php if ($credito['estado'] === 'Activo'): ?>
-                        <div class="form-group" style="margin-top:4px;">
-                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
-                                <input type="checkbox" name="pago_adelantado" value="1">
+                        <div style="margin-bottom:14px;">
+                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:normal;color:#555;">
+                                <input type="checkbox" name="pago_adelantado" value="1" style="width:auto;margin:0;">
                                 Pago por adelantado (extiende fecha límite 1 día)
                             </label>
                         </div>

@@ -727,7 +727,7 @@ function buscarVenta() {
                     html += `<div class="prod-dev-row">
                         <span style="flex:1;">${p.nombre_producto}</span>
                         <span style="color:#aaa;font-size:11px;">Restante: ${restante.toFixed(esDecimal?2:0).replace(/\.?0+$/, '')}</span>
-                        <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_unitario}" data-restante="${restante}"
+                        <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_final}" data-restante="${restante}"
                             placeholder="0" step="${esDecimal ? 'any' : '1'}" min="0" max="${restante}" value="">
                     </div>`;
                 });
@@ -787,7 +787,7 @@ function prepararDevolucion() {
                 prods.push({
                     producto_id:    p.producto_id,
                     cantidad:       qty * (parseFloat(p.cantidad_requerida_combo) || 1),
-                    precio_unitario: p.precio_unitario
+                    precio_unitario: p.precio_final
                 });
             });
         } else {

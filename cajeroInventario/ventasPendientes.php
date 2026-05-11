@@ -13,10 +13,18 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
 // Liquidar venta pendiente (el folio ya fue asignado al crear)
 if (isset($_GET['liquidar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'ventasPendientes.php');
     $venta_id = intval($_GET['liquidar']);
 
-    // Obtener datos de la venta antes de cambiar estado
-    $stmtV = $pdo->prepare("SELECT venta_id, cliente_id, metodo_pago, total FROM ventas WHERE venta_id = ? AND estado = 'Pendiente'");
+    // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
+    $stmtV = $pdo->prepare("
+        SELECT v.venta_id, v.cliente_id, v.metodo_pago, v.total
+        FROM ventas v
+        JOIN cajas c ON v.caja_id = c.caja_id
+        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ?
+    ");
+    $stmtV->execute([$venta_id, $_SESSION['usuario_id']]);
     $stmtV->execute([$venta_id]);
     $ventaLiq = $stmtV->fetch(PDO::FETCH_ASSOC);
 
@@ -50,9 +58,24 @@ if (isset($_GET['liquidar'])) {
 
 // Cancelar venta pendiente
 if (isset($_GET['cancelar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'ventasPendientes.php');
     $venta_id = intval($_GET['cancelar']);
 
-    // Devolver stock
+    // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
+    $stmtOwn = $pdo->prepare("
+        SELECT v.venta_id FROM ventas v
+        JOIN cajas c ON v.caja_id = c.caja_id
+        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ?
+    ");
+    $stmtOwn->execute([$venta_id, $_SESSION['usuario_id']]);
+    if (!$stmtOwn->fetch()) {
+        header('Location: ventasPendientes.php?msg=error_acceso');
+        exit();
+    }
+
+    // Devolver stock — columnas especificas sin SELECT *
+    // [AUTOFIX] P-05: Reemplazado SELECT * por columnas especificas
     $stmtProd = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
     $stmtProd->execute([$venta_id]);
     $productos = $stmtProd->fetchAll(PDO::FETCH_ASSOC);
@@ -103,9 +126,8 @@ if (isset($_GET['get_ticket_venta'])) {
     $stmtCliente->execute([$venta['cliente_id']]);
     $cliente = $stmtCliente->fetchColumn() ?: 'Consumidor final';
 
-    // Obtener datos de sucursal
-    $stmtSucVenta = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = (SELECT caja_id FROM cajas WHERE caja_id = ?) OR sucursal_id = ?");
-    $stmtSucVenta->execute([$venta['caja_id'], $_SESSION['sucursal_id']]);
+    // [AUTOFIX] B-01: Eliminada query redundante incorrecta (comparaba sucursal_id con caja_id)
+    // Solo se usa sucData que hace el JOIN correcto cajas → sucursales
     $sucData = $pdo->prepare("SELECT s.* FROM sucursales s JOIN cajas c ON c.sucursal_id = s.sucursal_id WHERE c.caja_id = ?");
     $sucData->execute([$venta['caja_id']]);
     $sucursal = $sucData->fetch(PDO::FETCH_ASSOC) ?: $sucursalTicket;
@@ -418,8 +440,9 @@ try {
                         </div>
                         <div class="pendiente-acciones">
                             <button class="btn-accion" type="button" style="background:#e3f2fd;color:#1565c0;" onclick="abrirTicketVenta(<?= $p['venta_id'] ?>)">🖨️ Ticket</button>
-                            <a class="btn-accion btn-liquidar" href="ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Liquidar esta venta?')">Liquidar</a>
-                            <a class="btn-accion btn-cancelar" href="ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Cancelar y devolver stock?')">Cancelar</a>
+                            <!-- [AUTOFIX] SEC-01: Token CSRF en links destructivos -->
+                            <a class="btn-accion btn-liquidar" href="ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Liquidar esta venta?')">Liquidar</a>
+                            <a class="btn-accion btn-cancelar" href="ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Cancelar y devolver stock?')">Cancelar</a>
                         </div>
                     </div>
                     <?php

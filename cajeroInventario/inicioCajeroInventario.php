@@ -36,7 +36,15 @@ $stmtStock->execute([$_SESSION['sucursal_id']]);
 $stockBajo = $stmtStock->fetchColumn();
 
 // Clientes con deuda (igual que creditos.php)
-$stmtCred = $pdo->query("SELECT COUNT(DISTINCT cliente_id) FROM creditos WHERE estado IN ('Activo', 'Vencido')");
+// [AUTOFIX] P-05/SEC-07: Filtrar por sucursal del cajero, no mostrar deudores de todas las sucursales
+$stmtCred = $pdo->prepare("
+    SELECT COUNT(DISTINCT cr.cliente_id)
+    FROM creditos cr
+    JOIN ventas v ON cr.venta_id = v.venta_id
+    JOIN cajas c ON v.caja_id = c.caja_id
+    WHERE cr.estado IN ('Activo', 'Vencido') AND c.sucursal_id = ?
+");
+$stmtCred->execute([$_SESSION['sucursal_id']]);
 $creditosActivos = $stmtCred->fetchColumn();
 
 // Notificaciones de transferencias

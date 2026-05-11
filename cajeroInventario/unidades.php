@@ -10,6 +10,8 @@ $sucursalId = intval($_SESSION['sucursal_id']);
 
 // Eliminar unidad
 if (isset($_GET['eliminar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'unidades.php');
     $id = intval($_GET['eliminar']);
     $u = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?");
     $u->execute([$id, $sucursalId]);
@@ -252,7 +254,8 @@ if (isset($_GET['editar'])) {
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="unidades.php?editar=<?= $u['unidad_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="unidades.php?eliminar=<?= $u['unidad_id'] ?>" onclick="return confirm('¿Eliminar esta unidad?')">Eliminar</a>
+                                    <!-- [AUTOFIX] SEC-01: Token CSRF en link destructivo -->
+                                    <a class="btn-accion btn-eliminar" href="unidades.php?eliminar=<?= $u['unidad_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar esta unidad?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>

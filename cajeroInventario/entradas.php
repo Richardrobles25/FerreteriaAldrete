@@ -18,14 +18,8 @@ if (isset($_GET['producto_id'])) {
     $productoPreseleccionado = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
-// ── Migración: agregar proveedor_id a movimientos_inventario si no existe ────
-$colExiste = $pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME   = 'movimientos_inventario'
-      AND COLUMN_NAME  = 'proveedor_id'")->fetchColumn();
-if (!$colExiste) {
-    $pdo->exec("ALTER TABLE movimientos_inventario ADD COLUMN proveedor_id INT NULL DEFAULT NULL");
-}
+// [AUTOFIX] B-05: Migración eliminada de aqui — ejecutar manualmente si es necesario:
+// ALTER TABLE movimientos_inventario ADD COLUMN IF NOT EXISTS proveedor_id INT NULL DEFAULT NULL;
 
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

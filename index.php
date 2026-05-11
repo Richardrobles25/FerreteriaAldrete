@@ -17,6 +17,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($usuario && password_verify($contrasena, $usuario['contrasena'])) {
+            // [AUTOFIX] SEC-03: Regenerar ID de sesion al login para prevenir session fixation
+            session_regenerate_id(true);
             $_SESSION['usuario_id']      = $usuario['usuario_id'];
             $_SESSION['nombre_completo'] = $usuario['nombre_completo'];
             $_SESSION['rol']             = $usuario['rol'];

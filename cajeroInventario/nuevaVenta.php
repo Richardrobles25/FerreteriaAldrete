@@ -176,7 +176,8 @@ if (isset($_GET['buscar_paquete'])) {
 // ── AJAX: búsqueda combinada (producto + paquete en un solo request) ─────────
 if (isset($_GET['buscar_combo'])) {
     $termino     = trim($_GET['buscar_combo']);
-    $sucursal_id = intval($_GET['sucursal_id'] ?? $_SESSION['sucursal_id']);
+    // [AUTOFIX] SEC-05: Ignorar sucursal_id del cliente, siempre usar la de la sesion
+    $sucursal_id = intval($_SESSION['sucursal_id']);
     $like        = '%' . $termino . '%';
 
     // Productos
@@ -239,7 +240,8 @@ if (isset($_GET['buscar_combo'])) {
 // ── AJAX: buscar producto ────────────────────────────────────────────────────
 if (isset($_GET['buscar_producto'])) {
     $termino     = trim($_GET['buscar_producto']);
-    $sucursal_id = intval($_GET['sucursal_id'] ?? $_SESSION['sucursal_id']);
+    // [AUTOFIX] SEC-05: Ignorar sucursal_id del cliente, siempre usar la de la sesion
+    $sucursal_id = intval($_SESSION['sucursal_id']);
     $stmt = $pdo->prepare("
         SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta,
                p.precio_mayoreo, p.precio_compra, ss.stock_actual, p.tipo_venta, p.unidad_medida
@@ -342,6 +344,15 @@ if (isset($_GET['ticket_venta'])) {
     $stmtP->execute([$venta_id]);
     $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
+    // [AUTOFIX] B-08: Calcular descuento_display proporcional al subtotal actual
+    // (igual que en historialVentas.php para consistencia entre ticket y historial)
+    if ($venta) {
+        $subtotalOriginal = array_sum(array_column($venta['productos'], 'subtotal'));
+        $venta['descuento_display'] = ($subtotalOriginal > 0.001)
+            ? round(floatval($venta['descuento']) * floatval($venta['subtotal']) / $subtotalOriginal, 2)
+            : 0;
+    }
+
     header('Content-Type: application/json');
     echo json_encode($venta);
     exit();
@@ -364,7 +375,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
     $referencia_transferencia = ($metodo_pago === 'Transferencia') ? trim($_POST['referencia_transferencia'] ?? '') : null;
 
-    if (!empty($items) && $metodo_pago) {
+    // [AUTOFIX] N-02: Validar metodo_pago contra whitelist permitido
+    $metodosPermitidos = ['Efectivo', 'Terminal', 'Mixto', 'Credito', 'Transferencia'];
+    if (!in_array($metodo_pago, $metodosPermitidos, true)) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'Método de pago inválido.']);
+            exit();
+        }
+        $errorVenta = 'Método de pago inválido.';
+    }
+
+    // [AUTOFIX] N-03: Validar que credito requiere cliente
+    if (!$errorVenta && $metodo_pago === 'Credito' && !$cliente_id) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'El pago a crédito requiere seleccionar un cliente.']);
+            exit();
+        }
+        $errorVenta = 'El pago a crédito requiere seleccionar un cliente.';
+    }
+
+    // [AUTOFIX] V-05: Validar que items sea un array valido antes de procesar
+    if (!$errorVenta && (!is_array($items) || empty($items))) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'El carrito está vacío o tiene un formato inválido.']);
+            exit();
+        }
+        $errorVenta = 'El carrito está vacío o tiene un formato inválido.';
+    }
+
+    // [AUTOFIX] N-02/N-03: Solo procesar si no hay errores de validacion previos
+    if (!$errorVenta && !empty($items) && $metodo_pago) {
         $pdo->beginTransaction();
         try {
             // Generar folio secuencial mensual: NNNN (reinicia cada mes)
@@ -399,6 +442,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 $subtotalItem = $item['cantidad'] * $precioFinal;
                 $notaAjuste   = trim($item['nota_ajuste'] ?? '');
                 $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
+
+                // [AUTOFIX] SEC-02: Validar precio contra precio_compra de la BD
+                // El precio final no puede ser menor al 50% del precio de compra (umbral de seguridad)
+                if (empty($paqId)) {
+                    $stmtPrecioComp = $pdo->prepare("SELECT precio_compra FROM productos WHERE producto_id = ?");
+                    $stmtPrecioComp->execute([$item['producto_id']]);
+                    $precioCompraDB = floatval($stmtPrecioComp->fetchColumn());
+                    if ($precioCompraDB > 0 && $precioFinal < ($precioCompraDB * 0.5)) {
+                        throw new Exception("Precio inválido para el producto. Verifica el carrito.");
+                    }
+                }
 
                 $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,precio_final,descuento,subtotal,paquete_id,nota_ajuste) VALUES (?,?,?,?,?,0,?,?,?)")
                     ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$precioOrig,$precioFinal,$subtotalItem,$paqId,$notaAjuste ?: null]);
@@ -441,6 +495,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
         } catch (Exception $e) {
             $pdo->rollBack();
+            // [AUTOFIX] SEC-04: Loguear error real; algunos mensajes de excepcion son de negocio (stock) y son seguros
+            error_log('[Ferreteria/nuevaVenta] Error venta: ' . $e->getMessage());
             if (!empty($_POST['_ajax'])) {
                 header('Content-Type: application/json');
                 echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
@@ -2278,8 +2334,9 @@ function imprimirTicket(ventaId) {
     if (!ventaId) return;
     fetch(`nuevaVenta.php?ticket_venta=${ventaId}`)
         .then(r => r.json())
+        // [AUTOFIX] N-04: Verificar error del servidor antes de generar ticket
         .then(venta => {
-            if (!venta) { alert('No se pudo cargar el ticket.'); return; }
+            if (!venta || venta.error) { alert('No se pudo cargar el ticket.'); return; }
             generarTicketHTML(venta);
             // Esperar un frame para que el navegador calcule el layout del ticket
             requestAnimationFrame(() => {
@@ -2399,14 +2456,15 @@ function generarTicketHTML(venta) {
 
     html += `<div class="t-linea"></div>`;
 
-    if (parseFloat(venta.descuento) > 0) {
+    // [AUTOFIX] N-01: Usar descuento_display (proporcional al subtotal actual) en lugar de descuento bruto
+    if (parseFloat(venta.descuento_display ?? venta.descuento) > 0) {
         html += `<div class="t-fila"><span>Subtotal</span><span>$${parseFloat(venta.subtotal).toFixed(2)}</span></div>`;
     }
     if (parseFloat(venta.comision_terminal) > 0) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${parseFloat(venta.comision_terminal).toFixed(2)}</span></div>`;
     }
-    if (parseFloat(venta.descuento) > 0) {
-        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${parseFloat(venta.descuento).toFixed(2)}</span></div>`;
+    if (parseFloat(venta.descuento_display ?? venta.descuento) > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${parseFloat(venta.descuento_display ?? venta.descuento).toFixed(2)}</span></div>`;
     }
 
     html += `
@@ -2518,16 +2576,19 @@ function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// [AUTOFIX] N-05: Usar el porcentaje real de la sucursal en lugar del valor hardcodeado 4.6
+const _comisionPct = parseFloat(document.getElementById('porcComision')?.value || document.getElementById('mixtoComision')?.value || 0);
 document.querySelectorAll('.js-zero-default').forEach((input) => {
     input.addEventListener('focus', function() {
         const valor = String(this.value ?? '').trim();
-        if (valor === '0' || valor === '0.00' || valor === '0.0' || valor === '4.6') {
+        const defaultComision = _comisionPct.toFixed(2);
+        if (valor === '0' || valor === '0.00' || valor === '0.0' || valor === defaultComision) {
             this.value = '';
         }
     });
     input.addEventListener('blur', function() {
         if (String(this.value ?? '').trim() === '') {
-            this.value = this.id.toLowerCase().includes('comision') ? '4.6' : '0.00';
+            this.value = this.id.toLowerCase().includes('comision') ? _comisionPct.toFixed(2) : '0.00';
             if (typeof this.oninput === 'function') this.oninput();
         }
     });

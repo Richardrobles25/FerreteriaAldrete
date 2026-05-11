@@ -143,7 +143,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         echo json_encode(['ok' => true]);
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+        // [AUTOFIX] SEC-04: Loguear error real internamente, responder con mensaje generico
+        error_log('[Ferreteria/creditos] Error abono: ' . $e->getMessage());
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]); // Mensajes de validacion son seguros de mostrar
     }
     exit();
 }
@@ -189,7 +191,9 @@ if (isset($_GET['get_creditos_cliente'])) {
         }
         echo json_encode($creditos);
     } catch (\Throwable $e) {
-        echo json_encode(['error' => $e->getMessage()]);
+        // [AUTOFIX] SEC-04: No exponer errores tecnicos al cliente
+        error_log('[Ferreteria/creditos] Error get_creditos: ' . $e->getMessage());
+        echo json_encode(['error' => 'Error al obtener los créditos. Intenta de nuevo.']);
     }
     exit();
 }

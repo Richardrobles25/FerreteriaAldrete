@@ -60,9 +60,11 @@ if (isset($_GET['buscar_venta'])) {
         $anio      = intval($_GET['anio'] ?? date('Y'));
 
         // Compatible con folio nuevo "NNNN" y folio viejo "NNNN-MM-YYYY"
+        // [AUTOFIX] D-01: Filtrar por sucursal — un cajero solo puede devolver ventas de su propia sucursal
         $stmt = $pdo->prepare("
             SELECT v.*, c.nombre_completo as cliente
             FROM ventas v
+            JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
             LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
             WHERE CAST(v.folio AS UNSIGNED) = ?
               AND MONTH(v.created_at) = ?
@@ -70,7 +72,7 @@ if (isset($_GET['buscar_venta'])) {
               AND v.estado IN ('Completada', 'Modificado')
             LIMIT 1
         ");
-        $stmt->execute([$folio_num, $mes, $anio]);
+        $stmt->execute([$_SESSION['sucursal_id'], $folio_num, $mes, $anio]);
         $venta = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($venta) {
@@ -98,13 +100,17 @@ if (isset($_GET['buscar_venta'])) {
         }
         echo json_encode($venta ?: null);
     } catch (\Throwable $e) {
-        echo json_encode(['error' => $e->getMessage()]);
+        // [AUTOFIX] SEC-04: No exponer errores tecnicos al cliente
+        error_log('[Ferreteria/devoluciones] Error buscar_venta: ' . $e->getMessage());
+        echo json_encode(['error' => 'Error al buscar la venta. Intenta de nuevo.']);
     }
     exit();
 }
 
 // Cancelar devolución (máx 24h)
 if (isset($_GET['cancelar_dev'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'devoluciones.php');
     $devolucion_id = intval($_GET['cancelar_dev']);
     $nota_cancel   = trim($_GET['nota'] ?? '');
 
@@ -184,10 +190,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$motivo)                $errores[] = 'El motivo es obligatorio.';
 
     if (empty($errores)) {
-        // Verificar si la venta era a crédito y obtener folio
-        $stmtV = $pdo->prepare("SELECT metodo_pago, cliente_id, folio FROM ventas WHERE venta_id = ?");
-        $stmtV->execute([$venta_id]);
+        // [AUTOFIX] D-02: Verificar que la venta pertenezca a la sucursal del cajero antes de procesar
+        $stmtV = $pdo->prepare("
+            SELECT v.metodo_pago, v.cliente_id, v.folio
+            FROM ventas v
+            JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
+            WHERE v.venta_id = ?
+        ");
+        $stmtV->execute([$_SESSION['sucursal_id'], $venta_id]);
         $ventaInfo = $stmtV->fetch(PDO::FETCH_ASSOC);
+        if (!$ventaInfo) {
+            $errores[] = 'La venta no pertenece a esta sucursal o no existe.';
+        }
 
         $stmtVendidos = $pdo->prepare("
             SELECT producto_id, SUM(cantidad) AS cantidad_vendida
@@ -202,11 +216,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $cantidadesDevueltas = obtenerTotalesDevueltos($pdo, $venta_id, intval($_SESSION['sucursal_id']));
+
+        // [AUTOFIX] V-06: Cargar precios reales de la BD para validar y usar en devoluciones
+        $stmtPreciosDB = $pdo->prepare("
+            SELECT producto_id, precio_final
+            FROM venta_productos
+            WHERE venta_id = ?
+        ");
+        $stmtPreciosDB->execute([$venta_id]);
+        $preciosRealDB = [];
+        foreach ($stmtPreciosDB->fetchAll(PDO::FETCH_ASSOC) as $fp) {
+            $preciosRealDB[intval($fp['producto_id'])] = floatval($fp['precio_final']);
+        }
+
         $productosAgrupados = [];
         if (empty($errores)) foreach ($productos_dev as $prod) {
             $productoId = intval($prod['producto_id'] ?? 0);
             $cantidad = floatval($prod['cantidad'] ?? 0);
-            $precioUnitario = floatval($prod['precio_unitario'] ?? 0);
+            // [AUTOFIX] V-06: Usar precio de la BD, no el que manda el cliente
+            $precioUnitario = $preciosRealDB[$productoId] ?? floatval($prod['precio_unitario'] ?? 0);
 
             if ($productoId <= 0 || $cantidad <= 0) {
                 continue;
@@ -327,7 +355,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit();
             } catch (\Throwable $e) {
                 $pdo->rollBack();
-                $errores[] = 'Error al procesar la devolución: ' . $e->getMessage();
+                // [AUTOFIX] D-03: No exponer mensaje técnico al usuario
+                error_log('[Ferreteria/devoluciones] Error procesar devolucion venta_id=' . $venta_id . ': ' . $e->getMessage());
+                $errores[] = 'Error al procesar la devolución. Intenta de nuevo.';
             }
         }
     }
@@ -657,6 +687,9 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+// [AUTOFIX] SEC-01: Token CSRF disponible en JS para links GET destructivos
+const CSRF_TOKEN = '<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>';
+
 let ventaActual = null;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
@@ -671,8 +704,11 @@ function buscarVenta() {
     if (!num) { alert('Ingresa el número de folio.'); return; }
     fetch(`devoluciones.php?buscar_venta=${encodeURIComponent(num)}&mes=${mes}&anio=${anio}`)
         .then(r => r.json())
+        // [AUTOFIX] D-04: Verificar errores del servidor antes de usar la respuesta
         .then(data => {
             if (!data) { alert('Folio no encontrado o la venta no está completada.'); return; }
+            if (data.error) { alert('Error al buscar la venta: ' + data.error); return; }
+            if (!Array.isArray(data.productos)) { alert('Folio no encontrado o la venta no está disponible en esta sucursal.'); return; }
             ventaActual = data;
             document.getElementById('ventaCliente').textContent = data.cliente || 'Público general';
             document.getElementById('ventaFecha').textContent = 'Folio: ' + (data.folio || ('#'+data.venta_id));
@@ -753,6 +789,10 @@ function buscarVenta() {
             document.getElementById('prodDevolver').classList.add('visible');
             document.getElementById('motivoGroup').style.display = 'block';
             document.getElementById('btnDevolver').style.display = 'block';
+        })
+        // [AUTOFIX] D-05: Manejar error de red en buscarVenta
+        .catch(() => {
+            alert('Error de conexión. Verifica tu red e intenta de nuevo.');
         });
 }
 
@@ -760,7 +800,8 @@ function cancelarDevolucion(id) {
     const nota = prompt('¿Motivo de la cancelación? (opcional)');
     if (nota === null) return; // usuario canceló el prompt
     if (!confirm('¿Seguro que deseas cancelar esta devolución? El stock se revertirá.')) return;
-    window.location.href = `devoluciones.php?cancelar_dev=${id}&nota=${encodeURIComponent(nota)}`;
+    // [AUTOFIX] SEC-01: Incluir CSRF token en el link de cancelacion
+    window.location.href = `devoluciones.php?cancelar_dev=${id}&nota=${encodeURIComponent(nota)}&_token=${encodeURIComponent(CSRF_TOKEN)}`;
 }
 
 function prepararDevolucion() {

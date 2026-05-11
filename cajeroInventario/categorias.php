@@ -8,6 +8,8 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'categorias.php');
     $id = intval($_GET['eliminar']);
     // Verificar que no tenga productos asociados
     $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE categoria_id = ? AND activo = 1");
@@ -240,7 +242,8 @@ if (isset($_GET['editar'])) {
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="categorias.php?editar=<?= $c['categoria_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="categorias.php?eliminar=<?= $c['categoria_id'] ?>" onclick="return confirm('¿Eliminar esta categoría?')">Eliminar</a>
+                                    <!-- [AUTOFIX] SEC-01: Token CSRF en link destructivo -->
+                                    <a class="btn-accion btn-eliminar" href="categorias.php?eliminar=<?= $c['categoria_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar esta categoría?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>

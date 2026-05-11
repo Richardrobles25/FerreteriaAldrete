@@ -8,6 +8,8 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
 // Eliminar cliente
 if (isset($_GET['eliminar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
     $id = intval($_GET['eliminar']);
     $pdo->prepare("UPDATE clientes SET activo = 0 WHERE cliente_id = ?")->execute([$id]);
     header('Location: clientes.php?msg=eliminado');
@@ -16,6 +18,8 @@ if (isset($_GET['eliminar'])) {
 
 // Toggle activo
 if (isset($_GET['toggle'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
     $id = intval($_GET['toggle']);
     $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$id]);
     header('Location: clientes.php');
@@ -45,6 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$nombre_completo) $errores[] = 'El nombre es obligatorio.';
     if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
+    // [AUTOFIX] V-01: Validar formato de email en backend
+    if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
+    // [AUTOFIX] V-02: Validar rangos de descuento y limite de credito
+    if ($descuento_fijo < 0 || $descuento_fijo > 100) $errores[] = 'El descuento debe estar entre 0 y 100.';
+    if ($limite_credito < 0) $errores[] = 'El límite de crédito no puede ser negativo.';
 
     if (empty($errores)) {
         if ($cliente_id) {
@@ -272,7 +281,8 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="clientes.php?editar=<?= $c['cliente_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="clientes.php?eliminar=<?= $c['cliente_id'] ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
+                                    <!-- [AUTOFIX] SEC-01: Token CSRF en link destructivo -->
+                                    <a class="btn-accion btn-eliminar" href="clientes.php?eliminar=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>

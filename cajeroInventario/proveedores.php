@@ -7,10 +7,14 @@ verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 if (isset($_GET['eliminar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'proveedores.php');
     $pdo->prepare("UPDATE proveedores SET activo = 0 WHERE proveedor_id = ?")->execute([intval($_GET['eliminar'])]);
     header('Location: proveedores.php?msg=eliminado'); exit();
 }
 if (isset($_GET['toggle'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'proveedores.php');
     $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval($_GET['toggle'])]);
     header('Location: proveedores.php'); exit();
 }
@@ -294,10 +298,11 @@ if ($editando) {
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="proveedores.php?editar=<?= $p['proveedor_id'] ?>">Editar</a>
-                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="proveedores.php?toggle=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Confirmar cambio?')">
+                                    <!-- [AUTOFIX] SEC-01: Token CSRF en links destructivos -->
+                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="proveedores.php?toggle=<?= $p['proveedor_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Confirmar cambio?')">
                                         <?= $p['activo']?'Desactivar':'Activar' ?>
                                     </a>
-                                    <a class="btn-accion btn-eliminar" href="proveedores.php?eliminar=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Eliminar proveedor?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="proveedores.php?eliminar=<?= $p['proveedor_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar proveedor?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>

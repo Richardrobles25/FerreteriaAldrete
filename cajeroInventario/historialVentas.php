@@ -546,9 +546,10 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                             <?= htmlspecialchars($v['cajero'] ?? '—') ?>
                         </td>
                         <td><?= htmlspecialchars($v['cliente'] ?? 'Público general') ?></td>
+                        <!-- [AUTOFIX] H-03: htmlspecialchars en badges de metodo_pago y estado -->
                         <td>
-                            <span class="badge badge-<?= strtolower($v['metodo_pago']) ?>">
-                                <?= $v['metodo_pago'] ?>
+                            <span class="badge badge-<?= htmlspecialchars(strtolower($v['metodo_pago'])) ?>">
+                                <?= htmlspecialchars($v['metodo_pago']) ?>
                             </span>
                         </td>
                         <td>$<?= number_format($v['subtotal'],2) ?></td>
@@ -563,12 +564,12 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                         </td>
                         <td style="font-weight:700;">$<?= number_format($v['total'],2) ?></td>
                         <td>
-                            <span class="badge badge-<?= strtolower($v['estado']) ?>">
-                                <?= $v['estado'] ?>
+                            <span class="badge badge-<?= htmlspecialchars(strtolower($v['estado'])) ?>">
+                                <?= htmlspecialchars($v['estado']) ?>
                             </span>
                         </td>
                         <td style="color:#aaa;font-size:12px;white-space:nowrap;">
-                            <?= date('d/m/Y H:i', strtotime($v['created_at'])) ?>
+                            <?= $v['created_at'] ? date('d/m/Y H:i', strtotime($v['created_at'])) : '—' ?>
                         </td>
                         <td>
                             <div class="acciones-td">
@@ -789,8 +790,9 @@ function verDetalle(ventaId) {
     ventaActualId = ventaId;
     fetch(`historialVentas.php?detalle_venta=${ventaId}`)
         .then(r => r.json())
+        // [AUTOFIX] H-02: Verificar error del servidor antes de renderizar detalle
         .then(venta => {
-            if (!venta) { alert('No se pudo cargar el detalle.'); return; }
+            if (!venta || venta.error) { alert('No se pudo cargar el detalle de la venta.'); return; }
             renderDetalle(venta);
             document.getElementById('modalDetalle').classList.add('visible');
         })
@@ -888,8 +890,9 @@ document.getElementById('modalDetalle').addEventListener('click', function(e) {
 function reimprimirTicket(ventaId) {
     fetch(`historialVentas.php?detalle_venta=${ventaId}`)
         .then(r => r.json())
+        // [AUTOFIX] H-01: Verificar error del servidor antes de generar ticket
         .then(venta => {
-            if (!venta) { alert('No se pudo cargar el ticket.'); return; }
+            if (!venta || venta.error) { alert('No se pudo cargar el ticket.'); return; }
             generarTicketHTML(venta);
             requestAnimationFrame(() => {
                 const ticket = document.getElementById('ticketImprimir');

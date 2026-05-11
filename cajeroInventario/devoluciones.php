@@ -26,28 +26,41 @@ function formatearMotivoDevolucion(string $motivo): string
 function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
 {
     $totales = [];
-    // Soporta formato antiguo "Devolucion venta #41: motivo"
-    // y formato nuevo     "Devolucion venta #41 folio:0021: motivo"
-    // Excluye movimientos cuya devolución fue cancelada (via devolucion_id FK)
-    $stmt = $pdo->prepare("
-        SELECT m.producto_id, SUM(m.cantidad) AS cantidad_devuelta
-        FROM movimientos_inventario m
-        JOIN productos p ON p.producto_id = m.producto_id
-        JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-        LEFT JOIN devoluciones d ON d.devolucion_id = m.devolucion_id
-        WHERE m.tipo = 'Entrada'
-          AND (m.motivo LIKE ? OR m.motivo LIKE ?)
-          AND (m.devolucion_id IS NULL OR d.cancelada_en IS NULL)
-        GROUP BY m.producto_id
+
+    // [AUTOFIX] Bug A: antes usaba INNER JOIN stock_sucursal → si faltaba la fila,
+    // el conteo era 0 y el producto podía devolverse de nuevo indefinidamente.
+    // Ahora consultamos directamente vía devoluciones.venta_id (FK exacta).
+    $stmtNew = $pdo->prepare("
+        SELECT mi.producto_id, SUM(mi.cantidad) AS cantidad_devuelta
+        FROM movimientos_inventario mi
+        JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
+        WHERE mi.tipo = 'Entrada'
+          AND d.cancelada_en IS NULL
+        GROUP BY mi.producto_id
     ");
-    $stmt->execute([
-        $sucursalId,
-        'Devolucion venta #' . $ventaId . ':%',   // formato antiguo
-        'Devolucion venta #' . $ventaId . ' %',   // formato nuevo (folio después)
-    ]);
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+    $stmtNew->execute([$ventaId]);
+    foreach ($stmtNew->fetchAll(PDO::FETCH_ASSOC) as $fila) {
         $totales[intval($fila['producto_id'])] = floatval($fila['cantidad_devuelta']);
     }
+
+    // Compatibilidad con movimientos anteriores a la tabla devoluciones (sin devolucion_id)
+    $stmtOld = $pdo->prepare("
+        SELECT mi.producto_id, SUM(mi.cantidad) AS cantidad_devuelta
+        FROM movimientos_inventario mi
+        WHERE mi.tipo = 'Entrada'
+          AND mi.devolucion_id IS NULL
+          AND (mi.motivo LIKE ? OR mi.motivo LIKE ?)
+        GROUP BY mi.producto_id
+    ");
+    $stmtOld->execute([
+        'Devolucion venta #' . $ventaId . ':%',
+        'Devolucion venta #' . $ventaId . ' %',
+    ]);
+    foreach ($stmtOld->fetchAll(PDO::FETCH_ASSOC) as $fila) {
+        $pid = intval($fila['producto_id']);
+        $totales[$pid] = ($totales[$pid] ?? 0) + floatval($fila['cantidad_devuelta']);
+    }
+
     return $totales;
 }
 
@@ -145,35 +158,23 @@ if (isset($_GET['cancelar_dev'])) {
                            'Cancelacion devolucion #' . $devolucion_id . ($nota_cancel ? ': ' . $nota_cancel : '')]);
         }
 
-        // Restaurar total de la venta
+        // [AUTOFIX] Bug C: restaurar correctamente subtotal (bruto), descuento, comisión y total.
+        // Los registros nuevos almacenan subtotal_bruto_devuelto y comision_devuelta.
+        // Para registros anteriores (columnas en 0) se usa total_devuelto como fallback.
         $totalDevuelto = floatval($dev['total_devuelto']);
-        $pdo->prepare("UPDATE ventas SET total = total + ?, subtotal = subtotal + ? WHERE venta_id = ?")
-            ->execute([$totalDevuelto, $totalDevuelto, $dev['venta_id']]);
+        $subtotalBruto = floatval($dev['subtotal_bruto_devuelto'] ?? 0);
+        if ($subtotalBruto < 0.001) $subtotalBruto = $totalDevuelto; // fallback registros viejos
+        $comisionDev   = floatval($dev['comision_devuelta'] ?? 0);
+        $descuentoDev  = max(0.0, round($subtotalBruto - $totalDevuelto, 2));
 
-        // [AUTOFIX] Bug: cuando la devolución era TOTAL (estado='Devuelto'), el proceso
-        // zeroed ventas.descuento a 0 pero la cancelación nunca lo restauraba.
-        // Se recalcula usando: descuento = subtotal_bruto - total_restaurado + comision
-        // Donde subtotal_bruto = SUM(cantidad * precio_unitario) de venta_productos.
-        if ($dev['estado_actual'] === 'Devuelto') {
-            $stmtSumBruto = $pdo->prepare("
-                SELECT COALESCE(SUM(cantidad * precio_unitario), 0)
-                FROM venta_productos
-                WHERE venta_id = ?
-            ");
-            $stmtSumBruto->execute([$dev['venta_id']]);
-            $subtotalBruto = floatval($stmtSumBruto->fetchColumn());
-
-            // Leer el total ya restaurado (recién actualizado arriba en esta misma transacción)
-            $stmtTotalAhora = $pdo->prepare("SELECT total FROM ventas WHERE venta_id = ?");
-            $stmtTotalAhora->execute([$dev['venta_id']]);
-            $totalRestaurado = floatval($stmtTotalAhora->fetchColumn());
-
-            $comision = floatval($dev['comision_terminal']);
-            $descuentoRestaurado = max(0.0, round($subtotalBruto - $totalRestaurado + $comision, 2));
-
-            $pdo->prepare("UPDATE ventas SET subtotal = ?, descuento = ? WHERE venta_id = ?")
-                ->execute([$subtotalBruto, $descuentoRestaurado, $dev['venta_id']]);
-        }
+        $pdo->prepare("
+            UPDATE ventas
+            SET subtotal          = subtotal + ?,
+                descuento         = descuento + ?,
+                comision_terminal = comision_terminal + ?,
+                total             = total + ?
+            WHERE venta_id = ?
+        ")->execute([$subtotalBruto, $descuentoDev, $comisionDev, $totalDevuelto + $comisionDev, $dev['venta_id']]);
 
         // Estado: si quedan otras devoluciones activas → Modificado, sino → Completada
         $stmtOtras = $pdo->prepare("SELECT COUNT(*) FROM devoluciones WHERE venta_id = ? AND devolucion_id != ? AND cancelada_en IS NULL");
@@ -319,13 +320,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $motivo = 'Devolucion venta #' . $venta_id . $folioExtra . ': ' . $motivo;
 
         if (empty($errores)) {
-            $totalDevuelto = array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_unitario'], $productos_dev));
+            // totalDevuelto = lo que el cajero le regresa al cliente (precio_final × qty devuelta)
+            $totalDevuelto = round(array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_unitario'], $productos_dev)), 2);
+
+            // [AUTOFIX] Bug B: calcular subtotal bruto, descuento proporcional y comisión proporcional.
+            // ventas.subtotal es base bruta (precio_unitario); totalDevuelto es base final (precio_final).
+            // Restar el mismo valor a ambos campos producía subtotal incorrecto y residuo de comisión.
+
+            // 1) Obtener precio_unitario real de venta_productos para los productos devueltos
+            $prodIdsRetorno = array_unique(array_map('intval', array_column($productos_dev, 'producto_id')));
+            $precioUnitarioMap = [];
+            if (!empty($prodIdsRetorno)) {
+                $inPH = implode(',', array_fill(0, count($prodIdsRetorno), '?'));
+                $stmtVPBruto = $pdo->prepare("
+                    SELECT producto_id, precio_unitario
+                    FROM venta_productos
+                    WHERE venta_id = ? AND producto_id IN ($inPH)
+                ");
+                $stmtVPBruto->execute(array_merge([$venta_id], $prodIdsRetorno));
+                foreach ($stmtVPBruto->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $precioUnitarioMap[intval($row['producto_id'])] = floatval($row['precio_unitario']);
+                }
+            }
+
+            $subtotalBrutoDevuelto = 0.0;
+            foreach ($productos_dev as $prod) {
+                $pid = intval($prod['producto_id']);
+                $precioUnit = $precioUnitarioMap[$pid] ?? floatval($prod['precio_unitario']);
+                $subtotalBrutoDevuelto += floatval($prod['cantidad']) * $precioUnit;
+            }
+            $subtotalBrutoDevuelto = round($subtotalBrutoDevuelto, 2);
+            $descuentoDevuelto     = round(max(0.0, $subtotalBrutoDevuelto - $totalDevuelto), 2);
+
+            // 2) Comisión proporcional (Terminal / Mixto): comision × (totalDevuelto / suma_precio_final_venta)
+            $stmtVComision = $pdo->prepare("
+                SELECT v.comision_terminal,
+                       COALESCE(SUM(vp.precio_final * vp.cantidad), 0) AS suma_precio_final_total
+                FROM ventas v
+                LEFT JOIN venta_productos vp ON vp.venta_id = v.venta_id
+                WHERE v.venta_id = ?
+                GROUP BY v.venta_id
+            ");
+            $stmtVComision->execute([$venta_id]);
+            $comData          = $stmtVComision->fetch(PDO::FETCH_ASSOC);
+            $comisionTotal    = $comData ? floatval($comData['comision_terminal'])      : 0.0;
+            $sumaPrecioFinal  = $comData ? floatval($comData['suma_precio_final_total']) : 0.0;
+            $comisionDevuelta = ($sumaPrecioFinal > 0.001 && $comisionTotal > 0.001)
+                ? round($comisionTotal * min(1.0, $totalDevuelto / $sumaPrecioFinal), 2)
+                : 0.0;
 
             $pdo->beginTransaction();
             try {
                 // Registrar la devolución como grupo (permite cancelación posterior)
-                $pdo->prepare("INSERT INTO devoluciones (venta_id, usuario_id, total_devuelto) VALUES (?,?,?)")
-                    ->execute([$venta_id, $_SESSION['usuario_id'], $totalDevuelto]);
+                $pdo->prepare("INSERT INTO devoluciones (venta_id, usuario_id, total_devuelto, subtotal_bruto_devuelto, comision_devuelta) VALUES (?,?,?,?,?)")
+                    ->execute([$venta_id, $_SESSION['usuario_id'], $totalDevuelto, $subtotalBrutoDevuelto, $comisionDevuelta]);
                 $devolucion_id = intval($pdo->lastInsertId());
 
                 foreach ($productos_dev as $prod) {
@@ -343,9 +391,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id]);
                 }
 
-                // Actualizar total de la venta
-                $pdo->prepare("UPDATE ventas SET subtotal = GREATEST(0, subtotal - ?), total = GREATEST(0, total - ?) WHERE venta_id = ?")
-                    ->execute([$totalDevuelto, $totalDevuelto, $venta_id]);
+                // [AUTOFIX] Bug B: actualizar con bases correctas por campo
+                // subtotal -= precio bruto devuelto | descuento -= descuento proporcional
+                // comision_terminal -= comisión proporcional | total -= precio_final + comisión
+                $pdo->prepare("
+                    UPDATE ventas
+                    SET subtotal          = GREATEST(0, subtotal - ?),
+                        descuento         = GREATEST(0, descuento - ?),
+                        comision_terminal = GREATEST(0, comision_terminal - ?),
+                        total             = GREATEST(0, total - ?)
+                    WHERE venta_id = ?
+                ")->execute([$subtotalBrutoDevuelto, $descuentoDevuelto, $comisionDevuelta, $totalDevuelto + $comisionDevuelta, $venta_id]);
 
                 // Actualizar estado según si fue devolución total o parcial
                 $stmtNuevoTotal = $pdo->prepare("SELECT total FROM ventas WHERE venta_id = ?");
@@ -353,8 +409,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $nuevoTotal  = floatval($stmtNuevoTotal->fetchColumn());
                 $nuevoEstado = $nuevoTotal <= 0 ? 'Devuelto' : 'Modificado';
                 if ($nuevoEstado === 'Devuelto') {
-                    // Devolución total: limpiar subtotal, descuento y total a 0
-                    $pdo->prepare("UPDATE ventas SET estado = ?, subtotal = 0, descuento = 0, total = 0 WHERE venta_id = ?")
+                    // Devolución total: limpiar todos los montos a 0 (incluyendo comision_terminal)
+                    $pdo->prepare("UPDATE ventas SET estado = ?, subtotal = 0, descuento = 0, comision_terminal = 0, total = 0 WHERE venta_id = ?")
                         ->execute([$nuevoEstado, $venta_id]);
                 } else {
                     $pdo->prepare("UPDATE ventas SET estado = ? WHERE venta_id = ?")

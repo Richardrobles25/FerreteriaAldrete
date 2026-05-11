@@ -312,6 +312,8 @@
     cancelada_por   INT UNSIGNED NULL DEFAULT NULL,
     nota_cancelacion TEXT NULL DEFAULT NULL,
     total_devuelto DECIMAL(10,2) NOT NULL DEFAULT 0,
+    subtotal_bruto_devuelto DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    comision_devuelta       DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     FOREIGN KEY (venta_id)   REFERENCES ventas(venta_id),
     FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
 );

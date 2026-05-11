@@ -115,7 +115,7 @@ if (isset($_GET['cancelar_dev'])) {
     $nota_cancel   = trim($_GET['nota'] ?? '');
 
     $stmtD = $pdo->prepare("
-        SELECT d.*, v.total AS total_actual
+        SELECT d.*, v.total AS total_actual, v.estado AS estado_actual, v.comision_terminal
         FROM devoluciones d
         JOIN ventas v ON d.venta_id = v.venta_id
         WHERE d.devolucion_id = ?
@@ -149,6 +149,31 @@ if (isset($_GET['cancelar_dev'])) {
         $totalDevuelto = floatval($dev['total_devuelto']);
         $pdo->prepare("UPDATE ventas SET total = total + ?, subtotal = subtotal + ? WHERE venta_id = ?")
             ->execute([$totalDevuelto, $totalDevuelto, $dev['venta_id']]);
+
+        // [AUTOFIX] Bug: cuando la devolución era TOTAL (estado='Devuelto'), el proceso
+        // zeroed ventas.descuento a 0 pero la cancelación nunca lo restauraba.
+        // Se recalcula usando: descuento = subtotal_bruto - total_restaurado + comision
+        // Donde subtotal_bruto = SUM(cantidad * precio_unitario) de venta_productos.
+        if ($dev['estado_actual'] === 'Devuelto') {
+            $stmtSumBruto = $pdo->prepare("
+                SELECT COALESCE(SUM(cantidad * precio_unitario), 0)
+                FROM venta_productos
+                WHERE venta_id = ?
+            ");
+            $stmtSumBruto->execute([$dev['venta_id']]);
+            $subtotalBruto = floatval($stmtSumBruto->fetchColumn());
+
+            // Leer el total ya restaurado (recién actualizado arriba en esta misma transacción)
+            $stmtTotalAhora = $pdo->prepare("SELECT total FROM ventas WHERE venta_id = ?");
+            $stmtTotalAhora->execute([$dev['venta_id']]);
+            $totalRestaurado = floatval($stmtTotalAhora->fetchColumn());
+
+            $comision = floatval($dev['comision_terminal']);
+            $descuentoRestaurado = max(0.0, round($subtotalBruto - $totalRestaurado + $comision, 2));
+
+            $pdo->prepare("UPDATE ventas SET subtotal = ?, descuento = ? WHERE venta_id = ?")
+                ->execute([$subtotalBruto, $descuentoRestaurado, $dev['venta_id']]);
+        }
 
         // Estado: si quedan otras devoluciones activas → Modificado, sino → Completada
         $stmtOtras = $pdo->prepare("SELECT COUNT(*) FROM devoluciones WHERE venta_id = ? AND devolucion_id != ? AND cancelada_en IS NULL");

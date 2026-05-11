@@ -49,6 +49,12 @@ if (isset($_GET['detalle_venta'])) {
             $prod['cantidad_devuelta'] = $devueltos[$prod['producto_id']] ?? 0;
         }
         unset($prod);
+
+        // Descuento proporcional: descuento × (subtotal_actual / subtotal_original)
+        $subtotalOriginal = array_sum(array_column($venta['productos'], 'subtotal'));
+        $venta['descuento_display'] = ($subtotalOriginal > 0.001)
+            ? round(floatval($venta['descuento']) * floatval($venta['subtotal']) / $subtotalOriginal, 2)
+            : 0;
     }
     header('Content-Type: application/json');
     echo json_encode($venta);
@@ -100,7 +106,10 @@ if ($buscar) {
 $limit = (!$hayFiltroFecha && !$buscar) ? 'LIMIT 150' : 'LIMIT 1000';
 
 $stmt = $pdo->prepare("
-    SELECT v.*, c.nombre_completo AS cliente, u.nombre_completo AS cajero
+    SELECT v.*, c.nombre_completo AS cliente, u.nombre_completo AS cajero,
+        ROUND(v.descuento * v.subtotal / NULLIF(
+            (SELECT SUM(vp2.subtotal) FROM venta_productos vp2 WHERE vp2.venta_id = v.venta_id), 0
+        ), 2) AS descuento_display
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
     LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
@@ -546,8 +555,9 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                         <td style="color:#2e7d32;">
                             <?php
                                 $sinDesc = in_array($v['estado'], ['Devuelto','Cancelada']);
-                                echo (!$sinDesc && floatval($v['descuento']) > 0)
-                                    ? '-$'.number_format($v['descuento'],2)
+                                $descShow = floatval($v['descuento_display'] ?? $v['descuento']);
+                                echo (!$sinDesc && $descShow > 0)
+                                    ? '-$'.number_format($descShow,2)
                                     : '—';
                             ?>
                         </td>
@@ -853,9 +863,9 @@ function renderDetalle(v) {
 
     // Totales
     let html = '';
-    if (parseFloat(v.descuento) > 0) {
+    if (parseFloat(v.descuento_display) > 0) {
         html += `<div class="det-fila"><span>Subtotal</span><span>$${fmt(v.subtotal)}</span></div>`;
-        html += `<div class="det-fila" style="color:#2e7d32;"><span>Ahorraste</span><span>-$${fmt(v.descuento)}</span></div>`;
+        html += `<div class="det-fila" style="color:#2e7d32;"><span>Ahorraste</span><span>-$${fmt(v.descuento_display)}</span></div>`;
     }
     if (parseFloat(v.comision_terminal) > 0) {
         html += `<div class="det-fila"><span>Comisión terminal</span><span>$${fmt(v.comision_terminal)}</span></div>`;
@@ -958,14 +968,14 @@ function generarTicketHTML(venta) {
 
     html += `<div class="t-linea"></div>`;
 
-    if (parseFloat(venta.descuento) > 0) {
+    if (parseFloat(venta.descuento_display) > 0) {
         html += `<div class="t-fila"><span>Subtotal</span><span>$${fmt(venta.subtotal)}</span></div>`;
     }
     if (parseFloat(venta.comision_terminal) > 0) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${fmt(venta.comision_terminal)}</span></div>`;
     }
-    if (parseFloat(venta.descuento) > 0) {
-        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${fmt(venta.descuento)}</span></div>`;
+    if (parseFloat(venta.descuento_display) > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${fmt(venta.descuento_display)}</span></div>`;
     }
 
     html += `

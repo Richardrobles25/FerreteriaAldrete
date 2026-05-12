@@ -352,21 +352,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $subtotalBrutoDevuelto = round($subtotalBrutoDevuelto, 2);
             $descuentoDevuelto     = round(max(0.0, $subtotalBrutoDevuelto - $totalDevuelto), 2);
 
-            // 2) Comisión proporcional (Terminal / Mixto): comision × (totalDevuelto / suma_precio_final_venta)
+            // 2) Comisión proporcional (Terminal / Mixto).
+            // [FIX] Bug sucesivas devoluciones: antes usábamos comision_restante / precio_final_TOTAL_ORIGINAL.
+            // Al haber una devolución previa, comision_restante bajó pero el denominador seguía siendo el
+            // original completo → tasa de comisión distorsionada.
+            // Solución: usar como denominador el precio_final de los productos AÚN NO devueltos
+            // (= suma_restante). Así la tasa comision_restante/suma_restante se mantiene constante
+            // sin importar cuántas devoluciones parciales haya habido.
             $stmtVComision = $pdo->prepare("
                 SELECT v.comision_terminal,
-                       COALESCE(SUM(vp.precio_final * vp.cantidad), 0) AS suma_precio_final_total
+                       COALESCE(SUM(vp.precio_final * GREATEST(0, vp.cantidad - COALESCE(dev.devuelta, 0))), 0) AS suma_restante
                 FROM ventas v
                 LEFT JOIN venta_productos vp ON vp.venta_id = v.venta_id
+                LEFT JOIN (
+                    SELECT mi.producto_id, SUM(mi.cantidad) AS devuelta
+                    FROM movimientos_inventario mi
+                    JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
+                    WHERE mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
+                    GROUP BY mi.producto_id
+                ) dev ON dev.producto_id = vp.producto_id
                 WHERE v.venta_id = ?
                 GROUP BY v.venta_id
             ");
-            $stmtVComision->execute([$venta_id]);
+            $stmtVComision->execute([$venta_id, $venta_id]);
             $comData          = $stmtVComision->fetch(PDO::FETCH_ASSOC);
-            $comisionTotal    = $comData ? floatval($comData['comision_terminal'])      : 0.0;
-            $sumaPrecioFinal  = $comData ? floatval($comData['suma_precio_final_total']) : 0.0;
-            $comisionDevuelta = ($sumaPrecioFinal > 0.001 && $comisionTotal > 0.001)
-                ? round($comisionTotal * min(1.0, $totalDevuelto / $sumaPrecioFinal), 2)
+            $comisionTotal    = $comData ? floatval($comData['comision_terminal']) : 0.0;
+            $sumaRestante     = $comData ? floatval($comData['suma_restante'])     : 0.0;
+            // Tasa = comision_restante / precio_final_restante (constante entre devoluciones parciales)
+            $comisionDevuelta = ($sumaRestante > 0.001 && $comisionTotal > 0.001)
+                ? round($comisionTotal * min(1.0, $totalDevuelto / $sumaRestante), 2)
                 : 0.0;
 
             $pdo->beginTransaction();
@@ -847,13 +861,41 @@ function buscarVenta() {
 
                 // Productos individuales
                 individuales.forEach(p => {
-                    const restante = parseFloat(p.cantidad_restante);
-                    const esDecimal = restante % 1 !== 0;
-                    html += `<div class="prod-dev-row">
-                        <span style="flex:1;">${p.nombre_producto}</span>
-                        <span style="color:#aaa;font-size:11px;">Restante: ${restante.toFixed(esDecimal?2:0).replace(/\.?0+$/, '')}</span>
+                    const restante    = parseFloat(p.cantidad_restante);
+                    const esDecimal   = restante % 1 !== 0;
+                    const precioFinal = parseFloat(p.precio_final);
+                    const precioOrig  = parseFloat(p.precio_unitario);
+                    const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
+                    const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
+
+                    // Línea de precio: muestra tachado + precio_final si hay ajuste/promo
+                    let precioHtml = '';
+                    if (tieneAjuste) {
+                        precioHtml = `<div style="font-size:11px;margin-top:2px;">
+                            <span style="text-decoration:line-through;color:#bbb;">$${precioOrig.toFixed(2)}</span>
+                            <span style="color:#e67e22;font-weight:700;margin-left:4px;">$${precioFinal.toFixed(2)}</span>
+                            <span style="background:#fff3e0;color:#e67e22;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px;">&#9888; Ajuste por da&#241;o: ${p.nota_ajuste}</span>
+                        </div>`;
+                    } else if (tienePromo) {
+                        precioHtml = `<div style="font-size:11px;margin-top:2px;">
+                            <span style="text-decoration:line-through;color:#bbb;">$${precioOrig.toFixed(2)}</span>
+                            <span style="color:#1565c0;font-weight:700;margin-left:4px;">$${precioFinal.toFixed(2)}</span>
+                            <span style="background:#e3f2fd;color:#1565c0;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px;">Promo</span>
+                        </div>`;
+                    } else {
+                        precioHtml = `<div style="font-size:11px;margin-top:2px;color:#888;">$${precioFinal.toFixed(2)} c/u</div>`;
+                    }
+
+                    html += `<div class="prod-dev-row" style="align-items:flex-start;padding-top:10px;padding-bottom:10px;">
+                        <span style="flex:1;">
+                            <span style="font-size:13px;">${p.nombre_producto}</span>
+                            ${precioHtml}
+                        </span>
+                        <span style="color:#aaa;font-size:11px;padding-top:2px;white-space:nowrap;">Restante: ${restante.toFixed(esDecimal?2:0).replace(/\.?0+$/, '')}</span>
                         <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_final}" data-restante="${restante}"
-                            placeholder="0" step="${esDecimal ? 'any' : '1'}" min="0" max="${restante}" value="">
+                            placeholder="0" step="${esDecimal ? 'any' : '1'}" min="0" max="${restante}" value=""
+                            oninput="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();"
+                            onchange="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();">
                     </div>`;
                 });
 

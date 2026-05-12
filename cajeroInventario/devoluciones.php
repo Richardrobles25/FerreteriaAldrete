@@ -960,14 +960,15 @@ function actualizarResumen() {
 
     if (totalADevolver <= 0.001) { resumen.style.display = 'none'; return; }
 
-    // Comisión proporcional al monto seleccionado
-    const comisionTotal      = parseFloat(ventaActual.comision_terminal || 0);
-    const sumaPrecioFinalAll = (ventaActual.productos || []).reduce(
-        (s, p) => s + parseFloat(p.precio_final) * parseFloat(p.cantidad), 0
+    // Comisión proporcional al monto seleccionado.
+    // Tasa = comision_restante / suma_precio_final_RESTANTE (usa cantidad_restante, no cantidad original).
+    // Así la tasa es constante entre devoluciones parciales: tasa × totalADevolver.
+    const comisionTotal  = parseFloat(ventaActual.comision_terminal || 0);
+    const sumaRestante   = (ventaActual.productos || []).reduce(
+        (s, p) => s + parseFloat(p.precio_final) * Math.max(0, parseFloat(p.cantidad_restante || 0)), 0
     );
-    const comisionProp = (sumaPrecioFinalAll > 0.001 && comisionTotal > 0.001)
-        ? Math.round(comisionTotal * Math.min(1, totalADevolver / sumaPrecioFinalAll) * 100) / 100
-        : 0;
+    const tasaComision   = (sumaRestante > 0.001 && comisionTotal > 0.001) ? comisionTotal / sumaRestante : 0;
+    const comisionProp   = Math.round(totalADevolver * tasaComision * 100) / 100;
 
     const metodo = ventaActual.metodo_pago || 'Efectivo';
 

@@ -71,6 +71,8 @@ if (isset($_GET['detalle_venta'])) {
         if (!empty($devolucionesList)) {
             $devIds = array_column($devolucionesList, 'devolucion_id');
             $inPH = implode(',', array_fill(0, count($devIds), '?'));
+            // [AUTOFIX] JOIN con paquete_id para evitar filas duplicadas cuando el mismo producto
+            //           aparece como suelto y como parte de paquete en la misma venta.
             $stmtDevProds = $pdo->prepare("
                 SELECT mi.devolucion_id,
                        p.nombre_producto, p.codigo,
@@ -78,7 +80,14 @@ if (isset($_GET['detalle_venta'])) {
                        vp.precio_unitario, vp.precio_final
                 FROM movimientos_inventario mi
                 JOIN productos p ON mi.producto_id = p.producto_id
-                JOIN venta_productos vp ON vp.venta_id = ? AND vp.producto_id = mi.producto_id
+                JOIN venta_productos vp
+                    ON vp.venta_id = ?
+                    AND vp.producto_id = mi.producto_id
+                    AND (
+                        (mi.paquete_id IS NULL     AND vp.paquete_id IS NULL)
+                        OR
+                        (mi.paquete_id IS NOT NULL AND mi.paquete_id = vp.paquete_id)
+                    )
                 WHERE mi.devolucion_id IN ($inPH) AND mi.tipo = 'Entrada'
             ");
             $stmtDevProds->execute(array_merge([$venta_id], $devIds));

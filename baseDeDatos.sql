@@ -248,6 +248,7 @@
         cantidad      DECIMAL(10,3) NOT NULL,
         stock_anterior DECIMAL(10,3) NOT NULL,
         stock_nuevo   DECIMAL(10,3) NOT NULL,
+        paquete_id INT NULL,
         motivo        VARCHAR(255),
         proveedor_id  INT NULL DEFAULT NULL,
         created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

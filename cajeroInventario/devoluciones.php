@@ -112,12 +112,25 @@ if (isset($_GET['buscar_venta'])) {
             $stmtP->execute([$venta['venta_id']]);
             $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
             $devueltos = obtenerTotalesDevueltos($pdo, intval($venta['venta_id']), intval($_SESSION['sucursal_id']));
+
+            // Ordenar: filas sueltas (paquete_id IS NULL) primero, luego filas de paquete.
+            // Así las devoluciones se descuentan primero del cupo suelto y el sobrante
+            // va al paquete — evita que una devolución de sueltos "consuma" el paquete.
+            usort($venta['productos'], function($a, $b) {
+                $aPaq = !empty($a['paquete_id']);
+                $bPaq = !empty($b['paquete_id']);
+                if ($aPaq === $bPaq) return 0;
+                return $aPaq ? 1 : -1; // sueltos primero
+            });
+
+            $pendienteDevuelto = $devueltos; // cantidad por aplicar por producto_id
             foreach ($venta['productos'] as &$productoVenta) {
-                $productoId = intval($productoVenta['producto_id']);
+                $productoId      = intval($productoVenta['producto_id']);
                 $cantidadVendida = floatval($productoVenta['cantidad']);
-                $cantidadDevuelta = $devueltos[$productoId] ?? 0;
-                $productoVenta['cantidad_devuelta'] = $cantidadDevuelta;
-                $productoVenta['cantidad_restante'] = max(0, $cantidadVendida - $cantidadDevuelta);
+                $porAplicar      = min($pendienteDevuelto[$productoId] ?? 0, $cantidadVendida);
+                $pendienteDevuelto[$productoId] = ($pendienteDevuelto[$productoId] ?? 0) - $porAplicar;
+                $productoVenta['cantidad_devuelta'] = $porAplicar;
+                $productoVenta['cantidad_restante'] = max(0, $cantidadVendida - $porAplicar);
             }
             unset($productoVenta);
         }
@@ -273,8 +286,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Cargar precios reales y calcular subtotalFinalVenta (suma de precio_final × cantidad)
         // subtotalFinalVenta se usa para separar descuentos por-ítem (promos/ajustes) del descuento global del cliente
+        // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para evitar colisión de precio cuando el mismo
+        //           producto aparece como suelto y como parte de paquete en la misma venta.
         $stmtPreciosDB = $pdo->prepare("
-            SELECT producto_id, precio_final, precio_final * cantidad AS item_final_total
+            SELECT producto_id, paquete_id, precio_final, precio_final * cantidad AS item_final_total
             FROM venta_productos
             WHERE venta_id = ?
         ");
@@ -282,41 +297,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $preciosRealDB     = [];
         $subtotalFinalVenta = 0.0;
         foreach ($stmtPreciosDB->fetchAll(PDO::FETCH_ASSOC) as $fp) {
-            $preciosRealDB[intval($fp['producto_id'])] = floatval($fp['precio_final']);
+            $mapKey = intval($fp['producto_id']) . ':' . ($fp['paquete_id'] ?? '');
+            $preciosRealDB[$mapKey] = floatval($fp['precio_final']);
             $subtotalFinalVenta += floatval($fp['item_final_total']);
         }
 
+        // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para diferenciar filas sueltas de filas en paquete.
+        //           Así dos entradas del mismo producto con distinto paquete_id mantienen precios independientes.
         $productosAgrupados = [];
         if (empty($errores)) foreach ($productos_dev as $prod) {
             $productoId = intval($prod['producto_id'] ?? 0);
-            $cantidad = floatval($prod['cantidad'] ?? 0);
-            // [AUTOFIX] V-06: Usar precio de la BD, no el que manda el cliente
-            $precioUnitario = $preciosRealDB[$productoId] ?? floatval($prod['precio_unitario'] ?? 0);
+            $paqueteId  = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
+                          ? intval($prod['paquete_id']) : null;
+            $cantidad   = floatval($prod['cantidad'] ?? 0);
+            $mapKey     = $productoId . ':' . ($paqueteId ?? '');
+            // [AUTOFIX] V-06: Usar precio de la BD keyed por composite, no el que manda el cliente
+            $precioUnitario = $preciosRealDB[$mapKey] ?? floatval($prod['precio_unitario'] ?? 0);
 
             if ($productoId <= 0 || $cantidad <= 0) {
                 continue;
             }
 
-            if (!isset($productosAgrupados[$productoId])) {
-                $productosAgrupados[$productoId] = [
-                    'producto_id' => $productoId,
-                    'cantidad' => 0,
+            if (!isset($productosAgrupados[$mapKey])) {
+                $productosAgrupados[$mapKey] = [
+                    'producto_id'   => $productoId,
+                    'paquete_id'    => $paqueteId,
+                    'cantidad'      => 0,
                     'precio_unitario' => $precioUnitario,
                 ];
             }
 
-            $productosAgrupados[$productoId]['cantidad'] += $cantidad;
-            $productosAgrupados[$productoId]['precio_unitario'] = $precioUnitario;
+            $productosAgrupados[$mapKey]['cantidad']       += $cantidad;
+            $productosAgrupados[$mapKey]['precio_unitario'] = $precioUnitario;
         }
 
-        foreach ($productosAgrupados as $productoId => $detalleDevuelto) {
-            $vendido = $cantidadesVendidas[$productoId] ?? 0;
+        // [AUTOFIX] Validar cantidad total por producto_id (sumando sueltos + paquete).
+        //           productosAgrupados ahora usa clave compuesta, así que agrupamos manualmente.
+        $cantTotalPorProd = [];
+        foreach ($productosAgrupados as $entry) {
+            $pid = $entry['producto_id'];
+            $cantTotalPorProd[$pid] = ($cantTotalPorProd[$pid] ?? 0) + $entry['cantidad'];
+        }
+        foreach ($cantTotalPorProd as $productoId => $cantTotal) {
+            $vendido  = $cantidadesVendidas[$productoId] ?? 0;
             $devuelto = $cantidadesDevueltas[$productoId] ?? 0;
             if ($vendido <= 0) {
                 $errores[] = 'Uno de los productos seleccionados no pertenece a la venta.';
                 continue;
             }
-            if ($detalleDevuelto['cantidad'] > (($vendido - $devuelto) + 0.0001)) {
+            if ($cantTotal > (($vendido - $devuelto) + 0.0001)) {
                 $errores[] = 'No puedes regresar mas producto del que realmente queda pendiente por devolver.';
             }
         }
@@ -351,15 +380,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cantSuelta[intval($f['producto_id'])] = floatval($f['qty']);
             }
 
-            // Determinar qué paquetes están siendo tocados por la devolución.
-            // Se considera que se devuelve DEL paquete solo cuando la cantidad a devolver
-            // supera lo disponible como suelto (las devoluciones previas se descuentan del suelto primero).
-            $idsDevueltos    = array_keys($productosAgrupados);
+            // [AUTOFIX] Usar $cantTotalPorProd (suma por producto_id) y lista plana de ids devueltos.
+            //           productosAgrupados ya tiene clave compuesta, así que extraemos los ids únicos.
+            $idsDevueltos    = array_unique(array_column(array_values($productosAgrupados), 'producto_id'));
             $paquesConRetorno = [];
             foreach ($paqProds as $paqId => $prodsDePaquete) {
                 foreach ($prodsDePaquete as $prodId) {
-                    if (!isset($productosAgrupados[$prodId])) continue; // no se devuelve este producto
-                    $qDevolviendo     = $productosAgrupados[$prodId]['cantidad'];
+                    if (!isset($cantTotalPorProd[$prodId])) continue; // no se devuelve este producto
+                    $qDevolviendo     = $cantTotalPorProd[$prodId];
                     $qSuelta          = $cantSuelta[$prodId] ?? 0;
                     $qYaDevuelta      = $cantidadesDevueltas[$prodId] ?? 0;
                     $disponibleSuelta = max(0.0, $qSuelta - $qYaDevuelta);
@@ -390,25 +418,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Restar el mismo valor a ambos campos producía subtotal incorrecto y residuo de comisión.
 
             // 1) Obtener precio_unitario real de venta_productos para los productos devueltos
+            // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para precio bruto correcto por fila.
             $prodIdsRetorno = array_unique(array_map('intval', array_column($productos_dev, 'producto_id')));
             $precioUnitarioMap = [];
             if (!empty($prodIdsRetorno)) {
                 $inPH = implode(',', array_fill(0, count($prodIdsRetorno), '?'));
                 $stmtVPBruto = $pdo->prepare("
-                    SELECT producto_id, precio_unitario
+                    SELECT producto_id, paquete_id, precio_unitario
                     FROM venta_productos
                     WHERE venta_id = ? AND producto_id IN ($inPH)
                 ");
                 $stmtVPBruto->execute(array_merge([$venta_id], $prodIdsRetorno));
                 foreach ($stmtVPBruto->fetchAll(PDO::FETCH_ASSOC) as $row) {
-                    $precioUnitarioMap[intval($row['producto_id'])] = floatval($row['precio_unitario']);
+                    $mk = intval($row['producto_id']) . ':' . ($row['paquete_id'] ?? '');
+                    $precioUnitarioMap[$mk] = floatval($row['precio_unitario']);
                 }
             }
 
             $subtotalBrutoDevuelto = 0.0;
             foreach ($productos_dev as $prod) {
-                $pid = intval($prod['producto_id']);
-                $precioUnit = $precioUnitarioMap[$pid] ?? floatval($prod['precio_unitario']);
+                $pid  = intval($prod['producto_id']);
+                $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
+                         ? intval($prod['paquete_id']) : null;
+                $mk   = $pid . ':' . ($paqId ?? '');
+                $precioUnit = $precioUnitarioMap[$mk] ?? floatval($prod['precio_unitario']);
                 $subtotalBrutoDevuelto += floatval($prod['cantidad']) * $precioUnit;
             }
             $subtotalBrutoDevuelto = round($subtotalBrutoDevuelto, 2);
@@ -435,10 +468,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 : 1.0;
 
             // subtotalFinalDevuelto = precio_final × qty por cada ítem devuelto
+            // [AUTOFIX] Usar clave compuesta para precio_final correcto (suelto vs paquete).
             $subtotalFinalDevuelto = 0.0;
             foreach ($productos_dev as $prod) {
-                $pid = intval($prod['producto_id']);
-                $subtotalFinalDevuelto += floatval($prod['cantidad']) * ($preciosRealDB[$pid] ?? floatval($prod['precio_unitario']));
+                $pid   = intval($prod['producto_id']);
+                $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
+                         ? intval($prod['paquete_id']) : null;
+                $mk    = $pid . ':' . ($paqId ?? '');
+                $subtotalFinalDevuelto += floatval($prod['cantidad']) * ($preciosRealDB[$mk] ?? floatval($prod['precio_unitario']));
             }
             $subtotalFinalDevuelto = round($subtotalFinalDevuelto, 2);
 
@@ -496,6 +533,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach ($productos_dev as $prod) {
                     $producto_id = intval($prod['producto_id']);
                     $cantidad    = floatval($prod['cantidad']);
+                    // [AUTOFIX] Guardar paquete_id en movimiento para poder hacer JOIN correcto en historial.
+                    $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
+                             ? intval($prod['paquete_id']) : null;
                     if ($cantidad <= 0) continue;
 
                     $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
@@ -504,8 +544,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stockNuevo    = $stockAnterior + $cantidad;
 
                     $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $_SESSION['sucursal_id']]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id) VALUES (?,?,?,'Entrada',?,?,?,?,?)")
-                        ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id,paquete_id) VALUES (?,?,?,'Entrada',?,?,?,?,?,?)")
+                        ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id, $paqId]);
                 }
 
                 // [AUTOFIX] Bug B: actualizar con bases correctas por campo
@@ -1022,9 +1062,11 @@ function buscarVenta() {
                         <div class="prod-dev-row" style="background:#fffde7;border-radius:8px;padding:10px 12px;">
                             <span style="flex:1;">📦 <strong>${paq.nombre}</strong></span>
                             <span style="color:#aaa;font-size:11px;">Restante: ${combosRestantes} combo${combosRestantes !== 1 ? 's' : ''}</span>
-                            <input type="number" data-paquete-id="${paqId}"
+                            <input type="number" data-paquete-id="${paqId}" data-restante="${combosRestantes}"
                                 placeholder="0" step="1" min="0" max="${combosRestantes}" value=""
-                                style="width:80px;padding:5px 8px;border:1px solid #ddd;border-radius:5px;font-size:13px;text-align:center;">
+                                style="width:80px;padding:5px 8px;border:1px solid #ddd;border-radius:5px;font-size:13px;text-align:center;"
+                                oninput="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();"
+                                onchange="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();">
                         </div>
                     </div>`;
                 });
@@ -1154,11 +1196,13 @@ function prepararDevolucion() {
                 errorMsg = `No puedes devolver más de ${paq.combosRestantes} combo(s) de "${paq.nombre}".`;
                 return;
             }
+            // [AUTOFIX] Incluir paquete_id en cada producto para que el backend use el precio correcto por fila.
             paq.productos.forEach(p => {
                 prods.push({
                     producto_id:    p.producto_id,
                     cantidad:       qty * (parseFloat(p.cantidad_requerida_combo) || 1),
-                    precio_unitario: p.precio_final
+                    precio_unitario: p.precio_final,
+                    paquete_id:     parseInt(paqId)
                 });
             });
         } else {
@@ -1168,7 +1212,8 @@ function prepararDevolucion() {
                 errorMsg = 'No puedes devolver más de lo que se compró (' + restante + ' restante).';
                 return;
             }
-            prods.push({ producto_id: inp.dataset.productoId, cantidad: qty, precio_unitario: inp.dataset.precio });
+            // [AUTOFIX] paquete_id = null para productos sueltos (clave compuesta en backend).
+            prods.push({ producto_id: inp.dataset.productoId, cantidad: qty, precio_unitario: inp.dataset.precio, paquete_id: null });
         }
     });
 

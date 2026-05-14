@@ -6,6 +6,14 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
+// Verificar que hay caja abierta; si no, redirigir a abrirCaja
+$_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
+$_stmtCajaGuard->execute([$_SESSION['usuario_id']]);
+if (!$_stmtCajaGuard->fetchColumn()) {
+    header('Location: abrirCaja.php?msg=sinCaja');
+    exit();
+}
+
 $errores = [];
 $exito   = false;
 

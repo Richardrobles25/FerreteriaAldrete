@@ -14,10 +14,14 @@ $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
 
 $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 
-// Caja abierta del usuario actual
+// Caja abierta del usuario actual — si no hay, redirigir a abrirCaja
 $stmtCajaCheck = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
 $stmtCajaCheck->execute([$_SESSION['usuario_id']]);
 $cajaAbiertaId = $stmtCajaCheck->fetchColumn() ?: null;
+if (!$cajaAbiertaId) {
+    header('Location: abrirCaja.php?msg=sinCaja');
+    exit();
+}
 
 // AJAX: historial de pagos de un cliente (todos sus créditos)
 if (isset($_GET['get_abonos_cliente'])) {

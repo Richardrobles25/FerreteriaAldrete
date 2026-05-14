@@ -24,9 +24,11 @@ if (isset($_GET['detalle_venta'])) {
         $venta['fecha_formateada'] = date('d/m/Y H:i', strtotime($venta['created_at']));
         $stmtP = $pdo->prepare("
             SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.precio_final, vp.descuento, vp.subtotal, vp.nota_ajuste,
+                   vp.paquete_id, pk.nombre AS paquete_nombre, pk.precio_paquete,
                    p.nombre_producto, p.codigo
             FROM venta_productos vp
             JOIN productos p ON vp.producto_id = p.producto_id
+            LEFT JOIN paquetes pk ON pk.paquete_id = vp.paquete_id
             WHERE vp.venta_id = ?
         ");
         $stmtP->execute([$venta_id]);
@@ -827,8 +829,55 @@ function renderDetalle(v) {
         ` : ''}
     `;
 
-    // Productos
-    document.getElementById('detProductos').innerHTML = v.productos.map(p => {
+    // Productos — agrupar paquetes en una sola fila
+    const paqMapDet = {};
+    const prodsSueltosDet = [];
+    (v.productos || []).forEach(p => {
+        if (p.paquete_id) {
+            const pid = String(p.paquete_id);
+            if (!paqMapDet[pid]) {
+                paqMapDet[pid] = {
+                    nombre:          p.paquete_nombre || ('Paquete #' + pid),
+                    precio_paquete:  parseFloat(p.precio_paquete || 0),
+                    subtotal:        0,
+                    cant_total:      0,
+                    cant_devuelta:   0,
+                };
+            }
+            paqMapDet[pid].subtotal      += parseFloat(p.subtotal || 0);
+            paqMapDet[pid].cant_total    += parseFloat(p.cantidad || 0);
+            paqMapDet[pid].cant_devuelta += parseFloat(p.cantidad_devuelta || 0);
+        } else {
+            prodsSueltosDet.push(p);
+        }
+    });
+
+    let rowsHTML = '';
+
+    // Filas de paquetes
+    Object.values(paqMapDet).forEach(pq => {
+        const combos    = pq.precio_paquete > 0.001 ? Math.round(pq.subtotal / pq.precio_paquete) : 1;
+        const todoDev   = pq.cant_devuelta >= pq.cant_total - 0.001 && pq.cant_total > 0;
+        const parcialDev= pq.cant_devuelta > 0.001 && !todoDev;
+        const rowStyle  = todoDev ? 'opacity:0.55;background:#fafafa;' : 'background:#fffde7;';
+        const ltStyle   = todoDev ? 'text-decoration:line-through;color:#aaa;' : '';
+        rowsHTML += `
+        <tr style="${rowStyle}">
+            <td style="color:#e65100;font-size:13px;padding-left:6px;">📦</td>
+            <td>
+                <span style="font-weight:600;${ltStyle}">${esc(pq.nombre)}</span>
+                ${todoDev    ? '<span style="background:#fdecea;color:#c0392b;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Devuelto</span>' : ''}
+                ${parcialDev ? '<span style="background:#fff3e0;color:#e65100;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Dev. parcial</span>' : ''}
+                <div style="font-size:11px;color:#aaa;margin-top:1px;">Paquete</div>
+            </td>
+            <td style="text-align:right;${ltStyle}">${combos} combo${combos !== 1 ? 's' : ''}</td>
+            <td style="text-align:right;${ltStyle}">$${fmt(pq.precio_paquete)}</td>
+            <td style="text-align:right;font-weight:600;${ltStyle}">$${fmt(pq.subtotal)}</td>
+        </tr>`;
+    });
+
+    // Filas de productos individuales
+    prodsSueltosDet.forEach(p => {
         const tieneAjuste  = p.nota_ajuste && p.nota_ajuste.trim() !== '';
         const precioOrig   = parseFloat(p.precio_unitario);
         const precioFinal  = parseFloat(p.precio_final || p.precio_unitario);
@@ -849,12 +898,12 @@ function renderDetalle(v) {
             precioHTML = `$${fmt(precioOrig)}`;
         }
 
-        return `
+        rowsHTML += `
         <tr style="${rowStyle}">
             <td style="color:#aaa;font-size:12px;font-family:monospace;${tdLineThru}">${esc(p.codigo)}</td>
             <td>
                 <span style="${tdLineThru}">${esc(p.nombre_producto)}</span>
-                ${todoDev   ? '<span style="background:#fdecea;color:#c0392b;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Devuelto</span>' : ''}
+                ${todoDev    ? '<span style="background:#fdecea;color:#c0392b;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Devuelto</span>' : ''}
                 ${parcialDev ? `<span style="background:#fff3e0;color:#e65100;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Dev. parcial (${devuelta % 1 === 0 ? devuelta : devuelta.toFixed(2)})</span>` : ''}
                 ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño: ${esc(p.nota_ajuste)}</div>` : ''}
                 ${tienePromo  ? `<div style="font-size:11px;color:#2e7d32;margin-top:2px;">Precio de promoción</div>` : ''}
@@ -863,7 +912,10 @@ function renderDetalle(v) {
             <td style="text-align:right;${todoDev?'text-decoration:line-through;color:#aaa;':''}">${precioHTML}</td>
             <td style="text-align:right;font-weight:600;${tdLineThru}">$${fmt(p.subtotal)}</td>
         </tr>`;
-    }).join('') || '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">Sin productos registrados</td></tr>';
+    });
+
+    document.getElementById('detProductos').innerHTML =
+        rowsHTML || '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">Sin productos registrados</td></tr>';
 
     // Totales
     let html = '';
@@ -946,8 +998,42 @@ function generarTicketHTML(venta) {
         <div class="t-fila t-bold"><span>Producto</span><span>Importe</span></div>
         <div class="t-linea"></div>`;
 
+    // Agrupar paquetes — combos = round(subtotal_acumulado / precio_paquete)
     let ahorroPromoTicket = 0;
+    const paqMapTk = {};
+    const prodsSueltosTk = [];
     (venta.productos || []).forEach(p => {
+        if (p.paquete_id) {
+            const pid = String(p.paquete_id);
+            if (!paqMapTk[pid]) {
+                paqMapTk[pid] = {
+                    nombre:         p.paquete_nombre || ('Paquete #' + pid),
+                    subtotal:       0,
+                    precio_paquete: parseFloat(p.precio_paquete || 0),
+                    cant_total:     0,
+                    cant_devuelta:  0,
+                };
+            }
+            paqMapTk[pid].subtotal      += parseFloat(p.subtotal || 0);
+            paqMapTk[pid].cant_total    += parseFloat(p.cantidad || 0);
+            paqMapTk[pid].cant_devuelta += parseFloat(p.cantidad_devuelta || 0);
+        } else {
+            prodsSueltosTk.push(p);
+        }
+    });
+
+    // Renderizar paquetes
+    Object.values(paqMapTk).forEach(pq => {
+        const combos    = pq.precio_paquete > 0.001 ? Math.round(pq.subtotal / pq.precio_paquete) : 1;
+        const combosStr = combos + (combos === 1 ? ' combo' : ' combos');
+        const todoDev   = pq.cant_devuelta >= pq.cant_total - 0.001 && pq.cant_total > 0;
+        const ltStyle   = todoDev ? 'text-decoration:line-through;color:#aaa;' : '';
+        html += `<div style="${ltStyle}">📦 ${esc(pq.nombre)}${todoDev ? ' [DEVUELTO]' : ''}</div>`;
+        html += `<div class="t-fila" style="${ltStyle}"><span>${combosStr}</span><span>$${fmt(pq.subtotal)}</span></div>`;
+    });
+
+    // Renderizar productos individuales
+    prodsSueltosTk.forEach(p => {
         const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
         const precioOrig  = parseFloat(p.precio_unitario);
         const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
@@ -1000,7 +1086,7 @@ function generarTicketHTML(venta) {
         <div class="t-fila"><span>Efectivo</span><span>$${fmt(venta.monto_efectivo)}</span></div>
         <div class="t-fila"><span>Terminal</span><span>$${fmt(venta.monto_terminal)}</span></div>`;
     }
-    if (venta.metodo_pago === 'Credito') {
+    if (venta.metodo_pago === 'Crédito' || venta.metodo_pago === 'Credito') {
         html += `<div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>`;
     }
 

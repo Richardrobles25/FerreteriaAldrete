@@ -184,6 +184,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
 
     <div class="content">
         <div class="form-card">
+            <?php if (isset($_GET['msg']) && $_GET['msg'] === 'sinCaja'): ?>
+                <div class="alerta-box" style="background:#fff3e0;border-color:#ffb74d;color:#e65100;">
+                    ⚠ Necesitas abrir una caja para acceder a ese módulo.
+                </div>
+            <?php endif; ?>
             <?php if ($cajaAbierta): ?>
                 <h1>Caja en curso</h1>
                 <p>Ya tienes un turno activo en este momento.</p>

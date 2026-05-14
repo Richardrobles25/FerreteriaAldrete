@@ -313,6 +313,7 @@
     nota_cancelacion TEXT NULL DEFAULT NULL,
     total_devuelto DECIMAL(10,2) NOT NULL DEFAULT 0,
     subtotal_bruto_devuelto DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    subtotal_final_devuelto DECIMAL(10,2) NOT NULL DEFAULT 0,
     comision_devuelta       DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     FOREIGN KEY (venta_id)   REFERENCES ventas(venta_id),
     FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
@@ -360,9 +361,11 @@ CREATE TABLE movimientos_caja (
   monto         DECIMAL(10,2) NOT NULL,
   nota          TEXT NOT NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  devolucion_id INT UNSIGNED NULL DEFAULT NULL,
   KEY idx_caja (caja_id),
   KEY idx_suc  (sucursal_id),
-  KEY idx_fecha (created_at)
+  KEY idx_fecha (created_at),
+  CONSTRAINT fk_movcaja_dev FOREIGN KEY (devolucion_id) REFERENCES devoluciones(devolucion_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE stock_sucursal (

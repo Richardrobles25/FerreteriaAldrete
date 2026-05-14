@@ -11,6 +11,23 @@ if (isset($_GET['eliminar'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
     $id = intval($_GET['eliminar']);
+
+    // [AUTOFIX] BUG-03: Verificar que el cliente no tenga créditos activos antes de eliminar
+    $stmtCred = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
+    $stmtCred->execute([$id]);
+    if ($stmtCred->fetchColumn() > 0) {
+        header('Location: clientes.php?msg=error_tiene_credito');
+        exit();
+    }
+
+    // [AUTOFIX] BUG-03: Verificar que el cliente no tenga ventas pendientes antes de eliminar
+    $stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
+    $stmtPend->execute([$id]);
+    if ($stmtPend->fetchColumn() > 0) {
+        header('Location: clientes.php?msg=error_tiene_pendientes');
+        exit();
+    }
+
     $pdo->prepare("UPDATE clientes SET activo = 0 WHERE cliente_id = ?")->execute([$id]);
     header('Location: clientes.php?msg=eliminado');
     exit();
@@ -34,9 +51,16 @@ if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM clientes WHERE cliente_id = ?");
     $stmt->execute([intval($_GET['editar'])]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
+    // [AUTOFIX] BUG-05: Si el ID no existe redirigir con error en lugar de mostrar form vacío
+    if ($editando === false) {
+        header('Location: clientes.php?msg=no_encontrado');
+        exit();
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [AUTOFIX] BUG-01: Verificar CSRF token en formulario de crear/editar cliente
+    requerirCSRF($_POST['_token'] ?? '', 'clientes.php');
     $nombre_completo    = trim($_POST['nombre_completo'] ?? '');
     $telefono           = trim($_POST['telefono'] ?? '');
     $direccion          = trim($_POST['direccion'] ?? '');
@@ -69,14 +93,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
-if ($busqueda) {
-    $stmt = $pdo->prepare("SELECT * FROM clientes WHERE activo = 1 AND nombre_completo LIKE ? ORDER BY nombre_completo ASC");
-    $stmt->execute(['%'.$busqueda.'%']);
-} else {
-    $stmt = $pdo->prepare("SELECT * FROM clientes WHERE activo = 1 ORDER BY nombre_completo ASC");
-    $stmt->execute();
-}
+// Búsqueda en tiempo real: se carga toda la lista y el JS filtra mientras se escribe
+$verInactivos = isset($_GET['ver_inactivos']) && $_GET['ver_inactivos'] === '1';
+$filtroActivo = $verInactivos ? '' : 'AND activo = 1';
+$stmt = $pdo->prepare("SELECT * FROM clientes WHERE 1=1 $filtroActivo ORDER BY nombre_completo ASC");
+$stmt->execute();
 $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -235,17 +256,28 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <!-- Lista -->
         <div>
             <?php if (isset($_GET['msg'])): ?>
-                <?php $msgs = ['creado'=>'Cliente registrado.','editado'=>'Cliente actualizado.','eliminado'=>'Cliente eliminado.']; ?>
-                <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
+                <?php
+                // [AUTOFIX] BUG-03/BUG-05: Agregar mensajes de error para bloqueos y cliente no encontrado
+                $msgsExito = ['creado' => 'Cliente registrado.', 'editado' => 'Cliente actualizado.', 'eliminado' => 'Cliente eliminado.', 'no_encontrado' => 'Cliente no encontrado.'];
+                $msgsError = ['error_tiene_credito' => 'No se puede eliminar: el cliente tiene créditos activos.', 'error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.'];
+                $msgKey = $_GET['msg'];
+                if (isset($msgsExito[$msgKey])):
+                ?>
+                    <div class="msg msg-exito"><?= $msgsExito[$msgKey] ?></div>
+                <?php elseif (isset($msgsError[$msgKey])): ?>
+                    <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;"><?= $msgsError[$msgKey] ?></div>
+                <?php endif; ?>
             <?php endif; ?>
 
-            <form method="GET" action="clientes.php">
-                <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar por nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
-                    <button class="btn-buscar" type="submit">Buscar</button>
-                    <?php if ($busqueda): ?><a class="btn-limpiar" href="clientes.php">Limpiar</a><?php endif; ?>
-                </div>
-            </form>
+            <div class="barra-busqueda">
+                <input type="text" id="inputBusqueda" placeholder="Buscar por nombre, teléfono o correo..." oninput="filtrarTabla(this.value)" autocomplete="off">
+                <!-- Botón Ver inactivos / Solo activos sigue siendo un link GET normal -->
+                <?php if ($verInactivos): ?>
+                    <a class="btn-limpiar" href="clientes.php">Solo activos</a>
+                <?php else: ?>
+                    <a class="btn-limpiar" href="clientes.php?ver_inactivos=1" style="color:#888;">Ver inactivos</a>
+                <?php endif; ?>
+            </div>
 
             <div class="card" style="padding:0;">
                 <?php if (count($clientes) > 0): ?>
@@ -261,9 +293,13 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </thead>
                     <tbody id="tablaFiltrable">
                         <?php foreach ($clientes as $c): ?>
-                        <tr>
+                        <tr <?= !$c['activo'] ? 'style="opacity:0.55;"' : '' ?>>
                             <td>
                                 <strong><?= htmlspecialchars($c['nombre_completo']) ?></strong>
+                                <?php if (!$c['activo']): ?>
+                                    <!-- [AUTOFIX] BUG-04: Indicador visual de cliente inactivo -->
+                                    <span style="font-size:10px;background:#f5f5f5;color:#999;padding:1px 6px;border-radius:99px;margin-left:5px;">Inactivo</span>
+                                <?php endif; ?>
                                 <?php if ($c['correo']): ?>
                                     <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($c['correo']) ?></div>
                                 <?php endif; ?>
@@ -280,9 +316,14 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             </td>
                             <td>
                                 <div class="acciones">
-                                    <a class="btn-accion btn-editar" href="clientes.php?editar=<?= $c['cliente_id'] ?>">Editar</a>
-                                    <!-- [AUTOFIX] SEC-01: Token CSRF en link destructivo -->
-                                    <a class="btn-accion btn-eliminar" href="clientes.php?eliminar=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
+                                    <?php if ($c['activo']): ?>
+                                        <a class="btn-accion btn-editar" href="clientes.php?editar=<?= $c['cliente_id'] ?>">Editar</a>
+                                        <!-- [AUTOFIX] SEC-01: Token CSRF en link destructivo -->
+                                        <a class="btn-accion btn-eliminar" href="clientes.php?eliminar=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
+                                    <?php else: ?>
+                                        <!-- [AUTOFIX] BUG-04: Botón reactivar para clientes inactivos -->
+                                        <a class="btn-accion" style="background:#e8f5e9;color:#2e7d32;" href="clientes.php?toggle=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?><?= $verInactivos ? '&ver_inactivos=1' : '' ?>" onclick="return confirm('¿Reactivar este cliente?')">Reactivar</a>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                         </tr>
@@ -305,11 +346,14 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
 
                 <form method="POST">
+                    <!-- [AUTOFIX] BUG-01: Token CSRF para proteger el form de crear/editar -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="cliente_id" value="<?= $editando['cliente_id'] ?? 0 ?>">
 
                     <div class="form-group">
                         <label>Nombre completo *</label>
-                        <input type="text" name="nombre_completo" value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan García">
+                        <!-- [AUTOFIX] BUG-07: Agregar required para validación inmediata en el navegador -->
+                        <input type="text" name="nombre_completo" required value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan García">
                     </div>
 
                     <div class="form-row">
@@ -319,7 +363,8 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                         <div class="form-group">
                             <label>Descuento fijo (%)</label>
-                            <input type="number" name="descuento_fijo" value="<?= $_POST['descuento_fijo'] ?? $editando['descuento_fijo'] ?? '' ?>" step="0.01" min="0" max="100" placeholder="0">
+                            <!-- [AUTOFIX] BUG-02: Agregar htmlspecialchars() para prevenir XSS en el value -->
+                            <input type="number" name="descuento_fijo" value="<?= htmlspecialchars($_POST['descuento_fijo'] ?? $editando['descuento_fijo'] ?? '') ?>" step="0.01" min="0" max="100" placeholder="0">
                         </div>
                     </div>
 
@@ -348,7 +393,8 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="credito-campos <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '' ?>" id="creditoCampos">
                         <div class="form-group">
                             <label>Límite de crédito</label>
-                            <input type="number" name="limite_credito" value="<?= $_POST['limite_credito'] ?? $editando['limite_credito'] ?? '' ?>" step="0.01" min="0" placeholder="0.00">
+                            <!-- [AUTOFIX] BUG-02: Agregar htmlspecialchars() para prevenir XSS en el value -->
+                            <input type="number" name="limite_credito" value="<?= htmlspecialchars($_POST['limite_credito'] ?? $editando['limite_credito'] ?? '') ?>" step="0.01" min="0" placeholder="0.00">
                         </div>
                     </div>
 
@@ -370,8 +416,14 @@ function normalizar(str) {
 }
 function filtrarTabla(q) {
     q = normalizar(q);
+    // Busca en columna 1 (nombre + correo como sub-línea) y columna 2 (teléfono)
+    // Se excluyen las demás celdas para no coincidir con "Editar", "Eliminar", "Autorizado", etc.
     document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
-        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+        var celdaNombre = tr.querySelector('td:nth-child(1)');
+        var celdaTel    = tr.querySelector('td:nth-child(2)');
+        var texto = (celdaNombre ? normalizar(celdaNombre.textContent) : '') +
+                    (celdaTel   ? normalizar(celdaTel.textContent)    : '');
+        tr.style.display = (!q || texto.includes(q)) ? '' : 'none';
     });
 }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }

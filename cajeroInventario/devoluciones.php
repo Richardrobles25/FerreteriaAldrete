@@ -9,10 +9,12 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 // Verificar que hay caja abierta; si no, redirigir a abrirCaja
 $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
 $_stmtCajaGuard->execute([$_SESSION['usuario_id']]);
-if (!$_stmtCajaGuard->fetchColumn()) {
+$_cajaGuardId = $_stmtCajaGuard->fetchColumn();
+if (!$_cajaGuardId) {
     header('Location: abrirCaja.php?msg=sinCaja');
     exit();
 }
+$cajaId = intval($_cajaGuardId); // [AUTOFIX] Guardado para registrar retiro de caja en devoluciones
 
 $errores = [];
 $exito   = false;
@@ -135,13 +137,18 @@ if (isset($_GET['cancelar_dev'])) {
     $devolucion_id = intval($_GET['cancelar_dev']);
     $nota_cancel   = trim($_GET['nota'] ?? '');
 
+    // [AUTOFIX] BUG-03: Agregar filtro de sucursal para que un cajero no pueda cancelar
+    // devoluciones de otra sucursal. Sin este check, un atacante que conozca el devolucion_id
+    // podría corromper stock e historial financiero de otras sucursales.
     $stmtD = $pdo->prepare("
-        SELECT d.*, v.total AS total_actual, v.estado AS estado_actual, v.comision_terminal
+        SELECT d.*, v.total AS total_actual, v.estado AS estado_actual,
+               v.comision_terminal, v.metodo_pago, v.folio
         FROM devoluciones d
         JOIN ventas v ON d.venta_id = v.venta_id
+        JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
         WHERE d.devolucion_id = ?
     ");
-    $stmtD->execute([$devolucion_id]);
+    $stmtD->execute([$_SESSION['sucursal_id'], $devolucion_id]);
     $dev = $stmtD->fetch(PDO::FETCH_ASSOC);
 
     if (!$dev)                                                  { header('Location: devoluciones.php?msg=error_cancelar');  exit(); }
@@ -203,6 +210,17 @@ if (isset($_GET['cancelar_dev'])) {
         $pdo->prepare("UPDATE devoluciones SET cancelada_en = NOW(), cancelada_por = ?, nota_cancelacion = ? WHERE devolucion_id = ?")
             ->execute([$_SESSION['usuario_id'], $nota_cancel ?: null, $devolucion_id]);
 
+        // Registrar ingreso de efectivo DENTRO de la transacción.
+        // Al cancelar la devolución el cliente regresa el efectivo — debe quedar en caja.
+        // Solo para Terminal/Mixto/Transferencia (igual que el Retiro original).
+        $metodosQueNecesitanIngreso = ['Terminal', 'Mixto', 'Transferencia'];
+        if (in_array($dev['metodo_pago'] ?? '', $metodosQueNecesitanIngreso, true)) {
+            $folioCancelNota = $dev['folio'] ?? $dev['venta_id'];
+            $notaIngreso = 'Cancelación devolución folio #' . $folioCancelNota;
+            $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota, devolucion_id) VALUES (?,?,?,'Ingreso',?,?,?)")
+                ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $totalDevuelto, $notaIngreso, $devolucion_id]);
+        }
+
         $pdo->commit();
         header('Location: devoluciones.php?msg=cancelada');
         exit();
@@ -225,8 +243,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         // [AUTOFIX] D-02: Verificar que la venta pertenezca a la sucursal del cajero antes de procesar
+        // [AUTOFIX] Se agregan subtotal y descuento para calcular el factor neto proporcional al devolver
         $stmtV = $pdo->prepare("
-            SELECT v.metodo_pago, v.cliente_id, v.folio
+            SELECT v.metodo_pago, v.cliente_id, v.folio,
+                   v.subtotal AS venta_subtotal, v.descuento AS venta_descuento
             FROM ventas v
             JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
             WHERE v.venta_id = ?
@@ -251,16 +271,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $cantidadesDevueltas = obtenerTotalesDevueltos($pdo, $venta_id, intval($_SESSION['sucursal_id']));
 
-        // [AUTOFIX] V-06: Cargar precios reales de la BD para validar y usar en devoluciones
+        // Cargar precios reales y calcular subtotalFinalVenta (suma de precio_final × cantidad)
+        // subtotalFinalVenta se usa para separar descuentos por-ítem (promos/ajustes) del descuento global del cliente
         $stmtPreciosDB = $pdo->prepare("
-            SELECT producto_id, precio_final
+            SELECT producto_id, precio_final, precio_final * cantidad AS item_final_total
             FROM venta_productos
             WHERE venta_id = ?
         ");
         $stmtPreciosDB->execute([$venta_id]);
-        $preciosRealDB = [];
+        $preciosRealDB     = [];
+        $subtotalFinalVenta = 0.0;
         foreach ($stmtPreciosDB->fetchAll(PDO::FETCH_ASSOC) as $fp) {
             $preciosRealDB[intval($fp['producto_id'])] = floatval($fp['precio_final']);
+            $subtotalFinalVenta += floatval($fp['item_final_total']);
         }
 
         $productosAgrupados = [];
@@ -298,7 +321,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Validar que los paquetes se devuelvan completos
+        // Validar que los paquetes se devuelvan completos.
+        // Si un producto se vendió tanto dentro de un paquete como suelto, se permite
+        // devolverlo de forma independiente siempre que la cantidad devuelta no supere
+        // lo vendido como suelto. Solo se exige el paquete completo cuando la cantidad
+        // a devolver excede lo disponible fuera del paquete (se está tocando el paquete).
         if (empty($errores)) {
             $stmtPaq = $pdo->prepare("
                 SELECT paquete_id, producto_id
@@ -310,15 +337,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach ($stmtPaq->fetchAll(PDO::FETCH_ASSOC) as $fila) {
                 $paqProds[intval($fila['paquete_id'])][] = intval($fila['producto_id']);
             }
-            $idsDevueltos = array_keys($productosAgrupados);
+
+            // Cantidades vendidas fuera de cualquier paquete (líneas sueltas)
+            $stmtSueltos = $pdo->prepare("
+                SELECT producto_id, SUM(cantidad) AS qty
+                FROM venta_productos
+                WHERE venta_id = ? AND paquete_id IS NULL
+                GROUP BY producto_id
+            ");
+            $stmtSueltos->execute([$venta_id]);
+            $cantSuelta = [];
+            foreach ($stmtSueltos->fetchAll(PDO::FETCH_ASSOC) as $f) {
+                $cantSuelta[intval($f['producto_id'])] = floatval($f['qty']);
+            }
+
+            // Determinar qué paquetes están siendo tocados por la devolución.
+            // Se considera que se devuelve DEL paquete solo cuando la cantidad a devolver
+            // supera lo disponible como suelto (las devoluciones previas se descuentan del suelto primero).
+            $idsDevueltos    = array_keys($productosAgrupados);
+            $paquesConRetorno = [];
             foreach ($paqProds as $paqId => $prodsDePaquete) {
-                $algunoEnDevolucion = count(array_intersect($idsDevueltos, $prodsDePaquete)) > 0;
-                if ($algunoEnDevolucion) {
-                    $faltantes = array_diff($prodsDePaquete, $idsDevueltos);
-                    if (!empty($faltantes)) {
-                        $errores[] = 'Si devuelves un paquete debes devolver todos sus productos juntos.';
-                        break;
+                foreach ($prodsDePaquete as $prodId) {
+                    if (!isset($productosAgrupados[$prodId])) continue; // no se devuelve este producto
+                    $qDevolviendo     = $productosAgrupados[$prodId]['cantidad'];
+                    $qSuelta          = $cantSuelta[$prodId] ?? 0;
+                    $qYaDevuelta      = $cantidadesDevueltas[$prodId] ?? 0;
+                    $disponibleSuelta = max(0.0, $qSuelta - $qYaDevuelta);
+                    if ($qDevolviendo > $disponibleSuelta + 0.0001) {
+                        // La cantidad supera lo disponible suelto → toca el paquete
+                        $paquesConRetorno[$paqId] = true;
                     }
+                }
+            }
+
+            // Solo exigir el paquete completo si efectivamente se está devolviendo del paquete
+            foreach ($paquesConRetorno as $paqId => $_) {
+                $faltantes = array_diff($paqProds[$paqId], $idsDevueltos);
+                if (!empty($faltantes)) {
+                    $errores[] = 'Si devuelves un paquete debes devolver todos sus productos juntos.';
+                    break;
                 }
             }
         }
@@ -328,11 +385,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $motivo = 'Devolucion venta #' . $venta_id . $folioExtra . ': ' . $motivo;
 
         if (empty($errores)) {
-            // totalDevuelto = lo que el cajero le regresa al cliente (precio_final × qty devuelta)
-            $totalDevuelto = round(array_sum(array_map(fn($p) => $p['cantidad'] * $p['precio_unitario'], $productos_dev)), 2);
-
             // [AUTOFIX] Bug B: calcular subtotal bruto, descuento proporcional y comisión proporcional.
-            // ventas.subtotal es base bruta (precio_unitario); totalDevuelto es base final (precio_final).
+            // ventas.subtotal es base bruta (precio_unitario); totalDevuelto debe reflejar el descuento global.
             // Restar el mismo valor a ambos campos producía subtotal incorrecto y residuo de comisión.
 
             // 1) Obtener precio_unitario real de venta_productos para los productos devueltos
@@ -358,44 +412,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $subtotalBrutoDevuelto += floatval($prod['cantidad']) * $precioUnit;
             }
             $subtotalBrutoDevuelto = round($subtotalBrutoDevuelto, 2);
-            $descuentoDevuelto     = round(max(0.0, $subtotalBrutoDevuelto - $totalDevuelto), 2);
 
-            // 2) Comisión proporcional (Terminal / Mixto).
-            // [FIX] Bug sucesivas devoluciones: antes usábamos comision_restante / precio_final_TOTAL_ORIGINAL.
-            // Al haber una devolución previa, comision_restante bajó pero el denominador seguía siendo el
-            // original completo → tasa de comisión distorsionada.
-            // Solución: usar como denominador el precio_final de los productos AÚN NO devueltos
-            // (= suma_restante). Así la tasa comision_restante/suma_restante se mantiene constante
-            // sin importar cuántas devoluciones parciales haya habido.
-            $stmtVComision = $pdo->prepare("
-                SELECT v.comision_terminal,
-                       COALESCE(SUM(vp.precio_final * GREATEST(0, vp.cantidad - COALESCE(dev.devuelta, 0))), 0) AS suma_restante
-                FROM ventas v
-                LEFT JOIN venta_productos vp ON vp.venta_id = v.venta_id
-                LEFT JOIN (
-                    SELECT mi.producto_id, SUM(mi.cantidad) AS devuelta
-                    FROM movimientos_inventario mi
-                    JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
-                    WHERE mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
-                    GROUP BY mi.producto_id
-                ) dev ON dev.producto_id = vp.producto_id
-                WHERE v.venta_id = ?
-                GROUP BY v.venta_id
-            ");
-            $stmtVComision->execute([$venta_id, $venta_id]);
-            $comData          = $stmtVComision->fetch(PDO::FETCH_ASSOC);
-            $comisionTotal    = $comData ? floatval($comData['comision_terminal']) : 0.0;
-            $sumaRestante     = $comData ? floatval($comData['suma_restante'])     : 0.0;
-            // Tasa = comision_restante / precio_final_restante (constante entre devoluciones parciales)
-            $comisionDevuelta = ($sumaRestante > 0.001 && $comisionTotal > 0.001)
-                ? round($comisionTotal * min(1.0, $totalDevuelto / $sumaRestante), 2)
-                : 0.0;
+            // Calcular totalDevuelto correctamente separando dos tipos de descuento:
+            //
+            // • Descuentos por-ítem (promos, ajustes por daño): ya están capturados en precio_final.
+            //   Usar precio_final × qty como base ya los incluye automáticamente.
+            //
+            // • Descuento global del cliente (porcentaje aplicado a todo el pedido): hay que
+            //   calcularlo como: ventas.descuento - (subtotalBruto - subtotalFinal).
+            //   factorClienteNeto = (subtotalFinal - clienteDiscount) / subtotalFinal.
+            //
+            // El factorNeto anterior usaba subtotalBruto como base, lo que "redistribuía"
+            // los ajustes por daño sobre todos los ítems y daba montos incorrectos.
+
+            $ventaSubtotalBruto  = floatval($ventaInfo['venta_subtotal'] ?? 0);
+            $ventaDescuentoTotal = floatval($ventaInfo['venta_descuento'] ?? 0);
+
+            $perItemDiscountVenta = max(0.0, $ventaSubtotalBruto - $subtotalFinalVenta);
+            $clientDiscountVenta  = max(0.0, $ventaDescuentoTotal - $perItemDiscountVenta);
+            $factorClienteNeto    = ($subtotalFinalVenta > 0.001)
+                ? max(0.0, ($subtotalFinalVenta - $clientDiscountVenta) / $subtotalFinalVenta)
+                : 1.0;
+
+            // subtotalFinalDevuelto = precio_final × qty por cada ítem devuelto
+            $subtotalFinalDevuelto = 0.0;
+            foreach ($productos_dev as $prod) {
+                $pid = intval($prod['producto_id']);
+                $subtotalFinalDevuelto += floatval($prod['cantidad']) * ($preciosRealDB[$pid] ?? floatval($prod['precio_unitario']));
+            }
+            $subtotalFinalDevuelto = round($subtotalFinalDevuelto, 2);
+
+            $totalDevuelto     = round($subtotalFinalDevuelto * $factorClienteNeto, 2);
+            $descuentoDevuelto = round(max(0.0, $subtotalBrutoDevuelto - $totalDevuelto), 2);
+
+            // 2) Comisión proporcional (solo Terminal / Mixto).
+            // [AUTOFIX] La comisión solo aplica a ventas con Terminal o Mixto.
+            // Efectivo, Transferencia y Crédito no tienen comisión de terminal.
+            $metodoVenta = $ventaInfo['metodo_pago'] ?? '';
+            $tieneComisionTerminal = ($metodoVenta === 'Terminal' || $metodoVenta === 'Mixto');
+
+            if ($tieneComisionTerminal) {
+                // [AUTOFIX] Ratio de comisión usando precio_final en ambos lados.
+                // precio_final ya captura promos y ajustes por daño, por lo que es la
+                // misma escala que $subtotalFinalDevuelto (que también usa precio_final).
+                // suma_restante_final = precio_final × cantidad_aún_no_devuelta.
+                // ratio = subtotalFinalDevuelto / suma_restante_final → siempre en [0,1].
+                // Para devolución total: ratio = 1 → se devuelve toda la comisión restante. ✓
+                $stmtVComision = $pdo->prepare("
+                    SELECT v.comision_terminal,
+                           COALESCE(SUM(vp.precio_final * GREATEST(0, vp.cantidad - COALESCE(dev.devuelta, 0))), 0) AS suma_restante_final
+                    FROM ventas v
+                    LEFT JOIN venta_productos vp ON vp.venta_id = v.venta_id
+                    LEFT JOIN (
+                        SELECT mi.producto_id, SUM(mi.cantidad) AS devuelta
+                        FROM movimientos_inventario mi
+                        JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
+                        WHERE mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
+                        GROUP BY mi.producto_id
+                    ) dev ON dev.producto_id = vp.producto_id
+                    WHERE v.venta_id = ?
+                    GROUP BY v.venta_id
+                ");
+                $stmtVComision->execute([$venta_id, $venta_id]);
+                $comData            = $stmtVComision->fetch(PDO::FETCH_ASSOC);
+                $comisionTotal      = $comData ? floatval($comData['comision_terminal'])      : 0.0;
+                $sumaRestanteFinal  = $comData ? floatval($comData['suma_restante_final'])    : 0.0;
+                $comisionDevuelta   = ($sumaRestanteFinal > 0.001 && $comisionTotal > 0.001)
+                    ? round($comisionTotal * min(1.0, $subtotalFinalDevuelto / $sumaRestanteFinal), 2)
+                    : 0.0;
+            } else {
+                // Efectivo, Transferencia, Crédito — sin comisión de terminal
+                $comisionDevuelta = 0.0;
+            }
 
             $pdo->beginTransaction();
             try {
                 // Registrar la devolución como grupo (permite cancelación posterior)
-                $pdo->prepare("INSERT INTO devoluciones (venta_id, usuario_id, total_devuelto, subtotal_bruto_devuelto, comision_devuelta) VALUES (?,?,?,?,?)")
-                    ->execute([$venta_id, $_SESSION['usuario_id'], $totalDevuelto, $subtotalBrutoDevuelto, $comisionDevuelta]);
+                // [AUTOFIX] Incluir subtotal_final_devuelto para auditoría y cálculo preciso de comisión
+                $pdo->prepare("INSERT INTO devoluciones (venta_id, usuario_id, total_devuelto, subtotal_bruto_devuelto, subtotal_final_devuelto, comision_devuelta) VALUES (?,?,?,?,?,?)")
+                    ->execute([$venta_id, $_SESSION['usuario_id'], $totalDevuelto, $subtotalBrutoDevuelto, $subtotalFinalDevuelto, $comisionDevuelta]);
                 $devolucion_id = intval($pdo->lastInsertId());
 
                 foreach ($productos_dev as $prod) {
@@ -450,6 +545,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
                             ->execute([$nuevoSaldo, $nuevoEstado, $cred['credito_id']]);
                     }
+                }
+
+                // Registrar salida de efectivo en caja DENTRO de la transacción.
+                // Si falla, toda la devolución se revierte — sin estados inconsistentes.
+                // Solo para Terminal/Mixto/Transferencia: en Efectivo la reducción ya queda
+                // en ventas.total y corteCaja la recoge; agregar Retiro contaría doble.
+                $metodosQueNecesitanRetiro = ['Terminal', 'Mixto', 'Transferencia'];
+                if (in_array($metodoVenta, $metodosQueNecesitanRetiro, true)) {
+                    $folioDevNota = $ventaInfo['folio'] ?? $venta_id;
+                    $notaRetiro   = 'Devolución folio #' . $folioDevNota;
+                    $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota, devolucion_id) VALUES (?,?,?,'Retiro',?,?,?)")
+                        ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $totalDevuelto, $notaRetiro, $devolucion_id]);
                 }
 
                 $pdo->commit();
@@ -900,7 +1007,7 @@ function buscarVenta() {
                             ${precioHtml}
                         </span>
                         <span style="color:#aaa;font-size:11px;padding-top:2px;white-space:nowrap;">Restante: ${restante.toFixed(esDecimal?2:0).replace(/\.?0+$/, '')}</span>
-                        <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_final}" data-restante="${restante}"
+                        <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_final}" data-precio-orig="${p.precio_unitario}" data-restante="${restante}"
                             placeholder="0" step="${esDecimal ? 'any' : '1'}" min="0" max="${restante}" value=""
                             oninput="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();"
                             onchange="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();">
@@ -958,39 +1065,54 @@ function actualizarResumen() {
         if (paqId) {
             const paq = paqMap[paqId];
             if (!paq) return;
+            // Usar precio_final: ya incluye el descuento del paquete por ítem
             paq.productos.forEach(p => {
                 totalADevolver += qty * (parseFloat(p.cantidad_requerida_combo) || 1) * parseFloat(p.precio_final);
             });
         } else {
+            // Usar precio_final: ya incluye promos y ajustes por daño
             totalADevolver += qty * parseFloat(inp.dataset.precio);
         }
     });
 
     if (totalADevolver <= 0.001) { resumen.style.display = 'none'; return; }
 
-    // Comisión proporcional al monto seleccionado.
-    // Tasa = comision_restante / suma_precio_final_RESTANTE (usa cantidad_restante, no cantidad original).
-    // Así la tasa es constante entre devoluciones parciales: tasa × totalADevolver.
-    const comisionTotal  = parseFloat(ventaActual.comision_terminal || 0);
-    const sumaRestante   = (ventaActual.productos || []).reduce(
-        (s, p) => s + parseFloat(p.precio_final) * Math.max(0, parseFloat(p.cantidad_restante || 0)), 0
+    // Aplicar SOLO el descuento global del cliente (no los descuentos por-ítem que ya están en precio_final).
+    // perItemDiscount = diferencia entre subtotalBruto y subtotalFinal (promos + ajustes daño ya en precio_final)
+    // clientDiscount  = ventas.descuento - perItemDiscount (porcentaje de descuento global del cliente)
+    // factorClienteNeto = (subtotalFinal - clientDiscount) / subtotalFinal
+    const ventaSubtotalBruto  = parseFloat(ventaActual.subtotal || 0);
+    const ventaDescuentoTotal = parseFloat(ventaActual.descuento || 0);
+    const subtotalFinalVenta  = (ventaActual.productos || []).reduce(
+        (s, p) => s + parseFloat(p.precio_final || 0) * parseFloat(p.cantidad || 0), 0
     );
-    const tasaComision   = (sumaRestante > 0.001 && comisionTotal > 0.001) ? comisionTotal / sumaRestante : 0;
-    const comisionProp   = Math.round(totalADevolver * tasaComision * 100) / 100;
+    const perItemDiscount   = Math.max(0, ventaSubtotalBruto - subtotalFinalVenta);
+    const clientDiscount    = Math.max(0, ventaDescuentoTotal - perItemDiscount);
+    const factorClienteNeto = (subtotalFinalVenta > 0.001)
+        ? Math.max(0, (subtotalFinalVenta - clientDiscount) / subtotalFinalVenta)
+        : 1;
+    totalADevolver = Math.round(totalADevolver * factorClienteNeto * 100) / 100;
 
     const metodo = ventaActual.metodo_pago || 'Efectivo';
 
-    // Texto de método de reembolso
-    const metodoTextos = {
-        'Efectivo':       '&#128181; Devuelve en <strong>efectivo</strong>',
-        'Terminal':       '&#128179; Devuelve por <strong>terminal o transferencia</strong>',
-        'Mixto':          '&#128181; Devuelve en <strong>efectivo o transferencia</strong>',
-        'Transferencia':  '&#128179; Devuelve por <strong>transferencia</strong>',
-        'Credito':        '&#128203; Descuenta del <strong>saldo del crédito</strong>',
-    };
-    const metodoHtml = `<div class="resumen-dev-metodo">${metodoTextos[metodo] || ('Devuelve: ' + metodo)}</div>`;
+    // Comisión proporcional SOLO para Terminal y Mixto — Transferencia y Efectivo no tienen comisión
+    // [AUTOFIX] La tasa se calcula como comision / neto_pagado (total - comision), en la misma escala
+    // que totalADevolver (precio_unitario × factorNeto). Antes usaba precio_final / sumaRestante
+    // lo que daba una escala distinta y producía una comision incorrecta.
+    const tieneComisionTerminal = (metodo === 'Terminal' || metodo === 'Mixto');
+    const comisionTotal = tieneComisionTerminal ? parseFloat(ventaActual.comision_terminal || 0) : 0;
+    const netoPagado    = parseFloat(ventaActual.total || 0) - comisionTotal; // total sin comisión
+    const tasaComision  = (netoPagado > 0.001 && comisionTotal > 0.001) ? comisionTotal / netoPagado : 0;
+    const comisionProp  = Math.round(totalADevolver * tasaComision * 100) / 100;
 
-    // Aviso de comisión (solo si aplica)
+    // [AUTOFIX] Las devoluciones siempre se entregan en efectivo sin importar cómo se pagó originalmente
+    // Crédito es la única excepción: se descuenta del saldo pendiente
+    const esCredito = (metodo === 'Crédito' || metodo === 'Credito');
+    const metodoHtml = esCredito
+        ? `<div class="resumen-dev-metodo">&#128203; Descuenta del <strong>saldo del crédito</strong></div>`
+        : `<div class="resumen-dev-metodo">&#128181; El cliente recibirá el reembolso en <strong>efectivo</strong></div>`;
+
+    // Aviso de comisión (solo Terminal / Mixto)
     const comisionHtml = comisionProp > 0
         ? `<div class="resumen-dev-comision">&#9888; La comisión de terminal (~$${comisionProp.toFixed(2)}) <strong>no se reembolsa</strong> — es cobrada por el banco y la absorbe el negocio.</div>`
         : '';

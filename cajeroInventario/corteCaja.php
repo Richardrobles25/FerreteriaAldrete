@@ -27,7 +27,7 @@ $stmtVentas = $pdo->prepare("
         COALESCE(SUM(CASE WHEN metodo_pago='Mixto' THEN monto_terminal ELSE 0 END),0) AS mixto_term,
         COALESCE(SUM(comision_terminal),0) AS comisiones
     FROM ventas
-    WHERE caja_id = ? AND estado = 'Completada'
+    WHERE caja_id = ? AND estado IN ('Completada', 'Modificado', 'Devuelto')
 ");
 $stmtVentas->execute([$caja['caja_id']]);
 $resumen = $stmtVentas->fetch(PDO::FETCH_ASSOC);

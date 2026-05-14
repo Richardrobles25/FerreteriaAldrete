@@ -53,11 +53,54 @@ if (isset($_GET['detalle_venta'])) {
         unset($prod);
 
         // [FIX] descuento_display = ventas.descuento directamente.
-        // La fórmula anterior (descuento × subtotal_actual / bruto_original) escalaba mal
-        // en devoluciones parciales: subtotal_actual < bruto_original → ratio < 1 → descuento incorrecto.
-        // ventas.descuento ya está correctamente actualizado por cada devolución/cancelación,
-        // así que usarlo directo es exacto para venta nueva, parcial y devuelta.
         $venta['descuento_display'] = floatval($venta['descuento']);
+
+        // Historial de devoluciones activas (no canceladas)
+        $stmtDevs = $pdo->prepare("
+            SELECT devolucion_id, procesada_en, total_devuelto,
+                   subtotal_bruto_devuelto, comision_devuelta
+            FROM devoluciones
+            WHERE venta_id = ? AND cancelada_en IS NULL
+            ORDER BY procesada_en ASC
+        ");
+        $stmtDevs->execute([$venta_id]);
+        $devolucionesList = $stmtDevs->fetchAll(PDO::FETCH_ASSOC);
+
+        // [AUTOFIX] BUG-06: Reemplazar N+1 (1 query por devolucion) por una sola query con IN
+        // Esto evita ralentizar la página cuando una venta tiene muchas devoluciones
+        if (!empty($devolucionesList)) {
+            $devIds = array_column($devolucionesList, 'devolucion_id');
+            $inPH = implode(',', array_fill(0, count($devIds), '?'));
+            $stmtDevProds = $pdo->prepare("
+                SELECT mi.devolucion_id,
+                       p.nombre_producto, p.codigo,
+                       mi.cantidad,
+                       vp.precio_unitario, vp.precio_final
+                FROM movimientos_inventario mi
+                JOIN productos p ON mi.producto_id = p.producto_id
+                JOIN venta_productos vp ON vp.venta_id = ? AND vp.producto_id = mi.producto_id
+                WHERE mi.devolucion_id IN ($inPH) AND mi.tipo = 'Entrada'
+            ");
+            $stmtDevProds->execute(array_merge([$venta_id], $devIds));
+            $prodsPorDev = [];
+            foreach ($stmtDevProds->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $prodsPorDev[$row['devolucion_id']][] = $row;
+            }
+            foreach ($devolucionesList as &$dev) {
+                $dev['productos'] = $prodsPorDev[$dev['devolucion_id']] ?? [];
+            }
+            unset($dev);
+        }
+        $venta['devoluciones'] = $devolucionesList;
+
+        // Reconstruir valores originales (antes de cualquier devolución)
+        $sumBruto    = array_sum(array_column($devolucionesList, 'subtotal_bruto_devuelto'));
+        $sumComision = array_sum(array_column($devolucionesList, 'comision_devuelta'));
+        $sumTotal    = array_sum(array_column($devolucionesList, 'total_devuelto'));
+        $venta['original_subtotal']  = floatval($venta['subtotal'])  + $sumBruto;
+        $venta['original_descuento'] = floatval($venta['descuento']) + ($sumBruto - $sumTotal);
+        $venta['original_comision']  = floatval($venta['comision_terminal']) + $sumComision;
+        $venta['original_total']     = floatval($venta['total'])     + $sumTotal + $sumComision;
     }
     header('Content-Type: application/json');
     echo json_encode($venta);
@@ -168,15 +211,74 @@ $stmtMov = $pdo->prepare("
 $stmtMov->execute($paramsM);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
-// Separar: abonos de crédito vs movimientos regulares
-// str_starts_with evita problemas de multibyte con regex sin /u
-$esAbono = fn($m) => str_starts_with($m['nota'], 'Pago crédito') || str_starts_with($m['nota'], 'Abono de crédito');
+// Separar: abonos de crédito vs devoluciones vs movimientos manuales.
+// Los movimientos de devolución (Retiro/Ingreso por devolución) se muestran en la sección
+// "Devoluciones — movimientos de caja" que consulta directamente la tabla devoluciones.
+// Excluirlos aquí evita que aparezcan doble en "Retiros e ingresos manuales".
+$esAbono = fn($m) => str_starts_with($m['nota'] ?? '', 'Pago crédito') || str_starts_with($m['nota'] ?? '', 'Abono de crédito');
+$esDev   = fn($m) => str_starts_with($m['nota'] ?? '', 'Devolución folio') || str_starts_with($m['nota'] ?? '', 'Cancelación devolución');
 $movAbonos    = array_values(array_filter($movimientos,  $esAbono));
-$movRegulares = array_values(array_filter($movimientos, fn($m) => !$esAbono($m)));
+$movRegulares = array_values(array_filter($movimientos, fn($m) => !$esAbono($m) && !$esDev($m)));
 
 // Totales regulares (retiros/ingresos manuales, sin abonos)
 $totalIngresos = array_sum(array_column(array_filter($movRegulares, fn($m) => $m['tipo']==='Ingreso'), 'monto'));
 $totalRetiros  = array_sum(array_column(array_filter($movRegulares, fn($m) => $m['tipo']==='Retiro'),  'monto'));
+
+// ── Movimientos de caja por devoluciones (directo desde tabla devoluciones) ──
+// Se consulta la tabla devoluciones en vez de movimientos_caja para garantizar
+// que siempre aparezcan, independientemente de si el INSERT en movimientos_caja funcionó.
+// Retiro: cuando se procesa la devolución (dinero sale de caja hacia el cliente).
+// Ingreso: cuando se cancela la devolución (cliente regresa el dinero a caja).
+$whereDevFecha  = '';
+$paramsDevFecha = [$_SESSION['sucursal_id']];
+
+if ($fechaDesde !== '' && $fechaHasta !== '') {
+    // Mostrar retiros procesados en el rango O ingresos (cancelaciones) en el rango
+    $whereDevFecha  = 'AND (DATE(d.procesada_en) BETWEEN ? AND ? OR (d.cancelada_en IS NOT NULL AND DATE(d.cancelada_en) BETWEEN ? AND ?))';
+    $paramsDevFecha = [$_SESSION['sucursal_id'], $fechaDesde, $fechaHasta, $fechaDesde, $fechaHasta];
+} elseif ($fechaDesde !== '') {
+    $whereDevFecha  = 'AND (DATE(d.procesada_en) >= ? OR (d.cancelada_en IS NOT NULL AND DATE(d.cancelada_en) >= ?))';
+    $paramsDevFecha = [$_SESSION['sucursal_id'], $fechaDesde, $fechaDesde];
+} elseif ($fechaHasta !== '') {
+    $whereDevFecha  = 'AND (DATE(d.procesada_en) <= ? OR (d.cancelada_en IS NOT NULL AND DATE(d.cancelada_en) <= ?))';
+    $paramsDevFecha = [$_SESSION['sucursal_id'], $fechaHasta, $fechaHasta];
+}
+// Sin filtro de fecha: últimas 50 devoluciones
+
+$stmtDevMov = $pdo->prepare("
+    SELECT d.devolucion_id, d.procesada_en, d.cancelada_en,
+           d.total_devuelto, d.venta_id, v.folio, v.metodo_pago,
+           u.nombre_completo  AS cajero,
+           uc.nombre_completo AS cajero_cancel
+    FROM devoluciones d
+    JOIN ventas v  ON d.venta_id      = v.venta_id
+    JOIN cajas  ca ON v.caja_id       = ca.caja_id AND ca.sucursal_id = ?
+    LEFT JOIN usuarios u  ON d.usuario_id   = u.usuario_id
+    LEFT JOIN usuarios uc ON d.cancelada_por = uc.usuario_id
+    $whereDevFecha
+    ORDER BY d.procesada_en DESC
+    LIMIT 50
+");
+$stmtDevMov->execute($paramsDevFecha);
+$devolucionesMov = $stmtDevMov->fetchAll(PDO::FETCH_ASSOC);
+
+// Calcular totales de devoluciones para el período
+$totalSalidaDev  = 0.0; // dinero que salió de caja (retiros activos)
+$totalEntradaDev = 0.0; // dinero que regresó a caja (ingresos por cancelación)
+foreach ($devolucionesMov as $dm) {
+    $enRangoRetiro  = ($fechaDesde === '' && $fechaHasta === '')
+        || ($fechaDesde !== '' && $fechaHasta !== '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00' && $dm['procesada_en'] <= $fechaHasta . ' 23:59:59')
+        || ($fechaDesde !== '' && $fechaHasta === '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00')
+        || ($fechaDesde === '' && $fechaHasta !== '' && $dm['procesada_en'] <= $fechaHasta . ' 23:59:59');
+    if ($enRangoRetiro) $totalSalidaDev += floatval($dm['total_devuelto']);
+    if (!empty($dm['cancelada_en'])) {
+        $enRangoIngreso = ($fechaDesde === '' && $fechaHasta === '')
+            || ($fechaDesde !== '' && $fechaHasta !== '' && $dm['cancelada_en'] >= $fechaDesde . ' 00:00:00' && $dm['cancelada_en'] <= $fechaHasta . ' 23:59:59')
+            || ($fechaDesde !== '' && $fechaHasta === '' && $dm['cancelada_en'] >= $fechaDesde . ' 00:00:00')
+            || ($fechaDesde === '' && $fechaHasta !== '' && $dm['cancelada_en'] <= $fechaHasta . ' 23:59:59');
+        if ($enRangoIngreso) $totalEntradaDev += floatval($dm['total_devuelto']);
+    }
+}
 
 // Desglose de abonos de crédito por método
 $totalAbonosEf    = array_sum(array_column(array_filter($movAbonos, fn($m) =>  str_ends_with($m['nota'], '[Efectivo]')),      'monto'));
@@ -294,6 +396,19 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     .btn-detalle:hover { background: #bbdefb; }
     .btn-ticket { background: #e8f5e9; color: #2e7d32; }
     .btn-ticket:hover { background: #c8e6c9; }
+    .dev-hist-bloque { margin-top: 18px; border-top: 1px solid #f0f0f0; padding-top: 14px; }
+    .dev-hist-titulo { font-size: 12px; font-weight: 700; color: #c0392b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+    .dev-orig-box { background: #f9f9f9; border: 1px solid #e8e8e8; border-radius: 7px; padding: 10px 14px; margin-bottom: 12px; }
+    .dev-orig-label { font-size: 10px; color: #aaa; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
+    .dev-orig-filas { display: flex; flex-wrap: wrap; gap: 6px 20px; }
+    .dev-orig-fila { font-size: 12px; color: #555; }
+    .dev-orig-fila strong { color: #222; }
+    .dev-card { background: #fff5f5; border: 1px solid #ffcdd2; border-radius: 7px; padding: 10px 14px; margin-bottom: 8px; }
+    .dev-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .dev-card-fecha { font-size: 11px; color: #888; }
+    .dev-card-monto { font-size: 13px; font-weight: 700; color: #c0392b; }
+    .dev-card-prods { font-size: 12px; color: #555; }
+    .dev-card-prods li { margin: 2px 0; }
     .acciones-td { display: flex; gap: 5px; }
 
     /* Modal detalle */
@@ -677,6 +792,81 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
             </div>
             <?php endif; ?>
 
+            <!-- Tabla: movimientos de caja por devoluciones -->
+            <?php if (count($devolucionesMov) > 0): ?>
+            <div class="tabla-wrapper" style="margin-bottom:12px;">
+                <div class="tabla-info" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                    <span style="font-size:11px;font-weight:700;color:#c0392b;text-transform:uppercase;letter-spacing:.4px;">Devoluciones — movimientos de caja</span>
+                    <div style="display:flex;gap:8px;">
+                        <?php if ($totalSalidaDev > 0): ?>
+                        <span style="background:#fdecea;color:#c0392b;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;">Salidas -$<?= number_format($totalSalidaDev,2) ?></span>
+                        <?php endif; ?>
+                        <?php if ($totalEntradaDev > 0): ?>
+                        <span style="background:#e8f5e9;color:#2e7d32;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;">Entradas +$<?= number_format($totalEntradaDev,2) ?></span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tipo</th>
+                            <th>Monto</th>
+                            <th>Referencia</th>
+                            <th>Cajero</th>
+                            <th>Fecha/Hora</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($devolucionesMov as $dm):
+                            $folioRef  = $dm['folio'] ? ('Folio ' . $dm['folio']) : ('Venta #' . $dm['venta_id']);
+                            $cancelada = !empty($dm['cancelada_en']);
+                            // Determinar qué filas mostrar según si caen en el rango de fecha
+                            $fechaProc   = $dm['procesada_en'];
+                            $fechaCanc   = $dm['cancelada_en'] ?? '';
+                            $enRangoRet = ($fechaDesde === '' && $fechaHasta === '')
+                                || ($fechaDesde !== '' && $fechaHasta !== '' && substr($fechaProc,0,10) >= $fechaDesde && substr($fechaProc,0,10) <= $fechaHasta)
+                                || ($fechaDesde !== '' && $fechaHasta === '' && substr($fechaProc,0,10) >= $fechaDesde)
+                                || ($fechaDesde === '' && $fechaHasta !== '' && substr($fechaProc,0,10) <= $fechaHasta);
+                            $enRangoIng = $cancelada && (
+                                ($fechaDesde === '' && $fechaHasta === '')
+                                || ($fechaDesde !== '' && $fechaHasta !== '' && substr($fechaCanc,0,10) >= $fechaDesde && substr($fechaCanc,0,10) <= $fechaHasta)
+                                || ($fechaDesde !== '' && $fechaHasta === '' && substr($fechaCanc,0,10) >= $fechaDesde)
+                                || ($fechaDesde === '' && $fechaHasta !== '' && substr($fechaCanc,0,10) <= $fechaHasta)
+                            );
+                        ?>
+                        <?php if ($enRangoRet): ?>
+                        <tr>
+                            <td>
+                                <span class="badge badge-retiro">&#8595; Retiro</span>
+                                <?php if ($cancelada): ?>
+                                <div style="font-size:10px;color:#aaa;margin-top:2px;">Devolución cancelada</div>
+                                <?php endif; ?>
+                            </td>
+                            <td style="font-weight:700;color:#c0392b;">-$<?= number_format($dm['total_devuelto'],2) ?></td>
+                            <td>
+                                <div class="mov-nota">Efectivo dado al cliente · <?= htmlspecialchars($folioRef) ?> (<?= htmlspecialchars($dm['metodo_pago']) ?>)</div>
+                            </td>
+                            <td style="font-size:12px;"><?= htmlspecialchars($dm['cajero'] ?? '—') ?></td>
+                            <td style="color:#aaa;font-size:12px;white-space:nowrap;"><?= date('d/m/Y H:i', strtotime($fechaProc)) ?></td>
+                        </tr>
+                        <?php endif; ?>
+                        <?php if ($enRangoIng): ?>
+                        <tr>
+                            <td><span class="badge badge-ingreso">&#8593; Ingreso</span></td>
+                            <td style="font-weight:700;color:#2e7d32;">+$<?= number_format($dm['total_devuelto'],2) ?></td>
+                            <td>
+                                <div class="mov-nota">Devolución cancelada · cliente regresó efectivo · <?= htmlspecialchars($folioRef) ?></div>
+                            </td>
+                            <td style="font-size:12px;"><?= htmlspecialchars($dm['cajero_cancel'] ?? '—') ?></td>
+                            <td style="color:#aaa;font-size:12px;white-space:nowrap;"><?= date('d/m/Y H:i', strtotime($fechaCanc)) ?></td>
+                        </tr>
+                        <?php endif; ?>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+
             <!-- Tabla: movimientos regulares (ingresos/retiros manuales) -->
             <div class="tabla-wrapper">
                 <?php if (count($movRegulares) > 0): ?>
@@ -765,6 +955,9 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
             <!-- Totales -->
             <div class="det-totales" id="detTotales"></div>
+
+            <!-- Historial de devoluciones (se muestra solo si hay) -->
+            <div id="detDevoluciones"></div>
         </div>
         <div class="modal-footer">
             <button class="btn-cerrar-modal" onclick="cerrarDetalle()">Cerrar</button>
@@ -928,6 +1121,70 @@ function renderDetalle(v) {
     }
     html += `<div class="det-fila total"><span>TOTAL</span><span>$${fmt(v.total)}</span></div>`;
     document.getElementById('detTotales').innerHTML = html;
+
+    // Historial de devoluciones
+    const devs = v.devoluciones || [];
+    const divDevs = document.getElementById('detDevoluciones');
+    if (devs.length === 0) { divDevs.innerHTML = ''; }
+    else {
+        const tieneDiff = v.original_total !== undefined && Math.abs(parseFloat(v.original_total) - parseFloat(v.total)) > 0.001;
+        let dHtml = `<div class="dev-hist-bloque">
+            <div class="dev-hist-titulo">&#128203; Historial de devoluciones</div>`;
+
+        // Valores originales (antes de todas las devoluciones)
+        if (tieneDiff) {
+            const origDescuento = parseFloat(v.original_descuento || 0);
+            const origComision  = parseFloat(v.original_comision  || 0);
+            dHtml += `<div class="dev-orig-box">
+                <div class="dev-orig-label">Valores originales de la venta</div>
+                <div class="dev-orig-filas">
+                    <div class="dev-orig-fila">Subtotal: <strong>$${fmt(v.original_subtotal)}</strong></div>
+                    ${origDescuento > 0.001 ? `<div class="dev-orig-fila">Descuento: <strong style="color:#2e7d32;">-$${fmt(origDescuento)}</strong></div>` : ''}
+                    ${origComision  > 0.001 ? `<div class="dev-orig-fila">Comisión terminal: <strong>$${fmt(origComision)}</strong></div>` : ''}
+                    <div class="dev-orig-fila">Total: <strong>$${fmt(v.original_total)}</strong></div>
+                </div>
+            </div>`;
+        }
+
+        // Una tarjeta por cada devolución
+        devs.forEach((d, i) => {
+            const fecha    = d.procesada_en ? d.procesada_en.substring(0, 16).replace('T', ' ') : '—';
+            const neto     = parseFloat(d.total_devuelto || 0);
+            const comDev   = parseFloat(d.comision_devuelta || 0);
+            const prods    = d.productos || [];
+
+            let prodsHtml = '';
+            prods.forEach(p => {
+                const qty = parseFloat(p.cantidad);
+                prodsHtml += `<li>${esc(p.nombre_producto)} &times; ${qty % 1 === 0 ? qty : qty.toFixed(2)} — $${fmt(parseFloat(p.precio_unitario) * qty)}</li>`;
+            });
+
+            dHtml += `<div class="dev-card">
+                <div class="dev-card-header">
+                    <span class="dev-card-fecha">&#128197; ${esc(fecha)}</span>
+                    <span class="dev-card-monto">$${fmt(neto)} regresados al cliente en efectivo</span>
+                </div>
+                <ul class="dev-card-prods">${prodsHtml}</ul>
+                ${comDev > 0.001 ? `<div style="font-size:11px;color:#888;margin-top:4px;">&#9888; Comisión de terminal ($${fmt(comDev)}) no reembolsable — la absorbe el negocio</div>` : ''}
+            </div>`;
+        });
+
+        // Valores actuales (después de devoluciones)
+        if (tieneDiff) {
+            dHtml += `<div class="dev-orig-box" style="background:#fff5f5;border-color:#ffcdd2;">
+                <div class="dev-orig-label" style="color:#c0392b;">Valores actuales (después de devoluciones)</div>
+                <div class="dev-orig-filas">
+                    <div class="dev-orig-fila">Subtotal: <strong>$${fmt(v.subtotal)}</strong></div>
+                    ${parseFloat(v.descuento_display) > 0.001 ? `<div class="dev-orig-fila">Descuento: <strong style="color:#2e7d32;">-$${fmt(v.descuento_display)}</strong></div>` : ''}
+                    ${parseFloat(v.comision_terminal) > 0.001 ? `<div class="dev-orig-fila">Comisión terminal: <strong>$${fmt(v.comision_terminal)}</strong></div>` : ''}
+                    <div class="dev-orig-fila">Total: <strong>$${fmt(v.total)}</strong></div>
+                </div>
+            </div>`;
+        }
+
+        dHtml += `</div>`;
+        divDevs.innerHTML = dHtml;
+    }
 }
 
 function cerrarDetalle() {

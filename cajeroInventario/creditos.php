@@ -12,7 +12,12 @@ $sucursalInfo->execute([$_SESSION['sucursal_id']]);
 $datosBanco  = $sucursalInfo->fetch(PDO::FETCH_ASSOC);
 $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
 
-$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+// [AUTOFIX] BUG-07: Envolver en try/catch para evitar crash si la BD falla
+try {
+    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+} catch (\PDOException $e) {
+    error_log('[Ferreteria/creditos] Error al actualizar vencidos: ' . $e->getMessage());
+}
 
 // Caja abierta del usuario actual — si no hay, redirigir a abrirCaja
 $stmtCajaCheck = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
@@ -47,6 +52,8 @@ if (isset($_GET['get_abonos_cliente'])) {
 // AJAX: registrar pago (distribuye automáticamente a créditos del más antiguo al más reciente)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'registrar_abono') {
     header('Content-Type: application/json');
+    // [AUTOFIX] BUG-01: Verificar token CSRF antes de procesar el pago
+    requerirCSRF($_POST['_token'] ?? '', 'creditos.php');
     try {
         // Caja abierta obligatoria
         $stmtCajaAb = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
@@ -73,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         $clienteNombre = $stmtCl->fetchColumn();
         if (!$clienteNombre) throw new Exception('Cliente no encontrado.');
 
-        // Créditos del cliente, del más antiguo al más reciente
+        // Créditos del cliente, del más antiguo al más reciente (globales — el cliente paga en cualquier sucursal)
         $stmtCrs = $pdo->prepare("
             SELECT credito_id, saldo_pendiente
             FROM creditos
@@ -145,11 +152,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
 
         $pdo->commit();
         echo json_encode(['ok' => true]);
-    } catch (Exception $e) {
+    } catch (\PDOException $e) {
+        // [AUTOFIX] BUG-08: Errores PDO (técnicos) no se exponen al cliente
         if ($pdo->inTransaction()) $pdo->rollBack();
-        // [AUTOFIX] SEC-04: Loguear error real internamente, responder con mensaje generico
-        error_log('[Ferreteria/creditos] Error abono: ' . $e->getMessage());
-        echo json_encode(['ok' => false, 'error' => $e->getMessage()]); // Mensajes de validacion son seguros de mostrar
+        error_log('[Ferreteria/creditos] Error PDO abono: ' . $e->getMessage());
+        echo json_encode(['ok' => false, 'error' => 'Error al registrar el pago. Intenta de nuevo.']);
+    } catch (Exception $e) {
+        // Excepciones de validación lanzadas manualmente — el mensaje es seguro
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
     }
     exit();
 }
@@ -164,13 +175,29 @@ if (isset($_GET['get_creditos_cliente'])) {
                    cr.created_at, cr.fecha_limite,
                    v.folio, v.total AS total_venta, v.created_at AS fecha_venta,
                    GROUP_CONCAT(
-                       CONCAT(p.nombre_producto, '||', CAST(vp.cantidad AS CHAR), '||', CAST(vp.precio_unitario AS CHAR))
+                       CASE
+                           WHEN (vp.cantidad - COALESCE(dev.cantidad_devuelta, 0)) > 0.0009
+                           THEN CONCAT(
+                               p.nombre_producto, '||',
+                               (vp.cantidad - COALESCE(dev.cantidad_devuelta, 0)), '||',
+                               vp.precio_unitario
+                           )
+                           ELSE NULL
+                       END
                        ORDER BY p.nombre_producto SEPARATOR ';;'
                    ) AS prods_raw
             FROM creditos cr
             JOIN ventas v ON cr.venta_id = v.venta_id
             LEFT JOIN venta_productos vp ON cr.venta_id = vp.venta_id
             LEFT JOIN productos p ON vp.producto_id = p.producto_id
+            -- Subquery: cantidad total devuelta por producto en esta venta (devoluciones no canceladas)
+            LEFT JOIN (
+                SELECT mi.producto_id, d.venta_id, SUM(mi.cantidad) AS cantidad_devuelta
+                FROM movimientos_inventario mi
+                JOIN devoluciones d ON mi.devolucion_id = d.devolucion_id
+                WHERE mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
+                GROUP BY mi.producto_id, d.venta_id
+            ) dev ON dev.producto_id = vp.producto_id AND dev.venta_id = vp.venta_id
             WHERE cr.cliente_id = ? AND cr.estado IN ('Activo', 'Vencido')
             GROUP BY cr.credito_id
             ORDER BY cr.created_at ASC
@@ -202,7 +229,7 @@ if (isset($_GET['get_creditos_cliente'])) {
     exit();
 }
 
-// Clientes con deuda activa
+// Clientes con deuda activa (globales — un cliente puede tener créditos en varias sucursales)
 $stmt = $pdo->prepare("
     SELECT c.cliente_id, c.nombre_completo, c.telefono,
            COUNT(cr.credito_id)                                      AS num_creditos,
@@ -219,7 +246,7 @@ $stmt = $pdo->prepare("
 $stmt->execute();
 $clientesDeuda = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Estadísticas globales
+// Estadísticas globales de créditos (todas las sucursales)
 $totales = $pdo->query("
     SELECT
         COUNT(DISTINCT cr.cliente_id)                           AS clientes_con_deuda,
@@ -585,6 +612,8 @@ $totales = $pdo->query("
             <div class="ab-msg-err" id="abMsgErr"></div>
 
             <form id="formAbono" onsubmit="submitAbono(event)">
+                <!-- [AUTOFIX] BUG-01: Token CSRF para proteger el registro de abonos -->
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <div id="abCajaCerrada" style="<?= $cajaAbiertaId ? 'display:none;' : '' ?>background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#e65100;">
                     Sin caja abierta. <a href="abrirCaja.php" style="color:#e65100;font-weight:700;">Abrir caja →</a>
                 </div>
@@ -592,7 +621,8 @@ $totales = $pdo->query("
                 <div class="ab-fg">
                     <label>Monto del abono *</label>
                     <input type="number" name="monto" id="abMonto" placeholder="0.00" step="0.01" min="0.01" required oninput="verificarPagoAb()">
-                    <small id="abMontoError" style="color:#c0392b;font-size:11px;display:none;margin-top:3px;display:none;"></small>
+                    <!-- [AUTOFIX] BUG-09: Eliminado display:none duplicado que impedía el margin-top -->
+                    <small id="abMontoError" style="color:#c0392b;font-size:11px;margin-top:3px;display:none;"></small>
                 </div>
 
                 <div class="ab-fg">

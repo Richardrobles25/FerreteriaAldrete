@@ -38,13 +38,31 @@ if (isset($_GET['liquidar'])) {
     if ($ventaLiq) {
         $pdo->beginTransaction();
         try {
-            // Marcar como completada
+            // Marcar como completada.
+            // [AUTOFIX] Al pasar a 'Completada', corteCaja.php automáticamente incluye esta
+            // venta en resumen['ef'] (Efectivo) o en total_cobrado (Transferencia) vía la
+            // query sobre ventas WHERE caja_id = ? AND estado IN ('Completada','Modificado','Devuelto').
+            // NO se inserta en movimientos_caja para evitar doble conteo: la venta ya
+            // está asociada a la caja activa (caja_id fue asignado al crear la pendiente).
             $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ?")->execute([$venta_id]);
 
-            // Si es pago a crédito, crear registro en tabla creditos (igual que nuevaVenta.php)
+            // Descontar stock ahora que se confirma la entrega
+            $stmtItems = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
+            $stmtItems->execute([$venta_id]);
+            foreach ($stmtItems->fetchAll(PDO::FETCH_ASSOC) as $it) {
+                $stmtSt = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtSt->execute([$it['producto_id'], $_SESSION['sucursal_id']]);
+                $stockAnt = floatval($stmtSt->fetchColumn() ?: 0);
+                $stockNvo = max(0, $stockAnt - floatval($it['cantidad']));
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                    ->execute([$stockNvo, $it['producto_id'], $_SESSION['sucursal_id']]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta domicilio confirmada')")
+                    ->execute([$it['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], floatval($it['cantidad']), $stockAnt, $stockNvo]);
+            }
+
+            // Si es pago a crédito, crear registro en tabla creditos
             $metodoPagoLiq = trim($ventaLiq['metodo_pago']);
             if (($metodoPagoLiq === 'Crédito' || $metodoPagoLiq === 'Credito') && $ventaLiq['cliente_id']) {
-                // Evitar duplicado por si se llama dos veces
                 $stmtCheck = $pdo->prepare("SELECT credito_id FROM creditos WHERE venta_id = ? LIMIT 1");
                 $stmtCheck->execute([$venta_id]);
                 if (!$stmtCheck->fetchColumn()) {
@@ -54,12 +72,10 @@ if (isset($_GET['liquidar'])) {
             }
 
             $pdo->commit();
-            // [AUTOFIX] BUG-02: Redirigir con éxito SOLO si commit fue exitoso
             header('Location: ventasPendientes.php?msg=liquidado');
             exit();
         } catch (Exception $e) {
             $pdo->rollBack();
-            // [AUTOFIX] BUG-02: Redirigir con error si la transacción falló
             header('Location: ventasPendientes.php?msg=error_liquidar');
             exit();
         }
@@ -88,25 +104,9 @@ if (isset($_GET['cancelar'])) {
         exit();
     }
 
-    // [AUTOFIX] BUG-01: Envolver devolución de stock en transacción para evitar inconsistencias
-    $stmtProd = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
-    $stmtProd->execute([$venta_id]);
-    $productos = $stmtProd->fetchAll(PDO::FETCH_ASSOC);
-
+    // El stock nunca fue descontado al crear la pendiente, así que solo se cancela la venta
     $pdo->beginTransaction();
     try {
-        foreach ($productos as $p) {
-            $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
-            $stmtS->execute([$p['producto_id'], $_SESSION['sucursal_id']]);
-            // [AUTOFIX] BUG-08: fetchColumn() puede devolver false si no existe la fila — proteger con floatval
-            $stockAnterior = floatval($stmtS->fetchColumn() ?: 0);
-            $stockNuevo    = $stockAnterior + floatval($p['cantidad']);
-
-            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $p['producto_id'], $_SESSION['sucursal_id']]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,'Cancelación venta pendiente')")
-                ->execute([$p['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], floatval($p['cantidad']), $stockAnterior, $stockNuevo]);
-        }
-
         $pdo->prepare("UPDATE ventas SET estado = 'Cancelada' WHERE venta_id = ?")->execute([$venta_id]);
         $pdo->commit();
         header('Location: ventasPendientes.php?msg=cancelado');
@@ -222,6 +222,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $monto_efectivo = ($metodo_pago === 'Efectivo') ? floatval($_POST['monto_efectivo'] ?? 0) : 0;
         $cambio         = ($metodo_pago === 'Efectivo') ? floatval($_POST['cambio']         ?? 0) : 0;
 
+        // [AUTOFIX] Validar monto_efectivo obligatorio y suficiente en backend
+        if ($metodo_pago === 'Efectivo') {
+            if ($monto_efectivo <= 0) {
+                $errores[] = 'El monto en efectivo que entrega el cliente es obligatorio.';
+            } elseif ($monto_efectivo < $total - 0.005) {
+                $errores[] = 'El monto en efectivo ($' . number_format($monto_efectivo, 2) . ') es menor al total ($' . number_format($total, 2) . ').';
+            }
+        }
+
         // Validar referencia obligatoria para Transferencia
         if ($metodo_pago === 'Transferencia' && empty($ref_transf)) {
             $errores[] = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
@@ -243,33 +252,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $numFolio = intval($stmtFolio->fetchColumn());
                 $folio    = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
 
-                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,0,?,?,?,?,0,?,'Pendiente',?,?)")
+                // [AUTOFIX] BUG-01: descuento estaba fijo en 0 literal y $descuento iba a comision_terminal
+                // Corregido: descuento=? recibe $descuento, comision_terminal=0 literal (pendientes no usan terminal)
+                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,0,?,?,?,0,?,'Pendiente',?,?)")
                     ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
                 $venta_id = $pdo->lastInsertId();
 
+                // Stock NO se descuenta al crear — se descuenta solo cuando se liquida (entrega confirmada)
                 foreach ($items as $item) {
-                    // Validar stock antes de descontar
-                    $stmtChk = $pdo->prepare("SELECT ss.stock_actual, p.nombre_producto FROM stock_sucursal ss JOIN productos p ON p.producto_id = ss.producto_id WHERE ss.producto_id = ? AND ss.sucursal_id = ? FOR UPDATE");
-                    $stmtChk->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
-                    $prodChk = $stmtChk->fetch(PDO::FETCH_ASSOC);
-                    if (!$prodChk || floatval($prodChk['stock_actual']) < $item['cantidad']) {
-                        $disponible = $prodChk ? floatval($prodChk['stock_actual']) : 0;
-                        $nombre     = $prodChk['nombre_producto'] ?? 'Producto';
-                        throw new Exception("Stock insuficiente para \"$nombre\". Disponible: $disponible.");
-                    }
-
-                    $precioOrig    = floatval($item['precio_normal'] ?? $item['precio']);
-                    $precioFinal   = floatval($item['precio']);
-                    $subtotalItem  = $item['cantidad'] * $precioFinal;
-                    $stockAnterior = floatval($prodChk['stock_actual']);
-                    $stockNuevo    = $stockAnterior - $item['cantidad'];
-                    $paqId         = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
+                    $precioOrig   = floatval($item['precio_normal'] ?? $item['precio']);
+                    $precioFinal  = floatval($item['precio']);
+                    $subtotalItem = floatval($item['cantidad']) * $precioFinal;
+                    $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
 
                     $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal, paquete_id) VALUES (?,?,?,?,?,?,?)")
-                        ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $precioOrig, $precioFinal, $subtotalItem, $paqId]);
-                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $item['producto_id'], $_SESSION['sucursal_id']]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
-                        ->execute([$item['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
+                        ->execute([$venta_id, $item['producto_id'], floatval($item['cantidad']), $precioOrig, $precioFinal, $subtotalItem, $paqId]);
                 }
 
                 $pdo->commit();
@@ -334,16 +331,21 @@ try {
     $clientes = $pdo->query("SELECT cliente_id, nombre_completo, 0 as descuento, 0 as credito FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Paquetes activos con stock en esta sucursal
+// Paquetes activos — se usa LEFT JOIN sin filtro de stock para que aparezcan todos,
+// incluyendo los que tienen algún producto en 0. El JS calcula combos disponibles.
+// Con INNER JOIN + stock > 0: si todos los productos tienen stock=0, el paquete
+// desaparece del buscador aunque exista. Con LEFT JOIN el paquete siempre aparece
+// (como "Sin stock") y el cálculo de combos es correcto.
 $stmtPaq = $pdo->prepare("
     SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
            pp.producto_id, pp.cantidad AS cantidad_requerida,
-           p.nombre_producto
+           p.nombre_producto,
+           COALESCE(ss.stock_actual, 0) AS stock_actual
     FROM paquetes pk
     JOIN paquete_productos pp ON pp.paquete_id = pk.paquete_id
-    JOIN productos p ON p.producto_id = pp.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-    WHERE pk.activo = 1 AND ss.stock_actual > 0
+    JOIN productos p ON p.producto_id = pp.producto_id AND p.activo = 1
+    LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE pk.activo = 1
     ORDER BY pk.nombre, pp.producto_id
 ");
 $stmtPaq->execute([$_SESSION['sucursal_id']]);
@@ -365,6 +367,7 @@ foreach ($paqFilas as $f) {
         'producto_id'        => intval($f['producto_id']),
         'nombre_producto'    => $f['nombre_producto'],
         'cantidad_requerida' => floatval($f['cantidad_requerida']),
+        'stock_actual'       => floatval($f['stock_actual']),  // stock real para calcular combos en JS
     ];
 }
 $paquesData = array_values($paqAgrupados);
@@ -723,19 +726,22 @@ $paquesData = array_values($paqAgrupados);
 
                     <div class="form-group">
                         <label>Método de pago</label>
+                        <!-- [AUTOFIX] Emojis eliminados de opciones de pago -->
                         <select name="metodo_pago" id="metodoPagoPend" onchange="cambiarMetodoPend(this.value)"
                             style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
-                            <option value="Efectivo">💵 Efectivo</option>
-                            <option value="Transferencia">🏦 Transferencia</option>
-                            <option value="Crédito" id="optCreditoPend" style="display:none;">📋 Crédito</option>
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Transferencia">Transferencia</option>
+                            <option value="Crédito" id="optCreditoPend" style="display:none;">Crédito</option>
                         </select>
                     </div>
 
                     <!-- Efectivo: monto a cobrar + cambio -->
                     <div id="camposEfectivoPend" style="display:none;background:#f0faf4;border:1px solid #c8e6c9;border-radius:6px;padding:10px 12px;margin-bottom:13px;font-size:13px;">
-                        <div style="font-weight:600;color:#2e7d32;margin-bottom:8px;">💵 Pago en efectivo</div>
+                        <!-- [AUTOFIX] Emoji eliminado del encabezado del panel de efectivo -->
+                        <div style="font-weight:600;color:#2e7d32;margin-bottom:8px;">Pago en efectivo</div>
                         <div style="margin-bottom:8px;">
-                            <label style="font-size:12px;color:#555;display:block;margin-bottom:3px;">Monto que entrega el cliente (opcional)</label>
+                            <!-- [AUTOFIX] Campo obligatorio: monto_efectivo es requerido para registrar la venta -->
+                            <label style="font-size:12px;color:#c0392b;display:block;margin-bottom:3px;">Monto que entrega el cliente *</label>
                             <input type="number" id="montoEfectivoPend" placeholder="0.00" step="0.01" min="0" inputmode="decimal"
                                 style="width:100%;padding:8px 10px;border:1px solid #a5d6a7;border-radius:6px;font-size:13px;"
                                 oninput="calcularCambioPend()">
@@ -901,11 +907,13 @@ document.addEventListener('DOMContentLoaded', function() {
 /* ── Calcular combos disponibles de un paquete ── */
 function calcularStockComboPend(productos) {
     if (!productos || !productos.length) return 0;
-    // Stock actual de cada producto en prodsPend (ya descontando lo que está en el carrito)
+    // Usa p.stock_actual (enviado desde PHP via LEFT JOIN) en vez de buscar en prodsPend.
+    // Esto garantiza que productos con stock=0 se consideren correctamente aunque no
+    // aparezcan en prodsPend (que solo incluye productos con stock > 0).
     return Math.floor(Math.min(...productos.map(p => {
-        const req  = parseFloat(p.cantidad_requerida || 1);
-        const prod = prodsPend.find(pr => pr.producto_id === parseInt(p.producto_id));
-        const enCarrito = carritoP
+        const req        = parseFloat(p.cantidad_requerida || 1);
+        const stockBase  = parseFloat(p.stock_actual || 0);
+        const enCarrito  = carritoP
             .filter(i => i.tipo !== 'paquete' && i.producto_id === parseInt(p.producto_id))
             .reduce((s, i) => s + i.cantidad, 0);
         // También contar los que consume el propio paquete si ya hay en carritoP
@@ -915,7 +923,7 @@ function calcularStockComboPend(productos) {
                 const sub = (i.productos_paquete || []).find(sp => sp.producto_id === parseInt(p.producto_id));
                 return s + (sub ? sub.cantidad_requerida * i.cantidad : 0);
             }, 0);
-        const stockDisp = prod ? Math.max(0, prod.stock - enCarrito - enPaq) : 0;
+        const stockDisp = Math.max(0, stockBase - enCarrito - enPaq);
         return req > 0 ? stockDisp / req : 0;
     })));
 }
@@ -1428,9 +1436,21 @@ function prepararPendiente() {
         }
     }
 
-    // Totales ya guardados en inputs hidden por recalcularTotalPend()
-    // Actualizar cambio si es efectivo
+    // [AUTOFIX] Validar monto_efectivo obligatorio y suficiente antes de enviar
     if (metodo === 'Efectivo') {
+        const montoInput = document.getElementById('montoEfectivoPend');
+        const montoVal   = parseFloat(montoInput.value) || 0;
+        const totalVal   = parseFloat(document.getElementById('inputTotalPend').value) || 0;
+        if (!montoInput.value || montoVal <= 0) {
+            alert('El monto en efectivo que entrega el cliente es obligatorio.');
+            montoInput.focus();
+            return false;
+        }
+        if (montoVal < totalVal - 0.005) {
+            alert('El cliente debe entregar al menos $' + totalVal.toFixed(2) + '.\nMonto ingresado: $' + montoVal.toFixed(2));
+            montoInput.focus();
+            return false;
+        }
         calcularCambioPend();
     }
 

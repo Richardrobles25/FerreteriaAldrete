@@ -32,6 +32,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 // ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 $msgMovCaja = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['movimiento_caja'])) {
+    // [AUTOFIX] BUG-04: Verificar CSRF token en handler de movimiento de caja
+    requerirCSRF($_POST['_token'] ?? '', 'nuevaVenta.php');
     $tipoMov  = in_array($_POST['tipo_mov'] ?? '', ['Retiro','Ingreso']) ? $_POST['tipo_mov'] : null;
     $montoMov = floatval($_POST['monto_mov'] ?? 0);
     $notaMov  = trim($_POST['nota_mov'] ?? '');
@@ -322,13 +324,15 @@ if (isset($_GET['buscar_cliente'])) {
 // ── AJAX: obtener detalle de venta para ticket ───────────────────────────────
 if (isset($_GET['ticket_venta'])) {
     $venta_id = intval($_GET['ticket_venta']);
+    // [AUTOFIX] BUG-02: Agregar filtro de sucursal para evitar que un cajero vea tickets de otra sucursal
     $stmtV = $pdo->prepare("
         SELECT v.*, c.nombre_completo AS cliente, c.telefono AS tel_cliente
         FROM ventas v
+        JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
         LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
         WHERE v.venta_id = ?
     ");
-    $stmtV->execute([$venta_id]);
+    $stmtV->execute([$_SESSION['sucursal_id'], $venta_id]);
     $venta = $stmtV->fetch(PDO::FETCH_ASSOC);
     if ($venta) {
         // Formatear fecha en servidor (evita problemas de zona horaria en JS)
@@ -336,24 +340,20 @@ if (isset($_GET['ticket_venta'])) {
     }
 
     $stmtP = $pdo->prepare("
-        SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.precio_final, vp.subtotal, vp.nota_ajuste, p.nombre_producto, p.codigo
+        SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.precio_final, vp.subtotal,
+               vp.nota_ajuste, vp.paquete_id, p.nombre_producto, p.codigo,
+               pk.nombre AS paquete_nombre, pk.precio_paquete
         FROM venta_productos vp
         JOIN productos p ON vp.producto_id = p.producto_id
+        LEFT JOIN paquetes pk ON vp.paquete_id = pk.paquete_id
         WHERE vp.venta_id = ?
     ");
     $stmtP->execute([$venta_id]);
     $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
-    // [AUTOFIX] B-08 + descuento_display correcto: usar precio_unitario*cantidad como denominador
-    // (misma base que ventas.subtotal = precio bruto), no vp.subtotal (precio_final) que da ratio incorrecto
+    // [AUTOFIX] descuento_display = descuento almacenado directamente (ya es el valor correcto)
     if ($venta) {
-        $subtotalOriginalBruto = array_sum(array_map(
-            fn($p) => floatval($p['precio_unitario']) * floatval($p['cantidad']),
-            $venta['productos']
-        ));
-        $venta['descuento_display'] = ($subtotalOriginalBruto > 0.001)
-            ? round(floatval($venta['descuento']) * floatval($venta['subtotal']) / $subtotalOriginalBruto, 2)
-            : 0;
+        $venta['descuento_display'] = floatval($venta['descuento']);
     }
 
     header('Content-Type: application/json');
@@ -482,7 +482,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
 
             if ($metodo_pago === 'Credito' && $cliente_id) {
-                $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado,fecha_limite) VALUES (?,?,?,?,'Activo',DATE_ADD(CURDATE(), INTERVAL 1 DAY))")
+                // [AUTOFIX] BUG-05: Cambiado de INTERVAL 1 DAY (valor de prueba) a INTERVAL 3 DAY
+                $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado,fecha_limite) VALUES (?,?,?,?,'Activo',DATE_ADD(CURDATE(), INTERVAL 3 DAY))")
                     ->execute([$cliente_id,$venta_id,$total,$total]);
             }
 
@@ -712,6 +713,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 <input type="hidden" name="movimiento_caja" value="1">
                 <input type="hidden" name="tipo_mov" id="inputTipoMov" value="Ingreso">
 
+                <!-- [AUTOFIX] BUG-04: Token CSRF para proteger el form de movimiento de caja -->
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <div class="tipo-toggle">
                     <button type="button" id="btnTipoIngreso" class="tipo-btn ingreso selected" onclick="seleccionarTipoMov('Ingreso')">
                         &#8593; Ingreso
@@ -1356,9 +1359,11 @@ function mostrarResultadosCombinados(productos, paquetes) {
         const label = paq.disponible
             ? `${paq.maxCombos} combo${paq.maxCombos !== 1 ? 's' : ''} disponible${paq.maxCombos !== 1 ? 's' : ''}`
             : 'Sin stock';
+        // [AUTOFIX] OBS-01: Pasar solo el paquete_id (numerico) en lugar de JSON serializado con comillas
+        // para evitar que un nombre con apostrofe (ej. "Tornillo 3/4'") rompa el parse en agregarPaquete()
         html += `<div class="resultado-item" style="background:#fffde7;"
             onclick="${paq.disponible
-                ? `agregarPaquete(${JSON.stringify(paq).replace(/"/g,"'")})`
+                ? `agregarPaquete(${paq.paquete_id})`
                 : 'alert(\"Stock insuficiente\")'}" >
             <div>
                 <div class="resultado-nombre">📦 ${esc(paq.nombre)}</div>
@@ -1453,6 +1458,11 @@ function calcularStockCombo(productos) {
 
 // ── Agregar paquete ──────────────────────────────────────────────────────────
 function agregarPaquete(paq) {
+    // [AUTOFIX] OBS-01: aceptar ID numerico (desde el dropdown) — busca en paquetesGlobales
+    if (typeof paq === 'number') {
+        paq = paquetesGlobales.find(p => p.paquete_id === paq);
+        if (!paq) return;
+    }
     if (typeof paq === 'string') {
         try { paq = JSON.parse(paq.replace(/'/g, '"')); } catch(e) { return; }
     }
@@ -2105,7 +2115,8 @@ function recalcularTodo() {
 }
 
 function calcularCambio() {
-    const total    = parseFloat(document.getElementById('resTotal').textContent.replace(/[^0-9.]/g,''))||0;
+    // [AUTOFIX] BUG-07: Leer total desde el campo oculto (ya calculado con precision) en lugar de parsear el span visual
+    const total    = parseFloat(document.getElementById('inputTotal').value)||0;
     const recibido = parseFloat(document.getElementById('montoEfectivo').value)||0;
     const falta    = total - recibido;
     const cambio   = recibido >= total ? recibido - total : 0;
@@ -2379,10 +2390,11 @@ function generarTicketHTML(venta) {
         if (datosTicket.telefono)  html += `<div class="t-centro">Tel: ${esc(datosTicket.telefono)}</div>`;
     }
 
+    // [AUTOFIX] OBS-03: Escapar folio y fecha para evitar XSS si hubiera HTML en esos campos
     html += `
         <div class="t-linea"></div>
-        <div class="t-fila"><span>Folio:</span><span>${venta.folio || ('#'+venta.venta_id)}</span></div>
-        <div class="t-fila"><span>Fecha:</span><span>${fecha}</span></div>
+        <div class="t-fila"><span>Folio:</span><span>${esc(venta.folio || ('#'+venta.venta_id))}</span></div>
+        <div class="t-fila"><span>Fecha:</span><span>${esc(fecha)}</span></div>
         <div class="t-fila"><span>Cajero:</span><span>${esc(cajeroNombre)}</span></div>`;
 
     if (venta.cliente) {

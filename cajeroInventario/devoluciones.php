@@ -33,6 +33,10 @@ function formatearMotivoDevolucion(string $motivo): string
     return preg_replace('/^Devolución:\s*/i', '', $motivo);
 }
 
+// [AUTOFIX] Retorna mapa con clave compuesta "producto_id:paquete_id" (paquete_id vacío = suelto).
+// Esto evita que devoluciones de componentes de paquete "contaminen" las filas sueltas
+// cuando el mismo producto aparece tanto en el paquete como vendido de forma independiente.
+// Los callers que necesiten el total por producto_id deben sumar ellos mismos.
 function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
 {
     $totales = [];
@@ -40,20 +44,23 @@ function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
     // [AUTOFIX] Bug A: antes usaba INNER JOIN stock_sucursal → si faltaba la fila,
     // el conteo era 0 y el producto podía devolverse de nuevo indefinidamente.
     // Ahora consultamos directamente vía devoluciones.venta_id (FK exacta).
+    // Incluir paquete_id en GROUP BY para clave compuesta correcta.
     $stmtNew = $pdo->prepare("
-        SELECT mi.producto_id, SUM(mi.cantidad) AS cantidad_devuelta
+        SELECT mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS cantidad_devuelta
         FROM movimientos_inventario mi
         JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
         WHERE mi.tipo = 'Entrada'
           AND d.cancelada_en IS NULL
-        GROUP BY mi.producto_id
+        GROUP BY mi.producto_id, mi.paquete_id
     ");
     $stmtNew->execute([$ventaId]);
     foreach ($stmtNew->fetchAll(PDO::FETCH_ASSOC) as $fila) {
-        $totales[intval($fila['producto_id'])] = floatval($fila['cantidad_devuelta']);
+        $mk = intval($fila['producto_id']) . ':' . ($fila['paquete_id'] ?? '');
+        $totales[$mk] = floatval($fila['cantidad_devuelta']);
     }
 
-    // Compatibilidad con movimientos anteriores a la tabla devoluciones (sin devolucion_id)
+    // Compatibilidad con movimientos anteriores a la tabla devoluciones (sin devolucion_id).
+    // Registros viejos no tienen paquete_id → siempre se tratan como sueltos (clave "pid:").
     $stmtOld = $pdo->prepare("
         SELECT mi.producto_id, SUM(mi.cantidad) AS cantidad_devuelta
         FROM movimientos_inventario mi
@@ -67,8 +74,8 @@ function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
         'Devolucion venta #' . $ventaId . ' %',
     ]);
     foreach ($stmtOld->fetchAll(PDO::FETCH_ASSOC) as $fila) {
-        $pid = intval($fila['producto_id']);
-        $totales[$pid] = ($totales[$pid] ?? 0) + floatval($fila['cantidad_devuelta']);
+        $mk = intval($fila['producto_id']) . ':'; // registros viejos = sueltos
+        $totales[$mk] = ($totales[$mk] ?? 0) + floatval($fila['cantidad_devuelta']);
     }
 
     return $totales;
@@ -111,26 +118,19 @@ if (isset($_GET['buscar_venta'])) {
                 WHERE vp.venta_id = ?");
             $stmtP->execute([$venta['venta_id']]);
             $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
+            // [AUTOFIX] obtenerTotalesDevueltos ahora retorna clave compuesta "producto_id:paquete_id".
+            // Matching directo por clave compuesta: elimina la asignación secuencial (que causaba
+            // que devoluciones de paquete se asignaran a filas sueltas del mismo producto).
             $devueltos = obtenerTotalesDevueltos($pdo, intval($venta['venta_id']), intval($_SESSION['sucursal_id']));
 
-            // Ordenar: filas sueltas (paquete_id IS NULL) primero, luego filas de paquete.
-            // Así las devoluciones se descuentan primero del cupo suelto y el sobrante
-            // va al paquete — evita que una devolución de sueltos "consuma" el paquete.
-            usort($venta['productos'], function($a, $b) {
-                $aPaq = !empty($a['paquete_id']);
-                $bPaq = !empty($b['paquete_id']);
-                if ($aPaq === $bPaq) return 0;
-                return $aPaq ? 1 : -1; // sueltos primero
-            });
-
-            $pendienteDevuelto = $devueltos; // cantidad por aplicar por producto_id
             foreach ($venta['productos'] as &$productoVenta) {
-                $productoId      = intval($productoVenta['producto_id']);
+                $pid   = intval($productoVenta['producto_id']);
+                $paqId = !empty($productoVenta['paquete_id']) ? intval($productoVenta['paquete_id']) : null;
+                $mk    = $pid . ':' . ($paqId ?? '');
+                $devuelta        = $devueltos[$mk] ?? 0;
                 $cantidadVendida = floatval($productoVenta['cantidad']);
-                $porAplicar      = min($pendienteDevuelto[$productoId] ?? 0, $cantidadVendida);
-                $pendienteDevuelto[$productoId] = ($pendienteDevuelto[$productoId] ?? 0) - $porAplicar;
-                $productoVenta['cantidad_devuelta'] = $porAplicar;
-                $productoVenta['cantidad_restante'] = max(0, $cantidadVendida - $porAplicar);
+                $productoVenta['cantidad_devuelta'] = min($devuelta, $cantidadVendida);
+                $productoVenta['cantidad_restante']  = max(0, $cantidadVendida - $productoVenta['cantidad_devuelta']);
             }
             unset($productoVenta);
         }
@@ -229,7 +229,9 @@ if (isset($_GET['cancelar_dev'])) {
         $metodosQueNecesitanIngreso = ['Terminal', 'Mixto', 'Transferencia'];
         if (in_array($dev['metodo_pago'] ?? '', $metodosQueNecesitanIngreso, true)) {
             $folioCancelNota = $dev['folio'] ?? $dev['venta_id'];
-            $notaIngreso = 'Cancelación devolución folio #' . $folioCancelNota;
+            // [AUTOFIX] Mismo sufijo que el Retiro original → corteCaja sabe que no entra a caja física
+            $sufIngresoC = ($dev['metodo_pago'] === 'Transferencia') ? ' [Transferencia]' : ' [Terminal]';
+            $notaIngreso = 'Cancelación devolución folio #' . $folioCancelNota . $sufIngresoC;
             $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota, devolucion_id) VALUES (?,?,?,'Ingreso',?,?,?)")
                 ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $totalDevuelto, $notaIngreso, $devolucion_id]);
         }
@@ -282,7 +284,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cantidadesVendidas[intval($filaVendida['producto_id'])] = floatval($filaVendida['cantidad_vendida']);
         }
 
+        // [AUTOFIX] obtenerTotalesDevueltos retorna clave compuesta "pid:paqId".
+        //           Calcular también el agregado por producto_id para validaciones de cantidad total.
         $cantidadesDevueltas = obtenerTotalesDevueltos($pdo, $venta_id, intval($_SESSION['sucursal_id']));
+        $cantDevAgregado = [];
+        foreach ($cantidadesDevueltas as $mk => $qty) {
+            $pid = intval(explode(':', $mk, 2)[0]);
+            $cantDevAgregado[$pid] = ($cantDevAgregado[$pid] ?? 0) + $qty;
+        }
 
         // Cargar precios reales y calcular subtotalFinalVenta (suma de precio_final × cantidad)
         // subtotalFinalVenta se usa para separar descuentos por-ítem (promos/ajustes) del descuento global del cliente
@@ -332,7 +341,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // [AUTOFIX] Validar cantidad total por producto_id (sumando sueltos + paquete).
-        //           productosAgrupados ahora usa clave compuesta, así que agrupamos manualmente.
+        //           Usar $cantDevAgregado (agrupado por producto_id) para comparar contra lo vendido total.
         $cantTotalPorProd = [];
         foreach ($productosAgrupados as $entry) {
             $pid = $entry['producto_id'];
@@ -340,7 +349,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         foreach ($cantTotalPorProd as $productoId => $cantTotal) {
             $vendido  = $cantidadesVendidas[$productoId] ?? 0;
-            $devuelto = $cantidadesDevueltas[$productoId] ?? 0;
+            $devuelto = $cantDevAgregado[$productoId] ?? 0;
             if ($vendido <= 0) {
                 $errores[] = 'Uno de los productos seleccionados no pertenece a la venta.';
                 continue;
@@ -389,7 +398,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (!isset($cantTotalPorProd[$prodId])) continue; // no se devuelve este producto
                     $qDevolviendo     = $cantTotalPorProd[$prodId];
                     $qSuelta          = $cantSuelta[$prodId] ?? 0;
-                    $qYaDevuelta      = $cantidadesDevueltas[$prodId] ?? 0;
+                    $qYaDevuelta      = $cantDevAgregado[$prodId] ?? 0;
                     $disponibleSuelta = max(0.0, $qSuelta - $qYaDevuelta);
                     if ($qDevolviendo > $disponibleSuelta + 0.0001) {
                         // La cantidad supera lo disponible suelto → toca el paquete
@@ -594,7 +603,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $metodosQueNecesitanRetiro = ['Terminal', 'Mixto', 'Transferencia'];
                 if (in_array($metodoVenta, $metodosQueNecesitanRetiro, true)) {
                     $folioDevNota = $ventaInfo['folio'] ?? $venta_id;
-                    $notaRetiro   = 'Devolución folio #' . $folioDevNota;
+                    // [AUTOFIX] Agregar sufijo al Retiro para que corteCaja lo excluya del efectivo físico
+                    $sufRetirod   = ($metodoVenta === 'Transferencia') ? ' [Transferencia]' : ' [Terminal]';
+                    $notaRetiro   = 'Devolución folio #' . $folioDevNota . $sufRetirod;
                     $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota, devolucion_id) VALUES (?,?,?,'Retiro',?,?,?)")
                         ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $totalDevuelto, $notaRetiro, $devolucion_id]);
                 }

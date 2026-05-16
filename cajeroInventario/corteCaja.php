@@ -22,9 +22,10 @@ $stmtVentas = $pdo->prepare("
         COALESCE(SUM(total),0) AS total_cobrado,
         COALESCE(SUM(CASE WHEN metodo_pago='Efectivo' THEN total ELSE 0 END),0) AS ef,
         COALESCE(SUM(CASE WHEN metodo_pago='Terminal' THEN total ELSE 0 END),0) AS term,
-        COALESCE(SUM(CASE WHEN metodo_pago='Credito' THEN total ELSE 0 END),0) AS cred,
+        COALESCE(SUM(CASE WHEN metodo_pago='Credito'      OR metodo_pago='Crédito' THEN total ELSE 0 END),0) AS cred,
         COALESCE(SUM(CASE WHEN metodo_pago='Mixto' THEN monto_efectivo ELSE 0 END),0) AS mixto_ef,
         COALESCE(SUM(CASE WHEN metodo_pago='Mixto' THEN monto_terminal ELSE 0 END),0) AS mixto_term,
+        COALESCE(SUM(CASE WHEN metodo_pago='Transferencia' THEN total ELSE 0 END),0) AS transf,
         COALESCE(SUM(comision_terminal),0) AS comisiones
     FROM ventas
     WHERE caja_id = ? AND estado IN ('Completada', 'Modificado', 'Devuelto')
@@ -53,9 +54,14 @@ $ingresosNoCash = array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso' 
 $totalIngresosCash   = array_sum(array_column(array_values($ingresosCash),   'monto'));
 $totalIngresosNoCash = array_sum(array_column(array_values($ingresosNoCash), 'monto'));
 $totalIngresos       = $totalIngresosCash + $totalIngresosNoCash;
-$totalRetiros        = array_sum(array_column(array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro'), 'monto'));
+// [AUTOFIX] Separar retiros: efectivo vs terminal/transferencia (devoluciones no-efectivo no salen de la caja física)
+$retirosCash         = array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro' && !preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota'] ?? ''));
+$retirosNoCash       = array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro' &&  preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota'] ?? ''));
+$totalRetiros        = array_sum(array_column(array_values($retirosCash),   'monto'));
+$totalRetirosNoCash  = array_sum(array_column(array_values($retirosNoCash), 'monto'));
 
-// Efectivo esperado = apertura + ventas en efectivo + ingresos en efectivo - retiros
+// Efectivo esperado = apertura + ventas en efectivo + ingresos en efectivo - retiros en efectivo
+// Los retiros de devoluciones por Terminal/Transferencia NO reducen la caja física
 $efectivoEsperado = floatval($caja['monto_apertura'])
                   + floatval($resumen['ef'])
                   + floatval($resumen['mixto_ef'])
@@ -267,6 +273,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>Terminal directa</span><span>$<?= number_format($resumen['term'],2) ?></span></div>
                     <div class="fila"><span>Mixto — parte efectivo</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
                     <div class="fila"><span>Mixto — parte terminal</span><span>$<?= number_format($resumen['mixto_term'],2) ?></span></div>
+                    <?php if (floatval($resumen['transf']) > 0): ?>
+                    <div class="fila"><span>Transferencia bancaria</span><span>$<?= number_format($resumen['transf'],2) ?></span></div>
+                    <?php endif; ?>
                     <div class="fila"><span>Crédito (no cobrado en caja)</span><span>$<?= number_format($resumen['cred'],2) ?></span></div>
                 </div>
 
@@ -287,8 +296,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <?php if (count($movimientos) > 1): ?>
                     <div class="fila subtotal" style="margin-top:4px;">
                         <span>Neto de movimientos</span>
-                        <span style="color:<?= ($totalIngresos - $totalRetiros) >= 0 ? '#2e7d32' : '#c0392b' ?>;">
-                            <?= ($totalIngresos - $totalRetiros) >= 0 ? '+' : '' ?>$<?= number_format($totalIngresos - $totalRetiros, 2) ?>
+                        <?php $netoMovimientos = $totalIngresos - ($totalRetiros + $totalRetirosNoCash); ?>
+                        <span style="color:<?= $netoMovimientos >= 0 ? '#2e7d32' : '#c0392b' ?>;">
+                            <?= $netoMovimientos >= 0 ? '+' : '' ?>$<?= number_format($netoMovimientos, 2) ?>
                         </span>
                     </div>
                     <?php endif; ?>
@@ -301,6 +311,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>Monto de apertura</span><span>$<?= number_format($caja['monto_apertura'],2) ?></span></div>
                     <div class="fila"><span>+ Ventas en efectivo</span><span>$<?= number_format($resumen['ef'],2) ?></span></div>
                     <div class="fila"><span>+ Efectivo de pagos mixtos</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
+                    <?php if (floatval($resumen['transf']) > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;"><span>↗ Transferencias bancarias <em style="font-size:11px;">(no entran a caja física)</em></span><span>$<?= number_format($resumen['transf'],2) ?></span></div>
+                    <?php endif; ?>
                     <?php if ($totalIngresosCash > 0): ?>
                     <div class="fila positivo"><span>+ Ingresos en efectivo</span><span>+$<?= number_format($totalIngresosCash,2) ?></span></div>
                     <?php endif; ?>
@@ -308,7 +321,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila" style="font-size:12px;color:#888;"><span>↗ Pagos crédito terminal/transferencia <em style="font-size:11px;">(no afectan caja física)</em></span><span>$<?= number_format($totalIngresosNoCash,2) ?></span></div>
                     <?php endif; ?>
                     <?php if ($totalRetiros > 0): ?>
-                    <div class="fila negativo"><span>- Retiros de caja</span><span>-$<?= number_format($totalRetiros,2) ?></span></div>
+                    <div class="fila negativo"><span>- Retiros de caja (efectivo)</span><span>-$<?= number_format($totalRetiros,2) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($totalRetirosNoCash > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;"><span>↙ Devoluciones terminal/transferencia <em style="font-size:11px;">(no salen de la caja física)</em></span><span>-$<?= number_format($totalRetirosNoCash,2) ?></span></div>
                     <?php endif; ?>
                     <div class="fila total-ef">
                         <span>Total esperado en caja</span>

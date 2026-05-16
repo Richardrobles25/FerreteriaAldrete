@@ -2421,12 +2421,13 @@ function generarTicketHTML(venta) {
 
     let ahorroPromoTicket = 0;
 
+    // [AUTOFIX] Las filas con paquete_id ya se muestran en la sección de paquetes de arriba.
+    //           Las filas sueltas (paquete_id null) se muestran tal cual — no restar consumidosPaquete
+    //           porque esa resta causaba que tornillos sueltos quedaran en cantidad negativa y
+    //           se omitieran del recibo cuando el mismo producto también existía dentro de un paquete.
     (venta.productos || []).forEach((p) => {
-        const key = String(p.producto_id || '');
-        let cantidadRestante = parseFloat(p.cantidad);
-        if (key && consumidosPaquete[key]) {
-            cantidadRestante = +(cantidadRestante - consumidosPaquete[key]).toFixed(3);
-        }
+        if (p.paquete_id) return;  // ya aparece en la sección de paquetes
+        const cantidadRestante = parseFloat(p.cantidad);
         if (cantidadRestante <= 0) return;
         const precioOrig  = parseFloat(p.precio_unitario);   // precio antes de promo
         const precioFinal = p.precio_final ? parseFloat(p.precio_final) : precioOrig;  // precio cobrado

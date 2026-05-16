@@ -34,21 +34,25 @@ if (isset($_GET['detalle_venta'])) {
         $stmtP->execute([$venta_id]);
         $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
-        // Cantidades devueltas activas (no canceladas) por producto
+        // [AUTOFIX] Cantidades devueltas activas con clave compuesta "producto_id:paquete_id".
+        // Sin paquete_id en GROUP BY, una devolución del paquete hacía que la fila suelta
+        // del mismo producto apareciera como "Devuelto" aunque no se hubiera devuelto.
         $stmtDev = $pdo->prepare("
-            SELECT mi.producto_id, SUM(mi.cantidad) AS cantidad_devuelta
+            SELECT mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS cantidad_devuelta
             FROM movimientos_inventario mi
             JOIN devoluciones d ON mi.devolucion_id = d.devolucion_id
             WHERE d.venta_id = ? AND mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
-            GROUP BY mi.producto_id
+            GROUP BY mi.producto_id, mi.paquete_id
         ");
         $stmtDev->execute([$venta_id]);
         $devueltos = [];
         foreach ($stmtDev->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $devueltos[$row['producto_id']] = floatval($row['cantidad_devuelta']);
+            $mk = $row['producto_id'] . ':' . ($row['paquete_id'] ?? '');
+            $devueltos[$mk] = floatval($row['cantidad_devuelta']);
         }
         foreach ($venta['productos'] as &$prod) {
-            $prod['cantidad_devuelta'] = $devueltos[$prod['producto_id']] ?? 0;
+            $mk = $prod['producto_id'] . ':' . ($prod['paquete_id'] ?? '');
+            $prod['cantidad_devuelta'] = $devueltos[$mk] ?? 0;
         }
         unset($prod);
 
@@ -182,10 +186,11 @@ $stmtTot = $pdo->prepare("
     SELECT
         COUNT(*) as total_ventas,
         COALESCE(SUM(CASE WHEN v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as total_cobrado,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'  AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as ef,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'  AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Credito'   AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'     AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as mixto,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'      AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as ef,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'      AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as term,
+        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('Credito','Crédito') AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as cred,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'          AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as mixto,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia'  AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as transf,
         COUNT(CASE WHEN v.estado='Cancelada' THEN 1 END) as canceladas
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
@@ -370,10 +375,11 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     tr:hover td { background: #fafafa; }
     tr.cancelada td { opacity: .65; }
     .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
-    .badge-efectivo  { background: #e8f5e9; color: #2e7d32; }
-    .badge-terminal  { background: #e3f2fd; color: #1565c0; }
-    .badge-mixto     { background: #f3e5f5; color: #6a1b9a; }
-    .badge-credito   { background: #fff8e1; color: #f57f17; }
+    .badge-efectivo      { background: #e8f5e9; color: #2e7d32; }
+    .badge-terminal      { background: #e3f2fd; color: #1565c0; }
+    .badge-mixto         { background: #f3e5f5; color: #6a1b9a; }
+    .badge-credito       { background: #fff8e1; color: #f57f17; }
+    .badge-transferencia { background: #e0f7fa; color: #00695c; }
     .badge-completada { background: #e8f5e9; color: #2e7d32; }
     .badge-cancelada  { background: #fdecea; color: #c0392b; }
     .badge-pendiente  { background: #e3f2fd; color: #1565c0; }
@@ -573,10 +579,11 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                     <label>Método de pago</label>
                     <select name="metodo">
                         <option value="">Todos</option>
-                        <option value="Efectivo" <?= $metodo==='Efectivo'?'selected':'' ?>>Efectivo</option>
-                        <option value="Terminal" <?= $metodo==='Terminal'?'selected':'' ?>>Terminal</option>
-                        <option value="Mixto"    <?= $metodo==='Mixto'   ?'selected':'' ?>>Mixto</option>
-                        <option value="Credito"  <?= $metodo==='Credito' ?'selected':'' ?>>Crédito</option>
+                        <option value="Efectivo"      <?= $metodo==='Efectivo'     ?'selected':'' ?>>Efectivo</option>
+                        <option value="Terminal"      <?= $metodo==='Terminal'     ?'selected':'' ?>>Terminal</option>
+                        <option value="Mixto"         <?= $metodo==='Mixto'        ?'selected':'' ?>>Mixto</option>
+                        <option value="Transferencia" <?= $metodo==='Transferencia'?'selected':'' ?>>Transferencia</option>
+                        <option value="Credito"       <?= $metodo==='Credito'      ?'selected':'' ?>>Crédito</option>
                     </select>
                 </div>
                 <div class="filtro-group">
@@ -626,6 +633,10 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
             <div class="stat">
                 <p>Mixto</p>
                 <h3>$<?= number_format($totales['mixto'],2) ?></h3>
+            </div>
+            <div class="stat">
+                <p>Transferencia</p>
+                <h3>$<?= number_format($totales['transf'],2) ?></h3>
             </div>
             <div class="stat canceladas">
                 <p>Canceladas</p>
@@ -1119,14 +1130,33 @@ function renderDetalle(v) {
     document.getElementById('detProductos').innerHTML =
         rowsHTML || '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:16px;">Sin productos registrados</td></tr>';
 
+    // [AUTOFIX] Calcular subtotal restante directo desde productos en vez de leer ventas.subtotal.
+    //           ventas.subtotal se mantiene por sustracción acumulada y puede acumular residuos de redondeo
+    //           (ej. subtotal=$3.10 en vez de $3.00 después de varias devoluciones/cancelaciones).
+    //           Sumar precio_unitario × (cantidad - cantidad_devuelta) para cada fila da siempre el valor exacto.
+    let subtotalRestante = 0;
+    let subtotalFinalRestante = 0;
+    (v.productos || []).forEach(p => {
+        const devuelta = parseFloat(p.cantidad_devuelta || 0);
+        const restante = Math.max(0, parseFloat(p.cantidad) - devuelta);
+        subtotalRestante      += restante * parseFloat(p.precio_unitario || 0);
+        subtotalFinalRestante += restante * parseFloat(p.precio_final || p.precio_unitario || 0);
+    });
+    subtotalRestante      = Math.round(subtotalRestante      * 100) / 100;
+    subtotalFinalRestante = Math.round(subtotalFinalRestante * 100) / 100;
+    // Descuento = bruto restante - (total actual + comision). Nunca negativo.
+    const comisionActual   = parseFloat(v.comision_terminal) || 0;
+    const totalActual      = parseFloat(v.total) || 0;
+    const descuentoRestante = Math.max(0, Math.round((subtotalRestante - (totalActual - comisionActual)) * 100) / 100);
+
     // Totales
     let html = '';
-    if (parseFloat(v.descuento_display) > 0) {
-        html += `<div class="det-fila"><span>Subtotal</span><span>$${fmt(v.subtotal)}</span></div>`;
-        html += `<div class="det-fila" style="color:#2e7d32;"><span>Ahorraste</span><span>-$${fmt(v.descuento_display)}</span></div>`;
+    if (descuentoRestante > 0.001) {
+        html += `<div class="det-fila"><span>Subtotal</span><span>$${fmt(subtotalRestante)}</span></div>`;
+        html += `<div class="det-fila" style="color:#2e7d32;"><span>Ahorraste</span><span>-$${fmt(descuentoRestante)}</span></div>`;
     }
-    if (parseFloat(v.comision_terminal) > 0) {
-        html += `<div class="det-fila"><span>Comisión terminal</span><span>$${fmt(v.comision_terminal)}</span></div>`;
+    if (comisionActual > 0) {
+        html += `<div class="det-fila"><span>Comisión terminal</span><span>$${fmt(comisionActual)}</span></div>`;
     }
     html += `<div class="det-fila total"><span>TOTAL</span><span>$${fmt(v.total)}</span></div>`;
     document.getElementById('detTotales').innerHTML = html;

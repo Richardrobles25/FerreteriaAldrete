@@ -71,10 +71,18 @@ $efectivoEsperado = floatval($caja['monto_apertura'])
 // Procesar cierre
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $monto_cierre  = floatval($_POST['monto_cierre'] ?? 0);
-    $observaciones = trim($_POST['observaciones'] ?? '');
+    // [AUTOFIX] VALIDACION-1B-1: Verificar que el campo no esté vacío antes de convertir a float.
+    // floatval('') = 0.0, lo que permitía cerrar sin escribir nada.
+    $monto_cierre_raw = $_POST['monto_cierre'] ?? '';
+    $observaciones    = trim($_POST['observaciones'] ?? '');
 
-    if ($monto_cierre < 0) $errores[] = 'El monto contado no puede ser negativo.';
+    if ($monto_cierre_raw === '') {
+        $errores[] = 'El monto contado es obligatorio. Escribe la cantidad que encontraste en caja.';
+        $monto_cierre = 0.0;
+    } else {
+        $monto_cierre = floatval($monto_cierre_raw);
+        if ($monto_cierre < 0) $errores[] = 'El monto contado no puede ser negativo.';
+    }
 
     if (empty($errores)) {
         $diferencia = $monto_cierre - $efectivoEsperado;
@@ -346,8 +354,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <form method="POST" onsubmit="return confirmarCierre()">
                     <div class="form-group">
                         <label>Monto contado en caja *</label>
+                        <!-- [AUTOFIX] VALIDACION-1B-1: required evita envío vacío desde el navegador -->
                         <input type="number" name="monto_cierre" id="inputMontoCierre"
-                            placeholder="0.00" step="0.01" min="0"
+                            placeholder="0.00" step="0.01" min="0" required
                             oninput="calcularDiferencia(this.value)" autofocus>
                     </div>
 
@@ -395,9 +404,20 @@ function calcularDiferencia(val) {
 }
 
 function confirmarCierre() {
-    const contado    = parseFloat(document.getElementById('inputMontoCierre').value) || 0;
-    const diferencia = contado - efectivoEsperado;
+    const raw     = document.getElementById('inputMontoCierre').value.trim();
+    const contado = parseFloat(raw);
 
+    // [AUTOFIX] VALIDACION-1B-1: Bloquear envío si el campo está vacío o no es un número
+    if (raw === '' || isNaN(contado)) {
+        alert('Escribe el monto que contaste en caja antes de cerrar.');
+        return false;
+    }
+    // Advertencia extra si se cierra con $0.00 (puede ser error de omisión)
+    if (contado === 0 && !confirm('Estás cerrando la caja con $0.00 contados. ¿Es correcto?')) {
+        return false;
+    }
+
+    const diferencia = contado - efectivoEsperado;
     if (Math.abs(diferencia) > 0.01) {
         const tipo = diferencia < 0 ? 'faltante' : 'sobrante';
         return confirm(`Hay un ${tipo} de $${Math.abs(diferencia).toFixed(2)}. ¿Confirmas el cierre de caja?`);

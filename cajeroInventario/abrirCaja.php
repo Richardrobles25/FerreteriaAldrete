@@ -39,17 +39,28 @@ $stmtAbiertas = $pdo->prepare("
 $stmtAbiertas->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id']]);
 $cajasAbiertas = $stmtAbiertas->fetchColumn();
 
+$erroresApertura = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
-    $monto_apertura = floatval($_POST['monto_apertura'] ?? 0);
-    $observaciones  = trim($_POST['observaciones'] ?? '');
+    $monto_apertura_raw = $_POST['monto_apertura'] ?? '';
+    $monto_apertura     = floatval($monto_apertura_raw);
+    $observaciones      = trim($_POST['observaciones'] ?? '');
 
-    $stmt = $pdo->prepare("
-        INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
-        VALUES (?, ?, ?, ?, 'Abierta', ?)
-    ");
-    $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
-    header('Location: inicioCajeroInventario.php?msg=cajaAbierta');
-    exit();
+    // [AUTOFIX] VALIDACION-1A-1: Requerir monto de apertura mayor a $0.00
+    if ($monto_apertura_raw === '' || $monto_apertura < 0) {
+        $erroresApertura[] = 'El monto de apertura es obligatorio y no puede ser negativo.';
+    } elseif ($monto_apertura == 0) {
+        $erroresApertura[] = 'El monto de apertura debe ser mayor a $0.00. Si no tienes fondo inicial, contacta al administrador.';
+    }
+
+    if (empty($erroresApertura)) {
+        $stmt = $pdo->prepare("
+            INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
+            VALUES (?, ?, ?, ?, 'Abierta', ?)
+        ");
+        $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
+        header('Location: inicioCajeroInventario.php?msg=cajaAbierta');
+        exit();
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -208,10 +219,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     </div>
                 <?php endif; ?>
 
+                <?php if (!empty($erroresApertura)): ?>
+                    <div style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:14px;">
+                        <?= htmlspecialchars($erroresApertura[0]) ?>
+                    </div>
+                <?php endif; ?>
                 <form method="POST">
                     <div class="form-group">
-                        <label>Monto inicial en caja</label>
-                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0" autofocus>
+                        <label>Monto inicial en caja *</label>
+                        <!-- [AUTOFIX] VALIDACION-1A-1: min="0.01" y required para bloquear $0 y vacío -->
+                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0.01" required autofocus
+                               value="<?= isset($_POST['monto_apertura']) ? htmlspecialchars($_POST['monto_apertura']) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>Observaciones (opcional)</label>

@@ -28,7 +28,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nombre = trim($_POST['nombre'] ?? '');
     $id     = intval($_POST['categoria_id'] ?? 0);
 
-    if ($nombre) {
+    // [AUTOFIX] VALIDACION-3A-2: Validar nombre en blanco antes de tocar la BD
+    if ($nombre === '') {
+        header('Location: inventario_categorias.php?msg=vacio');
+        exit();
+    }
+
+    // [AUTOFIX] ERROR-CAT-01: Capturar PDOException de clave duplicada en lugar de exponer el error PHP
+    try {
         if ($id) {
             $stmt = $pdo->prepare("UPDATE categorias SET nombre = ? WHERE categoria_id = ?");
             $stmt->execute([$nombre, $id]);
@@ -39,6 +46,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: inventario_categorias.php?msg=creado');
         }
         exit();
+    } catch (\PDOException $e) {
+        if ($e->getCode() === '23000') {
+            // Clave duplicada — nombre ya existe
+            header('Location: inventario_categorias.php?msg=duplicado');
+            exit();
+        }
+        throw $e; // Cualquier otro error sí se propaga
     }
 }
 
@@ -177,6 +191,10 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-exito">Categoría eliminada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
                     <div class="msg msg-error">No puedes eliminar esta categoría porque tiene productos asociados.</div>
+                <?php elseif ($_GET['msg'] === 'duplicado'): ?>
+                    <div class="msg msg-error">Ya existe una categoría con ese nombre. Elige un nombre diferente.</div>
+                <?php elseif ($_GET['msg'] === 'vacio'): ?>
+                    <div class="msg msg-error">El nombre de la categoría es obligatorio.</div>
                 <?php endif; ?>
             <?php endif; ?>
 

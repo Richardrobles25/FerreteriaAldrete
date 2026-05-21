@@ -32,6 +32,8 @@ if (!$cajaAbiertaId) {
 if (isset($_GET['get_abonos_cliente'])) {
     header('Content-Type: application/json');
     $cliente_id = intval($_GET['get_abonos_cliente']);
+    // [AUTOFIX] BUG-05: Validar que el ID sea positivo antes de consultar
+    if ($cliente_id <= 0) { echo json_encode([]); exit(); }
     $stmt = $pdo->prepare("
         SELECT a.abono_id, a.monto, a.comision_terminal, a.metodo_pago, a.notas, a.created_at,
                u.nombre_completo AS cajero,
@@ -125,7 +127,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
                 $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                     ->execute([$cr['credito_id']]);
             } else {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(fecha_limite, INTERVAL 2 DAY), fecha_limite) WHERE credito_id = ?")
+                // [AUTOFIX] BUG-03: Usar CURDATE() como base para la extensión, no fecha_limite pasada.
+                // Si venció hace 10 días y se suma desde ahí, sigue vencido. Ahora siempre queda 3 días en el futuro.
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(CURDATE(), INTERVAL 3 DAY), fecha_limite) WHERE credito_id = ?")
                     ->execute([$nuevoSaldo, $adelantado, $cr['credito_id']]);
             }
 
@@ -168,6 +172,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
 // AJAX: créditos activos de un cliente
 if (isset($_GET['get_creditos_cliente'])) {
     header('Content-Type: application/json');
+    // [AUTOFIX] BUG-05: Validar que el ID sea positivo antes de consultar
+    if (intval($_GET['get_creditos_cliente']) <= 0) { echo json_encode([]); exit(); }
     try {
         $cliente_id = intval($_GET['get_creditos_cliente']);
         $stmt = $pdo->prepare("
@@ -191,13 +197,15 @@ if (isset($_GET['get_creditos_cliente'])) {
             LEFT JOIN venta_productos vp ON cr.venta_id = vp.venta_id
             LEFT JOIN productos p ON vp.producto_id = p.producto_id
             -- Subquery: cantidad total devuelta por producto en esta venta (devoluciones no canceladas)
+            -- [AUTOFIX] BUG-02: Agregar paquete_id al GROUP BY y al JOIN para clave compuesta correcta.
+            -- Sin esto, devoluciones de un producto en paquete contaminan la fila suelto del mismo producto.
             LEFT JOIN (
-                SELECT mi.producto_id, d.venta_id, SUM(mi.cantidad) AS cantidad_devuelta
+                SELECT mi.producto_id, mi.paquete_id, d.venta_id, SUM(mi.cantidad) AS cantidad_devuelta
                 FROM movimientos_inventario mi
                 JOIN devoluciones d ON mi.devolucion_id = d.devolucion_id
                 WHERE mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
-                GROUP BY mi.producto_id, d.venta_id
-            ) dev ON dev.producto_id = vp.producto_id AND dev.venta_id = vp.venta_id
+                GROUP BY mi.producto_id, mi.paquete_id, d.venta_id
+            ) dev ON dev.producto_id = vp.producto_id AND dev.paquete_id <=> vp.paquete_id AND dev.venta_id = vp.venta_id
             WHERE cr.cliente_id = ? AND cr.estado IN ('Activo', 'Vencido')
             GROUP BY cr.credito_id
             ORDER BY cr.created_at ASC
@@ -712,7 +720,7 @@ $totales = $pdo->query("
                 <div class="ab-fg" id="abFgAdelantado" style="display:none;">
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;font-size:13px;">
                         <input type="checkbox" name="pago_adelantado" value="1" id="abAdelantado" style="width:auto;padding:0;border:none;">
-                        Pago por adelantado (extiende fecha límite 1 día)
+                        Pago por adelantado (extiende fecha límite 3 días)
                     </label>
                 </div>
 
@@ -730,6 +738,9 @@ $totales = $pdo->query("
 </div>
 
 <script>
+// [AUTOFIX] BUG-01: Funciones de escape/sanitización para prevenir XSS en template literals con innerHTML
+function esc(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function intval(n) { return parseInt(n, 10) || 0; }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
 
@@ -764,8 +775,9 @@ function abrirDetalles(clienteId, nombre) {
             let html = '';
             let totalPend = 0;
             creditos.forEach(cr => {
+                // [AUTOFIX] BUG-01: usar esc() en todos los valores de BD que van a innerHTML
                 const badgeClass = cr.estado === 'Vencido' ? 'badge-vencido2' : 'badge-activo';
-                const folio = cr.folio ? 'Folio ' + cr.folio : 'Venta #' + cr.credito_id;
+                const folio = cr.folio ? 'Folio ' + esc(cr.folio) : 'Venta #' + intval(cr.credito_id);
                 const saldo = parseFloat(cr.saldo_pendiente);
                 totalPend += saldo;
                 html += `<div class="credito-det">
@@ -774,7 +786,7 @@ function abrirDetalles(clienteId, nombre) {
                             <div class="credito-det-folio">${folio}</div>
                             <div class="credito-det-fecha">${formatFecha(cr.fecha_venta)}</div>
                         </div>
-                        <span class="credito-det-badge ${badgeClass}">${cr.estado}</span>
+                        <span class="credito-det-badge ${badgeClass}">${esc(cr.estado)}</span>
                         <div class="credito-det-saldo">$${saldo.toFixed(2)}</div>
                     </div>`;
                 if (cr.productos && cr.productos.length) {
@@ -782,7 +794,7 @@ function abrirDetalles(clienteId, nombre) {
                     cr.productos.forEach(p => {
                         const cant = Number.isInteger(p.cantidad) ? p.cantidad : parseFloat(p.cantidad).toFixed(2).replace(/\.?0+$/,'');
                         html += `<div class="prod-det-row">
-                            <span class="prod-det-nombre">${p.nombre}</span>
+                            <span class="prod-det-nombre">${esc(p.nombre)}</span>
                             <span class="prod-det-cant">x ${cant}</span>
                             <span class="prod-det-precio">$${(p.cantidad * p.precio).toFixed(2)}</span>
                         </div>`;
@@ -842,14 +854,15 @@ function abrirAbonar() {
 
     // Lista FIFO de creditos con productos
     let listHtml = '';
+    // [AUTOFIX] BUG-01: usar esc() en todos los valores de BD que van a innerHTML
     _creditosActuales.forEach(cr => {
-        const folio      = cr.folio ? 'Folio ' + cr.folio : 'Credito #' + cr.credito_id;
+        const folio      = cr.folio ? 'Folio ' + esc(cr.folio) : 'Credito #' + intval(cr.credito_id);
         const badgeClass = cr.estado === 'Vencido' ? 'badge-vencido2' : 'badge-activo';
         listHtml += `<div class="ab-cred-row">
             <div class="ab-cred-head">
                 <div class="ab-cred-left">
                     <span class="ab-cred-folio">${folio}</span>
-                    <span class="credito-det-badge ${badgeClass}">${cr.estado}</span>
+                    <span class="credito-det-badge ${badgeClass}">${esc(cr.estado)}</span>
                     <span class="ab-cred-fecha">${formatFecha(cr.fecha_venta)}</span>
                 </div>
                 <span class="ab-cred-saldo">$${parseFloat(cr.saldo_pendiente).toFixed(2)}</span>
@@ -859,7 +872,7 @@ function abrirAbonar() {
             cr.productos.forEach(p => {
                 const cant = Number.isInteger(p.cantidad) ? p.cantidad : parseFloat(p.cantidad).toFixed(2).replace(/\.?0+$/,'');
                 listHtml += `<div class="prod-det-row">
-                    <span class="prod-det-nombre">${p.nombre}</span>
+                    <span class="prod-det-nombre">${esc(p.nombre)}</span>
                     <span class="prod-det-cant">× ${cant}</span>
                     <span class="prod-det-precio">$${(p.cantidad * p.precio).toFixed(2)}</span>
                 </div>`;
@@ -894,15 +907,17 @@ function cargarHistorialPagos(clienteId) {
                 cont.innerHTML = '<div style="text-align:center;color:#aaa;font-size:12px;padding:12px;">Sin pagos registrados.</div>';
                 return;
             }
+            // [AUTOFIX] BUG-01: usar esc() en metodo_pago, cajero y folio para evitar XSS en innerHTML
             const badges = { Efectivo:'badge-efectivo', Terminal:'badge-terminal', Transferencia:'badge-transferencia', Mixto:'badge-mixto' };
             cont.innerHTML = '<table class="tabla-abonos"><thead><tr><th>Monto</th><th>Metodo</th><th>Folio</th><th>Cajero</th><th>Fecha</th></tr></thead><tbody>' +
                 abonos.map(a => {
-                    const com = parseFloat(a.comision_terminal||0);
+                    const com    = parseFloat(a.comision_terminal||0);
+                    const metodo = esc(a.metodo_pago);
                     return `<tr>
                         <td><span style="font-weight:700;color:#2e7d32;">$${parseFloat(a.monto).toFixed(2)}</span>${com>0?'<br><span style="font-size:11px;color:#1565c0;">+$'+com.toFixed(2)+' com.</span>':''}</td>
-                        <td><span class="badge ${badges[a.metodo_pago]||''}">${a.metodo_pago}</span></td>
-                        <td style="font-size:11px;color:#888;">${a.folio||'&mdash;'}</td>
-                        <td style="font-size:11px;">${a.cajero}</td>
+                        <td><span class="badge ${badges[a.metodo_pago]||''}">${metodo}</span></td>
+                        <td style="font-size:11px;color:#888;">${a.folio ? esc(a.folio) : '&mdash;'}</td>
+                        <td style="font-size:11px;">${esc(a.cajero)}</td>
                         <td style="font-size:11px;color:#aaa;">${formatFecha(a.created_at)}</td>
                     </tr>`;
                 }).join('') + '</tbody></table>';

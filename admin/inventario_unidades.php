@@ -36,7 +36,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $sucursalId = $esAdmin ? intval($_POST['sucursal_id'] ?? $sucursalVista) : intval($_SESSION['sucursal_id']);
     if ($sucursalId === 0 && !$esAdmin) $sucursalId = intval($_SESSION['sucursal_id']);
 
-    if ($nombre) {
+    // [AUTOFIX] VALIDACION-3B-2: Validar nombre en blanco antes de tocar la BD
+    if ($nombre === '') {
+        header('Location: inventario_unidades.php?msg=vacio');
+        exit();
+    }
+
+    // [AUTOFIX] ERROR-UNIT-01: Capturar PDOException de clave duplicada en lugar de exponer el error PHP
+    try {
         if ($id) {
             $pdo->prepare("UPDATE unidades_medida SET nombre = ?, sucursal_id = ? WHERE unidad_id = ?")
                 ->execute([$nombre, $sucursalId, $id]);
@@ -47,6 +54,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: inventario_unidades.php?msg=creado');
         }
         exit();
+    } catch (\PDOException $e) {
+        if ($e->getCode() === '23000') {
+            // Clave duplicada — nombre ya existe para esta sucursal
+            header('Location: inventario_unidades.php?msg=duplicado');
+            exit();
+        }
+        throw $e;
     }
 }
 
@@ -241,6 +255,10 @@ $todasSucursales = $esAdmin
                     <div class="msg msg-exito">Unidad eliminada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
                     <div class="msg msg-error">No puedes eliminar esta unidad porque tiene productos asociados.</div>
+                <?php elseif ($_GET['msg'] === 'duplicado'): ?>
+                    <div class="msg msg-error">Ya existe una unidad con ese nombre en esta sucursal. Elige un nombre diferente.</div>
+                <?php elseif ($_GET['msg'] === 'vacio'): ?>
+                    <div class="msg msg-error">El nombre de la unidad de medida es obligatorio.</div>
                 <?php endif; ?>
             <?php endif; ?>
 

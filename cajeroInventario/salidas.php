@@ -18,8 +18,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$motivo)       $errores[] = 'El motivo es obligatorio.';
 
     if (empty($errores)) {
+        // [AUTOFIX] INFO-3E-1: Incluir stock_minimo para detectar si queda bajo el mínimo
         $stmtP = $pdo->prepare("
-            SELECT p.nombre_producto, ss.stock_actual
+            SELECT p.nombre_producto, ss.stock_actual, ss.stock_minimo
             FROM productos p
             INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
             WHERE p.producto_id = ?
@@ -30,16 +31,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$prod) {
             $errores[] = 'Producto no encontrado.';
         } elseif ($cantidad > $prod['stock_actual']) {
-            $errores[] = 'La cantidad no puede ser mayor al stock actual ('.$prod['stock_actual'].' disponibles).';
+            $errores[] = 'La cantidad no puede ser mayor al stock actual (' . floatval($prod['stock_actual']) . ' disponibles).';
         } else {
-            $stockAnterior = $prod['stock_actual'];
+            $stockAnterior = floatval($prod['stock_actual']);
             $stockNuevo    = $stockAnterior - $cantidad;
 
             $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $_SESSION['sucursal_id']]);
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
                 ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo]);
 
-            header('Location: salidas.php?msg=exito');
+            // [AUTOFIX] INFO-3E-1: Redirigir con msg=exito_minimo si quedó bajo el mínimo
+            $stockMinimo = floatval($prod['stock_minimo'] ?? 0);
+            $msgRedir = ($stockMinimo > 0 && $stockNuevo < $stockMinimo) ? 'exito_minimo' : 'exito';
+            header('Location: salidas.php?msg=' . $msgRedir);
             exit();
         }
     }
@@ -221,8 +225,14 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="card">
                 <h3>Registrar salida</h3>
 
-                <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito'): ?>
+                <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito' && empty($errores)): ?>
                     <div class="msg msg-exito">Salida registrada correctamente.</div>
+                <?php endif; ?>
+                <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito_minimo' && empty($errores)): ?>
+                    <!-- [AUTOFIX] INFO-3E-1: Advertencia de stock bajo mínimo después del registro -->
+                    <div class="msg" style="background:#fff8e1;color:#e65100;border-left:3px solid #e65100;">
+                        ⚠️ Salida registrada, pero el stock quedó por debajo del mínimo establecido.
+                    </div>
                 <?php endif; ?>
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
@@ -232,10 +242,12 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-group">
                         <label>Producto *</label>
                         <div class="prod-busq-wrap">
+                            <!-- [AUTOFIX] OBS-7: Eliminar onfocus que disparaba el dropdown al hacer clic en "Quitar selección".
+                                 cancelarSelSalida() llama a .focus() que activaba onfocus → mostraba el primer producto disponible.
+                                 Ahora el dropdown solo aparece cuando el usuario escribe (oninput). -->
                             <input type="text" id="buscarProductoSalida" placeholder="Buscar por nombre o código..."
                                 autocomplete="off"
                                 oninput="filtrarDropSalida(this.value)"
-                                onfocus="filtrarDropSalida(this.value)"
                                 onblur="setTimeout(ocultarDropSalida, 200)"
                                 style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
                             <div id="dropProductosSalida" class="prod-drop"></div>

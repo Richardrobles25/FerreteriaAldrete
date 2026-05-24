@@ -12,7 +12,15 @@ if (isset($_GET['eliminar'])) {
     requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
     $id = intval($_GET['eliminar']);
 
-    // [AUTOFIX] BUG-03: Verificar que el cliente no tenga créditos activos antes de eliminar
+    // Bug #2: Verificar saldo pendiente directamente en la tabla clientes
+    $stmtSaldo = $pdo->prepare("SELECT saldo_pendiente FROM clientes WHERE cliente_id = ?");
+    $stmtSaldo->execute([$id]);
+    if (floatval($stmtSaldo->fetchColumn() ?: 0) > 0.005) {
+        header('Location: clientes.php?msg=error_tiene_credito');
+        exit();
+    }
+
+    // Verificar que el cliente no tenga créditos activos antes de eliminar
     $stmtCred = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
     $stmtCred->execute([$id]);
     if ($stmtCred->fetchColumn() > 0) {

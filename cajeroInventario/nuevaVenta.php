@@ -1401,7 +1401,8 @@ function mostrarResultadosCombinados(productos, paquetes) {
 function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, precioMayoreo) {
     id    = parseInt(id);
     stock = parseFloat(stock);
-    if (stock <= 0) { alert('Sin stock disponible.'); return; }
+    // Bug #6: Mensaje claro al hacer click en producto sin stock en el catálogo
+    if (stock <= 0) { alert('No hay stock disponible para este producto.'); return; }
 
     // Aplicar promoción si existe
     const promo         = promoByProdId[id] || null;
@@ -2585,7 +2586,7 @@ function renderInventario(productos) {
                 <td>$${parseFloat(p.precio_venta).toFixed(2)}</td>
                 <td>${!esDif && !sinStock
                     ? `<button class="btn-agregar-inv" onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${esc(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)});cerrarInventario()">Agregar</button>`
-                    : `<button class="btn-agregar-inv" disabled>${esDif?'Otra suc.':'Sin stock'}</button>`
+                    : `<button class="btn-agregar-inv" ${esDif ? 'disabled' : `onclick="alert('No hay stock disponible para este producto.')"`}>${esDif?'Otra suc.':'Sin stock'}</button>`
                 }</td>
             </tr>`;
         }).join('')}</tbody>

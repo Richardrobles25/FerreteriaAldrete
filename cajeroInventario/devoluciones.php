@@ -1196,7 +1196,13 @@ function prepararDevolucion() {
     inputs.forEach(inp => {
         if (inp.disabled) return;
         const qty = parseFloat(inp.value) || 0;
-        if (qty <= 0) return;
+        // Bug #4: Validar cantidad negativa explícitamente
+        if (qty < 0) {
+            errorMsg = 'La cantidad a devolver no puede ser negativa.';
+            inp.value = '0';
+            return;
+        }
+        if (qty === 0) return;
 
         const paqId = inp.dataset.paqueteId;
         if (paqId) {
@@ -1229,7 +1235,8 @@ function prepararDevolucion() {
     });
 
     if (errorMsg) { alert(errorMsg); return false; }
-    if (!prods.length) { alert('Selecciona al menos un producto o paquete a devolver.'); return false; }
+    // Bug #5: Mensaje claro cuando todas las cantidades son 0
+    if (!prods.length) { alert('Ingresa una cantidad mayor a 0 para al menos un producto a devolver.'); return false; }
     document.getElementById('inputProdsDev').value = JSON.stringify(prods);
     return true;
 }

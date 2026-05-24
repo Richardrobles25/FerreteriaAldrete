@@ -53,6 +53,10 @@ if (isset($_GET['liquidar'])) {
                 $stmtSt = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
                 $stmtSt->execute([$it['producto_id'], $_SESSION['sucursal_id']]);
                 $stockAnt = floatval($stmtSt->fetchColumn() ?: 0);
+                // Bug #3: Bloquear liquidación si no hay stock suficiente
+                if ($stockAnt < floatval($it['cantidad'])) {
+                    throw new Exception('stock_insuficiente');
+                }
                 $stockNvo = max(0, $stockAnt - floatval($it['cantidad']));
                 $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                     ->execute([$stockNvo, $it['producto_id'], $_SESSION['sucursal_id']]);
@@ -76,7 +80,11 @@ if (isset($_GET['liquidar'])) {
             exit();
         } catch (Exception $e) {
             $pdo->rollBack();
-            header('Location: ventasPendientes.php?msg=error_liquidar');
+            if ($e->getMessage() === 'stock_insuficiente') {
+                header('Location: ventasPendientes.php?msg=error_sin_stock');
+            } else {
+                header('Location: ventasPendientes.php?msg=error_liquidar');
+            }
             exit();
         }
     }
@@ -222,8 +230,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $monto_efectivo = ($metodo_pago === 'Efectivo') ? floatval($_POST['monto_efectivo'] ?? 0) : 0;
         $cambio         = ($metodo_pago === 'Efectivo') ? floatval($_POST['cambio']         ?? 0) : 0;
 
-        // [AUTOFIX] Validar monto_efectivo obligatorio y suficiente en backend
-        if ($metodo_pago === 'Efectivo') {
+        // Bug #7: Validar carrito antes de cualquier otra validación
+        if (empty($items)) {
+            $errores[] = 'Agrega al menos un producto a la venta.';
+        }
+
+        // Validar monto_efectivo obligatorio y suficiente en backend
+        if (empty($errores) && $metodo_pago === 'Efectivo') {
             if ($monto_efectivo <= 0) {
                 $errores[] = 'El monto en efectivo que entrega el cliente es obligatorio.';
             } elseif ($monto_efectivo < $total - 0.005) {
@@ -232,7 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // Validar referencia obligatoria para Transferencia
-        if ($metodo_pago === 'Transferencia' && empty($ref_transf)) {
+        if (empty($errores) && $metodo_pago === 'Transferencia' && empty($ref_transf)) {
             $errores[] = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
         }
 
@@ -513,9 +526,10 @@ $paquesData = array_values($paqAgrupados);
                     'cancelado' => 'Venta cancelada y stock devuelto.',
                 ];
                 $msgsError = [
-                    'error_acceso'   => 'Acceso denegado: la venta no pertenece a tu caja.',
-                    'error_cancelar' => 'Error al cancelar la venta. Intenta de nuevo.',
-                    'error_liquidar' => 'Error al liquidar la venta. Intenta de nuevo.',
+                    'error_acceso'    => 'Acceso denegado: la venta no pertenece a tu caja.',
+                    'error_cancelar'  => 'Error al cancelar la venta. Intenta de nuevo.',
+                    'error_liquidar'  => 'Error al liquidar la venta. Intenta de nuevo.',
+                    'error_sin_stock' => 'No se puede liquidar: uno o más productos no tienen stock suficiente.',
                 ];
                 $msgKey = $_GET['msg'];
                 if (isset($msgsExito[$msgKey])): ?>

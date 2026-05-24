@@ -2190,16 +2190,32 @@ function prepararVenta() {
     const itemsExpandidos = [];
     for (const item of carrito) {
         if (item.tipo === 'paquete') {
-            const totalCant = item.productos_paquete.reduce((s,p) => s+p.cantidad_requerida, 0);
-            for (const prod of item.productos_paquete) {
-                const precioProp = totalCant > 0 ? (item.precio * prod.cantidad_requerida) / totalCant : 0;
+            // [AUTOFIX] BUG-08: Distribuir precio del paquete con tecnica "ultimo item absorbe el redondeo"
+            // para que la suma de subtotales individuales sea exactamente igual al precio del paquete.
+            const totalCant   = item.productos_paquete.reduce((s,p) => s+p.cantidad_requerida, 0);
+            const paqTotal    = item.precio * item.cantidad;
+            let   distribuido = 0;
+            const lastIdx     = item.productos_paquete.length - 1;
+            item.productos_paquete.forEach((prod, idx) => {
+                const cantTotal = prod.cantidad_requerida * item.cantidad;
+                let precioUnit;
+                if (idx === lastIdx) {
+                    precioUnit = cantTotal > 0
+                        ? Math.round((paqTotal - distribuido) / cantTotal * 100) / 100
+                        : 0;
+                } else {
+                    precioUnit = totalCant > 0
+                        ? Math.round(item.precio / totalCant * 100) / 100
+                        : 0;
+                    distribuido += precioUnit * cantTotal;
+                }
                 itemsExpandidos.push({
                     producto_id: prod.producto_id,
-                    cantidad:    prod.cantidad_requerida * item.cantidad,
-                    precio:      parseFloat((precioProp / prod.cantidad_requerida).toFixed(4)),
+                    cantidad:    cantTotal,
+                    precio:      precioUnit,
                     paquete_id:  item.paquete_id
                 });
-            }
+            });
         } else {
             const tieneAjuste = item.ajuste_activo === true && item.precio_ajuste !== null;
             if (tieneAjuste && !item.nota_ajuste) {

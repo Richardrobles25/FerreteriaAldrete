@@ -762,6 +762,13 @@ function quitarItem(idx) {
 }
 
 function prepararEnvio() {
+    // [AUTOFIX] BUG-07: Validar explícitamente que se haya seleccionado una sucursal de origen
+    const origen = document.getElementById('selOrigen').value;
+    if (!origen) {
+        alert('Selecciona la sucursal de origen antes de enviar la solicitud.');
+        document.getElementById('selOrigen').focus();
+        return false;
+    }
     if (!itemsTransf.length) { alert('Agrega al menos un producto.'); return false; }
     document.getElementById('inputItemsTransf').value = JSON.stringify(
         itemsTransf.map(i => ({ id: i.id, cantidad: i.cantidad }))

@@ -37,6 +37,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$nombre) $errores[] = 'El nombre es obligatorio.';
 
+    // [AUTOFIX] BUG-02: Verificar nombre duplicado antes de insertar/actualizar
+    if ($nombre && empty($errores)) {
+        $stmtDup = $pdo->prepare("SELECT proveedor_id FROM proveedores WHERE LOWER(nombre) = LOWER(?) AND proveedor_id != ? AND activo = 1");
+        $stmtDup->execute([$nombre, $id]);
+        if ($stmtDup->fetch()) $errores[] = 'Ya existe un proveedor activo con ese nombre.';
+    }
+
     if (empty($errores)) {
         if ($id) {
             $pdo->prepare("UPDATE proveedores SET nombre=?, telefono=?, correo=?, direccion=? WHERE proveedor_id=?")
@@ -64,7 +71,8 @@ $filtrocat = intval($_GET['categoria'] ?? 0);
 
 $where  = "WHERE p.activo = 1";
 $params = [];
-if ($busqueda)  { $where .= " AND p.nombre LIKE ?"; $params[] = '%'.$busqueda.'%'; }
+// [AUTOFIX] BUG-04: Extender búsqueda para incluir teléfono además del nombre
+if ($busqueda)  { $where .= " AND (p.nombre LIKE ? OR p.telefono LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
 if ($filtrocat) { $where .= " AND pc.categoria_id = ?"; $params[] = $filtrocat; }
 
 $join = $filtrocat ? "JOIN proveedor_categorias pc ON p.proveedor_id = pc.proveedor_id" : "LEFT JOIN proveedor_categorias pc ON p.proveedor_id = pc.proveedor_id";
@@ -247,7 +255,7 @@ if ($editando) {
     <div class="content">
         <div>
             <?php if (isset($_GET['msg'])): ?>
-                <?php $msgs = ['creado'=>'Proveedor creado.','editado'=>'Proveedor actualizado.','eliminado'=>'Proveedor eliminado.']; ?>
+                <?php $msgs = ['creado'=>'Proveedor creado.','editado'=>'Proveedor actualizado.','eliminado'=>'Proveedor eliminado.']; // [AUTOFIX] BUG-02: no se necesita msg especial pues el error ya lo muestra el form ?>
                 <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
             <?php endif; ?>
 

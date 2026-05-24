@@ -452,8 +452,15 @@ function agregarProdPaquete() {
     if (!prodSelId) { alert('Selecciona un producto.'); return; }
     if (cant < 1)   { alert('La cantidad debe ser al menos 1.'); return; }
 
+    // [AUTOFIX] BUG-06: Avisar que el producto ya existe en el paquete antes de reemplazar la cantidad
     const existe = itemsPaquete.find(i => i.producto_id === prodSelId);
-    if (existe) { existe.cantidad = cant; }
+    if (existe) {
+        if (!confirm(
+            '"' + prodSelNombre + '" ya está en el paquete (cantidad actual: ' + existe.cantidad + ').\n' +
+            '¿Reemplazar con la nueva cantidad de ' + cant + '?'
+        )) return;
+        existe.cantidad = cant;
+    }
     else { itemsPaquete.push({ producto_id: prodSelId, nombre: prodSelNombre, cantidad: cant, precio: prodSelPrecio, costo: prodSelCosto }); }
 
     document.getElementById('buscarProd').value = '';

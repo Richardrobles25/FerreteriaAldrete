@@ -300,21 +300,23 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                             </td>
                             <td><span class="badge <?= $estBadge ?>"><?= $estLabel ?></span></td>
                             <td>
+                                <!-- [AUTOFIX] BUG-09: action="promociones.php" explicito para que los botones
+                                     funcionen correctamente aunque la URL tenga parametros GET de filtros -->
                                 <div class="acciones">
                                     <?php if ($pr['activo']): ?>
-                                    <form method="POST" style="display:inline;">
+                                    <form method="POST" action="promociones.php" style="display:inline;">
                                         <input type="hidden" name="accion" value="desactivar">
                                         <input type="hidden" name="promocion_id" value="<?= $pr['promocion_id'] ?>">
                                         <button class="btn-sm btn-desact" type="submit">Pausar</button>
                                     </form>
                                     <?php else: ?>
-                                    <form method="POST" style="display:inline;">
+                                    <form method="POST" action="promociones.php" style="display:inline;">
                                         <input type="hidden" name="accion" value="activar">
                                         <input type="hidden" name="promocion_id" value="<?= $pr['promocion_id'] ?>">
                                         <button class="btn-sm btn-act" type="submit">Activar</button>
                                     </form>
                                     <?php endif; ?>
-                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Eliminar esta promoción definitivamente?')">
+                                    <form method="POST" action="promociones.php" style="display:inline;" onsubmit="return confirm('Eliminar esta promocion definitivamente?')">
                                         <input type="hidden" name="accion" value="eliminar">
                                         <input type="hidden" name="promocion_id" value="<?= $pr['promocion_id'] ?>">
                                         <button class="btn-sm btn-del" type="submit">Eliminar</button>
@@ -336,7 +338,9 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <div class="card">
                 <h3>Nueva promoción</h3>
 
-                <form method="POST" id="formPromo">
+                <!-- [AUTOFIX] BUG-09: validacion movida a onsubmit del form para que funcione
+                     tanto con click como con Enter, y action explicito para evitar GET params -->
+                <form method="POST" action="promociones.php" id="formPromo" onsubmit="return validarForm()">
                     <input type="hidden" name="accion" value="crear">
                     <input type="hidden" id="inputProductoId" name="producto_id">
 
@@ -391,8 +395,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         <input type="text" name="descripcion" placeholder="Ej. Oferta de temporada, Liquidación, etc.">
                     </div>
 
-                    <button class="btn-guardar" type="submit" onclick="return validarForm()">
-                        Crear promoción
+                    <button class="btn-guardar" type="submit">
+                        Crear promocion
                     </button>
                 </form>
             </div>

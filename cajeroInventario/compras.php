@@ -537,9 +537,18 @@ function agregarProdCompra() {
     if (!id || cant <= 0 || precio <= 0) { alert('Completa producto, cantidad y precio.'); return; }
 
     const prod = productosData.find(x => x.producto_id == id);
+    // [AUTOFIX] BUG-05: Alertar visiblemente cuando el producto ya está en la compra (antes se sumaba en silencio)
     const existe = itemsCompra.find(i => i.producto_id == id);
     if (existe) {
-        existe.cantidad += cant;
+        const nuevaCant = existe.cantidad + cant;
+        if (!confirm(
+            '"' + nombre + '" ya está en la lista.\n' +
+            'Cantidad actual: ' + existe.cantidad + '\n' +
+            'Se agregará: ' + cant + '\n' +
+            'Nueva cantidad total: ' + nuevaCant + '\n\n' +
+            '¿Confirmar y sumar?'
+        )) return;
+        existe.cantidad = nuevaCant;
         existe.precio_unitario = precio;
         existe.prod_data = prod;
     } else {

@@ -120,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .login-title::before {
-            content: "CTM Kenay ";
+            content: "Iniciar Sesión Ferremateriales ";
             color: var(--negro-marca);
             font-size: 24px;
         }

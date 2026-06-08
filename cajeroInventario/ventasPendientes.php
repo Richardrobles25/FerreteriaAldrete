@@ -250,16 +250,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if (!empty($items) && empty($errores)) {
+            // Mutex por mes/año — mismo lock que nuevaVenta para evitar colisión entre módulos
+            $mesFolio      = date('m');
+            $anioFolio     = date('Y');
+            $folioLock     = 'folio_ventas_' . $anioFolio . '_' . $mesFolio;
+            $lockAdquirido = $pdo->query("SELECT GET_LOCK(" . $pdo->quote($folioLock) . ", 10)")->fetchColumn();
+
+            if (!$lockAdquirido) {
+                $errores[] = 'El sistema está procesando otra venta. Intenta de nuevo en unos segundos.';
+            } else {
             $pdo->beginTransaction();
             try {
+                // Validar límite de crédito antes de generar folio
+                if ($metodo_pago === 'Crédito' && $cliente_id) {
+                    $stmtLimite = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");
+                    $stmtLimite->execute([$cliente_id]);
+                    $clienteCredito = $stmtLimite->fetch(PDO::FETCH_ASSOC);
+                    if (!$clienteCredito) {
+                        throw new Exception('Cliente no encontrado o inactivo.');
+                    }
+                    if (!$clienteCredito['credito_autorizado']) {
+                        throw new Exception('El cliente no tiene crédito autorizado.');
+                    }
+                    if (floatval($clienteCredito['limite_credito']) <= 0) {
+                        throw new Exception('El límite de crédito del cliente no está configurado.');
+                    }
+                    $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
+                    $stmtDeuda->execute([$cliente_id]);
+                    $deudaActual = floatval($stmtDeuda->fetchColumn());
+                    $disponible  = floatval($clienteCredito['limite_credito']) - $deudaActual;
+                    if ($deudaActual + $total > floatval($clienteCredito['limite_credito']) + 0.005) {
+                        throw new Exception('La venta excede el límite de crédito. Disponible: $' . number_format(max(0, $disponible), 2));
+                    }
+                }
+
                 // Generar folio secuencial mensual (mismo criterio que nuevaVenta.php)
-                $mesFolio  = date('m');
-                $anioFolio = date('Y');
                 $stmtFolio = $pdo->prepare("
                     SELECT COALESCE(MAX(CAST(folio AS UNSIGNED)), 0) + 1
                     FROM ventas
                     WHERE folio IS NOT NULL AND MONTH(created_at) = ? AND YEAR(created_at) = ?
-                    FOR UPDATE
                 ");
                 $stmtFolio->execute([$mesFolio, $anioFolio]);
                 $numFolio = intval($stmtFolio->fetchColumn());
@@ -272,24 +301,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $venta_id = $pdo->lastInsertId();
 
                 // Stock NO se descuenta al crear — se descuenta solo cuando se liquida (entrega confirmada)
+                // Pero sí se valida que el stock disponible (actual menos comprometido en otras pendientes) sea suficiente
                 foreach ($items as $item) {
                     $precioOrig   = floatval($item['precio_normal'] ?? $item['precio']);
                     $precioFinal  = floatval($item['precio']);
-                    $subtotalItem = floatval($item['cantidad']) * $precioFinal;
+                    $cantidadItem = floatval($item['cantidad']);
+                    $subtotalItem = $cantidadItem * $precioFinal;
                     $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
 
+                    // Validar stock disponible = stock_actual - comprometido en otras pendientes activas
+                    $stmtStockActual = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                    $stmtStockActual->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
+                    $stockActual = floatval($stmtStockActual->fetchColumn() ?: 0);
+
+                    $stmtComprometido = $pdo->prepare("
+                        SELECT COALESCE(SUM(vp.cantidad), 0)
+                        FROM venta_productos vp
+                        JOIN ventas v ON vp.venta_id = v.venta_id
+                        JOIN cajas c ON v.caja_id = c.caja_id
+                        WHERE vp.producto_id = ?
+                          AND v.estado = 'Pendiente'
+                          AND c.sucursal_id = ?
+                    ");
+                    $stmtComprometido->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
+                    $stockComprometido = floatval($stmtComprometido->fetchColumn() ?: 0);
+
+                    $stockDisponible = $stockActual - $stockComprometido;
+                    if ($stockDisponible < $cantidadItem) {
+                        throw new Exception('Stock insuficiente para uno o más productos. Disponible: ' . number_format(max(0, $stockDisponible), 2));
+                    }
+
                     $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal, paquete_id) VALUES (?,?,?,?,?,?,?)")
-                        ->execute([$venta_id, $item['producto_id'], floatval($item['cantidad']), $precioOrig, $precioFinal, $subtotalItem, $paqId]);
+                        ->execute([$venta_id, $item['producto_id'], $cantidadItem, $precioOrig, $precioFinal, $subtotalItem, $paqId]);
                 }
 
                 $pdo->commit();
+                $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
                 // Pasar venta_id para auto-abrir el ticket de impresión al volver
                 header('Location: ventasPendientes.php?msg=creado&ticket=' . $venta_id);
                 exit();
             } catch (Exception $e) {
                 $pdo->rollBack();
+                $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
                 $errores[] = $e->getMessage();
             }
+            } // fin if lockAdquirido
         }
     }
 }

@@ -411,17 +411,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
     // [AUTOFIX] N-02/N-03: Solo procesar si no hay errores de validacion previos
     if (!$errorVenta && !empty($items) && $metodo_pago) {
+        // Mutex por mes/año: evita folios duplicados cuando dos cajeros venden simultáneamente
+        $mesFolio      = date('m');
+        $anioFolio     = date('Y');
+        $folioLock     = 'folio_ventas_' . $anioFolio . '_' . $mesFolio;
+        $lockAdquirido = $pdo->query("SELECT GET_LOCK(" . $pdo->quote($folioLock) . ", 10)")->fetchColumn();
+
+        if (!$lockAdquirido) {
+            $errorVenta = 'El sistema está procesando otra venta. Intenta de nuevo en unos segundos.';
+        } else {
         $pdo->beginTransaction();
         try {
+            // Validar límite de crédito antes de generar folio
+            if ($metodo_pago === 'Credito' && $cliente_id) {
+                $stmtLimite = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");
+                $stmtLimite->execute([$cliente_id]);
+                $clienteCredito = $stmtLimite->fetch(PDO::FETCH_ASSOC);
+                if (!$clienteCredito) {
+                    throw new Exception('Cliente no encontrado o inactivo.');
+                }
+                if (!$clienteCredito['credito_autorizado']) {
+                    throw new Exception('El cliente no tiene crédito autorizado.');
+                }
+                if (floatval($clienteCredito['limite_credito']) <= 0) {
+                    throw new Exception('El límite de crédito del cliente no está configurado.');
+                }
+                $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
+                $stmtDeuda->execute([$cliente_id]);
+                $deudaActual = floatval($stmtDeuda->fetchColumn());
+                $disponible  = floatval($clienteCredito['limite_credito']) - $deudaActual;
+                if ($deudaActual + $total > floatval($clienteCredito['limite_credito']) + 0.005) {
+                    throw new Exception('La venta excede el límite de crédito. Disponible: $' . number_format(max(0, $disponible), 2));
+                }
+            }
+
             // Generar folio secuencial mensual: NNNN (reinicia cada mes)
-            $mesFolio  = date('m');
-            $anioFolio = date('Y');
             $stmtFolio = $pdo->prepare("
                 SELECT COALESCE(MAX(CAST(folio AS UNSIGNED)), 0) + 1
                 FROM ventas
                 WHERE folio IS NOT NULL
                   AND MONTH(created_at) = ? AND YEAR(created_at) = ?
-                FOR UPDATE
             ");
             $stmtFolio->execute([$mesFolio, $anioFolio]);
             $numFolio = intval($stmtFolio->fetchColumn());
@@ -488,6 +517,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
 
             $pdo->commit();
+            $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
             // AJAX: retornar JSON en lugar de redirigir
             if (!empty($_POST['_ajax'])) {
                 header('Content-Type: application/json');
@@ -499,6 +529,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
         } catch (Exception $e) {
             $pdo->rollBack();
+            $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
             // [AUTOFIX] SEC-04: Loguear error real; algunos mensajes de excepcion son de negocio (stock) y son seguros
             error_log('[Ferreteria/nuevaVenta] Error venta: ' . $e->getMessage());
             if (!empty($_POST['_ajax'])) {
@@ -508,6 +539,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
             $errorVenta = $e->getMessage();
         }
+        } // fin if lockAdquirido
     }
 }
 ?>

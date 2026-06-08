@@ -383,3 +383,33 @@ CREATE TABLE stock_sucursal (
   KEY idx_producto (producto_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+
+
+CREATE TABLE categorias_gastos (
+    categoria_gasto_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    nombre             VARCHAR(100) NOT NULL,
+    activo             TINYINT(1)  NOT NULL DEFAULT 1
+);
+
+
+INSERT INTO categorias_gastos (nombre) VALUES
+('Vehiculos'),
+('Mantenimiento'),
+('Servicios basicos'),
+('Herramientas y equipo'),
+('Otros');
+
+CREATE TABLE gastos (
+    gasto_id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    sucursal_id        INT UNSIGNED NOT NULL,
+    usuario_id         INT UNSIGNED NOT NULL,
+    categoria_gasto_id INT UNSIGNED NOT NULL,
+    descripcion        VARCHAR(500) NOT NULL,
+    monto              DECIMAL(10,2) NOT NULL,
+    fecha              DATE NOT NULL,
+    notas              TEXT NULL,
+    created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sucursal_id)        REFERENCES sucursales(sucursal_id),
+    FOREIGN KEY (usuario_id)         REFERENCES usuarios(usuario_id),
+    FOREIGN KEY (categoria_gasto_id) REFERENCES categorias_gastos(categoria_gasto_id)
+);

@@ -1,0 +1,863 @@
+-- MySQL dump 10.13  Distrib 8.0.18, for Win64 (x86_64)
+--
+-- Host: 127.0.0.1    Database: ferreteria_aldrete
+-- ------------------------------------------------------
+-- Server version	8.0.45
+
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!50503 SET NAMES utf8mb4 */;
+/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
+/*!40103 SET TIME_ZONE='+00:00' */;
+/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
+/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
+/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+--
+-- Table structure for table `abonos`
+--
+
+DROP TABLE IF EXISTS `abonos`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `abonos` (
+  `abono_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `credito_id` int unsigned NOT NULL,
+  `usuario_id` int unsigned NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `comision_terminal` decimal(10,2) DEFAULT '0.00',
+  `metodo_pago` enum('Efectivo','Terminal','Credito','Mixto','Transferencia') NOT NULL,
+  `notas` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`abono_id`),
+  KEY `credito_id` (`credito_id`),
+  KEY `usuario_id` (`usuario_id`),
+  CONSTRAINT `abonos_ibfk_1` FOREIGN KEY (`credito_id`) REFERENCES `creditos` (`credito_id`),
+  CONSTRAINT `abonos_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=59 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `abonos`
+--
+
+LOCK TABLES `abonos` WRITE;
+/*!40000 ALTER TABLE `abonos` DISABLE KEYS */;
+INSERT INTO `abonos` VALUES (1,1,3,77.36,0.00,'','Ref: 87654657hgt678re','2026-04-27 03:01:44'),(2,1,3,50.00,2.30,'Terminal','','2026-04-27 03:12:23'),(3,1,3,350.00,0.00,'Efectivo','','2026-04-28 01:20:04'),(4,2,3,162.00,0.00,'Efectivo','','2026-04-28 01:25:21'),(5,4,3,250.00,0.00,'Efectivo','','2026-05-03 23:43:52'),(6,3,3,50.00,2.30,'Terminal','','2026-05-04 00:54:33'),(7,3,3,20.00,0.92,'Terminal','','2026-05-04 00:57:01'),(8,3,3,52.00,2.39,'Terminal','','2026-05-04 01:05:00'),(9,3,3,200.00,2.30,'Mixto','','2026-05-04 01:23:59'),(10,3,3,200.00,0.00,'Transferencia','Ref: njhyugt6r5esrtrytu','2026-05-04 01:24:46'),(11,4,3,200.00,0.00,'Efectivo','','2026-05-04 01:26:02'),(12,5,3,18.00,0.00,'Efectivo','','2026-05-04 01:33:05'),(13,10,3,40.00,0.00,'Efectivo','','2026-05-07 06:16:26'),(14,13,3,20.00,0.00,'Efectivo','','2026-05-10 01:58:41'),(15,13,3,20.00,0.00,'Efectivo','','2026-05-10 02:02:18'),(16,14,3,20.00,0.00,'Efectivo','','2026-05-10 02:08:45'),(17,14,3,20.00,0.00,'Efectivo','','2026-05-10 02:13:09'),(18,15,3,6.00,0.00,'Efectivo','','2026-05-10 02:16:28'),(19,15,3,30.00,0.00,'Efectivo','','2026-05-10 02:22:58'),(20,16,3,20.00,0.00,'Efectivo','','2026-05-10 02:26:58'),(21,17,3,20.00,0.00,'Efectivo','','2026-05-10 02:44:36'),(22,21,3,50.00,0.00,'Efectivo','','2026-05-10 02:51:21'),(23,18,3,40.00,0.00,'Efectivo','','2026-05-10 02:51:35'),(24,19,3,40.00,0.00,'Efectivo','','2026-05-10 02:51:49'),(25,20,3,40.00,0.00,'Efectivo','','2026-05-10 02:52:12'),(26,22,3,40.00,0.00,'Efectivo','','2026-05-10 02:52:23'),(27,23,3,40.00,0.00,'Efectivo','','2026-05-10 02:52:35'),(28,16,3,20.00,0.00,'Efectivo','','2026-05-10 02:52:48'),(29,17,3,20.00,0.00,'Efectivo','','2026-05-10 02:52:59'),(30,24,3,10.00,0.00,'Efectivo','','2026-05-10 20:00:06'),(31,24,3,10.00,0.00,'Efectivo','','2026-05-10 20:11:36'),(32,24,3,5.00,0.00,'Efectivo','','2026-05-10 20:28:19'),(33,24,3,5.00,0.00,'Efectivo','','2026-05-10 20:28:49'),(34,25,3,10.00,0.00,'Efectivo','','2026-05-10 20:29:29'),(35,25,3,10.00,0.00,'Efectivo','','2026-05-10 20:35:27'),(36,25,3,10.00,0.00,'Efectivo','','2026-05-10 20:36:14'),(37,31,3,20.00,0.00,'Efectivo','','2026-05-10 20:36:53'),(38,31,3,10.00,0.00,'Efectivo','','2026-05-10 20:37:24'),(39,11,3,200.00,0.00,'Efectivo','','2026-05-10 20:47:58'),(40,5,3,10.00,0.00,'Efectivo','','2026-05-10 20:53:54'),(41,8,3,10.00,0.00,'Efectivo','','2026-05-10 20:53:54'),(42,26,3,10.00,0.00,'Efectivo','','2026-05-10 20:54:17'),(43,8,3,28.00,0.00,'Efectivo','','2026-05-10 20:54:37'),(44,9,3,49.00,0.00,'Efectivo','','2026-05-10 20:54:37'),(45,12,3,40.00,0.00,'Efectivo','','2026-05-10 20:54:37'),(46,6,3,50.00,0.00,'Efectivo','','2026-05-10 20:54:54'),(47,7,3,25.00,0.00,'Efectivo','','2026-05-10 20:54:54'),(48,11,3,250.00,0.00,'Efectivo','','2026-05-10 20:55:39'),(49,29,3,10.00,0.00,'Efectivo','','2026-05-10 21:04:32'),(50,25,3,5.00,0.00,'Efectivo','','2026-05-10 21:05:00'),(51,27,3,20.00,0.00,'Efectivo','','2026-05-10 21:06:00'),(52,28,3,20.00,0.00,'Efectivo','','2026-05-13 00:11:38'),(53,25,3,5.00,0.00,'Efectivo','','2026-05-13 00:12:34'),(54,26,3,20.00,0.00,'Efectivo','','2026-05-16 08:45:28'),(55,35,3,50.00,0.00,'Efectivo','','2026-05-16 09:16:16'),(56,24,3,5.00,0.00,'Efectivo','','2026-05-24 01:42:31'),(57,32,3,270.00,0.00,'Efectivo','','2026-05-24 01:44:18'),(58,34,3,50.00,0.00,'Efectivo','','2026-05-24 22:44:37');
+/*!40000 ALTER TABLE `abonos` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `cajas`
+--
+
+DROP TABLE IF EXISTS `cajas`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `cajas` (
+  `caja_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `sucursal_id` int unsigned NOT NULL,
+  `usuario_id` int unsigned NOT NULL,
+  `monto_apertura` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `monto_cierre` decimal(10,2) DEFAULT NULL,
+  `monto_esperado` decimal(10,2) DEFAULT NULL,
+  `diferencia` decimal(10,2) DEFAULT NULL,
+  `observaciones` text,
+  `estado` enum('Abierta','Cerrada') DEFAULT 'Abierta',
+  `abierta_en` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `cerrada_en` timestamp NULL DEFAULT NULL,
+  `numero_turno` int unsigned DEFAULT '1',
+  PRIMARY KEY (`caja_id`),
+  KEY `sucursal_id` (`sucursal_id`),
+  KEY `usuario_id` (`usuario_id`),
+  CONSTRAINT `cajas_ibfk_1` FOREIGN KEY (`sucursal_id`) REFERENCES `sucursales` (`sucursal_id`),
+  CONSTRAINT `cajas_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=36 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `cajas`
+--
+
+LOCK TABLES `cajas` WRITE;
+/*!40000 ALTER TABLE `cajas` DISABLE KEYS */;
+INSERT INTO `cajas` VALUES (1,1,3,2000.00,4500.00,4500.00,0.00,'','Cerrada','2026-04-25 23:40:49','2026-04-27 23:27:28',1),(2,1,2,2000.00,2000.00,2000.00,0.00,'','Cerrada','2026-04-27 03:39:29','2026-04-27 23:33:21',2),(3,1,3,2000.00,1870.00,1870.00,0.00,'','Cerrada','2026-04-27 23:33:41','2026-04-27 23:55:09',1),(4,1,3,5000.00,NULL,NULL,NULL,' [Cerrada automáticamente al abrir nueva sesión]','Cerrada','2026-04-28 00:03:38','2026-04-29 22:49:09',1),(5,1,2,10000.00,11800.00,11800.00,0.00,'','Cerrada','2026-04-28 02:43:50','2026-05-03 23:18:09',2),(6,1,3,200.00,NULL,NULL,NULL,' [Cerrada automáticamente al abrir nueva sesión]','Cerrada','2026-04-30 04:53:26','2026-04-30 19:29:11',2),(7,1,3,2534.00,2591.00,2591.00,0.00,'','Cerrada','2026-04-30 19:34:11','2026-05-03 00:00:10',2),(8,2,4,2500.00,3223.00,3222.34,0.66,'','Cerrada','2026-04-30 20:02:22','2026-05-06 22:31:30',1),(9,1,3,1600.00,1600.00,1600.00,0.00,'','Cerrada','2026-05-03 00:00:32','2026-05-03 00:04:14',2),(10,1,3,1500.00,2200.20,2200.20,0.00,'','Cerrada','2026-05-03 00:04:50','2026-05-03 23:17:31',2),(11,1,3,1250.00,1574.00,1573.22,0.78,'','Cerrada','2026-05-03 23:26:10','2026-05-04 01:04:04',1),(12,1,3,2300.00,NULL,NULL,NULL,' [Cerrada automáticamente al abrir nueva sesión]','Cerrada','2026-05-04 01:04:42','2026-05-04 20:25:17',1),(13,1,3,1450.00,1800.00,1740.00,60.00,'','Cerrada','2026-05-06 22:30:08','2026-05-07 05:54:47',1),(14,2,4,1200.00,1200.00,1200.00,0.00,'','Cerrada','2026-05-06 22:43:33','2026-05-06 22:43:43',1),(16,2,4,1000.00,1130.00,1150.00,-20.00,'','Cerrada','2026-05-07 03:36:55','2026-05-07 05:54:21',1),(17,2,4,1000.00,1010.00,1010.00,0.00,'','Cerrada','2026-05-07 05:55:28','2026-05-07 06:00:33',1),(18,2,4,1000.00,1075.00,1075.00,0.00,'','Cerrada','2026-05-07 06:08:13','2026-05-12 00:40:08',1),(19,1,3,1500.00,1624.00,1624.00,0.00,'','Cerrada','2026-05-07 06:12:45','2026-05-10 01:47:58',1),(20,1,3,1000.00,2292.00,2291.00,1.00,'','Cerrada','2026-05-10 01:48:39','2026-05-10 21:09:41',1),(21,1,3,1200.00,1210.00,1210.00,0.00,'','Cerrada','2026-05-10 21:10:16','2026-05-11 17:22:02',1),(22,1,3,1000.00,1190.00,1189.00,1.00,'','Cerrada','2026-05-11 17:22:17','2026-05-12 00:39:38',1),(23,1,2,1000.00,1181.50,1181.50,0.00,'','Cerrada','2026-05-12 00:48:41','2026-05-12 01:08:47',1),(24,1,3,1000.00,1000.00,1000.00,0.00,'','Cerrada','2026-05-12 04:03:10','2026-05-13 00:00:08',1),(25,1,3,1000.00,0.00,-58.50,58.50,'','Cerrada','2026-05-13 00:00:18','2026-05-13 01:50:17',1),(26,1,3,1000.00,1291.00,1290.70,0.30,'','Cerrada','2026-05-13 01:50:33','2026-05-14 00:21:18',1),(27,1,3,2000.00,2050.00,2048.11,1.89,'','Cerrada','2026-05-14 00:30:47','2026-05-15 19:31:38',1),(28,1,3,2000.00,2322.00,2321.89,0.11,'','Cerrada','2026-05-15 19:31:48','2026-05-16 08:57:33',1),(29,1,3,0.00,0.00,0.00,0.00,'','Cerrada','2026-05-16 09:05:53','2026-05-16 09:07:22',1),(30,1,3,750.00,800.00,800.00,0.00,'Corte de prueba — auditoría de sistema','Cerrada','2026-05-16 09:07:50','2026-05-16 09:39:10',1),(31,1,3,500.00,610.00,610.00,0.00,'','Cerrada','2026-05-17 21:25:09','2026-05-21 22:08:12',1),(32,1,3,500.00,NULL,NULL,NULL,' [Cerrada automáticamente al abrir nueva sesión]','Cerrada','2026-05-23 04:15:57','2026-05-24 01:36:54',1),(33,1,3,500.00,775.00,775.00,0.00,'','Cerrada','2026-05-24 01:38:22','2026-05-24 22:33:20',1),(34,1,2,500.00,NULL,NULL,NULL,'','Abierta','2026-05-24 01:55:07',NULL,2),(35,1,3,2000.00,NULL,NULL,NULL,'','Abierta','2026-05-24 22:33:59',NULL,2);
+/*!40000 ALTER TABLE `cajas` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `categorias`
+--
+
+DROP TABLE IF EXISTS `categorias`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `categorias` (
+  `categoria_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `nombre` varchar(100) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`categoria_id`),
+  UNIQUE KEY `uk_nombre` (`nombre`)
+) ENGINE=InnoDB AUTO_INCREMENT=33 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `categorias`
+--
+
+LOCK TABLES `categorias` WRITE;
+/*!40000 ALTER TABLE `categorias` DISABLE KEYS */;
+INSERT INTO `categorias` VALUES (1,'Cementos','2026-04-25 17:53:17','2026-04-25 17:53:17'),(2,'Acero y varilla','2026-04-25 17:53:18','2026-04-25 17:53:18'),(3,'Materiales de construcción','2026-04-25 17:53:18','2026-04-25 17:53:18'),(4,'Arenas y gravas','2026-04-25 17:53:18','2026-04-25 17:53:18'),(5,'Clavos y tornillos','2026-04-25 17:53:19','2026-04-25 17:53:19'),(6,'Pinturas','2026-04-25 17:53:19','2026-04-25 17:53:19'),(7,'Plomería','2026-04-25 17:53:21','2026-04-25 17:53:21'),(8,'Eléctrico','2026-04-25 17:53:21','2026-04-25 17:53:21'),(9,'Herrería','2026-04-25 17:53:22','2026-04-25 17:53:22'),(10,'Tornillería','2026-04-30 04:32:20','2026-04-30 04:32:20'),(12,'Clavos','2026-04-30 04:32:21','2026-04-30 04:32:21'),(18,'Abrasivos','2026-04-30 04:32:26','2026-04-30 04:32:26'),(20,'Herramientas','2026-04-30 04:32:27','2026-04-30 04:32:27'),(22,'Construcción','2026-04-30 04:32:29','2026-04-30 04:32:29'),(23,'Selladores','2026-04-30 04:32:30','2026-04-30 04:32:30'),(27,'Jardinería','2026-04-30 04:32:33','2026-04-30 04:32:33'),(28,'Seguridad','2026-04-30 04:32:33','2026-04-30 04:32:33'),(30,'Pintura','2026-04-30 17:27:32','2026-04-30 17:27:32');
+/*!40000 ALTER TABLE `categorias` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `clientes`
+--
+
+DROP TABLE IF EXISTS `clientes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `clientes` (
+  `cliente_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `nombre_completo` varchar(100) NOT NULL,
+  `telefono` varchar(20) DEFAULT NULL,
+  `direccion` varchar(255) DEFAULT NULL,
+  `correo` varchar(100) DEFAULT NULL,
+  `descuento_fijo` decimal(5,2) DEFAULT '0.00',
+  `notas` varchar(255) DEFAULT NULL,
+  `activo` tinyint(1) DEFAULT '1',
+  `credito_autorizado` tinyint(1) DEFAULT '0',
+  `limite_credito` decimal(10,2) DEFAULT '0.00',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`cliente_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=25 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `clientes`
+--
+
+LOCK TABLES `clientes` WRITE;
+/*!40000 ALTER TABLE `clientes` DISABLE KEYS */;
+INSERT INTO `clientes` VALUES (1,'Jose Perez','3241140293','Hidalgo #2','jose@gmail.com',10.00,'',1,1,5000.00,'2026-04-26 00:02:48','2026-04-26 00:02:48'),(2,'Maria Esparza','3111004524','Hidalgo #232','maria@gmail.com',5.00,'',1,1,2000.00,'2026-04-28 01:46:39','2026-05-07 06:09:23'),(3,'Rasshid Rodriguez','3112433627','Napoles 140','dirard@gmail.com',50.00,'Mi amigo del tec',0,1,2500.00,'2026-04-30 19:48:32','2026-05-13 03:48:51'),(4,'Carlos Martinez','3112435672','Av. Tecnologico','carc@ittepic.edu.mx',0.00,'Compañero de equipo',1,0,0.00,'2026-04-30 19:49:23','2026-04-30 19:49:23'),(5,'Cesar Ulloa','31231434124234234','Av. Tecnologico','gesdr@ittepic.edu.mx',0.00,'Mi amigo del tec',1,0,0.00,'2026-04-30 19:49:50','2026-04-30 19:49:50'),(6,'Cesar Nolasco','3123112','Av. Tecnologico','cwwgsd@ittepic.edu.mx',1.00,'',0,1,1000.00,'2026-04-30 19:50:13','2026-05-13 03:42:25'),(7,'Cesar Perez','123142342','Av. Tecnologico','asdfsg@ittepic.edu.mx',2.00,'',1,0,0.00,'2026-04-30 19:50:29','2026-04-30 19:50:29'),(8,'Cesar RORO','3111234567','Av. Tecnologico','SDFSDF@ittepic.edu.mx',0.00,'',1,0,0.00,'2026-04-30 19:50:57','2026-04-30 19:50:57'),(10,'Prueba Credito','123455','PRUEBA #1','prueba@gmail.com',10.00,'',1,1,1500.00,'2026-05-10 01:56:36','2026-05-10 01:56:36'),(11,'Prueba Credito2','2222222222','PRUEBA #1','prueba@gmail.com',0.00,'',1,1,2000.00,'2026-05-10 02:38:21','2026-05-10 02:38:21'),(12,'Prueba Credito3','3242431542','PRUEBA #1','prueba@gmail.com',0.00,'',1,1,1000.00,'2026-05-10 02:38:34','2026-05-10 02:38:34'),(13,'Prueba Credito4','3242431542','PRUEBA #1','prueba@gmail.com',0.00,'',1,1,1000.00,'2026-05-10 02:38:53','2026-05-10 02:38:53'),(14,'Prueba Credito5','3242431542','PRUEBA #1','prueba@gmail.com',0.00,'',1,1,1000.00,'2026-05-10 02:39:04','2026-05-10 02:39:04'),(15,'Prueba Credito6','3242431542','PRUEBA #1','prueba@gmail.com',0.00,'',1,1,1000.00,'2026-05-10 02:39:27','2026-05-10 02:39:27'),(16,'Prueba Credito7','3241009724','PRUEBA #1','prueba@gmail.com',0.00,'',1,1,1000.00,'2026-05-10 02:39:51','2026-05-10 02:39:51'),(17,'Prueba Credito8','3242431542','PRUEBA #1','prueba@gmail.com',0.00,'',1,1,1000.00,'2026-05-10 02:40:08','2026-05-10 02:40:08'),(18,'Cliente Prueba Test','123','','',0.00,'',1,0,0.00,'2026-05-12 00:45:36','2026-05-12 00:47:27'),(19,'Jesus Ramirez','1234567890','Moctezuma #23, Centro','jhgcfvnhb@gmail.com',100.00,'',0,0,0.00,'2026-05-13 03:41:43','2026-05-13 03:41:49'),(20,'Cliente Prueba','3241009724','Calle Prueba','prueba@gmail.com',10.00,'',1,1,2000.00,'2026-05-14 00:27:43','2026-05-14 00:27:43'),(21,'Ricardo Nolasco','3241009724','Ortiz 180','ricardo@gmail.com',10.00,'',0,1,2500.00,'2026-05-15 19:29:54','2026-05-24 01:07:44'),(22,'Doña Petra Gutiérrez','6449876543','','petra@test.com',5.00,'',1,1,2000.00,'2026-05-16 09:09:11','2026-05-16 09:13:58'),(23,'Test Cliente Normal','','','',0.00,'',1,0,0.00,'2026-05-23 04:49:16','2026-05-23 04:49:16'),(24,'<script>alert(\'xss\')</script>','3300000001','','',0.00,'',1,1,500.00,'2026-05-24 01:06:05','2026-05-24 01:06:05');
+/*!40000 ALTER TABLE `clientes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `compra_productos`
+--
+
+DROP TABLE IF EXISTS `compra_productos`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `compra_productos` (
+  `compra_producto_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `compra_id` int unsigned NOT NULL,
+  `producto_id` int unsigned NOT NULL,
+  `cantidad` decimal(10,3) NOT NULL,
+  `precio_unitario` decimal(10,2) NOT NULL,
+  `subtotal` decimal(10,2) NOT NULL,
+  PRIMARY KEY (`compra_producto_id`),
+  KEY `compra_id` (`compra_id`),
+  KEY `producto_id` (`producto_id`),
+  CONSTRAINT `compra_productos_ibfk_1` FOREIGN KEY (`compra_id`) REFERENCES `compras_proveedor` (`compras_proveedor_id`),
+  CONSTRAINT `compra_productos_ibfk_2` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`producto_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `compra_productos`
+--
+
+LOCK TABLES `compra_productos` WRITE;
+/*!40000 ALTER TABLE `compra_productos` DISABLE KEYS */;
+INSERT INTO `compra_productos` VALUES (2,2,45,8.000,20.00,160.00),(3,3,42,100.000,0.80,80.00),(4,3,44,20.000,15.00,300.00),(5,4,52,5.000,25.00,125.00);
+/*!40000 ALTER TABLE `compra_productos` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `compras_proveedor`
+--
+
+DROP TABLE IF EXISTS `compras_proveedor`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `compras_proveedor` (
+  `compras_proveedor_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `proveedor_id` int unsigned NOT NULL,
+  `usuario_id` int unsigned NOT NULL,
+  `sucursal_id` int unsigned NOT NULL,
+  `total` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `notas` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`compras_proveedor_id`),
+  KEY `proveedor_id` (`proveedor_id`),
+  KEY `usuario_id` (`usuario_id`),
+  KEY `sucursal_id` (`sucursal_id`),
+  CONSTRAINT `compras_proveedor_ibfk_1` FOREIGN KEY (`proveedor_id`) REFERENCES `proveedores` (`proveedor_id`),
+  CONSTRAINT `compras_proveedor_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`),
+  CONSTRAINT `compras_proveedor_ibfk_3` FOREIGN KEY (`sucursal_id`) REFERENCES `sucursales` (`sucursal_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `compras_proveedor`
+--
+
+LOCK TABLES `compras_proveedor` WRITE;
+/*!40000 ALTER TABLE `compras_proveedor` DISABLE KEYS */;
+INSERT INTO `compras_proveedor` VALUES (1,2,3,1,1500.00,'subio el precio a 300','2026-04-27 03:30:47'),(2,3,3,1,160.00,'','2026-04-30 19:40:59'),(3,7,3,1,380.00,'Compra de prueba auditoria FAC-2024-001','2026-05-17 21:03:44'),(4,1,3,1,125.00,'','2026-05-24 22:48:09');
+/*!40000 ALTER TABLE `compras_proveedor` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `creditos`
+--
+
+DROP TABLE IF EXISTS `creditos`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `creditos` (
+  `credito_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `cliente_id` int unsigned NOT NULL,
+  `venta_id` int unsigned NOT NULL,
+  `monto_total` decimal(10,2) NOT NULL,
+  `saldo_pendiente` decimal(10,2) NOT NULL,
+  `estado` enum('Activo','Liquidado','Vencido') DEFAULT 'Activo',
+  `fecha_limite` date DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`credito_id`),
+  KEY `cliente_id` (`cliente_id`),
+  KEY `venta_id` (`venta_id`),
+  CONSTRAINT `creditos_ibfk_1` FOREIGN KEY (`cliente_id`) REFERENCES `clientes` (`cliente_id`),
+  CONSTRAINT `creditos_ibfk_2` FOREIGN KEY (`venta_id`) REFERENCES `ventas` (`venta_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=37 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `creditos`
+--
+
+LOCK TABLES `creditos` WRITE;
+/*!40000 ALTER TABLE `creditos` DISABLE KEYS */;
+INSERT INTO `creditos` VALUES (1,1,1,477.36,0.00,'Liquidado',NULL,'2026-04-26 00:38:32','2026-04-28 01:20:04'),(2,1,2,162.00,0.00,'Liquidado',NULL,'2026-04-27 03:39:47','2026-04-28 01:25:21'),(3,1,3,522.00,0.00,'Liquidado',NULL,'2026-04-27 03:40:04','2026-05-04 01:24:46'),(4,1,16,450.00,0.00,'Liquidado',NULL,'2026-04-28 01:14:30','2026-05-04 01:26:02'),(5,2,33,28.00,0.00,'Liquidado',NULL,'2026-05-03 00:12:07','2026-05-10 20:53:54'),(6,3,41,50.00,0.00,'Liquidado',NULL,'2026-05-04 00:36:38','2026-05-10 20:54:54'),(7,3,42,25.00,0.00,'Liquidado',NULL,'2026-05-04 01:52:08','2026-05-10 20:54:54'),(8,2,46,38.00,0.00,'Liquidado',NULL,'2026-05-07 03:30:18','2026-05-10 20:54:37'),(9,2,47,49.00,0.00,'Liquidado',NULL,'2026-05-07 03:33:18','2026-05-10 20:54:37'),(10,6,59,40.00,0.00,'Liquidado',NULL,'2026-05-07 06:15:47','2026-05-07 06:16:26'),(11,1,14,450.00,0.00,'Liquidado','2026-05-11','2026-05-10 01:18:47','2026-05-10 20:55:39'),(12,2,67,40.00,0.00,'Liquidado','2026-05-09','2026-05-10 01:49:14','2026-05-10 20:54:37'),(13,10,68,40.00,0.00,'Liquidado','2026-05-09','2026-05-10 01:57:14','2026-05-10 02:02:18'),(14,10,69,40.00,0.00,'Liquidado','2026-05-09','2026-05-10 02:03:12','2026-05-10 02:13:09'),(15,10,70,36.00,0.00,'Liquidado','2026-05-09','2026-05-10 02:13:57','2026-05-10 02:22:58'),(16,10,71,40.00,0.00,'Liquidado','2026-05-09','2026-05-10 02:23:30','2026-05-10 02:52:48'),(17,11,72,40.00,0.00,'Liquidado','2026-05-09','2026-05-10 02:41:00','2026-05-10 02:53:00'),(18,12,73,40.00,0.00,'Liquidado','2026-05-09','2026-05-10 02:41:13','2026-05-10 02:51:35'),(19,13,74,40.00,0.00,'Liquidado','2026-05-09','2026-05-10 02:41:29','2026-05-10 02:51:49'),(20,14,75,40.00,0.00,'Liquidado','2026-05-10','2026-05-10 02:42:43','2026-05-10 02:52:12'),(21,15,76,50.00,0.00,'Liquidado','2026-05-10','2026-05-10 02:43:00','2026-05-10 02:51:22'),(22,16,77,40.00,0.00,'Liquidado','2026-05-10','2026-05-10 02:43:17','2026-05-10 02:52:23'),(23,17,78,40.00,0.00,'Liquidado','2026-05-10','2026-05-10 02:43:32','2026-05-10 02:52:35'),(24,10,79,40.00,5.00,'Activo','2026-05-26','2026-05-10 02:53:25','2026-05-24 01:42:31'),(25,11,80,50.00,10.00,'Vencido','2026-05-13','2026-05-10 02:54:13','2026-05-15 19:04:09'),(26,12,81,50.00,20.00,'Vencido','2026-05-13','2026-05-10 02:54:29','2026-05-16 08:45:31'),(27,13,82,50.00,30.00,'Vencido','2026-05-12','2026-05-10 02:54:50','2026-05-14 00:28:42'),(28,14,83,50.00,30.00,'Vencido','2026-05-12','2026-05-10 02:55:04','2026-05-14 00:28:42'),(29,15,84,40.00,30.00,'Vencido','2026-05-12','2026-05-10 02:55:25','2026-05-14 00:28:42'),(30,16,85,50.00,50.00,'Vencido','2026-05-10','2026-05-10 02:55:42','2026-05-10 19:40:01'),(31,17,86,40.00,10.00,'Vencido','2026-05-11','2026-05-10 02:55:54','2026-05-13 00:11:05'),(32,6,104,270.00,0.00,'Liquidado','2026-05-27','2026-05-13 00:16:54','2026-05-24 01:44:18'),(33,6,108,76.23,76.23,'Vencido','2026-05-13','2026-05-13 02:19:39','2026-05-15 19:04:09'),(34,2,109,78.40,28.40,'Activo','2026-05-27','2026-05-13 02:21:26','2026-05-24 22:44:37'),(35,21,116,121.50,71.50,'Vencido','2026-05-18','2026-05-15 21:22:23','2026-05-21 22:21:52'),(36,20,123,130.50,0.00,'Liquidado','2026-05-25','2026-05-23 04:28:42','2026-05-24 02:07:45');
+/*!40000 ALTER TABLE `creditos` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `devoluciones`
+--
+
+DROP TABLE IF EXISTS `devoluciones`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `devoluciones` (
+  `devolucion_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `venta_id` int unsigned NOT NULL,
+  `usuario_id` int unsigned NOT NULL,
+  `procesada_en` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `cancelada_en` datetime DEFAULT NULL,
+  `cancelada_por` int unsigned DEFAULT NULL,
+  `nota_cancelacion` text,
+  `total_devuelto` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `subtotal_bruto_devuelto` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `subtotal_final_devuelto` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `comision_devuelta` decimal(10,2) NOT NULL DEFAULT '0.00',
+  PRIMARY KEY (`devolucion_id`),
+  KEY `venta_id` (`venta_id`),
+  KEY `usuario_id` (`usuario_id`),
+  CONSTRAINT `devoluciones_ibfk_1` FOREIGN KEY (`venta_id`) REFERENCES `ventas` (`venta_id`),
+  CONSTRAINT `devoluciones_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=46 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `devoluciones`
+--
+
+LOCK TABLES `devoluciones` WRITE;
+/*!40000 ALTER TABLE `devoluciones` DISABLE KEYS */;
+INSERT INTO `devoluciones` VALUES (1,9,3,'2026-04-27 17:18:21',NULL,NULL,NULL,535.71,0.00,0.00,0.00),(2,90,3,'2026-05-10 19:05:22','2026-05-10 19:09:36',3,'equivocacion',50.00,0.00,0.00,0.00),(3,90,3,'2026-05-10 19:10:52','2026-05-10 19:31:40',3,'equivocado',45.00,0.00,0.00,0.00),(4,90,3,'2026-05-10 19:32:39','2026-05-10 20:14:23',3,'anulado',45.00,0.00,0.00,0.00),(5,90,3,'2026-05-10 20:24:46',NULL,NULL,NULL,45.00,0.00,0.00,0.00),(6,91,3,'2026-05-11 10:25:52','2026-05-11 10:28:35',3,'Me equivoque',81.00,0.00,0.00,0.00),(7,92,3,'2026-05-11 10:36:44','2026-05-11 10:38:46',3,NULL,72.00,0.00,0.00,0.00),(8,93,3,'2026-05-11 11:21:15','2026-05-11 11:22:40',3,NULL,36.00,0.00,0.00,0.00),(9,93,3,'2026-05-11 11:23:26','2026-05-11 11:28:00',3,NULL,36.00,0.00,0.00,0.00),(10,94,3,'2026-05-11 11:36:32',NULL,NULL,NULL,25.20,0.00,0.00,0.00),(11,94,3,'2026-05-11 15:24:09',NULL,NULL,NULL,25.20,0.00,0.00,0.00),(12,95,3,'2026-05-11 15:27:29','2026-05-11 15:28:49',3,NULL,36.00,0.00,0.00,0.00),(13,96,3,'2026-05-11 15:45:27','2026-05-11 15:46:33',3,NULL,25.20,28.00,0.00,1.16),(14,97,3,'2026-05-11 16:57:31','2026-05-11 16:59:51',3,NULL,25.20,28.00,0.00,1.16),(15,97,3,'2026-05-11 17:02:06','2026-05-11 17:15:44',3,NULL,25.20,28.00,0.00,1.16),(16,97,3,'2026-05-11 17:17:06','2026-05-11 17:26:00',3,NULL,25.20,28.00,0.00,1.16),(17,97,3,'2026-05-11 17:27:15','2026-05-11 17:34:38',3,NULL,25.20,28.00,0.00,1.16),(18,97,3,'2026-05-11 17:31:25','2026-05-11 17:32:34',3,NULL,25.20,28.00,0.00,1.16),(19,97,3,'2026-05-11 17:33:41','2026-05-11 17:35:16',3,NULL,460.20,463.00,0.00,21.17),(20,100,3,'2026-05-11 21:32:16','2026-05-11 21:34:59',3,NULL,17.00,17.00,0.00,0.78),(21,100,3,'2026-05-11 21:36:25','2026-05-11 21:39:00',3,NULL,17.00,17.00,0.00,0.78),(22,104,3,'2026-05-12 17:18:11','2026-05-12 17:24:26',3,NULL,90.00,90.00,0.00,0.00),(23,104,3,'2026-05-12 17:23:19','2026-05-12 17:24:19',3,NULL,90.00,90.00,0.00,0.00),(24,106,3,'2026-05-12 18:01:55','2026-05-12 18:06:33',3,NULL,247.50,275.00,0.00,10.24),(25,106,3,'2026-05-12 18:06:52','2026-05-12 18:07:15',3,NULL,247.50,275.00,0.00,11.38),(26,106,3,'2026-05-12 18:11:39','2026-05-12 18:18:17',3,NULL,22.50,25.00,0.00,1.03),(27,106,3,'2026-05-12 18:17:52','2026-05-12 18:28:24',3,NULL,225.00,250.00,0.00,10.35),(28,106,3,'2026-05-12 18:28:52','2026-05-12 18:31:54',3,NULL,247.50,275.00,0.00,11.38),(29,106,3,'2026-05-12 18:32:24',NULL,NULL,NULL,247.50,275.00,0.00,11.38),(30,107,3,'2026-05-12 18:51:19','2026-05-12 18:51:52',3,NULL,90.00,90.00,0.00,0.00),(31,107,3,'2026-05-12 18:52:29','2026-05-12 19:02:23',3,NULL,90.00,90.00,0.00,0.00),(32,107,3,'2026-05-12 19:02:57','2026-05-12 19:04:04',3,NULL,90.00,90.00,0.00,0.00),(33,107,3,'2026-05-12 19:17:54',NULL,NULL,NULL,90.00,90.00,0.00,0.00),(34,113,3,'2026-05-13 23:47:03','2026-05-13 23:57:16',3,NULL,1.89,3.00,2.10,0.07),(35,113,3,'2026-05-14 00:11:06','2026-05-14 00:33:19',3,NULL,1.89,3.00,2.10,0.07),(36,113,3,'2026-05-14 00:17:48','2026-05-14 00:33:07',3,NULL,93.95,113.30,104.30,3.61),(37,113,3,'2026-05-14 00:34:29',NULL,NULL,NULL,1.89,3.00,2.10,0.07),(38,113,3,'2026-05-14 00:36:52','2026-05-14 00:38:22',3,NULL,225.11,249.90,249.90,8.07),(39,114,3,'2026-05-15 12:41:43','2026-05-15 12:45:15',3,'El cliente regresó y se quedó con los tornillos',1.89,3.00,2.10,0.07),(40,114,3,'2026-05-15 12:47:16',NULL,NULL,NULL,225.00,249.90,249.90,8.07),(41,117,3,'2026-05-15 14:33:56',NULL,NULL,NULL,100.00,125.00,100.00,0.00),(42,126,3,'2026-05-22 21:35:06',NULL,NULL,NULL,28.00,28.00,28.00,0.00),(43,120,3,'2026-05-22 21:42:46',NULL,NULL,NULL,28.00,28.00,28.00,0.00),(44,123,3,'2026-05-23 19:07:44',NULL,NULL,NULL,130.50,145.00,145.00,0.00),(45,128,3,'2026-05-24 15:41:51','2026-05-24 15:42:47',3,'Se arrepintio',53.86,63.00,56.70,0.00);
+/*!40000 ALTER TABLE `devoluciones` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `movimientos_caja`
+--
+
+DROP TABLE IF EXISTS `movimientos_caja`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `movimientos_caja` (
+  `movimiento_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `caja_id` int unsigned NOT NULL,
+  `usuario_id` int unsigned NOT NULL,
+  `sucursal_id` int unsigned NOT NULL,
+  `tipo` enum('Retiro','Ingreso') NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `nota` text NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `devolucion_id` int unsigned DEFAULT NULL,
+  PRIMARY KEY (`movimiento_id`),
+  KEY `idx_caja` (`caja_id`),
+  KEY `idx_suc` (`sucursal_id`),
+  KEY `idx_fecha` (`created_at`),
+  KEY `fk_movcaja_dev` (`devolucion_id`),
+  CONSTRAINT `fk_movcaja_dev` FOREIGN KEY (`devolucion_id`) REFERENCES `devoluciones` (`devolucion_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=74 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `movimientos_caja`
+--
+
+LOCK TABLES `movimientos_caja` WRITE;
+/*!40000 ALTER TABLE `movimientos_caja` DISABLE KEYS */;
+INSERT INTO `movimientos_caja` VALUES (1,3,3,1,'Retiro',400.00,'Pagar material','2026-04-27 23:34:27',NULL),(2,3,3,1,'Ingreso',200.00,'cliente abono','2026-04-27 23:38:26',NULL),(3,4,3,1,'Ingreso',162.00,'Abono de crédito — Jose Perez','2026-04-28 01:25:21',NULL),(4,11,3,1,'Ingreso',250.00,'Abono de crédito — Jose Perez','2026-05-03 23:43:52',NULL),(5,11,3,1,'Ingreso',52.30,'Pago crédito — Jose Perez','2026-05-04 00:54:34',NULL),(6,11,3,1,'Ingreso',20.92,'Pago crédito — Jose Perez','2026-05-04 00:57:01',NULL),(7,12,3,1,'Ingreso',54.39,'Pago crédito — Jose Perez [Terminal]','2026-05-04 01:05:00',NULL),(8,12,3,1,'Ingreso',150.00,'Pago crédito — Jose Perez [Efectivo]','2026-05-04 01:23:59',NULL),(9,12,3,1,'Ingreso',52.30,'Pago crédito — Jose Perez [Terminal]','2026-05-04 01:24:00',NULL),(10,12,3,1,'Ingreso',200.00,'Pago crédito — Jose Perez: Ref: njhyugt6r5esrtrytu [Transferencia]','2026-05-04 01:24:46',NULL),(11,12,3,1,'Ingreso',200.00,'Pago crédito — Jose Perez [Efectivo]','2026-05-04 01:26:02',NULL),(12,12,3,1,'Ingreso',18.00,'Pago crédito — Maria Esparza [Efectivo]','2026-05-04 01:33:06',NULL),(13,12,3,1,'Ingreso',50.00,'propina','2026-05-04 01:36:57',NULL),(14,19,3,1,'Ingreso',40.00,'Pago crédito — Cesar Nolasco [Efectivo]','2026-05-07 06:16:26',NULL),(15,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 01:58:42',NULL),(16,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 02:02:18',NULL),(17,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 02:08:46',NULL),(18,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 02:13:10',NULL),(19,20,3,1,'Ingreso',6.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 02:16:28',NULL),(20,20,3,1,'Ingreso',30.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 02:22:58',NULL),(21,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 02:26:58',NULL),(22,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito2 [Efectivo]','2026-05-10 02:44:37',NULL),(23,20,3,1,'Ingreso',50.00,'Pago crédito — Prueba Credito6 [Efectivo]','2026-05-10 02:51:22',NULL),(24,20,3,1,'Ingreso',40.00,'Pago crédito — Prueba Credito3 [Efectivo]','2026-05-10 02:51:35',NULL),(25,20,3,1,'Ingreso',40.00,'Pago crédito — Prueba Credito4 [Efectivo]','2026-05-10 02:51:49',NULL),(26,20,3,1,'Ingreso',40.00,'Pago crédito — Prueba Credito5 [Efectivo]','2026-05-10 02:52:12',NULL),(27,20,3,1,'Ingreso',40.00,'Pago crédito — Prueba Credito7 [Efectivo]','2026-05-10 02:52:23',NULL),(28,20,3,1,'Ingreso',40.00,'Pago crédito — Prueba Credito8 [Efectivo]','2026-05-10 02:52:35',NULL),(29,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 02:52:48',NULL),(30,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito2 [Efectivo]','2026-05-10 02:53:00',NULL),(31,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 20:00:06',NULL),(32,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 20:11:37',NULL),(33,20,3,1,'Ingreso',5.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 20:28:20',NULL),(34,20,3,1,'Ingreso',5.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-10 20:28:50',NULL),(35,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito2 [Efectivo]','2026-05-10 20:29:30',NULL),(36,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito2 [Efectivo]','2026-05-10 20:35:27',NULL),(37,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito2 [Efectivo]','2026-05-10 20:36:14',NULL),(38,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito8 [Efectivo]','2026-05-10 20:36:54',NULL),(39,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito8 [Efectivo]','2026-05-10 20:37:24',NULL),(40,20,3,1,'Ingreso',200.00,'Pago crédito — Jose Perez [Efectivo]','2026-05-10 20:47:59',NULL),(41,20,3,1,'Ingreso',20.00,'Pago crédito — Maria Esparza [Efectivo]','2026-05-10 20:53:55',NULL),(42,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito3 [Efectivo]','2026-05-10 20:54:18',NULL),(43,20,3,1,'Ingreso',117.00,'Pago crédito — Maria Esparza [Efectivo]','2026-05-10 20:54:37',NULL),(44,20,3,1,'Ingreso',75.00,'Pago crédito — Rasshid Rodriguez [Efectivo]','2026-05-10 20:54:55',NULL),(45,20,3,1,'Ingreso',250.00,'Pago crédito — Jose Perez [Efectivo]','2026-05-10 20:55:39',NULL),(46,20,3,1,'Ingreso',10.00,'Pago crédito — Prueba Credito6 [Efectivo]','2026-05-10 21:04:32',NULL),(47,20,3,1,'Ingreso',5.00,'Pago crédito — Prueba Credito2 [Efectivo]','2026-05-10 21:05:00',NULL),(48,20,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito4 [Efectivo]','2026-05-10 21:06:00',NULL),(49,25,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito5 [Efectivo]','2026-05-13 00:11:39',NULL),(50,25,3,1,'Ingreso',5.00,'Pago crédito — Prueba Credito2 [Efectivo]','2026-05-13 00:12:34',NULL),(51,25,3,1,'Retiro',247.50,'Devolución folio #0067 [Efectivo]','2026-05-13 01:01:56',NULL),(52,25,3,1,'Retiro',247.50,'Devolución folio #0067 [Efectivo]','2026-05-13 01:06:53',NULL),(53,25,3,1,'Retiro',22.50,'Devolución folio #0067 [Efectivo]','2026-05-13 01:11:40',NULL),(54,25,3,1,'Retiro',225.00,'Devolución folio #0067 [Efectivo]','2026-05-13 01:17:53',NULL),(55,25,3,1,'Retiro',247.50,'Devolución folio #0067 [Efectivo]','2026-05-13 01:28:53',NULL),(56,25,3,1,'Retiro',247.50,'Devolución folio #0067 [Efectivo]','2026-05-13 01:32:25',NULL),(57,27,3,1,'Retiro',1.89,'Devolución folio #0074 [Terminal]','2026-05-14 06:47:04',34),(58,27,3,1,'Ingreso',1.89,'Cancelación devolución folio #0074','2026-05-14 06:57:16',34),(59,27,3,1,'Retiro',1.89,'Devolución folio #0074 [Terminal]','2026-05-14 07:11:07',35),(60,27,3,1,'Retiro',93.95,'Devolución folio #0074 [Terminal]','2026-05-14 07:17:49',36),(61,27,3,1,'Ingreso',93.95,'Cancelación devolución folio #0074','2026-05-14 07:33:07',36),(62,27,3,1,'Ingreso',1.89,'Cancelación devolución folio #0074','2026-05-14 07:33:19',35),(63,27,3,1,'Retiro',1.89,'Devolución folio #0074 [Terminal]','2026-05-14 07:34:33',37),(64,27,3,1,'Retiro',225.11,'Devolución folio #0074 [Terminal]','2026-05-14 07:36:55',38),(65,27,3,1,'Ingreso',225.11,'Cancelación devolución folio #0074','2026-05-14 07:38:23',38),(66,28,3,1,'Retiro',1.89,'Devolución folio #0075 [Terminal]','2026-05-15 19:41:44',39),(67,28,3,1,'Ingreso',1.89,'Cancelación devolución folio #0075','2026-05-15 19:45:15',39),(68,28,3,1,'Retiro',225.00,'Devolución folio #0075 [Terminal]','2026-05-15 19:47:17',40),(69,28,3,1,'Ingreso',20.00,'Pago crédito — Prueba Credito3 [Efectivo]','2026-05-16 08:45:28',NULL),(70,30,3,1,'Ingreso',50.00,'Pago crédito — Ricardo Nolasco [Efectivo]','2026-05-16 09:16:16',NULL),(71,33,3,1,'Ingreso',5.00,'Pago crédito — Prueba Credito [Efectivo]','2026-05-24 01:42:31',NULL),(72,33,3,1,'Ingreso',270.00,'Pago crédito — Cesar Nolasco [Efectivo]','2026-05-24 01:44:18',NULL),(73,35,3,1,'Ingreso',50.00,'Pago crédito — Maria Esparza [Efectivo]','2026-05-24 22:44:37',NULL);
+/*!40000 ALTER TABLE `movimientos_caja` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `movimientos_inventario`
+--
+
+DROP TABLE IF EXISTS `movimientos_inventario`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `movimientos_inventario` (
+  `movimientos_inventario_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `producto_id` int unsigned NOT NULL,
+  `usuario_id` int unsigned NOT NULL,
+  `sucursal_id` int unsigned DEFAULT NULL,
+  `tipo` enum('Entrada','Salida','Ajuste','Transferencia') NOT NULL,
+  `cantidad` decimal(10,3) NOT NULL,
+  `stock_anterior` decimal(10,3) NOT NULL,
+  `stock_nuevo` decimal(10,3) NOT NULL,
+  `motivo` varchar(255) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `devolucion_id` int unsigned DEFAULT NULL,
+  `proveedor_id` int DEFAULT NULL,
+  `paquete_id` int DEFAULT NULL,
+  PRIMARY KEY (`movimientos_inventario_id`),
+  KEY `producto_id` (`producto_id`),
+  KEY `usuario_id` (`usuario_id`),
+  KEY `idx_mi_sucursal` (`sucursal_id`),
+  CONSTRAINT `movimientos_inventario_ibfk_1` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`producto_id`),
+  CONSTRAINT `movimientos_inventario_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=312 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `movimientos_inventario`
+--
+
+LOCK TABLES `movimientos_inventario` WRITE;
+/*!40000 ALTER TABLE `movimientos_inventario` DISABLE KEYS */;
+INSERT INTO `movimientos_inventario` VALUES (36,52,3,1,'Entrada',5.000,25.000,30.000,'Entrada manual','2026-04-30 04:44:20',NULL,NULL,NULL),(37,60,2,1,'Entrada',40.000,0.000,40.000,'Alta de producto en sucursal','2026-04-30 15:04:02',NULL,NULL,NULL),(38,58,2,1,'Entrada',20.000,0.000,20.000,'Alta de producto en sucursal','2026-04-30 15:04:44',NULL,NULL,NULL),(39,57,2,1,'Entrada',15.000,0.000,15.000,'Alta de producto en sucursal','2026-04-30 15:04:45',NULL,NULL,NULL),(40,62,2,1,'Entrada',20.000,0.000,20.000,'Inventario inicial','2026-04-30 15:32:21',NULL,NULL,NULL),(41,63,2,1,'Entrada',20.000,0.000,20.000,'Alta de producto en sucursal','2026-04-30 15:53:14',NULL,NULL,NULL),(42,63,3,1,'Salida',2.000,20.000,18.000,'Venta','2026-04-30 16:44:52',NULL,NULL,NULL),(43,52,3,1,'Salida',2.000,30.000,28.000,'Venta - Ajuste por daño: Se me cayo la brocha','2026-04-30 19:37:09',NULL,NULL,NULL),(44,45,3,1,'Entrada',8.000,40.000,48.000,'Compra a proveedor #2','2026-04-30 19:41:00',NULL,3,NULL),(45,45,3,1,'Salida',12.000,48.000,36.000,'Venta','2026-04-30 19:54:42',NULL,NULL,NULL),(46,44,3,1,'Salida',2.000,50.000,48.000,'Venta','2026-04-30 19:55:42',NULL,NULL,NULL),(47,52,4,2,'Salida',2.000,15.000,13.000,'Venta','2026-04-30 20:04:26',NULL,NULL,NULL),(48,52,4,2,'Salida',1.000,13.000,12.000,'Venta','2026-04-30 20:08:58',NULL,NULL,NULL),(49,52,4,2,'Salida',1.000,12.000,11.000,'Venta - Ajuste por daño: daño','2026-04-30 20:21:02',NULL,NULL,NULL),(50,60,4,2,'Salida',3.000,15.000,12.000,'Venta','2026-04-30 20:25:41',NULL,NULL,NULL),(51,56,4,2,'Salida',8.000,50.000,42.000,'Venta','2026-04-30 20:36:02',NULL,NULL,NULL),(52,53,3,1,'Transferencia',3.000,10.000,7.000,'Transferencia enviada','2026-04-30 22:27:15',NULL,NULL,NULL),(53,53,3,1,'Transferencia',3.000,20.000,23.000,'Transferencia recibida','2026-04-30 22:27:16',NULL,NULL,NULL),(54,52,4,2,'Transferencia',8.000,28.000,20.000,'Transferencia enviada','2026-04-30 22:27:54',NULL,NULL,NULL),(55,52,4,2,'Transferencia',8.000,11.000,19.000,'Transferencia recibida','2026-04-30 22:27:55',NULL,NULL,NULL),(56,48,3,1,'Transferencia',8.000,18.000,10.000,'Transferencia enviada','2026-04-30 22:30:23',NULL,NULL,NULL),(57,48,3,1,'Transferencia',8.000,30.000,38.000,'Transferencia recibida','2026-04-30 22:30:23',NULL,NULL,NULL),(58,45,3,1,'Salida',12.000,36.000,24.000,'Venta','2026-05-02 20:19:27',NULL,NULL,NULL),(59,60,3,1,'Salida',3.000,40.000,37.000,'Venta','2026-05-03 00:03:23',NULL,NULL,NULL),(60,52,3,1,'Salida',1.000,20.000,19.000,'Venta','2026-05-03 00:12:07',NULL,NULL,NULL),(61,54,3,1,'Salida',3.000,40.000,37.000,'Venta','2026-05-03 00:23:58',NULL,NULL,NULL),(62,68,4,2,'Entrada',25.000,0.000,25.000,'Alta de producto en sucursal','2026-05-03 01:36:17',NULL,NULL,NULL),(63,52,4,2,'Ajuste',19.000,19.000,0.000,'Producto eliminado: Descontinuadi','2026-05-03 01:40:41',NULL,NULL,NULL),(64,68,4,2,'Salida',3.000,25.000,22.000,'Venta','2026-05-03 01:47:43',NULL,NULL,NULL),(65,44,3,1,'Salida',3.000,48.000,45.000,'Venta','2026-05-03 01:48:41',NULL,NULL,NULL),(66,45,3,1,'Salida',12.000,24.000,12.000,'Venta','2026-05-03 01:51:50',NULL,NULL,NULL),(67,52,3,1,'Salida',1.000,19.000,18.000,'Venta','2026-05-03 01:51:50',NULL,NULL,NULL),(68,52,3,1,'Salida',1.000,18.000,17.000,'Venta - Ajuste por daño: daño','2026-05-03 01:51:51',NULL,NULL,NULL),(69,63,3,1,'Salida',1.000,18.000,17.000,'Venta','2026-05-03 01:52:33',NULL,NULL,NULL),(70,60,4,2,'Salida',1.000,12.000,11.000,'Venta','2026-05-03 01:55:29',NULL,NULL,NULL),(71,52,3,1,'Salida',15.000,17.000,2.000,'Venta','2026-05-03 03:48:39',NULL,NULL,NULL),(72,52,4,2,'Entrada',50.000,0.000,50.000,'Alta de producto en sucursal','2026-05-03 23:41:13',NULL,NULL,NULL),(73,63,3,1,'Salida',1.000,17.000,16.000,'Venta','2026-05-04 00:36:38',NULL,NULL,NULL),(74,68,3,1,'Salida',1.000,200.000,199.000,'Venta','2026-05-04 01:52:08',NULL,NULL,NULL),(75,52,2,1,'Entrada',20.000,0.000,20.000,'Alta de producto en sucursal','2026-05-06 22:48:22',NULL,NULL,NULL),(76,52,5,1,'Ajuste',20.000,20.000,0.000,'Producto eliminado: Descontinuado','2026-05-06 22:50:27',NULL,NULL,NULL),(77,54,5,1,'Entrada',10.000,0.000,10.000,'Alta de producto en sucursal','2026-05-07 00:59:25',NULL,NULL,NULL),(78,54,5,1,'Ajuste',10.000,10.000,0.000,'Producto eliminado: Descontinuado','2026-05-07 01:03:16',NULL,NULL,NULL),(90,60,3,1,'Salida',3.000,37.000,34.000,'Venta','2026-05-07 03:27:21',NULL,NULL,NULL),(91,45,3,1,'Salida',12.000,12.000,0.000,'Venta','2026-05-07 03:27:22',NULL,NULL,NULL),(92,68,3,1,'Salida',5.000,199.000,194.000,'Venta','2026-05-07 03:29:09',NULL,NULL,NULL),(93,52,3,1,'Salida',1.000,2.000,1.000,'Venta','2026-05-07 03:30:18',NULL,NULL,NULL),(94,54,3,1,'Salida',1.000,37.000,36.000,'Venta','2026-05-07 03:33:18',NULL,NULL,NULL),(95,54,3,1,'Salida',1.000,36.000,35.000,'Venta - Ajuste por daño: Daño','2026-05-07 03:33:18',NULL,NULL,NULL),(96,56,3,1,'Salida',4.000,80.000,76.000,'Venta','2026-05-07 03:35:39',NULL,NULL,NULL),(97,52,4,2,'Salida',5.000,50.000,45.000,'Venta','2026-05-07 03:37:21',NULL,NULL,NULL),(98,60,4,2,'Salida',2.000,11.000,9.000,'Venta','2026-05-07 03:37:50',NULL,NULL,NULL),(99,52,3,NULL,'Entrada',15.000,1.000,16.000,'Compra a proveedor','2026-05-07 04:46:16',NULL,NULL,NULL),(100,52,3,NULL,'Salida',15.000,16.000,1.000,'Producto vencido','2026-05-07 04:48:29',NULL,NULL,NULL),(101,52,3,NULL,'Entrada',5.000,1.000,6.000,'Compra a proveedor','2026-05-07 04:48:56',NULL,NULL,NULL),(102,52,3,1,'Salida',4.000,6.000,2.000,'Merma por daño','2026-05-07 04:58:16',NULL,NULL,NULL),(103,52,3,1,'Entrada',16.000,2.000,18.000,'Compra a proveedor','2026-05-07 04:58:40',NULL,NULL,NULL),(104,45,3,2,'Transferencia',10.000,25.000,15.000,'Transferencia enviada','2026-05-07 05:36:17',NULL,NULL,NULL),(105,45,3,1,'Transferencia',10.000,0.000,10.000,'Transferencia recibida','2026-05-07 05:36:18',NULL,NULL,NULL),(106,52,4,2,'Salida',1.000,45.000,44.000,'Venta','2026-05-07 05:55:51',NULL,NULL,NULL),(107,68,4,2,'Salida',1.000,22.000,21.000,'Venta','2026-05-07 05:57:00',NULL,NULL,NULL),(108,68,4,2,'Salida',1.000,21.000,20.000,'Venta','2026-05-07 06:08:46',NULL,NULL,NULL),(109,52,4,2,'Salida',1.000,44.000,43.000,'Venta','2026-05-07 06:10:37',NULL,NULL,NULL),(110,45,4,2,'Salida',1.000,15.000,14.000,'Venta','2026-05-07 06:11:10',NULL,NULL,NULL),(111,44,4,2,'Salida',1.000,35.000,34.000,'Venta','2026-05-07 06:11:30',NULL,NULL,NULL),(112,51,3,1,'Salida',1.000,100.000,99.000,'Venta','2026-05-07 06:13:17',NULL,NULL,NULL),(113,53,3,1,'Salida',2.000,23.000,21.000,'Venta','2026-05-07 06:14:04',NULL,NULL,NULL),(114,52,3,1,'Salida',1.000,18.000,17.000,'Venta','2026-05-07 06:15:47',NULL,NULL,NULL),(115,52,3,1,'Salida',1.000,17.000,16.000,'Venta','2026-05-10 01:49:14',NULL,NULL,NULL),(116,52,3,1,'Salida',1.000,16.000,15.000,'Venta','2026-05-10 01:57:14',NULL,NULL,NULL),(117,52,3,1,'Salida',1.000,15.000,14.000,'Venta','2026-05-10 02:03:12',NULL,NULL,NULL),(118,52,3,1,'Salida',1.000,14.000,13.000,'Venta','2026-05-10 02:13:56',NULL,NULL,NULL),(119,52,3,1,'Salida',1.000,13.000,12.000,'Venta','2026-05-10 02:23:30',NULL,NULL,NULL),(120,52,3,1,'Salida',1.000,12.000,11.000,'Venta','2026-05-10 02:41:00',NULL,NULL,NULL),(121,52,3,1,'Salida',1.000,11.000,10.000,'Venta','2026-05-10 02:41:13',NULL,NULL,NULL),(122,52,3,1,'Salida',1.000,10.000,9.000,'Venta','2026-05-10 02:41:29',NULL,NULL,NULL),(123,52,3,1,'Salida',1.000,9.000,8.000,'Venta','2026-05-10 02:42:43',NULL,NULL,NULL),(124,68,3,1,'Salida',1.000,194.000,193.000,'Venta','2026-05-10 02:43:00',NULL,NULL,NULL),(125,52,3,1,'Salida',1.000,8.000,7.000,'Venta','2026-05-10 02:43:17',NULL,NULL,NULL),(126,52,3,1,'Salida',1.000,7.000,6.000,'Venta','2026-05-10 02:43:31',NULL,NULL,NULL),(127,52,3,1,'Salida',1.000,6.000,5.000,'Venta','2026-05-10 02:53:25',NULL,NULL,NULL),(128,68,3,1,'Salida',1.000,193.000,192.000,'Venta','2026-05-10 02:54:12',NULL,NULL,NULL),(129,68,3,1,'Salida',1.000,192.000,191.000,'Venta','2026-05-10 02:54:28',NULL,NULL,NULL),(130,68,3,1,'Salida',1.000,191.000,190.000,'Venta','2026-05-10 02:54:50',NULL,NULL,NULL),(131,68,3,1,'Salida',1.000,190.000,189.000,'Venta','2026-05-10 02:55:04',NULL,NULL,NULL),(132,52,3,1,'Salida',1.000,5.000,4.000,'Venta','2026-05-10 02:55:25',NULL,NULL,NULL),(133,68,3,1,'Salida',1.000,189.000,188.000,'Venta','2026-05-10 02:55:41',NULL,NULL,NULL),(134,52,3,1,'Salida',1.000,4.000,3.000,'Venta','2026-05-10 02:55:54',NULL,NULL,NULL),(135,48,3,1,'Salida',1.000,38.000,37.000,'Venta','2026-05-10 06:45:43',NULL,NULL,NULL),(136,59,3,1,'Entrada',40.000,0.000,40.000,'Alta de producto en sucursal','2026-05-10 06:47:38',NULL,NULL,NULL),(137,60,3,1,'Salida',2.000,34.000,32.000,'Venta','2026-05-11 01:38:59',NULL,NULL,NULL),(138,42,3,1,'Salida',10.000,500.000,490.000,'Venta','2026-05-11 01:42:32',NULL,NULL,NULL),(139,43,3,1,'Salida',10.000,300.000,290.000,'Venta','2026-05-11 01:42:33',NULL,NULL,NULL),(140,68,3,1,'Salida',4.500,188.000,183.500,'Venta','2026-05-11 01:52:07',NULL,NULL,NULL),(141,68,3,1,'Salida',1.000,183.500,182.500,'Venta - Ajuste por daño: a','2026-05-11 01:52:08',NULL,NULL,NULL),(142,68,3,1,'Entrada',1.000,182.500,183.500,'Devolucion venta #90 folio:0052: No le sirvieron','2026-05-11 02:05:22',2,NULL,NULL),(143,68,3,1,'Salida',1.000,183.500,182.500,'Cancelacion devolucion #2: equivocacion','2026-05-11 02:09:35',NULL,NULL,NULL),(144,68,3,1,'Entrada',1.000,182.500,183.500,'Devolucion venta #90 folio:0052: No le sirvieron','2026-05-11 02:10:52',3,NULL,NULL),(145,68,3,1,'Salida',1.000,183.500,182.500,'Cancelacion devolucion #3: equivocado','2026-05-11 02:31:39',NULL,NULL,NULL),(146,68,3,1,'Entrada',1.000,182.500,183.500,'Devolucion venta #90 folio:0052: No le sirvieron','2026-05-11 02:32:39',4,NULL,NULL),(147,68,3,1,'Salida',1.000,183.500,182.500,'Cancelacion devolucion #4: anulado','2026-05-11 03:14:23',NULL,NULL,NULL),(148,68,3,1,'Entrada',1.000,182.500,183.500,'Devolucion venta #90 folio:0052: No le sirvieron','2026-05-11 03:24:46',5,NULL,NULL),(149,60,3,1,'Salida',1.000,32.000,31.000,'Venta - Ajuste por daño: dañado','2026-05-11 17:24:02',NULL,NULL,NULL),(150,60,3,1,'Entrada',1.000,31.000,32.000,'Devolucion venta #91 folio:0053: No le sirvieron','2026-05-11 17:25:52',6,NULL,NULL),(151,60,3,1,'Salida',1.000,32.000,31.000,'Cancelacion devolucion #6: Me equivoque','2026-05-11 17:28:34',NULL,NULL,NULL),(152,60,3,1,'Salida',1.000,31.000,30.000,'Venta - Ajuste por daño: daño','2026-05-11 17:34:57',NULL,NULL,NULL),(153,60,3,1,'Entrada',1.000,30.000,31.000,'Devolucion venta #92 folio:0054: No le sirvieron','2026-05-11 17:36:44',7,NULL,NULL),(154,60,3,1,'Salida',1.000,31.000,30.000,'Cancelacion devolucion #7','2026-05-11 17:38:45',NULL,NULL,NULL),(155,52,3,1,'Salida',1.000,3.000,2.000,'Venta - Ajuste por daño: Daño','2026-05-11 18:04:14',NULL,NULL,NULL),(156,52,3,1,'Entrada',1.000,2.000,3.000,'Devolucion venta #93 folio:0055: No le sirvieron','2026-05-11 18:21:16',8,NULL,NULL),(157,52,3,1,'Salida',1.000,3.000,2.000,'Cancelacion devolucion #8','2026-05-11 18:22:39',NULL,NULL,NULL),(158,52,3,1,'Entrada',1.000,2.000,3.000,'Devolucion venta #93 folio:0055: No le sirvieron','2026-05-11 18:23:27',9,NULL,NULL),(159,52,3,1,'Salida',1.000,3.000,2.000,'Cancelacion devolucion #9','2026-05-11 18:27:59',NULL,NULL,NULL),(160,54,3,1,'Salida',2.000,35.000,33.000,'Venta','2026-05-11 18:32:56',NULL,NULL,NULL),(161,54,3,1,'Salida',1.000,33.000,32.000,'Venta - Ajuste por daño: n','2026-05-11 18:32:57',NULL,NULL,NULL),(162,54,3,1,'Entrada',1.000,32.000,33.000,'Devolucion venta #94 folio:0056: daño','2026-05-11 18:36:32',10,NULL,NULL),(163,52,3,1,'Salida',1.000,2.000,1.000,'Venta - Ajuste por daño: mal estado','2026-05-11 22:20:52',NULL,NULL,NULL),(164,54,3,1,'Entrada',1.000,33.000,34.000,'Devolucion venta #94 folio:0056: daño','2026-05-11 22:24:09',11,NULL,NULL),(165,52,3,1,'Entrada',1.000,1.000,2.000,'Devolucion venta #95 folio:0057: daño','2026-05-11 22:27:29',12,NULL,NULL),(166,52,3,1,'Salida',1.000,2.000,1.000,'Cancelacion devolucion #12','2026-05-11 22:28:48',NULL,NULL,NULL),(167,54,3,1,'Salida',1.000,34.000,33.000,'Venta - Ajuste por daño: daño','2026-05-11 22:44:29',NULL,NULL,NULL),(168,54,3,1,'Entrada',1.000,33.000,34.000,'Devolucion venta #96 folio:0058: No le sirvieron','2026-05-11 22:45:28',13,NULL,NULL),(169,54,3,1,'Salida',1.000,34.000,33.000,'Cancelacion devolucion #13','2026-05-11 22:46:32',NULL,NULL,NULL),(170,54,3,1,'Salida',2.000,33.000,31.000,'Venta - Ajuste por daño: dano','2026-05-11 23:52:14',NULL,NULL,NULL),(171,46,3,1,'Salida',3.000,20.000,17.000,'Venta','2026-05-11 23:52:15',NULL,NULL,NULL),(172,54,3,1,'Entrada',1.000,31.000,32.000,'Devolucion venta #97 folio:0059: No le sirvieron','2026-05-11 23:57:31',14,NULL,NULL),(173,54,3,1,'Salida',1.000,32.000,31.000,'Cancelacion devolucion #14','2026-05-11 23:59:51',NULL,NULL,NULL),(174,54,3,1,'Entrada',1.000,31.000,32.000,'Devolucion venta #97 folio:0059: No le sirvieron','2026-05-12 00:02:06',15,NULL,NULL),(175,54,3,1,'Salida',1.000,32.000,31.000,'Cancelacion devolucion #15','2026-05-12 00:15:43',NULL,NULL,NULL),(176,54,3,1,'Entrada',1.000,31.000,32.000,'Devolucion venta #97 folio:0059: No le sirvieron','2026-05-12 00:17:06',16,NULL,NULL),(177,54,3,1,'Salida',1.000,32.000,31.000,'Cancelacion devolucion #16','2026-05-12 00:25:59',NULL,NULL,NULL),(178,54,3,1,'Entrada',1.000,31.000,32.000,'Devolucion venta #97 folio:0059: No le sirvieron','2026-05-12 00:27:15',17,NULL,NULL),(179,54,3,1,'Entrada',1.000,32.000,33.000,'Devolucion venta #97 folio:0059: No le sirvieron','2026-05-12 00:31:26',18,NULL,NULL),(180,54,3,1,'Salida',1.000,33.000,32.000,'Cancelacion devolucion #18','2026-05-12 00:32:33',NULL,NULL,NULL),(181,54,3,1,'Entrada',1.000,32.000,33.000,'Devolucion venta #97 folio:0059: No le sirvieron','2026-05-12 00:33:41',19,NULL,NULL),(182,46,3,1,'Entrada',3.000,17.000,20.000,'Devolucion venta #97 folio:0059: No le sirvieron','2026-05-12 00:33:42',19,NULL,NULL),(183,54,3,1,'Salida',1.000,33.000,32.000,'Cancelacion devolucion #17','2026-05-12 00:34:37',NULL,NULL,NULL),(184,54,3,1,'Salida',1.000,32.000,31.000,'Cancelacion devolucion #19','2026-05-12 00:35:15',NULL,NULL,NULL),(185,46,3,1,'Salida',3.000,20.000,17.000,'Cancelacion devolucion #19','2026-05-12 00:35:16',NULL,NULL,NULL),(186,42,2,NULL,'Salida',1.000,490.000,489.000,'Venta','2026-05-12 01:04:53',NULL,NULL,NULL),(187,60,2,NULL,'Salida',2.000,30.000,28.000,'Venta','2026-05-12 01:04:53',NULL,NULL,NULL),(188,42,2,1,'Entrada',1.000,489.000,490.000,'Devolución: Devolución de venta de prueba para testing','2026-05-12 01:07:53',NULL,NULL,NULL),(189,60,2,1,'Entrada',2.000,28.000,30.000,'Devolución: Devolución de venta de prueba para testing','2026-05-12 01:07:54',NULL,NULL,NULL),(190,42,3,1,'Salida',10.000,490.000,480.000,'Venta pendiente domicilio','2026-05-12 04:05:52',NULL,NULL,NULL),(191,43,3,1,'Salida',10.000,290.000,280.000,'Venta pendiente domicilio','2026-05-12 04:05:52',NULL,NULL,NULL),(192,52,3,1,'Salida',1.000,1.000,0.000,'Venta pendiente domicilio','2026-05-12 04:05:53',NULL,NULL,NULL),(193,42,3,1,'Entrada',10.000,480.000,490.000,'Cancelación venta pendiente','2026-05-12 04:12:18',NULL,NULL,NULL),(194,43,3,1,'Entrada',10.000,280.000,290.000,'Cancelación venta pendiente','2026-05-12 04:12:19',NULL,NULL,NULL),(195,52,3,1,'Entrada',1.000,0.000,1.000,'Cancelación venta pendiente','2026-05-12 04:12:19',NULL,NULL,NULL),(196,42,3,1,'Salida',10.000,490.000,480.000,'Venta pendiente domicilio','2026-05-12 04:12:54',NULL,NULL,NULL),(197,43,3,1,'Salida',10.000,290.000,280.000,'Venta pendiente domicilio','2026-05-12 04:12:54',NULL,NULL,NULL),(198,42,3,1,'Entrada',5.000,480.000,485.000,'Devolucion venta #100 folio:0061: No le sirvieron','2026-05-12 04:32:16',20,NULL,NULL),(199,43,3,1,'Entrada',5.000,280.000,285.000,'Devolucion venta #100 folio:0061: No le sirvieron','2026-05-12 04:32:17',20,NULL,NULL),(200,42,3,1,'Salida',5.000,485.000,480.000,'Cancelacion devolucion #20','2026-05-12 04:34:58',NULL,NULL,NULL),(201,43,3,1,'Salida',5.000,285.000,280.000,'Cancelacion devolucion #20','2026-05-12 04:34:58',NULL,NULL,NULL),(202,42,3,1,'Entrada',5.000,480.000,485.000,'Devolucion venta #100 folio:0061: No le sirvieron','2026-05-12 04:36:26',21,NULL,NULL),(203,43,3,1,'Entrada',5.000,280.000,285.000,'Devolucion venta #100 folio:0061: No le sirvieron','2026-05-12 04:36:26',21,NULL,NULL),(204,42,3,1,'Salida',5.000,485.000,480.000,'Cancelacion devolucion #21','2026-05-12 04:38:59',NULL,NULL,NULL),(205,43,3,1,'Salida',5.000,285.000,280.000,'Cancelacion devolucion #21','2026-05-12 04:38:59',NULL,NULL,NULL),(206,68,3,1,'Salida',1.000,183.500,182.500,'Venta pendiente domicilio','2026-05-12 04:40:41',NULL,NULL,NULL),(207,68,3,1,'Entrada',1.000,182.500,183.500,'Cancelación venta pendiente','2026-05-12 04:40:49',NULL,NULL,NULL),(208,42,3,1,'Salida',10.000,480.000,470.000,'Venta domicilio confirmada','2026-05-13 00:06:56',NULL,NULL,NULL),(209,43,3,1,'Salida',10.000,280.000,270.000,'Venta domicilio confirmada','2026-05-13 00:06:57',NULL,NULL,NULL),(210,57,3,1,'Salida',1.000,15.000,14.000,'Venta domicilio confirmada','2026-05-13 00:06:57',NULL,NULL,NULL),(211,60,3,1,'Salida',3.000,30.000,27.000,'Venta domicilio confirmada','2026-05-13 00:16:54',NULL,NULL,NULL),(212,60,3,1,'Entrada',1.000,27.000,28.000,'Devolucion venta #104 folio:0065: No le sirvieron','2026-05-13 00:18:11',22,NULL,NULL),(213,60,3,1,'Entrada',1.000,28.000,29.000,'Devolucion venta #104 folio:0065: No le sirvieron','2026-05-13 00:23:19',23,NULL,NULL),(214,60,3,1,'Salida',1.000,29.000,28.000,'Cancelacion devolucion #23','2026-05-13 00:24:19',NULL,NULL,NULL),(215,60,3,1,'Salida',1.000,28.000,27.000,'Cancelacion devolucion #22','2026-05-13 00:24:25',NULL,NULL,NULL),(216,52,3,1,'Salida',1.000,1.000,0.000,'Venta domicilio confirmada','2026-05-13 00:26:42',NULL,NULL,NULL),(217,68,3,1,'Salida',5.500,183.500,178.000,'Venta','2026-05-13 00:48:02',NULL,NULL,NULL),(218,68,3,1,'Entrada',5.500,178.000,183.500,'Devolucion venta #106 folio:0067: No le sirvieron','2026-05-13 01:01:56',24,NULL,NULL),(219,68,3,1,'Salida',5.500,183.500,178.000,'Cancelacion devolucion #24','2026-05-13 01:06:33',NULL,NULL,NULL),(220,68,3,1,'Entrada',5.500,178.000,183.500,'Devolucion venta #106 folio:0067: No le sirvieron','2026-05-13 01:06:53',25,NULL,NULL),(221,68,3,1,'Salida',5.500,183.500,178.000,'Cancelacion devolucion #25','2026-05-13 01:07:15',NULL,NULL,NULL),(222,68,3,1,'Entrada',0.500,178.000,178.500,'Devolucion venta #106 folio:0067: No le sirvieron','2026-05-13 01:11:39',26,NULL,NULL),(223,68,3,1,'Entrada',5.000,178.500,183.500,'Devolucion venta #106 folio:0067: No le sirvieron','2026-05-13 01:17:52',27,NULL,NULL),(224,68,3,1,'Salida',0.500,183.500,183.000,'Cancelacion devolucion #26','2026-05-13 01:18:17',NULL,NULL,NULL),(225,68,3,1,'Salida',5.000,183.000,178.000,'Cancelacion devolucion #27','2026-05-13 01:28:24',NULL,NULL,NULL),(226,68,3,1,'Entrada',5.500,178.000,183.500,'Devolucion venta #106 folio:0067: No le sirvieron','2026-05-13 01:28:53',28,NULL,NULL),(227,68,3,1,'Salida',5.500,183.500,178.000,'Cancelacion devolucion #28','2026-05-13 01:31:53',NULL,NULL,NULL),(228,68,3,1,'Entrada',5.500,178.000,183.500,'Devolucion venta #106 folio:0067: No le sirvieron','2026-05-13 01:32:25',29,NULL,NULL),(229,60,3,1,'Salida',1.000,27.000,26.000,'Venta','2026-05-13 01:50:59',NULL,NULL,NULL),(230,60,3,1,'Entrada',1.000,26.000,27.000,'Devolucion venta #107 folio:0068: No le sirvieron','2026-05-13 01:51:19',30,NULL,NULL),(231,60,3,1,'Salida',1.000,27.000,26.000,'Cancelacion devolucion #30','2026-05-13 01:51:51',NULL,NULL,NULL),(232,60,3,1,'Entrada',1.000,26.000,27.000,'Devolucion venta #107 folio:0068: No le sirvieron','2026-05-13 01:52:29',31,NULL,NULL),(233,60,3,1,'Salida',1.000,27.000,26.000,'Cancelacion devolucion #31','2026-05-13 02:02:22',NULL,NULL,NULL),(234,60,3,1,'Entrada',1.000,26.000,27.000,'Devolucion venta #107 folio:0068: No le sirvieron','2026-05-13 02:02:58',32,NULL,NULL),(235,60,3,1,'Salida',1.000,27.000,26.000,'Cancelacion devolucion #32','2026-05-13 02:04:03',NULL,NULL,NULL),(236,60,3,1,'Entrada',1.000,26.000,27.000,'Devolucion venta #107 folio:0068: No le sirvieron','2026-05-13 02:17:54',33,NULL,NULL),(237,68,3,1,'Salida',1.000,183.500,182.500,'Venta','2026-05-13 02:19:38',NULL,NULL,NULL),(238,56,3,1,'Salida',3.000,76.000,73.000,'Venta','2026-05-13 02:19:39',NULL,NULL,NULL),(239,54,3,1,'Salida',2.000,31.000,29.000,'Venta','2026-05-13 02:21:25',NULL,NULL,NULL),(240,54,3,1,'Salida',1.000,29.000,28.000,'Venta - Ajuste por daño: daño','2026-05-13 02:21:25',NULL,NULL,NULL),(241,60,3,1,'Salida',1.000,27.000,26.000,'Venta','2026-05-13 02:45:14',NULL,NULL,NULL),(242,60,3,1,'Salida',2.000,26.000,24.000,'Venta','2026-05-13 02:46:27',NULL,NULL,NULL),(243,56,3,1,'Salida',4.000,73.000,69.000,'Venta','2026-05-13 02:46:27',NULL,NULL,NULL),(244,44,3,1,'Entrada',50.000,45.000,95.000,'Compra a proveedor','2026-05-14 00:31:55',NULL,NULL,NULL),(245,42,3,1,'Salida',20.000,470.000,450.000,'Venta','2026-05-14 00:44:07',NULL,NULL,NULL),(246,44,3,1,'Salida',10.000,95.000,85.000,'Venta','2026-05-14 00:44:08',NULL,NULL,NULL),(247,42,3,1,'Salida',2.000,450.000,448.000,'Venta - Ajuste por daño: Caja golpeada','2026-05-14 00:44:09',NULL,NULL,NULL),(248,42,3,1,'Entrada',2.000,448.000,450.000,'Devolucion venta #113 folio:0074: El cliente cambió de opinión','2026-05-14 06:47:03',34,NULL,NULL),(249,42,3,1,'Salida',2.000,450.000,448.000,'Cancelacion devolucion #34','2026-05-14 06:57:15',NULL,NULL,NULL),(250,42,3,1,'Entrada',2.000,448.000,450.000,'Devolucion venta #113 folio:0074: El cliente cambió de opinión','2026-05-14 07:11:06',35,NULL,NULL),(251,42,3,1,'Entrada',20.000,450.000,470.000,'Devolucion venta #113 folio:0074: El cliente cambió de opinión','2026-05-14 07:17:48',36,NULL,NULL),(252,44,3,1,'Entrada',10.000,85.000,95.000,'Devolucion venta #113 folio:0074: El cliente cambió de opinión','2026-05-14 07:17:49',36,NULL,NULL),(253,42,3,1,'Salida',20.000,470.000,450.000,'Cancelacion devolucion #36','2026-05-14 07:33:05',NULL,NULL,NULL),(254,44,3,1,'Salida',10.000,95.000,85.000,'Cancelacion devolucion #36','2026-05-14 07:33:06',NULL,NULL,NULL),(255,42,3,1,'Salida',2.000,450.000,448.000,'Cancelacion devolucion #35','2026-05-14 07:33:18',NULL,NULL,NULL),(256,42,3,1,'Entrada',2.000,448.000,450.000,'Devolucion venta #113 folio:0074: El cliente cambió de opinión','2026-05-14 07:34:31',37,NULL,NULL),(257,42,3,1,'Entrada',20.000,450.000,470.000,'Devolucion venta #113 folio:0074: El cliente cambió de opinión','2026-05-14 07:36:52',38,NULL,5),(258,44,3,1,'Entrada',10.000,85.000,95.000,'Devolucion venta #113 folio:0074: El cliente cambió de opinión','2026-05-14 07:36:54',38,NULL,5),(259,42,3,1,'Salida',20.000,470.000,450.000,'Cancelacion devolucion #38','2026-05-14 07:38:21',NULL,NULL,NULL),(260,44,3,1,'Salida',10.000,95.000,85.000,'Cancelacion devolucion #38','2026-05-14 07:38:21',NULL,NULL,NULL),(261,42,3,1,'Salida',20.000,450.000,430.000,'Venta','2026-05-15 19:34:22',NULL,NULL,NULL),(262,44,3,1,'Salida',10.000,85.000,75.000,'Venta','2026-05-15 19:34:23',NULL,NULL,NULL),(263,42,3,1,'Salida',2.000,430.000,428.000,'Venta - Ajuste por daño: Caja Golpeada','2026-05-15 19:34:23',NULL,NULL,NULL),(264,42,3,1,'Entrada',2.000,428.000,430.000,'Devolucion venta #114 folio:0075: El cliente cambió de opinión','2026-05-15 19:41:43',39,NULL,NULL),(265,42,3,1,'Salida',2.000,430.000,428.000,'Cancelacion devolucion #39: El cliente regresó y se quedó con los tornillos','2026-05-15 19:45:14',NULL,NULL,NULL),(266,42,3,1,'Entrada',20.000,428.000,448.000,'Devolucion venta #114 folio:0075: El cliente cambió de opinión','2026-05-15 19:47:16',40,NULL,5),(267,44,3,1,'Entrada',10.000,75.000,85.000,'Devolucion venta #114 folio:0075: El cliente cambió de opinión','2026-05-15 19:47:17',40,NULL,5),(268,42,3,1,'Salida',20.000,448.000,428.000,'Venta domicilio confirmada','2026-05-15 20:47:13',NULL,NULL,NULL),(269,44,3,1,'Salida',10.000,85.000,75.000,'Venta domicilio confirmada','2026-05-15 20:47:14',NULL,NULL,NULL),(270,42,3,1,'Salida',2.000,428.000,426.000,'Venta domicilio confirmada','2026-05-15 20:47:14',NULL,NULL,NULL),(271,42,3,1,'Salida',50.000,426.000,376.000,'Venta','2026-05-15 21:22:22',NULL,NULL,NULL),(272,44,3,1,'Salida',3.000,75.000,72.000,'Venta','2026-05-15 21:22:23',NULL,NULL,NULL),(273,42,3,1,'Salida',20.000,376.000,356.000,'Venta','2026-05-15 21:32:11',NULL,NULL,NULL),(274,44,3,1,'Salida',10.000,72.000,62.000,'Venta','2026-05-15 21:32:11',NULL,NULL,NULL),(275,44,3,1,'Salida',5.000,62.000,57.000,'Venta - Ajuste por daño: Óxido en la punta','2026-05-15 21:32:12',NULL,NULL,NULL),(276,44,3,1,'Entrada',5.000,57.000,62.000,'Devolucion venta #117 folio:0078: El cliente encontró mejor precio','2026-05-15 21:33:56',41,NULL,NULL),(277,42,3,1,'Salida',20.000,356.000,336.000,'Venta domicilio confirmada','2026-05-15 21:38:40',NULL,NULL,NULL),(278,82,3,1,'Entrada',100.000,0.000,100.000,'Alta de producto en sucursal','2026-05-16 09:25:58',NULL,NULL,NULL),(279,82,3,1,'Entrada',50.000,100.000,150.000,'Compra proveedor — factura F-001','2026-05-16 09:28:13',NULL,NULL,NULL),(280,82,3,1,'Entrada',5.000,150.000,155.000,'','2026-05-16 09:30:33',NULL,NULL,NULL),(281,82,3,1,'Salida',10.000,155.000,145.000,'Merma — daño en almacén','2026-05-16 09:31:45',NULL,NULL,NULL),(282,82,3,1,'Salida',135.000,145.000,10.000,'Merma por prueba de stock mínimo','2026-05-16 09:34:40',NULL,NULL,NULL),(283,82,3,NULL,'Ajuste',10.000,10.000,0.000,'Producto eliminado: Eliminación prueba de auditoría','2026-05-16 09:37:47',NULL,NULL,NULL),(284,42,3,1,'Entrada',100.000,336.000,436.000,'Compra a proveedor #3','2026-05-17 21:03:44',NULL,7,NULL),(285,44,3,1,'Entrada',20.000,62.000,82.000,'Compra a proveedor #3','2026-05-17 21:03:45',NULL,7,NULL),(286,42,3,1,'Salida',15.000,436.000,421.000,'Venta','2026-05-18 02:56:09',NULL,NULL,NULL),(287,44,3,1,'Salida',2.000,82.000,80.000,'Venta','2026-05-18 02:56:09',NULL,NULL,NULL),(288,44,3,1,'Salida',3.000,80.000,77.000,'Venta','2026-05-18 02:56:10',NULL,NULL,NULL),(289,54,3,1,'Salida',1.000,28.000,27.000,'Venta','2026-05-23 04:17:45',NULL,NULL,NULL),(290,46,3,1,'Salida',1.000,17.000,16.000,'Venta','2026-05-23 04:19:45',NULL,NULL,NULL),(291,46,3,1,'Salida',1.000,16.000,15.000,'Venta','2026-05-23 04:23:25',NULL,NULL,NULL),(292,46,3,1,'Salida',1.000,15.000,14.000,'Venta','2026-05-23 04:28:42',NULL,NULL,NULL),(293,46,3,1,'Salida',1.000,14.000,13.000,'Venta','2026-05-23 04:30:44',NULL,NULL,NULL),(294,54,3,1,'Salida',1.000,27.000,26.000,'Venta','2026-05-23 04:32:04',NULL,NULL,NULL),(295,54,3,1,'Salida',2.000,26.000,24.000,'Venta','2026-05-23 04:34:01',NULL,NULL,NULL),(296,54,3,1,'Entrada',1.000,24.000,25.000,'Devolucion venta #126 folio:0087: Producto defectuoso - prueba de sistema','2026-05-23 04:35:06',42,NULL,NULL),(297,54,3,1,'Entrada',1.000,25.000,26.000,'Devolucion venta #120 folio:0081: Test: devolucion completa','2026-05-23 04:42:46',43,NULL,NULL),(298,54,3,1,'Salida',1.000,26.000,25.000,'Venta domicilio confirmada','2026-05-23 04:48:13',NULL,NULL,NULL),(299,68,2,1,'Salida',182.500,182.500,0.000,'Prueba QA - stock insuficiente test','2026-05-24 01:54:12',NULL,NULL,NULL),(300,68,3,1,'Salida',1.000,0.000,0.000,'Venta domicilio confirmada','2026-05-24 02:03:09',NULL,NULL,NULL),(301,46,3,1,'Entrada',1.000,13.000,14.000,'Devolucion venta #123 folio:0084: Prueba QA devolución crédito','2026-05-24 02:07:44',44,NULL,NULL),(302,56,3,1,'Salida',7.000,69.000,62.000,'Venta','2026-05-24 22:37:26',NULL,NULL,NULL),(303,56,3,1,'Salida',1.000,62.000,61.000,'Venta - Ajuste por daño: Daño','2026-05-24 22:37:26',NULL,NULL,NULL),(304,54,3,1,'Salida',4.000,25.000,21.000,'Venta domicilio confirmada','2026-05-24 22:40:18',NULL,NULL,NULL),(305,56,3,1,'Salida',2.000,61.000,59.000,'Venta domicilio confirmada','2026-05-24 22:40:18',NULL,NULL,NULL),(306,56,3,1,'Entrada',7.000,59.000,66.000,'Devolucion venta #128 folio:0089: No le sirvieron','2026-05-24 22:41:51',45,NULL,NULL),(307,56,3,1,'Salida',7.000,66.000,59.000,'Cancelacion devolucion #45: Se arrepintio','2026-05-24 22:42:47',NULL,NULL,NULL),(308,52,3,1,'Entrada',50.000,0.000,50.000,'Entrada manual','2026-05-24 22:46:05',NULL,NULL,NULL),(309,52,3,1,'Entrada',5.000,50.000,55.000,'Compra a proveedor #4','2026-05-24 22:48:09',NULL,1,NULL),(310,68,3,2,'Transferencia',5.000,20.000,15.000,'Transferencia enviada','2026-05-24 22:56:34',NULL,NULL,NULL),(311,68,3,1,'Transferencia',5.000,0.000,5.000,'Transferencia recibida','2026-05-24 22:56:34',NULL,NULL,NULL);
+/*!40000 ALTER TABLE `movimientos_inventario` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `paquete_productos`
+--
+
+DROP TABLE IF EXISTS `paquete_productos`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `paquete_productos` (
+  `paquete_productos_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `paquete_id` int unsigned NOT NULL,
+  `producto_id` int unsigned NOT NULL,
+  `cantidad` decimal(10,3) NOT NULL DEFAULT '1.000',
+  PRIMARY KEY (`paquete_productos_id`),
+  KEY `paquete_id` (`paquete_id`),
+  KEY `producto_id` (`producto_id`),
+  CONSTRAINT `paquete_productos_ibfk_1` FOREIGN KEY (`paquete_id`) REFERENCES `paquetes` (`paquete_id`),
+  CONSTRAINT `paquete_productos_ibfk_2` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`producto_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `paquete_productos`
+--
+
+LOCK TABLES `paquete_productos` WRITE;
+/*!40000 ALTER TABLE `paquete_productos` DISABLE KEYS */;
+INSERT INTO `paquete_productos` VALUES (2,2,42,5.000),(3,2,43,5.000),(6,5,42,20.000),(7,5,44,10.000),(8,6,42,15.000),(9,6,44,2.000),(10,7,52,5.000);
+/*!40000 ALTER TABLE `paquete_productos` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `paquetes`
+--
+
+DROP TABLE IF EXISTS `paquetes`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `paquetes` (
+  `paquete_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `codigo` varchar(50) NOT NULL DEFAULT '',
+  `nombre` varchar(150) NOT NULL,
+  `descripcion` text,
+  `precio_paquete` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `activo` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`paquete_id`),
+  UNIQUE KEY `uk_paquete_codigo` (`codigo`)
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `paquetes`
+--
+
+LOCK TABLES `paquetes` WRITE;
+/*!40000 ALTER TABLE `paquetes` DISABLE KEYS */;
+INSERT INTO `paquetes` VALUES (2,'PRU001','Prueba','prueba',17.00,1,'2026-05-03 01:59:27','2026-05-03 01:59:27'),(5,'PAQDE001','Paquete de Prueba','',250.00,1,'2026-05-14 00:29:58','2026-05-14 00:29:58'),(6,'KITDE001','Kit de Fijación Básica','Tornillos y clavos para instalaciones básicas',35.00,1,'2026-05-17 21:22:07','2026-05-17 21:22:07'),(7,'PAQ876567','Paquete de Brochas','',200.00,1,'2026-05-24 22:51:28','2026-05-24 22:51:28');
+/*!40000 ALTER TABLE `paquetes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `producto_proveedor`
+--
+
+DROP TABLE IF EXISTS `producto_proveedor`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `producto_proveedor` (
+  `producto_proveedor_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `producto_id` int unsigned NOT NULL,
+  `proveedor_id` int unsigned NOT NULL,
+  `codigo_proveedor` varchar(50) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`producto_proveedor_id`),
+  KEY `producto_id` (`producto_id`),
+  KEY `proveedor_id` (`proveedor_id`),
+  CONSTRAINT `producto_proveedor_ibfk_1` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`producto_id`),
+  CONSTRAINT `producto_proveedor_ibfk_2` FOREIGN KEY (`proveedor_id`) REFERENCES `proveedores` (`proveedor_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `producto_proveedor`
+--
+
+LOCK TABLES `producto_proveedor` WRITE;
+/*!40000 ALTER TABLE `producto_proveedor` DISABLE KEYS */;
+INSERT INTO `producto_proveedor` VALUES (2,62,1,'12543','2026-04-30 15:32:21'),(4,63,2,'584115','2026-04-30 17:34:49');
+/*!40000 ALTER TABLE `producto_proveedor` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `productos`
+--
+
+DROP TABLE IF EXISTS `productos`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `productos` (
+  `producto_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `categoria_id` int unsigned DEFAULT NULL,
+  `codigo` varchar(50) NOT NULL,
+  `nombre_producto` varchar(150) NOT NULL,
+  `descripcion` text,
+  `precio_compra` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `precio_venta` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `precio_mayoreo` decimal(10,2) DEFAULT '0.00',
+  `tipo_venta` enum('Unidad','Suelto') DEFAULT 'Unidad',
+  `unidad_medida` varchar(30) DEFAULT NULL,
+  `activo` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`producto_id`),
+  UNIQUE KEY `sucursal_id` (`codigo`),
+  UNIQUE KEY `uk_codigo` (`codigo`),
+  KEY `categoria_id` (`categoria_id`),
+  CONSTRAINT `productos_ibfk_2` FOREIGN KEY (`categoria_id`) REFERENCES `categorias` (`categoria_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=83 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `productos`
+--
+
+LOCK TABLES `productos` WRITE;
+/*!40000 ALTER TABLE `productos` DISABLE KEYS */;
+INSERT INTO `productos` VALUES (42,10,'TORN-001','Tornillo 1/4 x 1 pulgada','Tornillo estándar galvanizado',0.50,1.50,1.20,'Unidad','pieza',1,'2026-04-30 04:17:15','2026-04-30 04:32:20'),(43,10,'TORN-002','Tornillo 3/8 x 2 pulgadas','Tornillo estructural',0.80,2.00,1.60,'Unidad','pieza',1,'2026-04-30 04:17:15','2026-04-30 04:32:21'),(44,12,'CLAV-001','Clavo 2 pulgadas','Clavo liso galvanizado',12.00,25.00,20.00,'Suelto','kg',1,'2026-04-30 04:17:16','2026-04-30 04:32:22'),(45,12,'CLAV-002','Clavo 3 pulgadas','Clavo liso galvanizado',11.00,22.00,18.00,'Suelto','kg',1,'2026-04-30 04:17:17','2026-04-30 04:32:22'),(46,6,'PINT-001','Pintura blanca vinílica 4L','Pintura interior lavable',85.00,145.00,120.00,'Unidad','lata',1,'2026-04-30 04:17:17','2026-04-30 04:17:17'),(47,6,'PINT-002','Pintura esmalte negro 1L','Esmalte anticorrosivo',55.00,95.00,80.00,'Unidad','lata',1,'2026-04-30 04:17:18','2026-04-30 04:17:18'),(48,7,'TUBO-001','Tubo PVC 1/2 pulgada x 3m','Tubo PVC hidráulico',28.00,48.00,40.00,'Unidad','pieza',1,'2026-04-30 04:17:18','2026-04-30 04:17:18'),(49,7,'TUBO-002','Tubo PVC 3/4 pulgada x 3m','Tubo PVC hidráulico',38.00,65.00,55.00,'Unidad','pieza',1,'2026-04-30 04:17:19','2026-04-30 04:17:19'),(50,18,'LIJA-001','Lija grano 80','Lija para madera y metal',3.50,8.00,6.50,'Unidad','hoja',1,'2026-04-30 04:17:20','2026-04-30 04:32:26'),(51,18,'LIJA-002','Lija grano 120','Lija para acabado fino',3.50,8.00,6.50,'Unidad','hoja',1,'2026-04-30 04:17:20','2026-04-30 04:32:27'),(52,20,'BROE-001','Brocha 2 pulgadas','Brocha de cerdas naturales',25.00,50.00,35.00,'Unidad','pieza',1,'2026-04-30 04:17:21','2026-05-24 22:48:09'),(53,20,'ESPA-001','Espátula metálica 3 pulgadas','Espátula para masilla',22.00,42.00,35.00,'Unidad','pieza',1,'2026-04-30 04:17:21','2026-04-30 04:32:28'),(54,22,'CEME-001','Cemento blanco 1kg','Cemento blanco para juntas',15.00,28.00,23.00,'Unidad','bolsa',1,'2026-04-30 04:17:22','2026-04-30 04:32:29'),(55,23,'SILI-001','Silicón transparente 300ml','Silicón neutro multiusos',35.00,65.00,55.00,'Unidad','pieza',1,'2026-04-30 04:17:23','2026-04-30 04:32:30'),(56,7,'TEFL-001','Cinta teflón 3/4 pulgada','Cinta selladora para rosca',4.00,9.00,7.50,'Unidad','pieza',1,'2026-04-30 04:17:23','2026-04-30 04:17:23'),(57,20,'LLAV-001','Llave perica 10 pulgadas','Llave ajustable de acero',65.00,120.00,98.00,'Unidad','pieza',1,'2026-04-30 04:22:42','2026-04-30 04:32:31'),(58,20,'LLAV-002','Llave española 3/4 pulgada','Llave fija cromo-vanadio',42.00,80.00,65.00,'Unidad','pieza',1,'2026-04-30 04:22:43','2026-04-30 04:32:32'),(59,27,'MANG-001','Manguera de jardín 15m','Manguera reforzada 1/2 pulgada',55.00,110.00,90.00,'Unidad','pieza',1,'2026-04-30 04:22:44','2026-04-30 04:32:33'),(60,28,'CAND-001','Candado 40mm','Candado de arco corto acero',48.00,90.00,75.00,'Unidad','pieza',1,'2026-04-30 04:22:44','2026-04-30 04:32:34'),(61,6,'RODE-001','Rodillo de pintura 9 pulgadas','Rodillo de felpa para pintura',22.00,45.00,38.00,'Unidad','pieza',1,'2026-04-30 04:22:45','2026-04-30 04:22:45'),(62,12,'EJM0001','Ejemplo1','PRUEBA',20.00,30.00,25.00,'Unidad','pieza',1,'2026-04-30 15:32:20','2026-04-30 15:32:20'),(63,1,'NJBHGVFCF','EJEMPLO2','PRUEBA',20.00,50.00,40.00,'Unidad','caja',1,'2026-04-30 15:37:43','2026-04-30 17:34:49'),(64,10,'TOR-001','Tornillo 3/4\" cabeza plana','Tornillo de acero galvanizado cabeza plana ranura',0.00,0.00,0.00,'Suelto','Pieza',1,'2026-04-30 17:27:24','2026-04-30 17:27:24'),(65,10,'TOR-002','Tornillo 1\" cabeza redonda','Tornillo de acero galvanizado cabeza redonda',0.00,0.00,0.00,'Suelto','Pieza',1,'2026-04-30 17:27:24','2026-04-30 17:27:24'),(66,10,'TUE-001','Tuerca 1/4\" hexagonal','Tuerca hexagonal de acero zincado',0.00,0.00,0.00,'Suelto','Pieza',1,'2026-04-30 17:27:25','2026-04-30 17:27:25'),(67,10,'RON-001','Rondana plana 3/8\"','Rondana plana de acero zincado',0.00,0.00,0.00,'Suelto','Pieza',1,'2026-04-30 17:27:25','2026-04-30 17:27:25'),(68,8,'CAB-001','Cable eléctrico calibre 12','Cable THW calibre 12 AWG color negro',20.00,50.00,45.00,'Suelto','Metro',1,'2026-04-30 17:27:26','2026-05-03 00:06:46'),(69,8,'CAB-002','Cable eléctrico calibre 14','Cable THW calibre 14 AWG color rojo',20.00,50.00,45.00,'Suelto','Metro',1,'2026-04-30 17:27:26','2026-05-03 00:07:02'),(70,8,'INT-001','Interruptor sencillo','Interruptor sencillo de empotrar color blanco',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:27','2026-04-30 17:27:27'),(71,8,'COR-001','Contacto doble polarizado','Contacto doble polarizado de empotrar',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:27','2026-04-30 17:27:27'),(72,7,'TUB-001','Tubo PVC 1/2\" x 3m','Tubo PVC hidráulico 1/2 pulgada longitud 3 metros',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:27','2026-04-30 17:27:27'),(73,7,'TUB-002','Tubo PVC 3/4\" x 3m','Tubo PVC hidráulico 3/4 pulgada longitud 3 metros',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:28','2026-04-30 17:27:28'),(74,7,'COD-001','Codo PVC 1/2\"','Codo PVC 90 grados 1/2 pulgada',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:28','2026-04-30 17:27:28'),(75,7,'LLA-001','Llave de paso 1/2\"','Llave de paso esférica 1/2 pulgada cromada',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:29','2026-04-30 17:27:29'),(76,22,'CEM-001','Cemento gris 50kg','Saco de cemento gris Portland 50 kilogramos',0.00,0.00,0.00,'Unidad','Saco',1,'2026-04-30 17:27:29','2026-04-30 17:27:29'),(77,22,'VAR-001','Varilla corrugada 3/8\"','Varilla de acero corrugado 3/8 pulgada 6 metros',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:30','2026-04-30 17:27:30'),(78,22,'MAL-001','Malla electrosoldada 6x6','Malla electrosoldada 6x6 calibre 10 2.35x6m',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:30','2026-04-30 17:27:30'),(79,20,'MAR-001','Martillo de bola 500g','Martillo de bola mango de fibra de vidrio 500 gramos',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:31','2026-04-30 17:27:31'),(80,20,'DES-001','Desarmador de cruz #2','Desarmador de cruz Phillips #2 mango ergonómico',0.00,0.00,0.00,'Unidad','Pieza',1,'2026-04-30 17:27:31','2026-04-30 17:27:31'),(81,30,'PIN-001','Pintura vinílica blanca 4L','Pintura vinílica blanca interior/exterior 4 litros',0.00,0.00,0.00,'Unidad','Cuñete',1,'2026-04-30 17:27:32','2026-04-30 17:27:32'),(82,10,'TEST-001','Alambre Galvanizado','',0.00,8.50,7.00,'Unidad',NULL,1,'2026-05-16 09:24:12','2026-05-16 09:24:12');
+/*!40000 ALTER TABLE `productos` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `promociones`
+--
+
+DROP TABLE IF EXISTS `promociones`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `promociones` (
+  `promocion_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `producto_id` int unsigned NOT NULL,
+  `precio_promocional` decimal(10,2) NOT NULL,
+  `fecha_inicio` date NOT NULL,
+  `fecha_fin` date NOT NULL,
+  `descripcion` varchar(255) DEFAULT NULL,
+  `activo` tinyint(1) NOT NULL DEFAULT '1',
+  `usuario_id` int unsigned NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`promocion_id`),
+  KEY `producto_id` (`producto_id`),
+  KEY `usuario_id` (`usuario_id`),
+  CONSTRAINT `promociones_ibfk_1` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`producto_id`) ON DELETE CASCADE,
+  CONSTRAINT `promociones_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `promociones`
+--
+
+LOCK TABLES `promociones` WRITE;
+/*!40000 ALTER TABLE `promociones` DISABLE KEYS */;
+INSERT INTO `promociones` VALUES (2,44,21.25,'2026-05-17','2026-05-31','Oferta Verano Clavos',0,2,'2026-05-18 02:41:56');
+/*!40000 ALTER TABLE `promociones` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `proveedor_categorias`
+--
+
+DROP TABLE IF EXISTS `proveedor_categorias`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `proveedor_categorias` (
+  `proveedor_categoria_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `proveedor_id` int unsigned NOT NULL,
+  `categoria_id` int unsigned NOT NULL,
+  PRIMARY KEY (`proveedor_categoria_id`),
+  KEY `proveedor_id` (`proveedor_id`),
+  KEY `categoria_id` (`categoria_id`),
+  CONSTRAINT `proveedor_categorias_ibfk_1` FOREIGN KEY (`proveedor_id`) REFERENCES `proveedores` (`proveedor_id`),
+  CONSTRAINT `proveedor_categorias_ibfk_2` FOREIGN KEY (`categoria_id`) REFERENCES `categorias` (`categoria_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `proveedor_categorias`
+--
+
+LOCK TABLES `proveedor_categorias` WRITE;
+/*!40000 ALTER TABLE `proveedor_categorias` DISABLE KEYS */;
+INSERT INTO `proveedor_categorias` VALUES (1,1,2),(2,1,8),(3,1,3),(4,2,1),(5,3,12);
+/*!40000 ALTER TABLE `proveedor_categorias` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `proveedores`
+--
+
+DROP TABLE IF EXISTS `proveedores`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `proveedores` (
+  `proveedor_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `nombre` varchar(100) NOT NULL,
+  `telefono` varchar(20) DEFAULT NULL,
+  `correo` varchar(100) DEFAULT NULL,
+  `direccion` varchar(255) DEFAULT NULL,
+  `activo` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`proveedor_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `proveedores`
+--
+
+LOCK TABLES `proveedores` WRITE;
+/*!40000 ALTER TABLE `proveedores` DISABLE KEYS */;
+INSERT INTO `proveedores` VALUES (1,'Trupper','3241002541','trupper@gmail.com','Hidalgo #2',1,'2026-04-27 03:24:49','2026-04-27 03:24:49'),(2,'Cementos','3246332154','cementos@gmail.com','Justo Barajas #40, Centro',1,'2026-04-27 03:25:13','2026-04-27 03:25:13'),(3,'KOLA LOKA S.A DE C.V','3112567893','kolaloka@gmail.com','Colas locas 123',1,'2026-04-30 19:39:31','2026-04-30 19:39:31'),(4,'Distribuidora Ramírez S.A.','6443009900','ventas@ramirez.com','Calle Industrial #44, Hermosillo',0,'2026-05-17 20:48:52','2026-05-17 20:53:46'),(5,'TestProveedor Malo','','correomalformado','',0,'2026-05-17 20:50:06','2026-05-17 20:52:11'),(6,'Distribuidora Ramírez S.A.','','','',0,'2026-05-17 20:52:32','2026-05-17 20:52:46'),(7,'Distribuidora Ramírez S.A.','6443009900','ventas@ramirez.com','Calle Industrial #44, Hermosillo',1,'2026-05-17 20:54:15','2026-05-17 20:54:15');
+/*!40000 ALTER TABLE `proveedores` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `stock_sucursal`
+--
+
+DROP TABLE IF EXISTS `stock_sucursal`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `stock_sucursal` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `producto_id` int unsigned NOT NULL,
+  `sucursal_id` int unsigned NOT NULL,
+  `stock_actual` decimal(10,3) NOT NULL DEFAULT '0.000',
+  `stock_minimo` decimal(10,3) NOT NULL DEFAULT '0.000',
+  `stock_maximo` decimal(10,3) NOT NULL DEFAULT '0.000',
+  `activo` tinyint(1) NOT NULL DEFAULT '1',
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_prod_suc` (`producto_id`,`sucursal_id`),
+  KEY `idx_sucursal` (`sucursal_id`),
+  KEY `idx_producto` (`producto_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=157 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `stock_sucursal`
+--
+
+LOCK TABLES `stock_sucursal` WRITE;
+/*!40000 ALTER TABLE `stock_sucursal` DISABLE KEYS */;
+INSERT INTO `stock_sucursal` VALUES (64,42,1,421.000,100.000,2000.000,1,'2026-05-18 02:56:08'),(65,43,1,270.000,50.000,1500.000,1,'2026-05-13 00:06:56'),(66,44,1,77.000,10.000,200.000,1,'2026-05-18 02:56:10'),(67,45,1,10.000,10.000,150.000,1,'2026-05-07 05:36:18'),(68,46,1,14.000,5.000,80.000,1,'2026-05-24 02:07:44'),(69,47,1,15.000,5.000,60.000,1,'2026-04-30 04:17:18'),(70,48,1,37.000,10.000,100.000,1,'2026-05-10 06:45:43'),(71,49,1,25.000,10.000,80.000,1,'2026-04-30 04:17:19'),(72,50,1,100.000,20.000,400.000,1,'2026-04-30 04:17:20'),(73,51,1,99.000,20.000,400.000,1,'2026-05-07 06:13:16'),(74,52,1,55.000,10.000,80.000,1,'2026-05-24 22:48:09'),(75,53,1,21.000,5.000,60.000,1,'2026-05-07 06:14:04'),(76,54,1,21.000,10.000,150.000,1,'2026-05-24 22:40:18'),(77,55,1,30.000,10.000,100.000,1,'2026-04-30 04:17:23'),(78,56,1,59.000,20.000,300.000,1,'2026-05-24 22:42:47'),(79,57,2,12.000,3.000,40.000,1,'2026-04-30 04:22:42'),(80,58,2,10.000,3.000,35.000,1,'2026-04-30 04:22:43'),(81,59,2,8.000,2.000,30.000,1,'2026-04-30 04:22:44'),(82,60,2,9.000,5.000,50.000,1,'2026-05-07 03:37:50'),(83,61,2,20.000,5.000,70.000,1,'2026-04-30 04:22:45'),(84,42,2,350.000,80.000,1500.000,1,'2026-04-30 04:29:24'),(85,43,2,200.000,40.000,1000.000,1,'2026-04-30 04:29:24'),(86,44,2,34.000,8.000,150.000,1,'2026-05-07 06:11:30'),(87,45,2,14.000,8.000,120.000,1,'2026-05-07 06:11:10'),(88,46,2,12.000,3.000,50.000,1,'2026-04-30 04:29:26'),(89,47,2,8.000,3.000,40.000,1,'2026-04-30 04:29:27'),(90,48,2,10.000,5.000,70.000,1,'2026-04-30 22:30:23'),(91,49,2,15.000,5.000,60.000,1,'2026-04-30 04:29:28'),(92,50,2,60.000,15.000,250.000,1,'2026-04-30 04:29:29'),(93,51,2,60.000,15.000,250.000,1,'2026-04-30 04:29:29'),(94,52,2,43.000,10.000,80.000,1,'2026-05-07 06:10:37'),(95,53,2,7.000,3.000,40.000,1,'2026-04-30 22:27:15'),(96,54,2,25.000,8.000,100.000,1,'2026-04-30 04:29:31'),(97,55,2,20.000,5.000,70.000,1,'2026-04-30 04:29:32'),(98,56,2,42.000,15.000,200.000,1,'2026-04-30 20:36:02'),(124,60,1,24.000,10.000,80.000,1,'2026-05-13 02:46:27'),(125,58,1,20.000,5.000,40.000,1,'2026-04-30 15:04:44'),(126,57,1,14.000,5.000,40.000,1,'2026-05-13 00:06:57'),(127,62,1,20.000,10.000,80.000,1,'2026-04-30 15:32:20'),(128,62,2,20.000,10.000,80.000,1,'2026-04-30 15:32:21'),(129,63,1,16.000,10.000,30.000,1,'2026-05-04 00:36:38'),(130,64,1,500.000,100.000,2.000,1,'2026-04-30 17:27:24'),(131,65,1,400.000,100.000,2.000,1,'2026-04-30 17:27:24'),(132,66,1,600.000,200.000,3.000,1,'2026-04-30 17:27:25'),(133,67,1,800.000,200.000,4.000,1,'2026-04-30 17:27:25'),(134,68,1,5.000,50.000,500.000,1,'2026-05-24 22:56:34'),(135,69,1,200.000,50.000,500.000,1,'2026-04-30 17:27:26'),(136,70,1,80.000,20.000,200.000,1,'2026-04-30 17:27:27'),(137,71,1,60.000,15.000,150.000,1,'2026-04-30 17:27:27'),(138,72,1,100.000,20.000,300.000,1,'2026-04-30 17:27:28'),(139,73,1,80.000,20.000,200.000,1,'2026-04-30 17:27:28'),(140,74,1,200.000,50.000,500.000,1,'2026-04-30 17:27:28'),(141,75,1,40.000,10.000,100.000,1,'2026-04-30 17:27:29'),(142,76,1,50.000,10.000,100.000,1,'2026-04-30 17:27:30'),(143,77,1,60.000,10.000,150.000,1,'2026-04-30 17:27:30'),(144,78,1,20.000,5.000,50.000,1,'2026-04-30 17:27:30'),(145,79,1,30.000,5.000,80.000,1,'2026-04-30 17:27:31'),(146,80,1,50.000,10.000,150.000,1,'2026-04-30 17:27:31'),(147,81,1,40.000,10.000,120.000,1,'2026-04-30 17:27:32'),(148,68,2,15.000,10.000,50.000,1,'2026-05-24 22:56:34'),(155,59,1,40.000,10.000,80.000,1,'2026-05-10 06:47:38'),(156,82,1,10.000,10.000,0.000,0,'2026-05-16 09:37:47');
+/*!40000 ALTER TABLE `stock_sucursal` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `sucursales`
+--
+
+DROP TABLE IF EXISTS `sucursales`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `sucursales` (
+  `sucursal_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `nombre` varchar(100) NOT NULL,
+  `rfc` varchar(20) DEFAULT NULL,
+  `direccion` varchar(255) DEFAULT NULL,
+  `telefono` varchar(20) DEFAULT NULL,
+  `datos_ticket` text,
+  `activo` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `banco` varchar(100) DEFAULT NULL,
+  `titular_cuenta` varchar(150) DEFAULT NULL,
+  `numero_cuenta` varchar(30) DEFAULT NULL,
+  `clabe_interbancaria` char(18) DEFAULT NULL,
+  `alias_tarjeta` varchar(60) DEFAULT NULL,
+  `comision_terminal_pct` decimal(5,2) DEFAULT '0.00',
+  PRIMARY KEY (`sucursal_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `sucursales`
+--
+
+LOCK TABLES `sucursales` WRITE;
+/*!40000 ALTER TABLE `sucursales` DISABLE KEYS */;
+INSERT INTO `sucursales` VALUES (1,'Ferremateriales Aldrete Barrio de los Indios','RFC000000000','Moctezuma #23, Centro','3242436585','',1,'2026-04-25 01:28:39','2026-04-27 03:11:19','BBVA','Luis Gonzalez','6541257856','214852014851845215','Debido de BBVA',4.60),(2,'Ferremateriales Aldrete Pinar','GCFGHHGFCGV','Hidalgo #2','3241005142','',1,'2026-04-25 02:24:23','2026-05-06 22:43:56','BBVA','Ricardo Nolasco','12541254','552252525251511695','Debido de BBVA',4.80);
+/*!40000 ALTER TABLE `sucursales` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `transferencias`
+--
+
+DROP TABLE IF EXISTS `transferencias`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `transferencias` (
+  `transferencias_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `producto_id` int unsigned NOT NULL,
+  `sucursal_origen_id` int unsigned NOT NULL,
+  `sucursal_destino_id` int unsigned NOT NULL,
+  `usuario_solicita_id` int unsigned NOT NULL,
+  `usuario_aprueba_id` int unsigned DEFAULT NULL,
+  `cantidad` decimal(10,3) NOT NULL,
+  `estado` enum('Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada') NOT NULL DEFAULT 'Pendiente',
+  `notas` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`transferencias_id`),
+  KEY `producto_id` (`producto_id`),
+  KEY `sucursal_origen_id` (`sucursal_origen_id`),
+  KEY `sucursal_destino_id` (`sucursal_destino_id`),
+  KEY `usuario_solicita_id` (`usuario_solicita_id`),
+  KEY `usuario_aprueba_id` (`usuario_aprueba_id`),
+  CONSTRAINT `transferencias_ibfk_1` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`producto_id`),
+  CONSTRAINT `transferencias_ibfk_2` FOREIGN KEY (`sucursal_origen_id`) REFERENCES `sucursales` (`sucursal_id`),
+  CONSTRAINT `transferencias_ibfk_3` FOREIGN KEY (`sucursal_destino_id`) REFERENCES `sucursales` (`sucursal_id`),
+  CONSTRAINT `transferencias_ibfk_4` FOREIGN KEY (`usuario_solicita_id`) REFERENCES `usuarios` (`usuario_id`),
+  CONSTRAINT `transferencias_ibfk_5` FOREIGN KEY (`usuario_aprueba_id`) REFERENCES `usuarios` (`usuario_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `transferencias`
+--
+
+LOCK TABLES `transferencias` WRITE;
+/*!40000 ALTER TABLE `transferencias` DISABLE KEYS */;
+INSERT INTO `transferencias` VALUES (3,52,2,1,3,4,18.000,'Rechazada','falta de stock\nCantidad modificada por origen de 8.00 a 18.00 el 30/04/2026 15:15 por Ricardo Nolasco. Pendiente de confirmacion por destino.\nModificacion de cantidad rechazada por destino el 30/04/2026 15:16 por Luis.','2026-04-30 22:14:12','2026-04-30 22:17:07'),(4,45,2,1,3,4,5.000,'Rechazada','Cantidad modificada por origen de 36.00 a 5.00 el 30/04/2026 15:25 por Ricardo Nolasco. Pendiente de confirmacion por destino.\nModificacion de cantidad rechazada por destino el 30/04/2026 15:26 por Luis.','2026-04-30 22:17:49','2026-04-30 22:26:58'),(5,45,2,1,3,4,5.000,'Rechazada','Aceptada el 30/04/2026 15:18 por Ricardo Nolasco. Preparar envio a sucursal destino.\nCantidad modificada por origen de 100.00 a 5.00 el 30/04/2026 15:24 por Ricardo Nolasco. Pendiente de confirmacion por destino.\nModificacion de cantidad rechazada por destino el 30/04/2026 15:26 por Luis.','2026-04-30 22:18:22','2026-04-30 22:26:54'),(6,53,2,1,3,3,3.000,'Entregada','Cantidad modificada por origen de 11.00 a 3.00 el 30/04/2026 15:25 por Ricardo Nolasco. Pendiente de confirmacion por destino.','2026-04-30 22:19:35','2026-04-30 22:27:16'),(7,52,1,2,4,4,8.000,'Entregada','Aceptada el 30/04/2026 15:27 por Luis. Preparar envio a sucursal destino.','2026-04-30 22:27:38','2026-04-30 22:27:55'),(8,48,2,1,3,3,8.000,'Entregada','Cantidad modificada por origen de 18.00 a 8.00 el 30/04/2026 15:29 por Ricardo Nolasco. Pendiente de confirmacion por destino.','2026-04-30 22:28:48','2026-04-30 22:30:23'),(9,45,2,1,3,3,10.000,'Entregada','Aceptada el 06/05/2026 22:36 por Ricardo Nolasco. Preparar envio a sucursal destino.','2026-05-07 05:35:38','2026-05-07 05:36:18'),(10,42,2,1,3,NULL,10.000,'Pendiente','Solicitud de prueba auditoria - TORN-001 x10','2026-05-18 02:24:00','2026-05-18 02:24:00'),(11,68,2,1,3,3,5.000,'Entregada','Cantidad modificada por origen de 10.00 a 5.00 el 24/05/2026 15:55 por Ricardo Nolasco. Pendiente de confirmacion por destino.','2026-05-24 22:53:47','2026-05-24 22:56:34');
+/*!40000 ALTER TABLE `transferencias` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `unidades_medida`
+--
+
+DROP TABLE IF EXISTS `unidades_medida`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `unidades_medida` (
+  `unidad_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `sucursal_id` int unsigned NOT NULL,
+  `nombre` varchar(50) NOT NULL,
+  PRIMARY KEY (`unidad_id`),
+  UNIQUE KEY `uq_sucursal_nombre` (`sucursal_id`,`nombre`),
+  CONSTRAINT `unidades_medida_ibfk_1` FOREIGN KEY (`sucursal_id`) REFERENCES `sucursales` (`sucursal_id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=110 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `unidades_medida`
+--
+
+LOCK TABLES `unidades_medida` WRITE;
+/*!40000 ALTER TABLE `unidades_medida` DISABLE KEYS */;
+INSERT INTO `unidades_medida` VALUES (32,1,'bolsa'),(5,1,'caja'),(6,1,'cubeta'),(101,1,'Cuñete'),(28,1,'hoja'),(1,1,'kg'),(24,1,'lata'),(7,1,'litro'),(2,1,'m'),(4,1,'m³'),(99,1,'Metro'),(9,1,'par'),(20,1,'pieza'),(8,1,'rollo'),(100,1,'Saco'),(47,2,'bolsa'),(14,2,'caja'),(15,2,'cubeta'),(43,2,'hoja'),(10,2,'kg'),(39,2,'lata'),(16,2,'litro'),(11,2,'m'),(13,2,'m³'),(18,2,'par'),(35,2,'pieza'),(12,2,'pza'),(17,2,'rollo');
+/*!40000 ALTER TABLE `unidades_medida` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `usuarios`
+--
+
+DROP TABLE IF EXISTS `usuarios`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `usuarios` (
+  `usuario_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `sucursal_id` int unsigned NOT NULL,
+  `nombre_completo` varchar(100) NOT NULL,
+  `telefono` varchar(20) DEFAULT NULL,
+  `domicilio` varchar(150) DEFAULT NULL,
+  `nombre_usuario` varchar(25) NOT NULL,
+  `contrasena` varchar(255) NOT NULL,
+  `rol` enum('Administrador','Inventario','Cajero','Inventario/Cajero') NOT NULL,
+  `activo` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`usuario_id`),
+  UNIQUE KEY `nombre_usuario` (`nombre_usuario`),
+  KEY `sucursal_id` (`sucursal_id`),
+  CONSTRAINT `usuarios_ibfk_1` FOREIGN KEY (`sucursal_id`) REFERENCES `sucursales` (`sucursal_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `usuarios`
+--
+
+LOCK TABLES `usuarios` WRITE;
+/*!40000 ALTER TABLE `usuarios` DISABLE KEYS */;
+INSERT INTO `usuarios` VALUES (2,1,'Ricardo Nolasco','','','admin','$2y$12$l9Z4iXpPnwJknY5YsoK70enBua7EvOqS0wPBCznrYwVaFjpWWz4Ni','Administrador',1,'2026-04-25 01:28:48','2026-04-25 01:42:05'),(3,1,'Luis','3241522125','Moctezuma #30','inventarioCajero','$2y$10$DjdnbJiMItyTYZ8/HZ/kTuAlscIjKbwNY.ZEsKxfy9ocOiHb9LsFK','Inventario/Cajero',1,'2026-04-25 02:25:50','2026-04-25 19:27:04'),(4,2,'Ricardo Nolasco','324100584999999','Moctezuma #30','InventarioCajero2','$2y$12$2I99oyKWpGocPcqKcqXakuvV.5m.jh9EbPisvSH89hRBj5m6bGoR2','Inventario/Cajero',1,'2026-04-25 19:27:36','2026-04-25 19:27:36'),(5,1,'Diego Rasshid','3241009724','Prueba#1','prueba','$2y$10$jZpRHCQ6bIJm42iCBfaBZ.h39kVYdVU9sqaIxh.S4xiEGLyBLMZAe','Inventario/Cajero',0,'2026-05-06 22:49:48','2026-05-07 01:15:52'),(6,1,'Prueba 2','2563256259','Napoles','prueba2','$2y$10$Cy32AggMppp49qCUHnnEseLBn7khHKrc5RIfgx7fShliq9/gYeFRu','Inventario/Cajero',0,'2026-05-07 01:36:08','2026-05-07 02:22:19');
+/*!40000 ALTER TABLE `usuarios` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `venta_productos`
+--
+
+DROP TABLE IF EXISTS `venta_productos`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `venta_productos` (
+  `venta_productos_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `venta_id` int unsigned NOT NULL,
+  `producto_id` int unsigned NOT NULL,
+  `cantidad` decimal(10,3) NOT NULL,
+  `precio_unitario` decimal(10,2) NOT NULL,
+  `precio_final` decimal(10,2) DEFAULT NULL,
+  `descuento` decimal(10,2) DEFAULT '0.00',
+  `subtotal` decimal(10,2) NOT NULL,
+  `paquete_id` int DEFAULT NULL,
+  `nota_ajuste` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`venta_productos_id`),
+  KEY `venta_id` (`venta_id`),
+  KEY `producto_id` (`producto_id`),
+  CONSTRAINT `venta_productos_ibfk_1` FOREIGN KEY (`venta_id`) REFERENCES `ventas` (`venta_id`),
+  CONSTRAINT `venta_productos_ibfk_2` FOREIGN KEY (`producto_id`) REFERENCES `productos` (`producto_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=155 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `venta_productos`
+--
+
+LOCK TABLES `venta_productos` WRITE;
+/*!40000 ALTER TABLE `venta_productos` DISABLE KEYS */;
+INSERT INTO `venta_productos` VALUES (24,22,63,2.000,50.00,50.00,0.00,100.00,NULL,NULL),(25,23,52,2.000,40.00,21.00,0.00,42.00,NULL,'Se me cayo la brocha'),(26,24,45,12.000,0.83,0.83,0.00,10.00,1,NULL),(27,25,44,2.000,25.00,25.00,0.00,50.00,NULL,NULL),(28,26,52,2.000,40.00,40.00,0.00,80.00,NULL,NULL),(29,27,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(30,28,52,1.000,40.00,25.20,0.00,25.20,NULL,'daño'),(31,29,60,3.000,90.00,90.00,0.00,270.00,NULL,NULL),(32,30,56,8.000,9.00,9.00,0.00,72.00,NULL,NULL),(33,31,45,12.000,0.83,0.83,0.00,10.00,1,NULL),(34,32,60,3.000,90.00,90.00,0.00,270.00,NULL,NULL),(35,33,52,1.000,40.00,28.00,0.00,28.00,NULL,NULL),(36,34,54,3.000,28.00,28.00,0.00,84.00,NULL,NULL),(37,35,68,3.000,50.00,50.00,0.00,150.00,NULL,NULL),(38,36,44,3.000,25.00,25.00,0.00,75.00,NULL,NULL),(39,37,45,12.000,0.83,0.83,0.00,10.00,1,NULL),(40,37,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(41,37,52,1.000,40.00,25.20,0.00,25.20,NULL,'daño'),(42,38,63,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(43,39,60,1.000,90.00,90.00,0.00,90.00,NULL,NULL),(44,40,52,15.000,30.00,30.00,0.00,450.00,4,NULL),(45,41,63,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(46,42,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(48,44,60,3.000,90.00,90.00,0.00,270.00,NULL,NULL),(49,44,45,12.000,0.83,0.83,0.00,10.00,1,NULL),(50,45,68,5.000,50.00,50.00,0.00,250.00,NULL,NULL),(51,46,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(52,47,54,1.000,28.00,28.00,0.00,28.00,NULL,NULL),(53,47,54,1.000,28.00,21.00,0.00,21.00,NULL,'Daño'),(54,48,56,4.000,9.00,9.00,0.00,36.00,NULL,NULL),(55,49,52,5.000,30.00,30.00,0.00,150.00,4,NULL),(56,50,60,2.000,90.00,90.00,0.00,180.00,NULL,NULL),(57,51,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(58,52,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(59,53,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(60,54,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(61,55,45,1.000,22.00,22.00,0.00,22.00,NULL,NULL),(62,56,44,1.000,25.00,25.00,0.00,25.00,NULL,NULL),(63,57,51,1.000,8.00,8.00,0.00,8.00,NULL,NULL),(64,58,53,2.000,42.00,42.00,0.00,84.00,NULL,NULL),(65,59,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(66,67,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(67,68,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(68,69,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(69,70,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(70,71,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(71,72,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(72,73,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(73,74,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(74,75,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(75,76,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(76,77,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(77,78,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(78,79,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(79,80,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(80,81,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(81,82,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(82,83,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(83,84,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(84,85,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(85,86,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(86,87,48,1.000,48.00,48.00,0.00,48.00,NULL,NULL),(87,88,60,2.000,90.00,90.00,0.00,180.00,NULL,NULL),(88,89,42,10.000,1.70,1.70,0.00,17.00,2,NULL),(89,89,43,10.000,1.70,1.70,0.00,17.00,2,NULL),(90,90,68,4.500,50.00,50.00,0.00,225.00,NULL,NULL),(91,90,68,1.000,50.00,45.00,0.00,45.00,NULL,'a'),(92,91,60,1.000,90.00,81.00,0.00,81.00,NULL,'dañado'),(93,92,60,1.000,90.00,72.00,0.00,72.00,NULL,'daño'),(94,93,52,1.000,40.00,36.00,0.00,36.00,NULL,'Daño'),(95,94,54,2.000,28.00,28.00,0.00,56.00,NULL,NULL),(96,94,54,1.000,28.00,25.20,0.00,25.20,NULL,'n'),(97,95,52,1.000,40.00,36.00,0.00,36.00,NULL,'mal estado'),(98,96,54,1.000,28.00,25.20,0.00,25.20,NULL,'daño'),(99,97,54,2.000,28.00,25.20,0.00,50.40,NULL,'dano'),(100,97,46,3.000,145.00,145.00,0.00,435.00,NULL,NULL),(101,98,42,1.000,1.50,NULL,0.00,1.50,NULL,NULL),(102,98,60,2.000,90.00,NULL,0.00,180.00,NULL,NULL),(103,99,42,10.000,1.70,1.70,0.00,17.00,2,NULL),(104,99,43,10.000,1.70,1.70,0.00,17.00,2,NULL),(105,99,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(106,100,42,10.000,1.70,1.70,0.00,17.00,2,NULL),(107,100,43,10.000,1.70,1.70,0.00,17.00,2,NULL),(108,101,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(109,102,42,10.000,1.70,1.70,0.00,17.00,2,NULL),(110,102,43,10.000,1.70,1.70,0.00,17.00,2,NULL),(111,102,57,1.000,120.00,120.00,0.00,120.00,NULL,NULL),(112,103,60,3.000,90.00,90.00,0.00,270.00,NULL,NULL),(113,104,60,3.000,90.00,90.00,0.00,270.00,NULL,NULL),(114,105,52,1.000,40.00,40.00,0.00,40.00,NULL,NULL),(115,106,68,5.500,50.00,50.00,0.00,275.00,NULL,NULL),(116,107,60,1.000,90.00,90.00,0.00,90.00,NULL,NULL),(117,108,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(118,108,56,3.000,9.00,9.00,0.00,27.00,NULL,NULL),(119,109,54,2.000,28.00,28.00,0.00,56.00,NULL,NULL),(120,109,54,1.000,28.00,22.40,0.00,22.40,NULL,'daño'),(121,110,60,1.000,90.00,90.00,0.00,90.00,NULL,NULL),(122,111,60,2.000,90.00,90.00,0.00,180.00,NULL,NULL),(123,111,56,4.000,9.00,9.00,0.00,36.00,NULL,NULL),(124,112,68,1.000,50.00,50.00,0.00,50.00,NULL,NULL),(125,113,42,20.000,8.33,8.33,0.00,166.67,5,NULL),(126,113,44,10.000,8.33,8.33,0.00,83.33,5,NULL),(127,113,42,2.000,1.50,1.05,0.00,2.10,NULL,'Caja golpeada'),(128,114,42,20.000,8.33,8.33,0.00,166.67,5,NULL),(129,114,44,10.000,8.33,8.33,0.00,83.33,5,NULL),(130,114,42,2.000,1.50,1.05,0.00,2.10,NULL,'Caja Golpeada'),(131,115,42,20.000,8.33,8.33,0.00,166.67,5,NULL),(132,115,44,10.000,8.33,8.33,0.00,83.33,5,NULL),(133,115,42,2.000,1.50,1.50,0.00,3.00,NULL,NULL),(134,116,42,50.000,1.50,1.20,0.00,60.00,NULL,NULL),(135,116,44,3.000,25.00,25.00,0.00,75.00,NULL,NULL),(136,117,42,20.000,8.33,8.33,0.00,166.67,5,NULL),(137,117,44,10.000,8.33,8.33,0.00,83.33,5,NULL),(138,117,44,5.000,25.00,20.00,0.00,100.00,NULL,'Óxido en la punta'),(139,118,42,20.000,1.50,1.50,0.00,30.00,NULL,NULL),(140,119,42,15.000,2.06,2.06,0.00,30.88,6,NULL),(141,119,44,2.000,2.06,2.06,0.00,4.12,6,NULL),(142,119,44,3.000,25.00,25.00,0.00,75.00,NULL,NULL),(143,120,54,1.000,28.00,28.00,0.00,28.00,NULL,NULL),(144,121,46,1.000,145.00,145.00,0.00,145.00,NULL,NULL),(145,122,46,1.000,145.00,145.00,0.00,145.00,NULL,NULL),(146,123,46,1.000,145.00,145.00,0.00,145.00,NULL,NULL),(147,124,46,1.000,145.00,145.00,0.00,145.00,NULL,NULL),(148,125,54,1.000,28.00,28.00,0.00,28.00,NULL,NULL),(149,126,54,2.000,28.00,28.00,0.00,56.00,NULL,NULL),(150,127,54,1.000,28.00,28.00,0.00,28.00,NULL,NULL),(151,128,56,7.000,9.00,9.00,0.00,63.00,NULL,NULL),(152,128,56,1.000,9.00,8.10,0.00,8.10,NULL,'Daño'),(153,129,54,4.000,28.00,28.00,0.00,112.00,NULL,NULL),(154,129,56,2.000,9.00,9.00,0.00,18.00,NULL,NULL);
+/*!40000 ALTER TABLE `venta_productos` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `ventas`
+--
+
+DROP TABLE IF EXISTS `ventas`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `ventas` (
+  `venta_id` int unsigned NOT NULL AUTO_INCREMENT,
+  `folio` varchar(20) DEFAULT NULL,
+  `caja_id` int unsigned NOT NULL,
+  `cliente_id` int unsigned DEFAULT NULL,
+  `usuario_id` int unsigned NOT NULL,
+  `subtotal` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `descuento` decimal(10,2) DEFAULT '0.00',
+  `comision_terminal` decimal(10,2) DEFAULT '0.00',
+  `total` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `metodo_pago` enum('Efectivo','Terminal','Credito','Mixto','Transferencia') NOT NULL,
+  `monto_efectivo` decimal(10,2) DEFAULT '0.00',
+  `monto_terminal` decimal(10,2) DEFAULT '0.00',
+  `cambio` decimal(10,2) DEFAULT '0.00',
+  `estado` enum('Pendiente','Completada','Cancelada','Devuelto','Modificado') NOT NULL DEFAULT 'Pendiente',
+  `notas` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `referencia_transferencia` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`venta_id`),
+  KEY `idx_folio` (`folio`),
+  KEY `idx_ventas_mes` (`created_at`),
+  KEY `caja_id` (`caja_id`),
+  KEY `cliente_id` (`cliente_id`),
+  KEY `usuario_id` (`usuario_id`),
+  CONSTRAINT `ventas_ibfk_1` FOREIGN KEY (`caja_id`) REFERENCES `cajas` (`caja_id`),
+  CONSTRAINT `ventas_ibfk_2` FOREIGN KEY (`cliente_id`) REFERENCES `clientes` (`cliente_id`),
+  CONSTRAINT `ventas_ibfk_3` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=130 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `ventas`
+--
+
+LOCK TABLES `ventas` WRITE;
+/*!40000 ALTER TABLE `ventas` DISABLE KEYS */;
+INSERT INTO `ventas` VALUES (1,'0001',1,1,3,538.00,60.64,0.00,477.36,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-26 00:38:30',NULL),(2,NULL,2,1,2,180.00,18.00,0.00,162.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-04-27 03:39:46',NULL),(3,NULL,2,1,2,580.00,58.00,0.00,522.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-04-27 03:40:04',NULL),(4,'0002',1,NULL,3,1000.00,0.00,0.00,1000.00,'Efectivo',1000.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-27 04:09:43',NULL),(5,'0003',1,NULL,3,500.00,0.00,0.00,500.00,'Efectivo',500.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-27 04:13:04',NULL),(6,'0004',1,NULL,3,535.71,35.71,0.00,500.00,'Efectivo',500.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-27 14:32:09',NULL),(7,'0005',1,NULL,3,535.71,35.71,0.00,500.00,'Efectivo',500.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-27 14:36:26',NULL),(8,'0006',3,NULL,3,70.00,0.00,0.00,70.00,'Efectivo',100.00,73.22,30.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-27 23:53:06',NULL),(9,'0007',4,NULL,3,0.00,35.71,0.00,0.00,'Efectivo',500.00,0.00,0.00,'Devuelto','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-28 00:04:04',NULL),(10,'0008',4,NULL,3,535.71,0.00,0.00,535.71,'Efectivo',0.00,0.00,0.00,'Completada','','2026-04-28 00:36:42',NULL),(11,'0009',4,NULL,3,535.71,35.71,0.00,500.00,'Efectivo',0.00,0.00,0.00,'Cancelada','','2026-04-28 00:52:27',NULL),(12,'0010',4,NULL,3,2678.55,178.55,0.00,2500.00,'Efectivo',0.00,0.00,0.00,'Completada','','2026-04-28 00:53:41',NULL),(13,'0011',4,NULL,3,535.71,35.71,0.00,500.00,'Credito',0.00,0.00,0.00,'Cancelada','','2026-04-28 00:57:07',NULL),(14,'0012',4,1,3,535.71,85.71,0.00,450.00,'Credito',0.00,0.00,0.00,'Completada','','2026-04-28 01:03:24',NULL),(15,'0013',4,1,3,535.71,85.71,0.00,450.00,'Efectivo',0.00,0.00,0.00,'Completada','','2026-04-28 01:13:14',NULL),(16,'0014',4,1,3,535.71,85.71,0.00,450.00,'Credito',0.00,0.00,0.00,'Completada','','2026-04-28 01:14:09',NULL),(17,NULL,5,NULL,2,1800.00,0.00,0.00,1800.00,'Efectivo',2000.00,0.00,200.00,'Completada',NULL,'2026-04-28 02:44:37',NULL),(18,'0015',4,NULL,3,535.71,35.71,0.00,500.00,'Efectivo',500.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-28 18:05:42',NULL),(19,'0016',4,NULL,3,535.71,35.71,0.00,500.00,'Efectivo',500.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-28 22:11:24',NULL),(20,'0017',4,NULL,3,535.71,35.71,0.00,500.00,'Efectivo',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-28 22:13:40',NULL),(21,'0018',4,NULL,3,715.71,35.71,0.00,680.00,'Efectivo',100.00,606.68,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-28 22:20:43',NULL),(22,'0019',6,NULL,3,100.00,0.00,0.00,100.00,'Efectivo',100.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 16:44:52',NULL),(23,'0020',7,NULL,3,80.00,38.00,0.00,42.00,'Efectivo',50.00,0.00,8.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 19:37:08',NULL),(24,'0021',7,3,3,10.00,0.01,0.23,10.22,'Mixto',5.00,5.22,0.00,'Completada','Paquetes vendidos: Kit De Clavones de fierro x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6MSwibm9tYnJlIjoiS2l0IERlIENsYXZvbmVzIGRlIGZpZXJybyIsImNhbnRpZGFkIjoxLCJwcmVjaW9fcGFxdWV0ZSI6MTAsInByb2R1Y3RvcyI6W3sicHJvZHVjdG9faWQiOjQ1LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAzIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoxMn1dfV19','2026-04-30 19:54:42',NULL),(25,'0022',7,NULL,3,50.00,0.00,2.30,52.30,'Terminal',0.00,52.30,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 19:55:42',NULL),(26,'0023',8,NULL,4,80.00,0.00,0.00,80.00,'Efectivo',100.00,0.00,20.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 20:04:25',NULL),(27,'0024',8,NULL,4,40.00,0.00,0.00,40.00,'Efectivo',50.00,0.00,10.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 20:08:58',NULL),(28,'0025',8,2,4,40.00,16.06,0.00,23.94,'Efectivo',25.00,0.00,1.06,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 20:21:01',NULL),(29,'0026',8,NULL,4,270.00,0.00,0.00,270.00,'Efectivo',300.00,0.00,30.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 20:25:40',NULL),(30,'0027',8,2,4,72.00,3.60,0.00,68.40,'Efectivo',100.00,0.00,31.60,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-04-30 20:36:01',NULL),(31,'0001',7,NULL,3,10.00,0.00,0.00,10.00,'Efectivo',10.00,0.00,0.00,'Completada','Paquetes vendidos: Kit De Clavones de fierro x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6MSwibm9tYnJlIjoiS2l0IERlIENsYXZvbmVzIGRlIGZpZXJybyIsImNhbnRpZGFkIjoxLCJwcmVjaW9fcGFxdWV0ZSI6MTAsInByb2R1Y3RvcyI6W3sicHJvZHVjdG9faWQiOjQ1LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAzIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoxMn1dfV19','2026-05-02 20:19:26',NULL),(32,'0002',9,4,3,270.00,0.00,12.42,282.42,'Terminal',0.00,282.42,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-03 00:03:22',NULL),(33,'0003',10,2,3,40.00,12.00,0.00,28.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-03 00:12:06',NULL),(34,'0004',10,NULL,3,84.00,0.00,1.56,85.56,'Mixto',50.00,35.56,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-03 00:23:58',NULL),(35,'0005',8,NULL,4,150.00,0.00,0.00,150.00,'Efectivo',200.00,0.00,50.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-03 01:47:42',NULL),(36,'0006',10,NULL,3,75.00,0.00,0.00,75.00,'Efectivo',100.00,0.00,25.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-03 01:48:41',NULL),(37,'0007',10,NULL,3,90.00,14.80,0.00,75.20,'Efectivo',100.00,78.66,24.80,'Completada','Paquetes vendidos: Kit De Clavones de fierro x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6MSwibm9tYnJlIjoiS2l0IERlIENsYXZvbmVzIGRlIGZpZXJybyIsImNhbnRpZGFkIjoxLCJwcmVjaW9fcGFxdWV0ZSI6MTAsInByb2R1Y3RvcyI6W3sicHJvZHVjdG9faWQiOjQ1LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAzIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoxMn1dfV19','2026-05-03 01:51:49',NULL),(38,'0008',10,NULL,3,50.00,0.00,0.00,50.00,'Efectivo',10.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-03 01:52:33',NULL),(39,'0009',8,NULL,4,90.00,0.00,0.00,90.00,'Efectivo',40.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-03 01:55:29',NULL),(40,'0010',10,NULL,3,450.00,0.00,0.00,450.00,'Efectivo',500.00,0.00,50.00,'Completada','Paquetes vendidos: Kit de Brochas x3\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6NCwibm9tYnJlIjoiS2l0IGRlIEJyb2NoYXMiLCJjYW50aWRhZCI6MywicHJlY2lvX3BhcXVldGUiOjE1MCwicHJvZHVjdG9zIjpbeyJwcm9kdWN0b19pZCI6NTIsIm5vbWJyZV9wcm9kdWN0byI6IkJyb2NoYSAyIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjo1fV19XX0=','2026-05-03 03:48:38',NULL),(41,'0011',11,3,3,50.00,0.00,0.00,50.00,'Credito',0.00,26.15,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-04 00:36:38',NULL),(42,'0012',12,3,3,50.00,25.00,0.00,25.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-04 01:52:07',NULL),(44,'0013',13,NULL,3,280.00,0.00,0.00,280.00,'Efectivo',300.00,0.00,20.00,'Completada','Paquetes vendidos: Kit De Clavones de fierro x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6MSwibm9tYnJlIjoiS2l0IERlIENsYXZvbmVzIGRlIGZpZXJybyIsImNhbnRpZGFkIjoxLCJwcmVjaW9fcGFxdWV0ZSI6MTAsInByb2R1Y3RvcyI6W3sicHJvZHVjdG9faWQiOjQ1LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAzIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoxMn1dfV19','2026-05-07 03:27:21',NULL),(45,'0014',13,NULL,3,250.00,0.00,11.50,261.50,'Terminal',0.00,261.50,20.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 03:29:09',NULL),(46,'0015',13,2,3,40.00,2.00,0.00,38.00,'Credito',0.00,261.50,20.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 03:30:17',NULL),(47,'0016',13,2,3,56.00,7.00,0.00,49.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 03:33:17',NULL),(48,'0017',13,NULL,3,36.00,0.00,1.20,37.20,'Mixto',10.00,27.20,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 03:35:38',NULL),(49,'0018',16,NULL,4,150.00,0.00,0.00,150.00,'Efectivo',200.00,0.00,50.00,'Completada','Paquetes vendidos: Kit de Brochas x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6NCwibm9tYnJlIjoiS2l0IGRlIEJyb2NoYXMiLCJjYW50aWRhZCI6MSwicHJlY2lvX3BhcXVldGUiOjE1MCwicHJvZHVjdG9zIjpbeyJwcm9kdWN0b19pZCI6NTIsIm5vbWJyZV9wcm9kdWN0byI6IkJyb2NoYSAyIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjo1fV19XX0=','2026-05-07 03:37:21',NULL),(50,'0019',16,NULL,4,180.00,0.00,8.64,188.64,'Terminal',0.00,188.64,50.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 03:37:49',NULL),(51,'0020',17,NULL,4,40.00,0.00,1.44,41.44,'Mixto',10.00,31.44,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 05:55:51',NULL),(52,'0021',17,NULL,4,50.00,0.00,0.00,50.00,'Transferencia',0.00,50.00,0.00,'Completada','Pago por transferencia. Referencia: 56412564515614\r\n__META_VENTA__eyJwYWdvIjp7InJlZmVyZW5jaWEiOiI1NjQxMjU2NDUxNTYxNCJ9LCJwYXF1ZXRlcyI6W119','2026-05-07 05:56:59','56412564515614'),(53,'0022',18,1,4,50.00,5.00,0.00,45.00,'Efectivo',50.00,0.00,5.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 06:08:45',NULL),(54,'0023',18,6,4,40.00,0.00,1.92,41.92,'Terminal',0.00,41.92,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 06:10:36',NULL),(55,'0024',18,NULL,4,22.00,0.00,0.58,22.58,'Mixto',10.00,12.58,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 06:11:10',NULL),(56,'0025',18,6,4,25.00,0.00,0.24,25.24,'Mixto',20.00,5.24,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 06:11:29',NULL),(57,'0026',19,6,3,8.00,0.00,0.00,8.00,'Transferencia',0.00,8.00,0.00,'Completada','Pago por transferencia. Referencia: 26551265\r\n__META_VENTA__eyJwYWdvIjp7InJlZmVyZW5jaWEiOiIyNjU1MTI2NSJ9LCJwYXF1ZXRlcyI6W119','2026-05-07 06:13:16','26551265'),(58,'0027',19,6,3,84.00,0.00,0.00,84.00,'Efectivo',100.00,8.00,16.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 06:14:04',NULL),(59,'0028',19,6,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-07 06:15:46',NULL),(60,NULL,19,NULL,3,1500.00,0.00,0.00,1500.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-05-10 01:34:51',NULL),(61,NULL,19,NULL,3,1500.00,0.00,0.00,1500.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-05-10 01:34:58',NULL),(62,NULL,19,NULL,3,1500.00,0.00,0.00,1500.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-05-10 01:35:04',NULL),(63,NULL,19,NULL,3,1500.00,0.00,0.00,1500.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-05-10 01:35:11',NULL),(64,NULL,19,NULL,3,1500.00,0.00,0.00,1500.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-05-10 01:36:00',NULL),(65,NULL,19,NULL,3,1500.00,0.00,0.00,1500.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-05-10 01:36:14',NULL),(66,NULL,19,NULL,3,1500.00,0.00,0.00,1500.00,'Credito',0.00,0.00,0.00,'Completada',NULL,'2026-05-10 01:36:22',NULL),(67,'0029',20,2,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 01:49:13',NULL),(68,'0030',20,10,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 01:57:13',NULL),(69,'0031',20,10,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:03:11',NULL),(70,'0032',20,10,3,40.00,4.00,0.00,36.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:13:56',NULL),(71,'0033',20,10,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:23:29',NULL),(72,'0034',20,11,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:40:59',NULL),(73,'0035',20,12,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:41:12',NULL),(74,'0036',20,13,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:41:29',NULL),(75,'0037',20,14,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:42:42',NULL),(76,'0038',20,15,3,50.00,0.00,0.00,50.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:42:59',NULL),(77,'0039',20,16,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:43:16',NULL),(78,'0040',20,17,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:43:31',NULL),(79,'0041',20,10,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:53:24',NULL),(80,'0042',20,11,3,50.00,0.00,0.00,50.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:54:12',NULL),(81,'0043',20,12,3,50.00,0.00,0.00,50.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:54:28',NULL),(82,'0044',20,13,3,50.00,0.00,0.00,50.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:54:49',NULL),(83,'0045',20,14,3,50.00,0.00,0.00,50.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:55:03',NULL),(84,'0046',20,15,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:55:24',NULL),(85,'0047',20,16,3,50.00,0.00,0.00,50.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:55:41',NULL),(86,'0048',20,17,3,40.00,0.00,0.00,40.00,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 02:55:54',NULL),(87,'0049',20,NULL,3,48.00,0.00,0.00,48.00,'Efectivo',100.00,48.00,52.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-10 06:45:42',NULL),(88,'0050',21,NULL,3,180.00,0.00,8.28,188.28,'Terminal',0.00,188.28,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 01:38:59',NULL),(89,'0051',21,NULL,3,34.00,0.00,1.10,35.10,'Mixto',10.00,25.10,0.00,'Completada','Paquetes vendidos: Prueba x2\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6Miwibm9tYnJlIjoiUHJ1ZWJhIiwiY2FudGlkYWQiOjIsInByZWNpb19wYXF1ZXRlIjoxNywicHJvZHVjdG9zIjpbeyJwcm9kdWN0b19pZCI6NDIsIm5vbWJyZV9wcm9kdWN0byI6IlRvcm5pbGxvIDEvNCB4IDEgcHVsZ2FkYSIsImNhbnRpZGFkX3JlcXVlcmlkYSI6NX0seyJwcm9kdWN0b19pZCI6NDMsIm5vbWJyZV9wcm9kdWN0byI6IlRvcm5pbGxvIDMvOCB4IDIgcHVsZ2FkYXMiLCJjYW50aWRhZF9yZXF1ZXJpZGEiOjV9XX1dfQ==','2026-05-11 01:42:32',NULL),(90,'0052',21,NULL,3,230.00,5.00,0.00,225.00,'Efectivo',300.00,275.00,30.00,'Modificado','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 01:52:07',NULL),(91,'0053',22,NULL,3,81.00,0.00,0.00,81.00,'Efectivo',100.00,0.00,19.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 17:24:01',NULL),(92,'0054',22,NULL,3,72.00,0.00,0.00,72.00,'Efectivo',100.00,0.00,28.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 17:34:56',NULL),(93,'0055',22,NULL,3,40.00,4.00,0.00,36.00,'Efectivo',50.00,0.00,14.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 18:04:13',NULL),(94,'0056',22,NULL,3,33.60,2.80,3.74,34.54,'Terminal',0.00,84.94,0.00,'Modificado','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 18:32:56',NULL),(95,'0057',22,NULL,3,40.00,4.00,1.66,37.66,'Terminal',0.00,37.66,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 22:20:52',NULL),(96,'0058',22,NULL,3,28.00,2.80,1.16,26.36,'Terminal',0.00,26.36,4.80,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 22:44:28',NULL),(97,'0059',22,NULL,3,491.00,5.60,22.33,507.73,'Terminal',0.00,507.73,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-11 23:52:14',NULL),(98,NULL,23,NULL,2,181.50,0.00,0.00,181.50,'Efectivo',100.00,0.00,0.00,'Completada',NULL,'2026-05-12 01:04:52',NULL),(99,'0060',24,3,3,74.00,0.00,3.40,77.40,'Terminal',0.00,77.40,0.00,'Cancelada','Brazil #300','2026-05-12 04:05:51',NULL),(100,'0061',24,3,3,34.00,0.00,1.56,35.56,'Terminal',0.00,35.56,0.00,'Completada','Brazil #300','2026-05-12 04:12:53',NULL),(101,'0062',24,NULL,3,50.00,0.00,0.00,50.00,'Efectivo',0.00,0.00,0.00,'Cancelada','','2026-05-12 04:40:40',NULL),(102,'0063',25,NULL,3,154.00,0.00,0.00,154.00,'Efectivo',200.00,0.00,46.00,'Completada','Brazil #300','2026-05-13 00:03:24',NULL),(103,'0064',25,6,3,270.00,0.00,0.00,270.00,'Credito',0.00,0.00,0.00,'Cancelada','Hidalgo 123','2026-05-13 00:14:09',NULL),(104,'0065',25,6,3,270.00,0.00,0.00,270.00,'Credito',0.00,0.00,0.00,'Completada','Brazil #300','2026-05-13 00:15:39',NULL),(105,'0066',25,1,3,40.00,0.00,4.00,36.00,'Transferencia',0.00,0.00,0.00,'Completada','Brazil #300','2026-05-13 00:25:54','546554614154165'),(106,'0067',25,1,3,0.00,0.00,0.00,0.00,'Terminal',0.00,258.88,0.00,'Devuelto','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-13 00:48:01',NULL),(107,'0068',26,NULL,3,0.00,0.00,0.00,0.00,'Efectivo',100.00,0.00,10.00,'Devuelto','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-13 01:50:58',NULL),(108,'0069',26,6,3,77.00,0.77,0.00,76.23,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-13 02:19:38',NULL),(109,'0070',26,2,3,84.00,5.60,0.00,78.40,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-13 02:21:24',NULL),(110,'0071',26,1,3,90.00,4.50,0.00,85.50,'Efectivo',90.00,89.43,4.50,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-13 02:45:13',NULL),(111,'0072',26,1,3,216.00,10.80,0.00,205.20,'Efectivo',210.00,89.43,4.80,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-13 02:46:26',NULL),(112,'0073',26,5,3,50.00,0.00,0.00,50.00,'Efectivo',100.00,0.00,50.00,'Completada','Hidalgo 123','2026-05-13 03:50:06',NULL),(113,'0074',27,20,3,249.90,24.79,8.07,233.18,'Mixto',50.00,185.03,0.00,'Modificado','Paquetes vendidos: Paquete de Prueba x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6NSwibm9tYnJlIjoiUGFxdWV0ZSBkZSBQcnVlYmEiLCJjYW50aWRhZCI6MSwicHJlY2lvX3BhcXVldGUiOjI1MCwicHJvZHVjdG9zIjpbeyJwcm9kdWN0b19pZCI6NDIsIm5vbWJyZV9wcm9kdWN0byI6IlRvcm5pbGxvIDEvNCB4IDEgcHVsZ2FkYSIsImNhbnRpZGFkX3JlcXVlcmlkYSI6MjB9LHsicHJvZHVjdG9faWQiOjQ0LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAyIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoxMH1dfV19','2026-05-14 00:44:07',NULL),(114,'0075',28,21,3,3.10,1.21,0.07,1.96,'Mixto',50.00,185.03,0.00,'Modificado','Paquetes vendidos: Paquete de Prueba x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6NSwibm9tYnJlIjoiUGFxdWV0ZSBkZSBQcnVlYmEiLCJjYW50aWRhZCI6MSwicHJlY2lvX3BhcXVldGUiOjI1MCwicHJvZHVjdG9zIjpbeyJwcm9kdWN0b19pZCI6NDIsIm5vbWJyZV9wcm9kdWN0byI6IlRvcm5pbGxvIDEvNCB4IDEgcHVsZ2FkYSIsImNhbnRpZGFkX3JlcXVlcmlkYSI6MjB9LHsicHJvZHVjdG9faWQiOjQ0LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAyIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoxMH1dfV19','2026-05-15 19:34:21',NULL),(115,'0076',28,21,3,253.00,25.30,0.00,227.70,'Transferencia',0.00,0.00,0.00,'Completada','Ortiz #180','2026-05-15 20:46:24','546554614154165'),(116,'0077',28,21,3,150.00,28.50,0.00,121.50,'Credito',0.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-15 21:22:21',NULL),(117,'0078',28,NULL,3,250.00,0.00,0.00,250.00,'Efectivo',350.00,0.00,0.00,'Modificado','Paquetes vendidos: Paquete de Prueba x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6NSwibm9tYnJlIjoiUGFxdWV0ZSBkZSBQcnVlYmEiLCJjYW50aWRhZCI6MSwicHJlY2lvX3BhcXVldGUiOjI1MCwicHJvZHVjdG9zIjpbeyJwcm9kdWN0b19pZCI6NDIsIm5vbWJyZV9wcm9kdWN0byI6IlRvcm5pbGxvIDEvNCB4IDEgcHVsZ2FkYSIsImNhbnRpZGFkX3JlcXVlcmlkYSI6MjB9LHsicHJvZHVjdG9faWQiOjQ0LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAyIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoxMH1dfV19','2026-05-15 21:32:10',NULL),(118,'0079',28,21,3,30.00,3.00,0.00,27.00,'Transferencia',0.00,0.00,0.00,'Completada','','2026-05-15 21:37:46','TRF-20240001'),(119,'0080',31,NULL,3,110.00,0.00,0.00,110.00,'Efectivo',120.00,0.00,10.00,'Completada','Paquetes vendidos: Kit de Fijación Básica x1\r\n__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W3sicGFxdWV0ZV9pZCI6Niwibm9tYnJlIjoiS2l0IGRlIEZpamFjacOzbiBCw6FzaWNhIiwiY2FudGlkYWQiOjEsInByZWNpb19wYXF1ZXRlIjozNSwicHJvZHVjdG9zIjpbeyJwcm9kdWN0b19pZCI6NDIsIm5vbWJyZV9wcm9kdWN0byI6IlRvcm5pbGxvIDEvNCB4IDEgcHVsZ2FkYSIsImNhbnRpZGFkX3JlcXVlcmlkYSI6MTV9LHsicHJvZHVjdG9faWQiOjQ0LCJub21icmVfcHJvZHVjdG8iOiJDbGF2byAyIHB1bGdhZGFzIiwiY2FudGlkYWRfcmVxdWVyaWRhIjoyfV19XX0=','2026-05-18 02:56:08',NULL),(120,'0081',32,NULL,3,0.00,0.00,0.00,0.00,'Efectivo',28.00,0.00,0.00,'Devuelto','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-23 04:17:44',NULL),(121,'0082',32,NULL,3,145.00,0.00,0.00,145.00,'Efectivo',200.00,0.00,55.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-23 04:19:44',NULL),(122,'0083',32,NULL,3,145.00,0.00,2.07,147.07,'Mixto',100.00,47.07,55.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-23 04:23:24',NULL),(123,'0084',32,20,3,0.00,0.00,0.00,0.00,'Credito',0.00,0.00,0.00,'Devuelto','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-23 04:28:41',NULL),(124,'0085',32,NULL,3,145.00,0.00,0.00,145.00,'Efectivo',145.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-23 04:30:43',NULL),(125,'0086',32,NULL,3,28.00,0.00,0.00,28.00,'Efectivo',28.00,0.00,0.00,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-23 04:32:03',NULL),(126,'0087',32,NULL,3,28.00,0.00,0.00,28.00,'Efectivo',56.00,0.00,0.00,'Modificado','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-23 04:34:01',NULL),(127,'0088',32,5,3,28.00,0.00,0.00,28.00,'Efectivo',28.00,0.00,0.00,'Completada','','2026-05-23 04:46:31',NULL),(128,'0089',35,1,3,72.00,9.14,0.00,67.55,'Efectivo',70.00,0.00,2.45,'Completada','__META_VENTA__eyJwYWdvIjpudWxsLCJwYXF1ZXRlcyI6W119','2026-05-24 22:37:26',NULL),(129,'0090',35,NULL,3,130.00,0.00,0.00,130.00,'Efectivo',150.00,0.00,20.00,'Completada','Hidalgo 100','2026-05-24 22:39:43',NULL);
+/*!40000 ALTER TABLE `ventas` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Dumping routines for database 'ferreteria_aldrete'
+--
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+
+/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
+/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+-- Dump completed on 2026-05-31 16:23:12

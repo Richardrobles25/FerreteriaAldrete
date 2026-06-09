@@ -15,18 +15,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
 }
 
 // Filtros
-$empleadoFiltro  = intval($_GET['empleado']   ?? 0);
-$tipoFiltro      = trim($_GET['tipo']         ?? '');
-$resolucionFiltro = trim($_GET['resolucion']  ?? '');
-$fechaInicio     = $_GET['fecha_inicio']      ?? date('Y-m-d', strtotime('monday this week'));
-$fechaFin        = $_GET['fecha_fin']         ?? date('Y-m-d', strtotime('saturday this week'));
+$empleadoFiltro = intval($_GET['empleado']   ?? 0);
+$tipoFiltro     = trim($_GET['tipo']         ?? '');
+$fechaInicio    = $_GET['fecha_inicio']      ?? date('Y-m-d', strtotime('monday this week'));
+$fechaFin       = $_GET['fecha_fin']         ?? date('Y-m-d', strtotime('saturday this week'));
 
 $where  = "WHERE a.fecha BETWEEN ? AND ?";
 $params = [$fechaInicio, $fechaFin];
 
-if ($empleadoFiltro) { $where .= " AND a.empleado_id = ?";  $params[] = $empleadoFiltro; }
-if ($tipoFiltro)     { $where .= " AND a.tipo = ?";          $params[] = $tipoFiltro; }
-if ($resolucionFiltro){ $where .= " AND a.resolucion = ?";   $params[] = $resolucionFiltro; }
+if ($empleadoFiltro) { $where .= " AND a.empleado_id = ?"; $params[] = $empleadoFiltro; }
+if ($tipoFiltro)     { $where .= " AND a.tipo = ?";         $params[] = $tipoFiltro; }
 
 $stmt = $pdo->prepare("
     SELECT a.*, e.nombre AS nombre_empleado
@@ -57,7 +55,7 @@ $totalHorasNT    = array_sum(array_column($registros, 'horas_no_trabajadas'));
 $totalHorasExtra = array_sum(array_column($registros, 'horas_extra'));
 
 $empleados   = $pdo->query("SELECT empleado_id, nombre FROM empleados WHERE activo=1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
-$tipos       = ['Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
+$tipos       = ['Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
 $resoluciones = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
 
 $colorRes = [
@@ -68,7 +66,7 @@ $colorRes = [
     'Pagado integro' => ['bg'=>'#f5f5f5','color'=>'#666','border'=>'#bbb'],
 ];
 
-$filtrosActivos = $empleadoFiltro || $tipoFiltro || $resolucionFiltro
+$filtrosActivos = $empleadoFiltro || $tipoFiltro
     || ($fechaInicio !== date('Y-m-d', strtotime('monday this week')))
     || ($fechaFin    !== date('Y-m-d', strtotime('saturday this week')));
 ?>
@@ -131,6 +129,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro || $resolucionFiltro
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #fafafa; }
     .badge-tipo { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; background: #f0f0f0; color: #555; }
+    .badge-tipo.normal { background: #e8f8ee; color: #1e8449; }
     .badge-res { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; border: 1px solid; }
     .tf-list { font-size: 11px; color: #888; margin-top: 3px; }
     .btn-editar { background: #f5f5f5; border: none; color: #555; padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; text-decoration: none; display: inline-block; }
@@ -200,18 +199,9 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro || $resolucionFiltro
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div class="filtro-group">
-                    <label>Resolucion</label>
-                    <select name="resolucion">
-                        <option value="">Todas</option>
-                        <?php foreach ($resoluciones as $r): ?>
-                            <option value="<?= $r ?>" <?= $resolucionFiltro === $r ? 'selected' : '' ?>><?= $r ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
                 <?php if ($filtrosActivos): ?><a class="btn-limpiar" href="asistencia.php">Limpiar</a><?php endif; ?>
-                <a class="btn-nuevo" href="formAsistencia.php" style="margin-left:auto;">+ Registrar incidente</a>
+                <a class="btn-nuevo" href="formAsistencia.php" style="margin-left:auto;">+ Registrar asistencia</a>
             </div>
         </form>
 
@@ -246,8 +236,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro || $resolucionFiltro
                         <th>Tiempo fuera</th>
                         <th>Hrs no trab.</th>
                         <th>Hrs extra</th>
-                        <th>Razon</th>
-                        <th>Resolucion</th>
+                        <th>Razon / Notas</th>
                         <th>Acciones</th>
                     </tr>
                 </thead>
@@ -259,7 +248,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro || $resolucionFiltro
                 <tr>
                     <td style="white-space:nowrap;"><?= date('d/m/Y', strtotime($reg['fecha'])) ?><br><span style="font-size:10px;color:#aaa;"><?= ['1'=>'Lun','2'=>'Mar','3'=>'Mie','4'=>'Jue','5'=>'Vie','6'=>'Sab'][date('N', strtotime($reg['fecha']))] ?? '' ?></span></td>
                     <td style="font-weight:600;"><?= htmlspecialchars($reg['nombre_empleado']) ?></td>
-                    <td><span class="badge-tipo"><?= htmlspecialchars($reg['tipo']) ?></span></td>
+                    <td><span class="badge-tipo <?= $reg['tipo'] === 'Asistencia normal' ? 'normal' : '' ?>"><?= htmlspecialchars($reg['tipo']) ?></span></td>
                     <td style="white-space:nowrap;">
                         <?php if ($reg['hora_entrada'] && $reg['hora_salida']): ?>
                             <?= date('h:i A', strtotime($reg['hora_entrada'])) ?><br><?= date('h:i A', strtotime($reg['hora_salida'])) ?>
@@ -284,16 +273,11 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro || $resolucionFiltro
                     <td style="font-weight:600;color:<?= floatval($reg['horas_extra']) > 0 ? '#27ae60' : '#aaa' ?>;">
                         <?= floatval($reg['horas_extra']) > 0 ? '+' . number_format($reg['horas_extra'], 2) . ' h' : '—' ?>
                     </td>
-                    <td style="max-width:160px;">
+                    <td style="max-width:180px;">
                         <?= htmlspecialchars($reg['razon'] ?? '—') ?>
                         <?php if ($reg['notas']): ?>
                             <div style="font-size:11px;color:#aaa;margin-top:2px;"><?= htmlspecialchars($reg['notas']) ?></div>
                         <?php endif; ?>
-                    </td>
-                    <td>
-                        <span class="badge-res" style="background:<?= $c['bg'] ?>;color:<?= $c['color'] ?>;border-color:<?= $c['border'] ?>;">
-                            <?= htmlspecialchars($reg['resolucion']) ?>
-                        </span>
                     </td>
                     <td style="white-space:nowrap;">
                         <a class="btn-editar" href="formAsistencia.php?id=<?= $reg['asistencia_id'] ?>">Editar</a>

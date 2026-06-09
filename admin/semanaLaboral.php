@@ -24,10 +24,25 @@ $dtSabado = (clone $dtLunes)->modify('+5 days');
 
 $lunes  = $dtLunes->format('Y-m-d');
 $sabado = $dtSabado->format('Y-m-d');
+$hoy    = date('Y-m-d');
 
-$semanaAnterior = (clone $dtLunes)->modify('-7 days')->format('Y-m-d');
+// Corte: hasta hoy si estamos en la semana activa, hasta sabado si es semana pasada
+$esSemanaActual = ($hoy >= $lunes && $hoy <= $sabado);
+$fechaCorte     = $esSemanaActual ? $hoy : $sabado;
+$semanaCompleta = ($fechaCorte === $sabado);
+
+$semanaAnterior  = (clone $dtLunes)->modify('-7 days')->format('Y-m-d');
 $semanaSiguiente = (clone $dtLunes)->modify('+7 days')->format('Y-m-d');
-$etiquetaSemana = $dtLunes->format('d/m/Y') . ' — ' . $dtSabado->format('d/m/Y');
+$etiquetaSemana  = $dtLunes->format('d/m/Y') . ' — ' . $dtSabado->format('d/m/Y');
+
+// Dias transcurridos en la semana (1=lunes ... 6=sabado)
+$diasTranscurridos = 0;
+if ($esSemanaActual) {
+    $dowHoy = (int)(new DateTime($hoy))->format('N');
+    $diasTranscurridos = min($dowHoy, 6);
+} else {
+    $diasTranscurridos = 6;
+}
 
 // Todos los empleados activos
 $empleados = $pdo->query("
@@ -37,16 +52,41 @@ $empleados = $pdo->query("
     ORDER BY e.nombre
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Registros de asistencia de la semana
+// Handle resolucion semanal por empleado (POST)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resolver_empleado'])) {
+    $eid       = intval($_POST['empleado_id']);
+    $resolucion = trim($_POST['resolucion_semana']);
+    $resVal    = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
+    if (in_array($resolucion, $resVal)) {
+        $pdo->prepare("
+            UPDATE asistencia SET resolucion = ?
+            WHERE empleado_id = ? AND fecha BETWEEN ? AND ?
+        ")->execute([$resolucion, $eid, $lunes, $sabado]);
+    }
+    header('Location: semanaLaboral.php?semana=' . $lunes);
+    exit();
+}
+
+// Registros de asistencia acumulados hasta el corte
+// DAYOFWEEK: 1=Dom, 2=Lun...7=Sab → sabado=7 → 6hrs, resto=9hrs
 $stmtA = $pdo->prepare("
     SELECT empleado_id,
            SUM(horas_no_trabajadas) AS total_no_trabajadas,
-           SUM(horas_extra)         AS total_extra
+           SUM(horas_extra)         AS total_extra,
+           COUNT(*)                 AS total_registros,
+           SUM(CASE WHEN tipo != 'Falta'
+               THEN (CASE WHEN DAYOFWEEK(fecha) = 7 THEN 6.0 ELSE 9.0 END)
+                    - horas_no_trabajadas + horas_extra
+               ELSE 0 END)         AS total_horas_trabajadas,
+           SUM(CASE WHEN tipo = 'Asistencia normal' THEN 1 ELSE 0 END) AS dias_normales,
+           SUM(CASE WHEN tipo = 'Falta'             THEN 1 ELSE 0 END) AS dias_falta,
+           SUM(CASE WHEN resolucion != 'Pendiente' AND tipo != 'Asistencia normal' THEN 1 ELSE 0 END) AS resueltos,
+           SUM(CASE WHEN tipo != 'Asistencia normal' AND tipo != 'Falta' THEN 1 ELSE 0 END) AS total_incidentes
     FROM asistencia
     WHERE fecha BETWEEN ? AND ?
     GROUP BY empleado_id
 ");
-$stmtA->execute([$lunes, $sabado]);
+$stmtA->execute([$lunes, $fechaCorte]);
 $asistenciaMap = [];
 foreach ($stmtA->fetchAll(PDO::FETCH_ASSOC) as $row) {
     $asistenciaMap[$row['empleado_id']] = $row;
@@ -64,8 +104,15 @@ foreach ($empleados as $emp) {
     $sueldo = floatval($emp['sueldo_semanal']);
     $tarifa = $sueldo / 51;
 
-    $horasNT    = floatval($asistenciaMap[$eid]['total_no_trabajadas'] ?? 0);
-    $horasExtra = floatval($asistenciaMap[$eid]['total_extra'] ?? 0);
+    $horasNT         = floatval($asistenciaMap[$eid]['total_no_trabajadas']  ?? 0);
+    $horasExtra      = floatval($asistenciaMap[$eid]['total_extra']          ?? 0);
+    $horasTrabajadas = floatval($asistenciaMap[$eid]['total_horas_trabajadas'] ?? 0);
+    $diasNormales    = intval($asistenciaMap[$eid]['dias_normales']          ?? 0);
+    $diasFalta       = intval($asistenciaMap[$eid]['dias_falta']             ?? 0);
+    $totalInc        = intval($asistenciaMap[$eid]['total_incidentes']       ?? 0);
+    $resueltos       = intval($asistenciaMap[$eid]['resueltos']              ?? 0);
+    $totalReg        = intval($asistenciaMap[$eid]['total_registros']        ?? 0);
+    $todoResuelto    = $totalInc > 0 && $resueltos === $totalInc;
 
     $horasCompensadas   = min($horasNT, $horasExtra);
     $horasNetaDeducir   = round($horasNT    - $horasCompensadas, 2);
@@ -75,15 +122,19 @@ foreach ($empleados as $emp) {
     $bono       = round($horasExtraNeta   * $tarifa * 1.5, 2);
     $pagoFinal  = round($sueldo - $deduccion + $bono,      2);
 
-    $totalSueldos    += $sueldo;
+    $totalSueldos     += $sueldo;
     $totalDeducciones += $deduccion;
-    $totalBonos      += $bono;
-    $totalFinal      += $pagoFinal;
+    $totalBonos       += $bono;
+    $totalFinal       += $pagoFinal;
 
     $filas[] = [
+        'empleado_id'      => $eid,
         'empleado'         => $emp['nombre'],
-
         'sueldo'           => $sueldo,
+        'horas_trabajadas' => round($horasTrabajadas, 2),
+        'dias_normales'    => $diasNormales,
+        'dias_falta'       => $diasFalta,
+        'total_reg'        => $totalReg,
         'horas_nt'         => $horasNT,
         'horas_extra'      => $horasExtra,
         'horas_comp'       => $horasCompensadas,
@@ -92,6 +143,8 @@ foreach ($empleados as $emp) {
         'deduccion'        => $deduccion,
         'bono'             => $bono,
         'pago_final'       => $pagoFinal,
+        'total_inc'        => $totalInc,
+        'todo_resuelto'    => $todoResuelto,
     ];
 }
 ?>
@@ -157,6 +210,18 @@ foreach ($empleados as $emp) {
     .pago-mas { color: #1e8449; }
     .pago-menos { color: #c0392b; }
     .sin-inc { color: #bbb; font-size: 11px; }
+    .btn-resolver { background: #fff9e6; border: 1px solid #f0b429; color: #b7860b; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .btn-resolver:hover { background: #fef3cd; }
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 500; align-items: center; justify-content: center; }
+    .modal-overlay.visible { display: flex; }
+    .modal { background: white; border-radius: 10px; padding: 24px; width: 360px; max-width: 90%; }
+    .modal h3 { font-size: 15px; margin-bottom: 6px; }
+    .modal p { font-size: 13px; color: #666; margin-bottom: 16px; }
+    .modal select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 7px; font-size: 13px; margin-bottom: 16px; }
+    .modal select:focus { outline: none; border-color: #14ace7; }
+    .modal-btns { display: flex; gap: 10px; justify-content: flex-end; }
+    .btn-m-cancel { background: white; border: 1px solid #ddd; color: #555; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .btn-m-ok { background: #14ace7; border: none; color: white; padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     @media (max-width: 768px) {
         .sidebar { position: fixed; top: 0; left: 0; height: 100%; z-index: 300; width: 0; transition: width 0.3s; }
         .sidebar.collapsed { width: 260px; box-shadow: 4px 0 16px rgba(0,0,0,.15); }
@@ -185,9 +250,18 @@ foreach ($empleados as $emp) {
     <div class="content">
         <!-- Navegacion de semana -->
         <div class="nav-semana">
-            <a href="semanaLaboral.php?semana=<?= $semanaAnterior ?>">&larr; Semana anterior</a>
-            <h3><?= $etiquetaSemana ?></h3>
-            <a href="semanaLaboral.php?semana=<?= $semanaSiguiente ?>">Semana siguiente &rarr;</a>
+            <a href="semanaLaboral.php?semana=<?= $semanaAnterior ?>">&larr; Anterior</a>
+            <div style="flex:1;text-align:center;">
+                <div style="font-size:14px;font-weight:700;color:#222;"><?= $etiquetaSemana ?></div>
+                <?php if ($esSemanaActual): ?>
+                    <div style="font-size:11px;color:#14ace7;margin-top:2px;">
+                        Semana en curso &mdash; acumulado hasta hoy (<?= date('d/m/Y') ?>, d&iacute;a <?= $diasTranscurridos ?>/6)
+                    </div>
+                <?php else: ?>
+                    <div style="font-size:11px;color:#999;margin-top:2px;">Semana cerrada</div>
+                <?php endif; ?>
+            </div>
+            <a href="semanaLaboral.php?semana=<?= $semanaSiguiente ?>">Siguiente &rarr;</a>
             <form method="GET" style="display:flex;gap:8px;align-items:center;">
                 <input type="date" name="semana" value="<?= $lunes ?>">
                 <button type="submit">Ir</button>
@@ -221,6 +295,7 @@ foreach ($empleados as $emp) {
                     <tr>
                         <th>Empleado</th>
                         <th>Sueldo base</th>
+                        <th>Hrs trabajadas</th>
                         <th>Hrs no trab.</th>
                         <th>Hrs extra</th>
                         <th>Hrs compensadas</th>
@@ -229,6 +304,7 @@ foreach ($empleados as $emp) {
                         <th>Deduccion ($)</th>
                         <th>Bono extra ($)</th>
                         <th>Pago final</th>
+                        <th>Estado semana</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -236,6 +312,17 @@ foreach ($empleados as $emp) {
                 <tr>
                     <td style="font-weight:600;"><?= htmlspecialchars($f['empleado']) ?></td>
                     <td>$<?= number_format($f['sueldo'], 2) ?></td>
+                    <td>
+                        <?php if ($f['total_reg'] > 0): ?>
+                            <span style="font-weight:700;color:#222;"><?= number_format($f['horas_trabajadas'], 2) ?> h</span>
+                            <div style="font-size:10px;color:#aaa;margin-top:2px;">
+                                <?= $f['total_reg'] ?> d&iacute;a<?= $f['total_reg'] != 1 ? 's' : '' ?> registrados
+                                <?= $f['dias_falta'] > 0 ? ' · <span style="color:#c0392b;">' . $f['dias_falta'] . ' falta' . ($f['dias_falta'] > 1 ? 's' : '') . '</span>' : '' ?>
+                            </div>
+                        <?php else: ?>
+                            <span class="sin-inc">Sin registros</span>
+                        <?php endif; ?>
+                    </td>
                     <td><?= $f['horas_nt'] > 0 ? '<span class="num-rojo">' . number_format($f['horas_nt'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
                     <td><?= $f['horas_extra'] > 0 ? '<span class="num-verde">+' . number_format($f['horas_extra'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
                     <td><?= $f['horas_comp'] > 0 ? '<span class="num-azul">' . number_format($f['horas_comp'], 2) . ' h</span>' : '<span class="sin-inc">—</span>' ?></td>
@@ -247,6 +334,17 @@ foreach ($empleados as $emp) {
                         <span class="pago-final <?= $f['pago_final'] < $f['sueldo'] ? 'pago-menos' : ($f['pago_final'] > $f['sueldo'] ? 'pago-mas' : '') ?>">
                             $<?= number_format($f['pago_final'], 2) ?>
                         </span>
+                    </td>
+                    <td>
+                        <?php if ($f['total_inc'] === 0): ?>
+                            <span class="sin-inc">Sin incidentes</span>
+                        <?php elseif ($f['todo_resuelto']): ?>
+                            <span style="color:#27ae60;font-weight:600;font-size:11px;">&#10003; Resuelto</span>
+                        <?php else: ?>
+                            <button class="btn-resolver" onclick="abrirResolver(<?= $f['empleado_id'] ?>, '<?= htmlspecialchars(addslashes($f['empleado'])) ?>')">
+                                Resolver
+                            </button>
+                        <?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; ?>
@@ -270,8 +368,44 @@ foreach ($empleados as $emp) {
     </div>
 </div>
 
+<!-- Modal resolver semana -->
+<div class="modal-overlay" id="modalResolver">
+    <div class="modal">
+        <h3>Resolver semana</h3>
+        <p id="textoResolver">Marca como quedo la semana de este empleado.</p>
+        <form method="POST" id="formResolver">
+            <input type="hidden" name="resolver_empleado" value="1">
+            <input type="hidden" name="empleado_id" id="resolverEmpId">
+            <select name="resolucion_semana">
+                <option value="Deducido">Deducido — se desconto del sueldo</option>
+                <option value="Compensado">Compensado — recupero las horas</option>
+                <option value="Justificado">Justificado — excusa valida, sin descuento</option>
+                <option value="Pagado integro">Pagado integro — se pago sin descuento</option>
+            </select>
+            <div class="modal-btns">
+                <button type="button" class="btn-m-cancel" onclick="cerrarModal()">Cancelar</button>
+                <button type="submit" class="btn-m-ok">Aplicar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+function abrirResolver(empId, nombre) {
+    document.getElementById('resolverEmpId').value = empId;
+    document.getElementById('textoResolver').textContent = 'Marca como quedo la semana de ' + nombre + '.';
+    document.getElementById('modalResolver').classList.add('visible');
+}
+
+function cerrarModal() {
+    document.getElementById('modalResolver').classList.remove('visible');
+}
+
+document.getElementById('modalResolver').addEventListener('click', function(e) {
+    if (e.target === this) cerrarModal();
+});
 </script>
 </body>
 </html>

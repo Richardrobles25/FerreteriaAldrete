@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $tfSalidas   = $_POST['tf_salida']  ?? [];
     $tfRegresos  = $_POST['tf_regreso'] ?? [];
 
-    $tiposValidos     = ['Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
+    $tiposValidos     = ['Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
     $resolucionesVal  = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
 
     if (!$empleado_id)                          $errores[] = 'Selecciona un empleado.';
@@ -51,10 +51,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!in_array($tipo, $tiposValidos))        $errores[] = 'El tipo no es valido.';
     if (!in_array($resolucion, $resolucionesVal)) $errores[] = 'La resolucion no es valida.';
 
-    if ($tipo !== 'Falta') {
+    if ($tipo !== 'Falta' && $tipo !== 'Asistencia normal') {
         if (!$hora_entrada) $errores[] = 'La hora de entrada es obligatoria.';
         if (!$hora_salida)  $errores[] = 'La hora de salida es obligatoria.';
         if ($hora_entrada && $hora_salida && timeToMinutes($hora_salida) <= timeToMinutes($hora_entrada))
+            $errores[] = 'La hora de salida debe ser mayor a la de entrada.';
+    }
+    if ($tipo !== 'Falta' && $tipo !== 'Asistencia normal' && $hora_entrada && $hora_salida) {
+        if (timeToMinutes($hora_salida) <= timeToMinutes($hora_entrada))
             $errores[] = 'La hora de salida debe ser mayor a la de entrada.';
     }
 
@@ -77,11 +81,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($tipo === 'Falta') {
             $horasNoTrabajadas = $horasEsperadas;
             $horasExtra        = 0.0;
+        } elseif ($tipo === 'Asistencia normal' && !$hora_entrada && !$hora_salida) {
+            // Dia completo sin especificar horario — se asume que trabajo sus horas completas
+            $horasNoTrabajadas = 0.0;
+            $horasExtra        = 0.0;
         } else {
             $minEntrada    = timeToMinutes($hora_entrada);
             $minSalida     = timeToMinutes($hora_salida);
             $minTrabajados = $minSalida - $minEntrada;
 
+            // Restar intervalos fuera para todos los tipos (turnos partidos, descansos, etc.)
             $minFuera = 0;
             foreach ($intervalosLimpios as $intv) {
                 $minFuera += timeToMinutes($intv['regreso']) - timeToMinutes($intv['salida']);
@@ -136,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $empleados   = $pdo->query("SELECT empleado_id, nombre FROM empleados WHERE activo=1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
-$tipos       = ['Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
+$tipos       = ['Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
 $resoluciones = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
 
 $v = [
@@ -291,6 +300,11 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
                     </select>
                 </div>
 
+                <!-- Info asistencia normal -->
+                <div id="infoNormal" style="display:none;background:#f0fff0;border:1px solid #b7dfb8;border-radius:7px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#1e8449;">
+                    Dia completo: si no capturas horas, el sistema asume que trabajo sus horas esperadas (9 hrs entre semana, 6 hrs sabado). Puedes capturar las horas reales si quieres mayor detalle.
+                </div>
+
                 <!-- Seccion tiempos (oculta para Falta) -->
                 <div id="seccionTiempos">
                     <div class="form-row">
@@ -304,9 +318,9 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
                         </div>
                     </div>
 
-                    <!-- Tiempos fuera (solo para tipo Tiempo fuera) -->
+                    <!-- Tiempos fuera (para todos los tipos excepto Falta) -->
                     <div id="seccionTF">
-                        <div class="section-label">Intervalos de tiempo fuera</div>
+                        <div class="section-label">Intervalos de tiempo fuera <span style="font-weight:400;text-transform:none;color:#bbb;">(opcional — turno partido, descansos, etc.)</span></div>
                         <div id="tfContainer">
                             <?php foreach ($intervalosForm as $idx => $intv): ?>
                             <div class="tf-row">
@@ -348,15 +362,6 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
                 </div>
 
                 <div class="form-group">
-                    <label>Resolucion</label>
-                    <select name="resolucion">
-                        <?php foreach ($resoluciones as $r): ?>
-                            <option value="<?= $r ?>" <?= $v['resolucion'] === $r ? 'selected' : '' ?>><?= $r ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="form-group">
                     <label>Notas <span style="font-weight:400;text-transform:none;color:#bbb;">(opcional)</span></label>
                     <textarea name="notas" placeholder="Informacion adicional..."><?= htmlspecialchars($v['notas']) ?></textarea>
                 </div>
@@ -377,18 +382,31 @@ function actualizarVista() {
     var tipo = document.getElementById('selectTipo').value;
     var secTiempos = document.getElementById('seccionTiempos');
     var secTF      = document.getElementById('seccionTF');
+    var lblEntrada = document.querySelector('label[for_entrada]') || document.querySelector('#seccionTiempos .form-row .form-group:first-child label');
 
     if (tipo === 'Falta') {
         secTiempos.classList.add('hidden');
+        secTF.classList.add('hidden');
     } else {
         secTiempos.classList.remove('hidden');
+        secTF.classList.remove('hidden');
     }
 
-    if (tipo === 'Tiempo fuera') {
-        secTF.classList.remove('hidden');
-    } else {
-        secTF.classList.add('hidden');
-    }
+    // Para asistencia normal, las horas son opcionales
+    var esNormal = tipo === 'Asistencia normal';
+    var inputs = document.querySelectorAll('#seccionTiempos input[type=time]');
+    inputs.forEach(function(inp) {
+        if (esNormal) {
+            inp.removeAttribute('required');
+            inp.placeholder = 'Opcional';
+        } else {
+            inp.placeholder = '';
+        }
+    });
+
+    // Etiqueta informativa
+    var infoNormal = document.getElementById('infoNormal');
+    if (infoNormal) infoNormal.style.display = esNormal ? 'block' : 'none';
 
     calcular();
 }
@@ -433,17 +451,15 @@ function calcular() {
 
     var minTrabajados = mSal - mEnt;
 
-    // Subtract time intervals (only for Tiempo fuera type)
-    if (tipo === 'Tiempo fuera') {
-        document.querySelectorAll('#tfContainer .tf-row').forEach(function(row) {
-            var inputs = row.querySelectorAll('input[type=time]');
-            var tfs = timeToMin(inputs[0] ? inputs[0].value : '');
-            var tfr = timeToMin(inputs[1] ? inputs[1].value : '');
-            if (tfs !== null && tfr !== null && tfr > tfs) {
-                minTrabajados -= (tfr - tfs);
-            }
-        });
-    }
+    // Subtract time intervals for all types (split shifts, breaks, etc.)
+    document.querySelectorAll('#tfContainer .tf-row').forEach(function(row) {
+        var inputs = row.querySelectorAll('input[type=time]');
+        var tfs = timeToMin(inputs[0] ? inputs[0].value : '');
+        var tfr = timeToMin(inputs[1] ? inputs[1].value : '');
+        if (tfs !== null && tfr !== null && tfr > tfs) {
+            minTrabajados -= (tfr - tfs);
+        }
+    });
 
     var horasTrab = minTrabajados / 60;
     var noTrab    = Math.max(0, esperadas - horasTrab);

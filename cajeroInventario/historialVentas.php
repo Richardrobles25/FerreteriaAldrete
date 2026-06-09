@@ -1260,20 +1260,29 @@ function reimprimirTicket(ventaId) {
         .then(venta => {
             if (!venta || venta.error) { alert('No se pudo cargar el ticket.'); return; }
             generarTicketHTML(venta);
-            requestAnimationFrame(() => {
-                const ticket = document.getElementById('ticketImprimir');
-                ticket.style.display = 'block';
-                const altoMm = Math.ceil(ticket.scrollHeight * 0.2646) + 4;
-                ticket.style.display = '';
-                let estilo = document.getElementById('__ticketPageStyle');
-                if (!estilo) {
-                    estilo = document.createElement('style');
-                    estilo.id = '__ticketPageStyle';
-                    document.head.appendChild(estilo);
-                }
-                estilo.textContent = `@page { size: 80mm ${altoMm}mm; margin: 0; }`;
-                setTimeout(() => window.print(), 150);
-            });
+            const _doImprimirH = () => {
+                requestAnimationFrame(() => {
+                    const ticket = document.getElementById('ticketImprimir');
+                    ticket.style.display = 'block';
+                    const altoMm = Math.ceil(ticket.scrollHeight * 0.2646) + 4;
+                    ticket.style.display = '';
+                    let estilo = document.getElementById('__ticketPageStyle');
+                    if (!estilo) {
+                        estilo = document.createElement('style');
+                        estilo.id = '__ticketPageStyle';
+                        document.head.appendChild(estilo);
+                    }
+                    estilo.textContent = `@page { size: 80mm ${altoMm}mm; margin: 0; }`;
+                    setTimeout(() => window.print(), 150);
+                });
+            };
+            const imgH = document.querySelector('#ticketImprimir img');
+            if (imgH && !imgH.complete) {
+                imgH.onload  = _doImprimirH;
+                imgH.onerror = _doImprimirH;
+            } else {
+                _doImprimirH();
+            }
         })
         .catch(() => alert('Error de conexión.'));
 }

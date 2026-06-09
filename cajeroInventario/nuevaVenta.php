@@ -2417,24 +2417,31 @@ function imprimirTicket(ventaId) {
         .then(venta => {
             if (!venta || venta.error) { alert('No se pudo cargar el ticket.'); return; }
             generarTicketHTML(venta);
-            // Esperar un frame para que el navegador calcule el layout del ticket
-            requestAnimationFrame(() => {
-                const ticket = document.getElementById('ticketImprimir');
-                ticket.style.display = 'block';
-                const altoPx = ticket.scrollHeight;
-                ticket.style.display = '';
-                // Convertir px → mm (1px ≈ 0.2646mm a 96dpi) y agregar 4mm de margen inferior
-                const altoMm = Math.ceil(altoPx * 0.2646) + 4;
-                // Inyectar @page con alto exacto para que Chrome no agregue hoja en blanco
-                let estilo = document.getElementById('__ticketPageStyle');
-                if (!estilo) {
-                    estilo = document.createElement('style');
-                    estilo.id = '__ticketPageStyle';
-                    document.head.appendChild(estilo);
-                }
-                estilo.textContent = `@page { size: 80mm ${altoMm}mm; margin: 0; }`;
-                setTimeout(() => window.print(), 150);
-            });
+            // Esperar a que cargue el logo (si hay) y luego medir alto e imprimir
+            const _doImprimir = () => {
+                requestAnimationFrame(() => {
+                    const ticket = document.getElementById('ticketImprimir');
+                    ticket.style.display = 'block';
+                    const altoPx = ticket.scrollHeight;
+                    ticket.style.display = '';
+                    const altoMm = Math.ceil(altoPx * 0.2646) + 4;
+                    let estilo = document.getElementById('__ticketPageStyle');
+                    if (!estilo) {
+                        estilo = document.createElement('style');
+                        estilo.id = '__ticketPageStyle';
+                        document.head.appendChild(estilo);
+                    }
+                    estilo.textContent = `@page { size: 80mm ${altoMm}mm; margin: 0; }`;
+                    setTimeout(() => window.print(), 150);
+                });
+            };
+            const imgTicket = document.querySelector('#ticketImprimir img');
+            if (imgTicket && !imgTicket.complete) {
+                imgTicket.onload  = _doImprimir;
+                imgTicket.onerror = _doImprimir;
+            } else {
+                _doImprimir();
+            }
         });
 }
 

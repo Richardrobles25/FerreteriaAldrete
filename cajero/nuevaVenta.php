@@ -419,7 +419,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         display: none;
         font-family: 'Courier New', monospace;
         font-size: 12px;
-        width: 280px;
+        width: 58mm;
         margin: 0 auto;
         padding: 10px;
     }
@@ -699,11 +699,15 @@ function normalizar(str) {
 
 const miSucursalId = <?= intval($_SESSION['sucursal_id']) ?>;
 const datosTicket  = <?= json_encode([
-    'nombre'       => $sucursalTicket['nombre'] ?? 'Ferretería Aldrete',
-    'rfc'          => $sucursalTicket['rfc'] ?? '',
-    'direccion'    => $sucursalTicket['direccion'] ?? '',
-    'telefono'     => $sucursalTicket['telefono'] ?? '',
-    'datos_ticket' => $sucursalTicket['datos_ticket'] ?? '',
+    'nombre'           => $sucursalTicket['nombre']           ?? 'Ferretería Aldrete',
+    'rfc'              => $sucursalTicket['rfc']              ?? '',
+    'direccion'        => $sucursalTicket['direccion']        ?? '',
+    'telefono'         => $sucursalTicket['telefono']         ?? '',
+    'datos_ticket'     => $sucursalTicket['datos_ticket']     ?? '',
+    'ticket_logo'      => $sucursalTicket['ticket_logo']      ?? null,
+    'ticket_font_size' => intval($sucursalTicket['ticket_font_size'] ?? 12),
+    'ticket_ancho_mm'  => intval($sucursalTicket['ticket_ancho_mm']  ?? 58),
+    'ticket_pie'       => $sucursalTicket['ticket_pie']       ?? '',
 ]) ?>;
 const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
@@ -1219,8 +1223,20 @@ function generarTicketHTML(venta) {
     const linea = '--------------------------------';
     const fecha = new Date(venta.created_at).toLocaleString('es-MX');
 
-    let html = `
-        <div class="t-centro t-bold t-grande">${datosTicket.nombre}</div>`;
+    // Aplicar configuracion de la sucursal al contenedor
+    const el = document.getElementById('ticketImprimir');
+    el.style.fontSize  = datosTicket.ticket_font_size + 'px';
+    el.style.width     = datosTicket.ticket_ancho_mm + 'mm';
+
+    // Logo de la sucursal
+    let html = '';
+    if (datosTicket.ticket_logo) {
+        html += `<div class="t-centro" style="margin-bottom:6px;">
+            <img src="../${datosTicket.ticket_logo}" style="max-width:${datosTicket.ticket_ancho_mm >= 80 ? '140' : '100'}px;max-height:50px;object-fit:contain;">
+        </div>`;
+    }
+
+    html += `<div class="t-centro t-bold t-grande">${datosTicket.nombre}</div>`;
 
     if (datosTicket.datos_ticket) {
         html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(datosTicket.datos_ticket)}</div>`;
@@ -1280,9 +1296,10 @@ function generarTicketHTML(venta) {
         html += `<div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>`;
     }
 
+    const pieTexto = datosTicket.ticket_pie || '¡Gracias por su compra!';
     html += `
         <div class="t-linea"></div>
-        <div class="t-centro">¡Gracias por su compra!</div>
+        <div class="t-centro">${esc(pieTexto)}</div>
         <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
 
     document.getElementById('ticketImprimir').innerHTML = html;

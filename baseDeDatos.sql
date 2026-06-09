@@ -11,6 +11,10 @@
         direccion VARCHAR(255),
         telefono VARCHAR(20),
         datos_ticket TEXT,
+        ticket_logo      VARCHAR(255) NULL,
+        ticket_font_size TINYINT      NOT NULL DEFAULT 12,
+        ticket_ancho_mm  TINYINT      NOT NULL DEFAULT 58,
+        ticket_pie       VARCHAR(500) NULL,
         logo_url VARCHAR(255) NULL DEFAULT NULL,
         activo boolean DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -413,3 +417,62 @@ CREATE TABLE gastos (
     FOREIGN KEY (usuario_id)         REFERENCES usuarios(usuario_id),
     FOREIGN KEY (categoria_gasto_id) REFERENCES categorias_gastos(categoria_gasto_id)
 );
+
+CREATE TABLE movimientos_mora (
+    mora_id     INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    credito_id  INT UNSIGNED NOT NULL,
+    monto       DECIMAL(10,2) NOT NULL,
+    saldo_base  DECIMAL(10,2) NOT NULL,
+    porcentaje  DECIMAL(5,2)  NOT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (credito_id) REFERENCES creditos(credito_id)
+);
+
+ALTER TABLE sucursales ADD COLUMN porcentaje_mora DECIMAL(5,2) NOT NULL DEFAULT 0;
+ALTER TABLE creditos   ADD COLUMN mora_acumulada  DECIMAL(10,2) NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS empleados (
+    empleado_id    INT AUTO_INCREMENT PRIMARY KEY,
+    nombre         VARCHAR(100) NOT NULL,
+    fecha_ingreso  DATE NOT NULL,
+    sueldo_semanal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    activo         TINYINT(1) DEFAULT 1,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS asistencia (
+    asistencia_id       INT AUTO_INCREMENT PRIMARY KEY,
+    empleado_id         INT NOT NULL,
+    fecha               DATE NOT NULL,
+    tipo                ENUM('Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra') NOT NULL,
+    hora_entrada        TIME NULL,
+    hora_salida         TIME NULL,
+    horas_no_trabajadas DECIMAL(5,2) DEFAULT 0.00,
+    horas_extra         DECIMAL(5,2) DEFAULT 0.00,
+    razon               TEXT,
+    resolucion          ENUM('Pendiente','Deducido','Compensado','Justificado','Pagado integro') DEFAULT 'Pendiente',
+    notas               TEXT,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (empleado_id) REFERENCES empleados(empleado_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS asistencia_tiempos_fuera (
+    tiempo_id     INT AUTO_INCREMENT PRIMARY KEY,
+    asistencia_id INT NOT NULL,
+    hora_salida   TIME NOT NULL,
+    hora_regreso  TIME NOT NULL,
+    FOREIGN KEY (asistencia_id) REFERENCES asistencia(asistencia_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS vacaciones (
+    vacacion_id  INT AUTO_INCREMENT PRIMARY KEY,
+    empleado_id  INT NOT NULL,
+    fecha_inicio DATE NOT NULL,
+    fecha_fin    DATE NOT NULL,
+    dias_tomados INT NOT NULL DEFAULT 0,
+    anio         INT NOT NULL,
+    estado       ENUM('Solicitado','Aprobado','Rechazado') DEFAULT 'Solicitado',
+    notas        TEXT,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (empleado_id) REFERENCES empleados(empleado_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

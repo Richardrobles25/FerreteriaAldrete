@@ -7,7 +7,7 @@ verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
 // Datos bancarios de la sucursal
-$sucursalInfo = $pdo->prepare("SELECT banco, titular_cuenta, numero_cuenta, clabe_interbancaria, alias_tarjeta, comision_terminal_pct FROM sucursales WHERE sucursal_id = ?");
+$sucursalInfo = $pdo->prepare("SELECT banco, titular_cuenta, numero_cuenta, clabe_interbancaria, alias_tarjeta, comision_terminal_pct, porcentaje_mora FROM sucursales WHERE sucursal_id = ?");
 $sucursalInfo->execute([$_SESSION['sucursal_id']]);
 $datosBanco  = $sucursalInfo->fetch(PDO::FETCH_ASSOC);
 $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
@@ -17,6 +17,30 @@ try {
     $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 } catch (\PDOException $e) {
     error_log('[Ferreteria/creditos] Error al actualizar vencidos: ' . $e->getMessage());
+}
+
+// Aplicar mora a créditos vencidos que aún no la tienen (mora_acumulada = 0)
+try {
+    $stmtMoraList = $pdo->query("
+        SELECT cr.credito_id, cr.saldo_pendiente, s.porcentaje_mora
+        FROM creditos cr
+        JOIN ventas v     ON cr.venta_id     = v.venta_id
+        JOIN cajas  ca    ON v.caja_id       = ca.caja_id
+        JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
+        WHERE cr.estado = 'Vencido' AND cr.mora_acumulada = 0 AND s.porcentaje_mora > 0
+    ");
+    foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
+        $saldoBase  = round(floatval($cm['saldo_pendiente']), 2);
+        $pct        = floatval($cm['porcentaje_mora']);
+        $moraAmt    = round($saldoBase * $pct / 100, 2);
+        $nuevoSaldo = round($saldoBase + $moraAmt, 2);
+        $pdo->prepare("UPDATE creditos SET mora_acumulada = ?, saldo_pendiente = ? WHERE credito_id = ?")
+            ->execute([$moraAmt, $nuevoSaldo, $cm['credito_id']]);
+        $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje) VALUES (?,?,?,?)")
+            ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct]);
+    }
+} catch (\PDOException $e) {
+    error_log('[Ferreteria/creditos] Error al aplicar mora: ' . $e->getMessage());
 }
 
 // Caja abierta del usuario actual — si no hay, redirigir a abrirCaja
@@ -129,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             } else {
                 // [AUTOFIX] BUG-03: Usar CURDATE() como base para la extensión, no fecha_limite pasada.
                 // Si venció hace 10 días y se suma desde ahí, sigue vencido. Ahora siempre queda 3 días en el futuro.
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(CURDATE(), INTERVAL 3 DAY), fecha_limite) WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', mora_acumulada = 0, fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(CURDATE(), INTERVAL 3 DAY), fecha_limite) WHERE credito_id = ?")
                     ->execute([$nuevoSaldo, $adelantado, $cr['credito_id']]);
             }
 
@@ -177,7 +201,7 @@ if (isset($_GET['get_creditos_cliente'])) {
     try {
         $cliente_id = intval($_GET['get_creditos_cliente']);
         $stmt = $pdo->prepare("
-            SELECT cr.credito_id, cr.monto_total, cr.saldo_pendiente, cr.estado,
+            SELECT cr.credito_id, cr.monto_total, cr.saldo_pendiente, cr.mora_acumulada, cr.estado,
                    cr.created_at, cr.fecha_limite,
                    v.folio, v.total AS total_venta, v.created_at AS fecha_venta,
                    GROUP_CONCAT(
@@ -227,6 +251,10 @@ if (isset($_GET['get_creditos_cliente'])) {
                 }
             }
             unset($cr['prods_raw']);
+            // Historial de mora del crédito
+            $stmtMH = $pdo->prepare("SELECT monto, saldo_base, porcentaje, created_at FROM movimientos_mora WHERE credito_id = ? ORDER BY created_at ASC");
+            $stmtMH->execute([$cr['credito_id']]);
+            $cr['historial_mora'] = $stmtMH->fetchAll(PDO::FETCH_ASSOC);
         }
         echo json_encode($creditos);
     } catch (\Throwable $e) {
@@ -801,10 +829,30 @@ function abrirDetalles(clienteId, nombre) {
                     });
                     html += '</div>';
                 }
+                const mora = parseFloat(cr.mora_acumulada || 0);
+                // Historial de mora
+                let moraHistHtml = '';
+                if (cr.historial_mora && cr.historial_mora.length > 0) {
+                    moraHistHtml = `<div style="padding:8px 14px;background:#fff8f0;border-top:0.5px solid #fde8cc;">
+                        <div style="font-size:11px;font-weight:700;color:#e67e22;margin-bottom:5px;">Historial de mora</div>
+                        <table style="width:100%;border-collapse:collapse;font-size:11px;color:#666;">
+                            <tr><th style="text-align:left;padding:2px 6px 2px 0;font-weight:600;">Fecha</th><th style="text-align:right;padding:2px 0;font-weight:600;">Saldo base</th><th style="text-align:right;padding:2px 0 2px 6px;font-weight:600;">%</th><th style="text-align:right;padding:2px 0;font-weight:600;color:#e67e22;">Mora</th></tr>
+                            ${cr.historial_mora.map(m => `<tr>
+                                <td style="padding:2px 6px 2px 0;">${esc(m.created_at ? m.created_at.substring(0,10) : '')}</td>
+                                <td style="text-align:right;">$${parseFloat(m.saldo_base).toFixed(2)}</td>
+                                <td style="text-align:right;padding:0 6px;">${parseFloat(m.porcentaje).toFixed(1)}%</td>
+                                <td style="text-align:right;color:#e67e22;font-weight:600;">+$${parseFloat(m.monto).toFixed(2)}</td>
+                            </tr>`).join('')}
+                        </table>
+                    </div>`;
+                }
                 html += `<div class="credito-det-footer">
                     <span style="font-size:12px;color:#888;">Monto original: $${parseFloat(cr.monto_total).toFixed(2)}</span>
+                    ${mora > 0 ? `<span style="font-size:12px;color:#e67e22;font-weight:600;">⚠ Mora actual: +$${mora.toFixed(2)}</span>` : ''}
                     ${saldo <= 0 ? '<span style="font-size:12px;color:#2e7d32;font-weight:600;">Liquidado</span>' : ''}
-                </div></div>`;
+                </div>
+                ${moraHistHtml}
+                </div>`;
             });
             document.getElementById('modalBody').innerHTML = html;
             document.getElementById('modalFooterTotal').innerHTML =

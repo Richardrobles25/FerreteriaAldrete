@@ -3,6 +3,7 @@ function renderAdminSidebar(string $activeKey): void
 {
     $inventarioOpen = str_starts_with($activeKey, 'inventario_');
     $cajeroOpen = str_starts_with($activeKey, 'cajero_');
+    $rrhhOpen = str_starts_with($activeKey, 'rrhh_');
 
     $isActive = static fn(string $key): string => $activeKey === $key ? ' active' : '';
     $submenuStyle = static fn(bool $open): string => 'style="display:' . ($open ? 'block' : 'none') . ';"';
@@ -25,6 +26,17 @@ function renderAdminSidebar(string $activeKey): void
             <a class="menu-item<?= $isActive('clientes_admin') ?>" href="clientes.php">Clientes</a>
             <a class="menu-item<?= $isActive('creditos_admin') ?>" href="creditos.php">Creditos</a>
             <a class="menu-item<?= $isActive('abonos_admin') ?>" href="abonos.php">Abonos</a>
+            <div class="divider"></div>
+            <button type="button" class="menu-item" onclick="toggleAdminSection('rrhhSubmenu')" style="width:100%;text-align:left;background:none;border:none;">
+                Recursos Humanos
+                <span style="float:right;opacity:.6;"><?= $rrhhOpen ? '-' : '+' ?></span>
+            </button>
+            <div id="rrhhSubmenu" <?= $submenuStyle($rrhhOpen) ?>>
+                <a class="menu-item<?= $isActive('rrhh_empleados') . $isActive('rrhh_form_empleado') ?>" href="empleados.php" style="padding-left:28px;">Empleados</a>
+                <a class="menu-item<?= $isActive('rrhh_asistencia') . $isActive('rrhh_form_asistencia') ?>" href="asistencia.php" style="padding-left:28px;">Asistencia</a>
+                <a class="menu-item<?= $isActive('rrhh_semana') ?>" href="semanaLaboral.php" style="padding-left:28px;">Semana laboral</a>
+                <a class="menu-item<?= $isActive('rrhh_vacaciones') . $isActive('rrhh_form_vacacion') ?>" href="vacaciones.php" style="padding-left:28px;">Vacaciones</a>
+            </div>
             <div class="divider"></div>
             <a class="menu-item<?= $isActive('gastos') ?>" href="gastos.php">Bitacora de gastos</a>
             <div class="divider"></div>

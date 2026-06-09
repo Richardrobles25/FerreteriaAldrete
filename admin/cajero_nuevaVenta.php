@@ -672,11 +672,15 @@ function normalizar(str) {
 
 const miSucursalId = <?= intval($_SESSION['sucursal_id']) ?>;
 const datosTicket  = <?= json_encode([
-    'nombre'       => $sucursalTicket['nombre'] ?? 'Ferretería Aldrete',
-    'rfc'          => $sucursalTicket['rfc'] ?? '',
-    'direccion'    => $sucursalTicket['direccion'] ?? '',
-    'telefono'     => $sucursalTicket['telefono'] ?? '',
-    'datos_ticket' => $sucursalTicket['datos_ticket'] ?? '',
+    'nombre'           => $sucursalTicket['nombre']           ?? 'Ferretería Aldrete',
+    'rfc'              => $sucursalTicket['rfc']              ?? '',
+    'direccion'        => $sucursalTicket['direccion']        ?? '',
+    'telefono'         => $sucursalTicket['telefono']         ?? '',
+    'datos_ticket'     => $sucursalTicket['datos_ticket']     ?? '',
+    'ticket_logo'      => $sucursalTicket['ticket_logo']      ?? null,
+    'ticket_font_size' => intval($sucursalTicket['ticket_font_size'] ?? 12),
+    'ticket_ancho_mm'  => intval($sucursalTicket['ticket_ancho_mm']  ?? 58),
+    'ticket_pie'       => $sucursalTicket['ticket_pie']       ?? '',
 ]) ?>;
 const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
@@ -1190,10 +1194,18 @@ function imprimirTicket(ventaId) {
 }
 
 function generarTicketHTML(venta) {
-    const linea = '--------------------------------';
     const fecha = new Date(venta.created_at).toLocaleString('es-MX');
 
-    let html = `
+    const elTicket = document.getElementById('ticketImprimir');
+    elTicket.style.fontSize = datosTicket.ticket_font_size + 'px';
+    elTicket.style.width    = datosTicket.ticket_ancho_mm  + 'mm';
+
+    let html = '';
+    if (datosTicket.ticket_logo) {
+        const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="${datosTicket.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    }
+    html += `
         <div class="t-centro t-bold t-grande">${datosTicket.nombre}</div>`;
 
     if (datosTicket.datos_ticket) {
@@ -1251,12 +1263,19 @@ function generarTicketHTML(venta) {
     }
 
     if (venta.metodo_pago === 'Credito') {
-        html += `<div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>`;
+        html += `
+        <div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>
+        <div class="t-linea"></div>
+        <div class="t-centro" style="font-size:10px;margin-bottom:8px;">Al firmar acepto cubrir el monto total adeudado</div>
+        <div style="margin-top:22px;font-size:11px;">Nombre: _______________________________</div>
+        <div style="margin-top:28px;font-size:11px;">Firma: &nbsp;&nbsp;_______________________________</div>
+        <div style="margin-top:28px;font-size:11px;">Fecha: &nbsp;&nbsp;_______________________________</div>`;
     }
 
+    const pieTexto = datosTicket.ticket_pie || '¡Gracias por su compra!';
     html += `
         <div class="t-linea"></div>
-        <div class="t-centro">¡Gracias por su compra!</div>
+        <div class="t-centro">${esc(pieTexto)}</div>
         <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
 
     document.getElementById('ticketImprimir').innerHTML = html;

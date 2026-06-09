@@ -465,6 +465,14 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
             padding: 0 !important;
             overflow: hidden !important;
         }
+        @page {
+            margin: 0;
+            size: 58mm auto;
+        }
+        body {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
         body > * { display: none !important; }
         #ticketImprimir {
             display: block !important;
@@ -991,11 +999,15 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 <script>
 // ── Config datos sucursal para ticket ────────────────────────────────────────
 const datosTicket = <?= json_encode([
-    'nombre'       => $sucursalTicket['nombre']       ?? 'Ferretería Aldrete',
-    'rfc'          => $sucursalTicket['rfc']           ?? '',
-    'direccion'    => $sucursalTicket['direccion']     ?? '',
-    'telefono'     => $sucursalTicket['telefono']      ?? '',
-    'datos_ticket' => $sucursalTicket['datos_ticket']  ?? '',
+    'nombre'           => $sucursalTicket['nombre']           ?? 'Ferretería Aldrete',
+    'rfc'              => $sucursalTicket['rfc']              ?? '',
+    'direccion'        => $sucursalTicket['direccion']        ?? '',
+    'telefono'         => $sucursalTicket['telefono']         ?? '',
+    'datos_ticket'     => $sucursalTicket['datos_ticket']     ?? '',
+    'ticket_logo'      => $sucursalTicket['ticket_logo']      ?? null,
+    'ticket_font_size' => intval($sucursalTicket['ticket_font_size'] ?? 12),
+    'ticket_ancho_mm'  => intval($sucursalTicket['ticket_ancho_mm']  ?? 58),
+    'ticket_pie'       => $sucursalTicket['ticket_pie']       ?? '',
 ]) ?>;
 
 let ventaActualId = null;
@@ -1269,7 +1281,18 @@ function reimprimirDesdeModal() {
 
 function generarTicketHTML(venta) {
     const fecha = venta.fecha_formateada || venta.created_at;
-    let html = `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
+
+    // Aplicar configuracion de ticket de la sucursal
+    const elTicket = document.getElementById('ticketImprimir');
+    elTicket.style.fontSize = datosTicket.ticket_font_size + 'px';
+    elTicket.style.width    = datosTicket.ticket_ancho_mm  + 'mm';
+
+    let html = '';
+    if (datosTicket.ticket_logo) {
+        const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    }
+    html += `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
 
     if (datosTicket.datos_ticket) {
         html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(datosTicket.datos_ticket)}</div>`;
@@ -1383,12 +1406,19 @@ function generarTicketHTML(venta) {
         <div class="t-fila"><span>Terminal</span><span>$${fmt(venta.monto_terminal)}</span></div>`;
     }
     if (venta.metodo_pago === 'Crédito' || venta.metodo_pago === 'Credito') {
-        html += `<div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>`;
+        html += `
+        <div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>
+        <div class="t-linea"></div>
+        <div class="t-centro" style="font-size:10px;margin-bottom:8px;">Al firmar acepto cubrir el monto total adeudado</div>
+        <div style="margin-top:22px;font-size:11px;">Nombre: _______________________________</div>
+        <div style="margin-top:28px;font-size:11px;">Firma: &nbsp;&nbsp;_______________________________</div>
+        <div style="margin-top:28px;font-size:11px;">Fecha: &nbsp;&nbsp;_______________________________</div>`;
     }
 
+    const pieTexto = datosTicket.ticket_pie || '¡Gracias por su compra!';
     html += `
         <div class="t-linea"></div>
-        <div class="t-centro">¡Gracias por su compra!</div>
+        <div class="t-centro">${esc(pieTexto)}</div>
         <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
 
     document.getElementById('ticketImprimir').innerHTML = html;

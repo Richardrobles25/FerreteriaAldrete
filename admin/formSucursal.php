@@ -31,6 +31,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $clabe_interbancaria   = trim($_POST['clabe_interbancaria']   ?? '');
     $alias_tarjeta         = trim($_POST['alias_tarjeta']         ?? '');
     $sucursal_id           = intval($_POST['sucursal_id']         ?? 0);
+    $ticket_font_size      = intval($_POST['ticket_font_size']    ?? 12);
+    $ticket_ancho_mm       = intval($_POST['ticket_ancho_mm']     ?? 58);
+    $ticket_pie            = trim($_POST['ticket_pie']            ?? '');
+    $porcentaje_mora       = floatval($_POST['porcentaje_mora']   ?? 0);
 
     if (!$nombre) $errores[] = 'El nombre de la sucursal es obligatorio.';
     if ($telefono !== '' && !preg_match('/^\d{10}$/', $telefono))
@@ -41,6 +45,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errores[] = 'La CLABE interbancaria debe tener exactamente 18 dígitos.';
 
     if (empty($errores)) {
+        $ticket_logo = $editando['ticket_logo'] ?? null;
+        if (isset($_POST['eliminar_logo']) && $ticket_logo) {
+            $old = __DIR__ . '/../' . $ticket_logo;
+            if (file_exists($old)) @unlink($old);
+            $ticket_logo = null;
+        } elseif (!empty($_FILES['ticket_logo_file']['name']) && $_FILES['ticket_logo_file']['error'] === UPLOAD_ERR_OK) {
+            $ext = strtolower(pathinfo($_FILES['ticket_logo_file']['name'], PATHINFO_EXTENSION));
+            if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
+                $dir = __DIR__ . '/../uploads/logos/';
+                if (!is_dir($dir)) mkdir($dir, 0755, true);
+                $fname = 'logo_suc' . ($sucursal_id ?: 'new') . '_' . time() . '.' . $ext;
+                if (move_uploaded_file($_FILES['ticket_logo_file']['tmp_name'], $dir . $fname)) {
+                    if ($ticket_logo) { $old = __DIR__ . '/../' . $ticket_logo; if (file_exists($old)) @unlink($old); }
+                    $ticket_logo = 'uploads/logos/' . $fname;
+                }
+            }
+        }
         $campos = [
             'nombre'                => $nombre,
             'rfc'                   => $rfc,
@@ -52,7 +73,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'titular_cuenta'      => $titular_cuenta ?: null,
             'numero_cuenta'       => $numero_cuenta ?: null,
             'clabe_interbancaria' => $clabe_interbancaria ?: null,
-            'alias_tarjeta'       => $alias_tarjeta ?: null,
+            'alias_tarjeta'        => $alias_tarjeta ?: null,
+            'ticket_font_size'     => $ticket_font_size,
+            'ticket_ancho_mm'      => $ticket_ancho_mm,
+            'ticket_pie'           => $ticket_pie ?: null,
+            'ticket_logo'          => $ticket_logo,
+            'porcentaje_mora'      => $porcentaje_mora,
         ];
 
         if ($sucursal_id) {
@@ -110,8 +136,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .errores ul { margin: 6px 0 0 16px; }
     .form-group { margin-bottom: 16px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
-    .form-group input, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; color: #333; font-family: Arial, sans-serif; }
-    .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #14ace7; }
+    .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; color: #333; font-family: Arial, sans-serif; }
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus { outline: none; border-color: #14ace7; }
+    .logo-preview { display:flex; align-items:center; gap:12px; background:#f9f9f9; border:1px solid #eee; border-radius:6px; padding:10px; margin-bottom:8px; }
+    .logo-preview img { max-width:100px; max-height:50px; object-fit:contain; }
+    .logo-preview-info { flex:1; font-size:12px; color:#888; }
+    input[type="file"] { padding:6px 8px; font-size:13px; cursor:pointer; border:1px dashed #ddd; background:#fafafa; }
     .form-group textarea { min-height: 100px; resize: vertical; font-size: 13px; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .hint { font-size: 11px; color: #aaa; margin-top: 4px; }
@@ -147,7 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             <?php endif; ?>
 
-            <form method="POST">
+            <form method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="sucursal_id" value="<?= $editando['sucursal_id'] ?? 0 ?>">
 
                 <div class="form-group">
@@ -260,6 +290,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
 
+                <!-- Seccion: Creditos -->
+                <div style="border-top:1px solid #eee;margin:20px 0 18px;padding-top:18px;">
+                    <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px;">Créditos</div>
+                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">Configura el recargo por vencimiento de crédito para esta sucursal.</div>
+                    <div class="form-group">
+                        <label>% Mora por vencimiento</label>
+                        <input type="number" name="porcentaje_mora" step="0.01" min="0" max="100"
+                            value="<?= htmlspecialchars($_POST['porcentaje_mora'] ?? $editando['porcentaje_mora'] ?? '') ?>"
+                            placeholder="Ej. 5 (dejar en 0 para no cobrar mora)">
+                        <div class="hint">Se aplica una sola vez sobre el saldo pendiente de cada crédito cuando vence. Dejar en 0 para no cobrar.</div>
+                    </div>
+                </div>
+
+                <!-- Seccion: Configuracion del ticket -->
+                <div style="border-top:1px solid #eee;margin:20px 0 18px;padding-top:18px;">
+                    <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px;">Configuracion de impresion del ticket</div>
+                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">Personaliza el aspecto del ticket para esta sucursal. Cada sucursal puede tener su propio logo y estilo.</div>
+
+                    <div class="form-group">
+                        <label>Logotipo</label>
+                        <?php $logoActual = $editando['ticket_logo'] ?? null; ?>
+                        <?php if ($logoActual): ?>
+                        <div class="logo-preview" id="logoPreviewActual">
+                            <img src="../<?= htmlspecialchars($logoActual) ?>" alt="Logo actual">
+                            <div class="logo-preview-info">
+                                Logo actual<br>
+                                <label style="display:flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer;">
+                                    <input type="checkbox" name="eliminar_logo" id="eliminarLogo">
+                                    <span style="color:#c0392b;">Eliminar logo</span>
+                                </label>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+                        <input type="file" name="ticket_logo_file" id="ticketLogoFile" accept="image/jpeg,image/png,image/gif,image/webp">
+                        <div class="hint">Formatos: JPG, PNG, GIF o WEBP. Se mostrara centrado en la parte superior del ticket.</div>
+                        <div id="logoNuevoPreview" style="display:none;margin-top:8px;text-align:center;background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:10px;">
+                            <img id="logoNuevoImg" src="" alt="Vista previa" style="max-width:120px;max-height:60px;object-fit:contain;">
+                            <div style="font-size:11px;color:#888;margin-top:4px;">Vista previa del nuevo logo</div>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Tamano de fuente</label>
+                            <select name="ticket_font_size" id="ticketFontSize">
+                                <?php $fs = intval($_POST['ticket_font_size'] ?? $editando['ticket_font_size'] ?? 12); ?>
+                                <option value="10" <?= $fs===10?'selected':'' ?>>Chico (10px)</option>
+                                <option value="12" <?= $fs===12?'selected':'' ?>>Normal (12px)</option>
+                                <option value="14" <?= $fs===14?'selected':'' ?>>Grande (14px)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Ancho del papel</label>
+                            <select name="ticket_ancho_mm" id="ticketAnchoMm">
+                                <?php $am = intval($_POST['ticket_ancho_mm'] ?? $editando['ticket_ancho_mm'] ?? 58); ?>
+                                <option value="58" <?= $am===58?'selected':'' ?>>58 mm (rollo estrecho)</option>
+                                <option value="80" <?= $am===80?'selected':'' ?>>80 mm (rollo ancho)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Pie de pagina <span style="font-weight:400;color:#aaa;">(opcional)</span></label>
+                        <input type="text" name="ticket_pie"
+                            value="<?= htmlspecialchars($_POST['ticket_pie'] ?? $editando['ticket_pie'] ?? '') ?>"
+                            placeholder="Ej. Gracias por su compra · Tel: 871-123-4567">
+                        <div class="hint">Texto al final del ticket. Si se deja vacio se muestra el texto predeterminado.</div>
+                    </div>
+                </div>
+
                 <div class="acciones-form">
                     <a class="btn-cancelar" href="sucursales.php">Cancelar</a>
                     <button class="btn-guardar" type="submit">
@@ -271,16 +371,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 </div>
 
+<!-- Area exclusiva para impresion del ticket -->
+<div id="areaImpresionTicket"></div>
+
 <!-- Modal: Ticket preview -->
 <div class="modal-overlay" id="modalPreviewTicket" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;padding:20px;z-index:999;" aria-hidden="true">
-    <div style="background:white;border-radius:8px;padding:24px;max-width:90mm;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e8e8e8;">
+    <div style="background:white;border-radius:8px;padding:20px;width:320px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #e8e8e8;">
             <h3 style="margin:0;font-size:16px;color:#333;">Vista previa del ticket</h3>
             <button type="button" onclick="cerrarPreviewTicket()" style="background:none;border:none;font-size:24px;color:#aaa;cursor:pointer;padding:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">×</button>
         </div>
+        <div style="display:flex;gap:6px;margin-bottom:14px;">
+            <button type="button" id="btnPrevEfectivo" onclick="renderPreview('Efectivo')" style="flex:1;padding:6px;border:2px solid #14ace7;background:#eef8ff;color:#14ace7;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Efectivo</button>
+            <button type="button" id="btnPrevTerminal" onclick="renderPreview('Terminal')" style="flex:1;padding:6px;border:2px solid #ddd;background:white;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Terminal</button>
+            <button type="button" id="btnPrevCredito"  onclick="renderPreview('Credito')"  style="flex:1;padding:6px;border:2px solid #ddd;background:white;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Crédito</button>
+        </div>
         <div id="previewTicketContent" style="margin-bottom:16px;"></div>
         <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:16px;">
-            <button type="button" onclick="window.print()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
+            <button type="button" onclick="imprimirPreview()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
             <button type="button" onclick="cerrarPreviewTicket()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
         </div>
     </div>
@@ -290,90 +398,169 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 .modal-overlay.visible { display: flex !important; }
 @media print {
     body > * { display: none !important; }
-    .modal-overlay.visible { display: flex !important; background: none; position: relative; inset: auto; }
-    .modal-overlay.visible > div { max-width: 100%; box-shadow: none; padding: 0; }
-    .modal-overlay.visible button { display: none !important; }
-    .modal-overlay.visible h3 { display: none !important; }
-    .modal-overlay.visible > div > div:first-of-type { display: none !important; }
+    .modal-overlay { display: none !important; }
+    #areaImpresionTicket { display: block !important; position: fixed; top: 0; left: 0; }
 }
+#areaImpresionTicket { display: none; }
+/* Clases del ticket — identicas a cajeroInventario/nuevaVenta.php */
+.t-ticket  { font-family:'Courier New',monospace; font-size:12px; width:58mm; margin:0 auto; line-height:1.5; }
+.t-centro  { text-align:center; }
+.t-linea   { border-top:1px dashed #000; margin:4px 0; }
+.t-fila    { display:flex; justify-content:space-between; }
+.t-bold    { font-weight:bold; }
+.t-grande  { font-size:13px; font-weight:bold; }
 </style>
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
+/* Vista previa del logo cuando se selecciona un archivo */
+document.getElementById('ticketLogoFile').addEventListener('change', function() {
+    const file = this.files[0];
+    const preview = document.getElementById('logoNuevoPreview');
+    const img = document.getElementById('logoNuevoImg');
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = e => { img.src = e.target.result; preview.style.display = 'block'; };
+        reader.readAsDataURL(file);
+    } else {
+        preview.style.display = 'none';
+    }
+});
+
 /* Modal de vista previa del ticket */
+function renderPreview(metodo) {
+    ['Efectivo','Terminal','Credito'].forEach(m => {
+        const btn = document.getElementById('btnPrev'+m);
+        if (!btn) return;
+        btn.style.border     = m===metodo ? '2px solid #14ace7' : '2px solid #ddd';
+        btn.style.background = m===metodo ? '#eef8ff' : 'white';
+        btn.style.color      = m===metodo ? '#14ace7' : '#666';
+        btn.style.fontWeight = m===metodo ? '600' : '400';
+    });
+
+    const nombre   = document.querySelector('input[name="nombre"]').value || 'FERRETERIA ALDRETE';
+    const datosTxt = document.querySelector('textarea[name="datos_ticket"]').value || '';
+    const rfc      = document.querySelector('input[name="rfc"]').value || '';
+    const dir      = document.querySelector('input[name="direccion"]').value || '';
+    const tel      = document.querySelector('input[name="telefono"]').value || '';
+    const fontSize = document.getElementById('ticketFontSize').value || '12';
+    const anchoMm  = document.getElementById('ticketAnchoMm').value || '58';
+    const pie      = document.querySelector('input[name="ticket_pie"]').value || '¡Gracias por su compra!';
+    const comPct   = parseFloat(document.querySelector('input[name="comision_terminal_pct"]').value || 0);
+    const fecha    = new Date().toLocaleString('es-MX',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const maxW     = parseInt(anchoMm) >= 80 ? '140px' : '100px';
+
+    const L  = `<div style="border-top:1px dashed #000;margin:4px 0;"></div>`;
+    const C  = t => `<div style="text-align:center;">${t}</div>`;
+    const F  = (a,b) => `<table style="width:100%;border-collapse:collapse;"><tr><td style="text-align:left;">${a}</td><td style="text-align:right;">${b}</td></tr></table>`;
+    const FB = (a,b) => `<table style="width:100%;border-collapse:collapse;"><tr><td style="text-align:left;font-weight:bold;font-size:13px;">${a}</td><td style="text-align:right;font-weight:bold;font-size:13px;">${b}</td></tr></table>`;
+
+    let html = '';
+
+    // Logo
+    const logoNuevoSrc = document.getElementById('logoNuevoImg').src;
+    const logoActualEl = document.querySelector('.logo-preview img');
+    if (logoNuevoSrc && document.getElementById('logoNuevoPreview').style.display !== 'none') {
+        html += `<div style="text-align:center;margin-bottom:6px;"><img src="${logoNuevoSrc}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    } else if (logoActualEl && !document.getElementById('eliminarLogo')?.checked) {
+        html += `<div style="text-align:center;margin-bottom:6px;"><img src="${logoActualEl.src}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    }
+
+    // Encabezado
+    html += `<div style="text-align:center;font-weight:bold;font-size:13px;">${nombre}</div>`;
+    if (datosTxt.trim()) {
+        html += `<div style="text-align:center;white-space:pre-line;font-size:11px;">${datosTxt}</div>`;
+    } else {
+        if (rfc) html += C(`RFC: ${rfc}`);
+        if (dir) html += C(dir);
+        if (tel) html += C(`Tel: ${tel}`);
+    }
+
+    html += L;
+    html += F('Folio:', '0042');
+    html += F('Fecha:', fecha);
+    html += F('Cajero:', 'Juan Perez');
+    html += F('Cliente:', 'Maria Esparza');
+    html += L;
+    html += F('<b>Producto</b>', '<b>Importe</b>');
+    html += L;
+    html += '<div>Cemento blanco 1kg</div>';
+    html += F('2 x $8.50', '$17.00');
+    html += '<div>Tubo PVC 1/2" x 3m</div>';
+    html += F('5 x $12.00', '$60.00');
+    html += L;
+
+    const subtotal = 77.00;
+    const comision = metodo === 'Terminal' ? parseFloat((subtotal * comPct / 100).toFixed(2)) : 0;
+    const total    = subtotal + comision;
+    if (comision > 0) {
+        html += F('Subtotal', `$${subtotal.toFixed(2)}`);
+        html += F('Comisión terminal', `$${comision.toFixed(2)}`);
+    }
+    html += FB('TOTAL', `$${total.toFixed(2)}`);
+    html += L;
+    html += F('Método de pago', metodo === 'Credito' ? 'Crédito' : metodo);
+
+    if (metodo === 'Efectivo') {
+        html += F('Recibido', '$100.00');
+        html += F('Cambio', `$${(100 - total).toFixed(2)}`);
+    } else if (metodo === 'Terminal') {
+        html += F('Pago con terminal', `$${total.toFixed(2)}`);
+    } else if (metodo === 'Credito') {
+        html += `<div style="text-align:center;font-weight:bold;margin-top:6px;">*** VENTA A CRÉDITO ***</div>`;
+        html += L;
+        html += `<div style="text-align:center;font-size:10px;margin-bottom:8px;">Al firmar acepto cubrir el monto total adeudado</div>`;
+        html += `<div style="margin-top:14px;">Nombre: _______________________________</div>`;
+        html += `<div style="margin-top:14px;">Firma: &nbsp;&nbsp;_______________________________</div>`;
+        html += `<div style="margin-top:10px;">Fecha: &nbsp;&nbsp;_______________________________</div>`;
+    }
+
+    html += L;
+    html += C(pie);
+    html += `<div style="text-align:center;font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
+
+    document.getElementById('previewTicketContent').innerHTML =
+        `<div style="font-family:'Courier New',monospace;font-size:${fontSize}px;width:100%;line-height:1.5;">${html}</div>`;
+}
+
 function abrirPreviewTicket() {
-    const nombre = document.querySelector('input[name="nombre"]').value || 'FERRETERIA ALDRETE';
-    const datosTicket = document.querySelector('textarea[name="datos_ticket"]').value || '';
-    const banco = document.querySelector('input[name="banco"]').value || '';
-    const titular = document.querySelector('input[name="titular_cuenta"]').value || '';
-    const cuenta = document.querySelector('input[name="numero_cuenta"]').value || '';
-    const clabe = document.querySelector('input[name="clabe_interbancaria"]').value || '';
-
-    const html = `
-<div style="font-family:'Courier New',monospace;width:72mm;font-size:10px;line-height:1.3;white-space:pre-wrap;">
-<div style="text-align:center;font-weight:bold;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;">
-${nombre.toUpperCase()}
-${datosTicket.trim() ? '\n' + datosTicket : ''}
-</div>
-
-<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:9px;">
-Folio: 0042 | Turno: 1
-${new Date().toLocaleString('es-MX', {year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
-Juan Pérez López
-</div>
-
-<table style="width:100%;border-collapse:collapse;">
-<tr style="border-bottom:0.5px solid #333;font-weight:bold;">
- <th style="text-align:left;padding:3px 0;padding-right:4px;">Producto</th>
- <th style="text-align:right;padding:3px 0;width:35px;">Cant</th>
- <th style="text-align:right;padding:3px 0;width:40px;">Total</th>
-</tr>
-<tr style="border-bottom:0.5px solid #ddd;">
- <td style="padding:2px 0;padding-right:4px;">Cemento saco 50kg</td>
- <td style="text-align:right;padding:2px 0;">2</td>
- <td style="text-align:right;padding:2px 0;">$17.00</td>
-</tr>
-<tr style="border-bottom:0.5px solid #ddd;">
- <td style="padding:2px 0;padding-right:4px;">Tubo PVC 1/2"</td>
- <td style="text-align:right;padding:2px 0;">5</td>
- <td style="text-align:right;padding:2px 0;">$60.00</td>
-</tr>
-</table>
-
-<div style="border-bottom:1px dashed #000;border-top:1px dashed #000;padding:6px 0;margin:6px 0;text-align:right;font-weight:bold;font-size:11px;">
-Subtotal: $77.00
-TOTAL: $77.00
-</div>
-
-<div style="padding:4px 0;font-size:9px;border-bottom:1px dashed #000;margin-bottom:6px;padding-bottom:6px;">
-Pago: Efectivo
-</div>
-
-${banco || titular || cuenta || clabe ? `
-<div style="border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;font-size:8px;background:#f9f9f9;padding:4px;">
-DATOS BANCARIOS:
-${banco ? `Banco: ${banco}` : ''}
-${titular ? `\nTitular: ${titular}` : ''}
-${cuenta ? `\nCuenta: ${cuenta}` : ''}
-${clabe ? `\nCLABE: ${clabe}` : ''}
-</div>
-` : ''}
-
-<div style="text-align:center;padding-top:6px;font-size:8px;color:#999;">
-Gracias por su compra
-www.ferreterialdrete.com
-</div>
-</div>`;
-
-    document.getElementById('previewTicketContent').innerHTML = html;
     document.getElementById('modalPreviewTicket').classList.add('visible');
     document.getElementById('modalPreviewTicket').setAttribute('aria-hidden', 'false');
+    renderPreview('Efectivo');
 }
 
 function cerrarPreviewTicket() {
     document.getElementById('modalPreviewTicket').classList.remove('visible');
     document.getElementById('modalPreviewTicket').setAttribute('aria-hidden', 'true');
+}
+
+function imprimirPreview() {
+    const fontSize = document.getElementById('ticketFontSize').value || '12';
+    const anchoMm  = document.getElementById('ticketAnchoMm').value || '58';
+    const contenido = document.getElementById('previewTicketContent').innerHTML;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:none;';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Courier New',monospace; font-size:${fontSize}px; width:${anchoMm}mm; padding:8px; }
+table { width:100%; border-collapse:collapse; }
+td { padding:1px 0; }
+@media print { @page { margin:0; size:${anchoMm}mm auto; } }
+</style></head><body>${contenido}</body></html>`);
+    doc.close();
+
+    iframe.onload = function() {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+        setTimeout(() => document.body.removeChild(iframe), 1000);
+    };
 }
 
 document.getElementById('inputClabe').addEventListener('input', function() {

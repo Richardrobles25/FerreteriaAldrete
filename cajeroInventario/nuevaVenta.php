@@ -1178,11 +1178,15 @@ const datosTicket  = <?= json_encode([
     'rfc'              => $sucursalTicket['rfc']              ?? '',
     'direccion'        => $sucursalTicket['direccion']        ?? '',
     'telefono'         => $sucursalTicket['telefono']         ?? '',
-    'datos_ticket'     => $sucursalTicket['datos_ticket']     ?? '',
-    'ticket_logo'      => $sucursalTicket['ticket_logo']      ?? null,
-    'ticket_font_size' => intval($sucursalTicket['ticket_font_size'] ?? 12),
-    'ticket_ancho_mm'  => intval($sucursalTicket['ticket_ancho_mm']  ?? 58),
-    'ticket_pie'       => $sucursalTicket['ticket_pie']       ?? '',
+    'datos_ticket'        => $sucursalTicket['datos_ticket']        ?? '',
+    'ticket_logo'         => $sucursalTicket['ticket_logo']         ?? null,
+    'ticket_font_size'    => intval($sucursalTicket['ticket_font_size'] ?? 12),
+    'ticket_ancho_mm'     => intval($sucursalTicket['ticket_ancho_mm']  ?? 58),
+    'ticket_pie'          => $sucursalTicket['ticket_pie']          ?? '',
+    'ticket_pie_efectivo' => $sucursalTicket['ticket_pie_efectivo'] ?? '',
+    'ticket_pie_credito'  => $sucursalTicket['ticket_pie_credito']  ?? '',
+    'ticket_pie_terminal' => $sucursalTicket['ticket_pie_terminal'] ?? '',
+    'ticket_nota_credito' => $sucursalTicket['ticket_nota_credito'] ?? '',
 ]) ?>;
 const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
@@ -2577,18 +2581,24 @@ function generarTicketHTML(venta) {
     }
 
     if (venta.metodo_pago === 'Credito') {
+        const notaCred = datosTicket.ticket_nota_credito || 'Al firmar acepto cubrir el monto total adeudado';
         html += `
         <div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>
         <div class="t-linea"></div>
-        <div class="t-centro" style="font-size:10px;margin-bottom:8px;">Al firmar acepto cubrir el monto total adeudado</div>
-        <div style="margin-top:22px;font-size:11px;">Nombre: _______________________________</div>
-        <div style="margin-top:28px;font-size:11px;">Firma: &nbsp;&nbsp;_______________________________</div>
-        <div style="margin-top:28px;font-size:11px;">Fecha: &nbsp;&nbsp;_______________________________</div>`;
+        <div class="t-centro" style="font-size:10px;margin-bottom:8px;">${esc(notaCred)}</div>
+        <div style="margin-top:48px;font-size:11px;">Firma: _______________________________</div>`;
     }
+
+    const _metodo = venta.metodo_pago || '';
+    let _pie;
+    if (_metodo === 'Credito')       _pie = datosTicket.ticket_pie_credito;
+    else if (_metodo === 'Terminal') _pie = datosTicket.ticket_pie_terminal;
+    else                             _pie = datosTicket.ticket_pie_efectivo;
+    const pieTexto = _pie || datosTicket.ticket_pie || '¡Gracias por su compra!';
 
     html += `
         <div class="t-linea"></div>
-        <div class="t-centro">${esc(datosTicket.ticket_pie || '¡Gracias por su compra!')}</div>
+        <div class="t-centro">${esc(pieTexto)}</div>
         <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
 
     document.getElementById('ticketImprimir').innerHTML = html;

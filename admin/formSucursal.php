@@ -34,6 +34,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ticket_font_size      = intval($_POST['ticket_font_size']    ?? 12);
     $ticket_ancho_mm       = intval($_POST['ticket_ancho_mm']     ?? 58);
     $ticket_pie            = trim($_POST['ticket_pie']            ?? '');
+    $ticket_pie_efectivo   = trim($_POST['ticket_pie_efectivo']   ?? '');
+    $ticket_pie_credito    = trim($_POST['ticket_pie_credito']    ?? '');
+    $ticket_pie_terminal   = trim($_POST['ticket_pie_terminal']   ?? '');
+    $ticket_nota_credito   = trim($_POST['ticket_nota_credito']   ?? '');
     $porcentaje_mora       = floatval($_POST['porcentaje_mora']   ?? 0);
 
     if (!$nombre) $errores[] = 'El nombre de la sucursal es obligatorio.';
@@ -45,55 +49,93 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errores[] = 'La CLABE interbancaria debe tener exactamente 18 dígitos.';
 
     if (empty($errores)) {
-        $ticket_logo = $editando['ticket_logo'] ?? null;
-        if (isset($_POST['eliminar_logo']) && $ticket_logo) {
-            $old = __DIR__ . '/../' . $ticket_logo;
-            if (file_exists($old)) @unlink($old);
-            $ticket_logo = null;
-        } elseif (!empty($_FILES['ticket_logo_file']['name']) && $_FILES['ticket_logo_file']['error'] === UPLOAD_ERR_OK) {
-            $ext = strtolower(pathinfo($_FILES['ticket_logo_file']['name'], PATHINFO_EXTENSION));
-            if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
-                $dir = __DIR__ . '/../uploads/logos/';
-                if (!is_dir($dir)) mkdir($dir, 0755, true);
-                $fname = 'logo_suc' . ($sucursal_id ?: 'new') . '_' . time() . '.' . $ext;
-                if (move_uploaded_file($_FILES['ticket_logo_file']['tmp_name'], $dir . $fname)) {
-                    if ($ticket_logo) { $old = __DIR__ . '/../' . $ticket_logo; if (file_exists($old)) @unlink($old); }
-                    $ticket_logo = 'uploads/logos/' . $fname;
-                }
-            }
-        }
-        $campos = [
-            'nombre'                => $nombre,
-            'rfc'                   => $rfc,
-            'direccion'             => $direccion,
-            'telefono'              => $telefono,
-            'datos_ticket'          => $datos_ticket,
-            'comision_terminal_pct' => $comision_terminal_pct,
-            'banco'                 => $banco ?: null,
-            'titular_cuenta'      => $titular_cuenta ?: null,
-            'numero_cuenta'       => $numero_cuenta ?: null,
-            'clabe_interbancaria' => $clabe_interbancaria ?: null,
-            'alias_tarjeta'        => $alias_tarjeta ?: null,
-            'ticket_font_size'     => $ticket_font_size,
-            'ticket_ancho_mm'      => $ticket_ancho_mm,
-            'ticket_pie'           => $ticket_pie ?: null,
-            'ticket_logo'          => $ticket_logo,
-            'porcentaje_mora'      => $porcentaje_mora,
-        ];
+        $ticket_logo     = $editando['ticket_logo'] ?? null;
+        $pendingLogoFile = null; // para nueva sucursal: se procesa después del INSERT
 
         if ($sucursal_id) {
-            $sets = implode(', ', array_map(fn($k) => "$k = ?", array_keys($campos)));
-            $pdo->prepare("UPDATE sucursales SET $sets WHERE sucursal_id = ?")
-                ->execute([...array_values($campos), $sucursal_id]);
-            header('Location: sucursales.php?msg=editado');
+            // ── EDICIÓN: tenemos el ID, procesamos el logo ahora ──────────────
+            if (isset($_POST['eliminar_logo']) && $ticket_logo) {
+                $old = __DIR__ . '/../' . $ticket_logo;
+                if (file_exists($old)) @unlink($old);
+                $ticket_logo = null;
+            } elseif (!empty($_FILES['ticket_logo_file']['name']) && $_FILES['ticket_logo_file']['error'] === UPLOAD_ERR_OK) {
+                $ext = strtolower(pathinfo($_FILES['ticket_logo_file']['name'], PATHINFO_EXTENSION));
+                if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
+                    $dir = __DIR__ . '/../uploads/logos/';
+                    if (!is_dir($dir)) mkdir($dir, 0755, true);
+                    $fname = 'logo_suc' . $sucursal_id . '_' . uniqid('', true) . '.' . $ext;
+                    if (move_uploaded_file($_FILES['ticket_logo_file']['tmp_name'], $dir . $fname)) {
+                        if ($ticket_logo) { $old = __DIR__ . '/../' . $ticket_logo; if (file_exists($old)) @unlink($old); }
+                        $ticket_logo = 'uploads/logos/' . $fname;
+                    } else {
+                        $errores[] = 'No se pudo guardar el logo. Verifica los permisos del directorio uploads/logos/.';
+                    }
+                } else {
+                    $errores[] = 'Formato de imagen no soportado. Usa JPG, PNG, GIF o WEBP.';
+                }
+            }
         } else {
-            $cols = implode(', ', array_keys($campos));
-            $vals = implode(', ', array_fill(0, count($campos), '?'));
-            $pdo->prepare("INSERT INTO sucursales ($cols, activo) VALUES ($vals, 1)")
-                ->execute(array_values($campos));
-            header('Location: sucursales.php?msg=creado');
+            // ── NUEVA sucursal: guardamos el archivo para después del INSERT ──
+            if (!empty($_FILES['ticket_logo_file']['name']) && $_FILES['ticket_logo_file']['error'] === UPLOAD_ERR_OK) {
+                $pendingLogoFile = $_FILES['ticket_logo_file'];
+            }
+            $ticket_logo = null; // se asignará tras conocer el sucursal_id real
         }
-        exit();
+
+        if (empty($errores)) {
+            $campos = [
+                'nombre'               => $nombre,
+                'rfc'                  => $rfc,
+                'direccion'            => $direccion,
+                'telefono'             => $telefono,
+                'datos_ticket'         => $datos_ticket,
+                'comision_terminal_pct'=> $comision_terminal_pct,
+                'banco'                => $banco ?: null,
+                'titular_cuenta'       => $titular_cuenta ?: null,
+                'numero_cuenta'        => $numero_cuenta ?: null,
+                'clabe_interbancaria'  => $clabe_interbancaria ?: null,
+                'alias_tarjeta'        => $alias_tarjeta ?: null,
+                'ticket_font_size'     => $ticket_font_size,
+                'ticket_ancho_mm'      => $ticket_ancho_mm,
+                'ticket_pie'           => $ticket_pie ?: null,
+                'ticket_pie_efectivo'  => $ticket_pie_efectivo ?: null,
+                'ticket_pie_credito'   => $ticket_pie_credito  ?: null,
+                'ticket_pie_terminal'  => $ticket_pie_terminal ?: null,
+                'ticket_nota_credito'  => $ticket_nota_credito ?: null,
+                'ticket_logo'          => $ticket_logo,
+                'porcentaje_mora'      => $porcentaje_mora,
+            ];
+
+            if ($sucursal_id) {
+                $sets = implode(', ', array_map(fn($k) => "$k = ?", array_keys($campos)));
+                $pdo->prepare("UPDATE sucursales SET $sets WHERE sucursal_id = ?")
+                    ->execute([...array_values($campos), $sucursal_id]);
+                header('Location: sucursales.php?msg=editado');
+            } else {
+                $cols = implode(', ', array_keys($campos));
+                $vals = implode(', ', array_fill(0, count($campos), '?'));
+                $pdo->prepare("INSERT INTO sucursales ($cols, activo) VALUES ($vals, 1)")
+                    ->execute(array_values($campos));
+                $newId = intval($pdo->lastInsertId());
+
+                // Ahora procesar el logo con el ID real de la sucursal recién creada
+                if ($pendingLogoFile) {
+                    $ext = strtolower(pathinfo($pendingLogoFile['name'], PATHINFO_EXTENSION));
+                    if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
+                        $dir = __DIR__ . '/../uploads/logos/';
+                        if (!is_dir($dir)) mkdir($dir, 0755, true);
+                        $fname = 'logo_suc' . $newId . '_' . uniqid('', true) . '.' . $ext;
+                        if (move_uploaded_file($pendingLogoFile['tmp_name'], $dir . $fname)) {
+                            $pdo->prepare("UPDATE sucursales SET ticket_logo = ? WHERE sucursal_id = ?")
+                                ->execute(['uploads/logos/' . $fname, $newId]);
+                        }
+                    }
+                }
+
+                header('Location: sucursales.php?msg=creado');
+            }
+            exit();
+        }
     }
 }
 ?>
@@ -150,6 +192,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar { background: white; color: #666; border: 1px solid #ddd; padding: 12px 20px; border-radius: 6px; font-size: 14px; cursor: pointer; text-decoration: none; display: flex; align-items: center; }
     .btn-cancelar:hover { background: #f5f5f5; }
+    .ticket-tabs-wrap { border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }
+    .ticket-tabs { display: flex; background: #f5f5f5; border-bottom: 1px solid #e0e0e0; }
+    .t-tab { flex: 1; padding: 8px 4px; border: none; background: none; cursor: pointer; font-size: 12px; font-weight: 600; color: #777; transition: all 0.15s; border-bottom: 2px solid transparent; font-family: Arial, sans-serif; }
+    .t-tab:hover { background: #ebebeb; color: #444; }
+    .t-tab.active { background: white; color: #14ace7; border-bottom-color: #14ace7; }
+    .t-panel { padding: 12px; }
 </style>
 
 <?php renderAdminSidebar('form_sucursal'); ?>
@@ -352,11 +400,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <div class="form-group">
-                        <label>Pie de pagina <span style="font-weight:400;color:#aaa;">(opcional)</span></label>
+                        <label>Pie de p&aacute;gina por tipo de pago <span style="font-weight:400;color:#aaa;">(opcional)</span></label>
+                        <div class="ticket-tabs-wrap">
+                            <div class="ticket-tabs">
+                                <button type="button" class="t-tab active" onclick="switchTTab('efectivo',this)">Efectivo</button>
+                                <button type="button" class="t-tab" onclick="switchTTab('terminal',this)">Terminal</button>
+                                <button type="button" class="t-tab" onclick="switchTTab('credito',this)">Cr&eacute;dito</button>
+                            </div>
+                            <div id="ttab-efectivo" class="t-panel">
+                                <input type="text" name="ticket_pie_efectivo"
+                                    value="<?= htmlspecialchars($_POST['ticket_pie_efectivo'] ?? $editando['ticket_pie_efectivo'] ?? '') ?>"
+                                    placeholder="Ej. ¡Gracias por su compra!">
+                                <div class="hint">Pie para tickets pagados en efectivo.</div>
+                            </div>
+                            <div id="ttab-terminal" class="t-panel" style="display:none;">
+                                <input type="text" name="ticket_pie_terminal"
+                                    value="<?= htmlspecialchars($_POST['ticket_pie_terminal'] ?? $editando['ticket_pie_terminal'] ?? '') ?>"
+                                    placeholder="Ej. Pago con tarjeta &mdash; ¡Gracias!">
+                                <div class="hint">Pie para tickets pagados con terminal.</div>
+                            </div>
+                            <div id="ttab-credito" class="t-panel" style="display:none;">
+                                <input type="text" name="ticket_pie_credito"
+                                    value="<?= htmlspecialchars($_POST['ticket_pie_credito'] ?? $editando['ticket_pie_credito'] ?? '') ?>"
+                                    placeholder="Ej. Pago en 3 d&iacute;as h&aacute;biles — ¡Gracias!">
+                                <div class="hint">Pie para tickets de venta a cr&eacute;dito.</div>
+                                <label style="display:block;margin-top:14px;font-size:13px;color:#555;font-weight:600;">Texto del pagar&eacute; (firma)</label>
+                                <textarea name="ticket_nota_credito"
+                                    style="width:100%;min-height:72px;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;color:#333;font-family:Arial,sans-serif;resize:vertical;margin-top:6px;"
+                                    placeholder="Al firmar acepto cubrir el monto total adeudado en el plazo establecido."><?= htmlspecialchars($_POST['ticket_nota_credito'] ?? $editando['ticket_nota_credito'] ?? '') ?></textarea>
+                                <div class="hint">Aparece en el bloque de firma del ticket de cr&eacute;dito.</div>
+                            </div>
+                        </div>
+                        <div class="hint" style="margin-top:6px;">Si se deja vac&iacute;o, se usa el pie general de abajo.</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Pie de p&aacute;gina general <span style="font-weight:400;color:#aaa;">(fallback)</span></label>
                         <input type="text" name="ticket_pie"
                             value="<?= htmlspecialchars($_POST['ticket_pie'] ?? $editando['ticket_pie'] ?? '') ?>"
-                            placeholder="Ej. Gracias por su compra · Tel: 871-123-4567">
-                        <div class="hint">Texto al final del ticket. Si se deja vacio se muestra el texto predeterminado.</div>
+                            placeholder="Ej. Gracias por su compra &middot; Tel: 871-123-4567">
+                        <div class="hint">Se muestra cuando el pie por tipo est&aacute; vac&iacute;o. Si tambi&eacute;n est&aacute; vac&iacute;o, se muestra el texto predeterminado.</div>
                     </div>
                 </div>
 
@@ -414,6 +497,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
+/* Pestañas de configuración por tipo de pago */
+function switchTTab(tab, btn) {
+    document.querySelectorAll('.t-tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.t-panel').forEach(p => p.style.display = 'none');
+    btn.classList.add('active');
+    document.getElementById('ttab-' + tab).style.display = '';
+}
+
+/* Obtiene el pie de página correcto según método de pago */
+function getPieTicket(metodo) {
+    let pie = '';
+    if (metodo === 'Efectivo')  pie = document.querySelector('input[name="ticket_pie_efectivo"]')?.value || '';
+    else if (metodo === 'Terminal') pie = document.querySelector('input[name="ticket_pie_terminal"]')?.value || '';
+    else if (metodo === 'Credito')  pie = document.querySelector('input[name="ticket_pie_credito"]')?.value || '';
+    return pie || document.querySelector('input[name="ticket_pie"]').value || '¡Gracias por su compra!';
+}
+
 /* Vista previa del logo cuando se selecciona un archivo */
 document.getElementById('ticketLogoFile').addEventListener('change', function() {
     const file = this.files[0];
@@ -446,7 +546,7 @@ function renderPreview(metodo) {
     const tel      = document.querySelector('input[name="telefono"]').value || '';
     const fontSize = document.getElementById('ticketFontSize').value || '12';
     const anchoMm  = document.getElementById('ticketAnchoMm').value || '58';
-    const pie      = document.querySelector('input[name="ticket_pie"]').value || '¡Gracias por su compra!';
+    const pie      = getPieTicket(metodo);
     const comPct   = parseFloat(document.querySelector('input[name="comision_terminal_pct"]').value || 0);
     const fecha    = new Date().toLocaleString('es-MX',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
     const maxW     = parseInt(anchoMm) >= 80 ? '140px' : '100px';
@@ -508,12 +608,11 @@ function renderPreview(metodo) {
     } else if (metodo === 'Terminal') {
         html += F('Pago con terminal', `$${total.toFixed(2)}`);
     } else if (metodo === 'Credito') {
+        const notaCred = document.querySelector('textarea[name="ticket_nota_credito"]')?.value?.trim() || 'Al firmar acepto cubrir el monto total adeudado';
         html += `<div style="text-align:center;font-weight:bold;margin-top:6px;">*** VENTA A CRÉDITO ***</div>`;
         html += L;
-        html += `<div style="text-align:center;font-size:10px;margin-bottom:8px;">Al firmar acepto cubrir el monto total adeudado</div>`;
-        html += `<div style="margin-top:14px;">Nombre: _______________________________</div>`;
-        html += `<div style="margin-top:14px;">Firma: &nbsp;&nbsp;_______________________________</div>`;
-        html += `<div style="margin-top:10px;">Fecha: &nbsp;&nbsp;_______________________________</div>`;
+        html += `<div style="text-align:center;font-size:10px;margin-bottom:8px;">${notaCred}</div>`;
+        html += `<div style="margin-top:48px;">Firma: _______________________________</div>`;
     }
 
     html += L;

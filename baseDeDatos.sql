@@ -476,3 +476,9 @@ CREATE TABLE IF NOT EXISTS vacaciones (
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (empleado_id) REFERENCES empleados(empleado_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE sucursales
+  ADD COLUMN ticket_pie_efectivo TEXT NULL AFTER ticket_pie,
+  ADD COLUMN ticket_pie_credito  TEXT NULL AFTER ticket_pie_efectivo,
+  ADD COLUMN ticket_pie_terminal TEXT NULL AFTER ticket_pie_credito,
+  ADD COLUMN ticket_nota_credito TEXT NULL AFTER ticket_pie_terminal;

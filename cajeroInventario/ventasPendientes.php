@@ -1746,7 +1746,10 @@ function imprimirTicketPend() {
             estilo.id = '__ticketPageStyle';
             document.head.appendChild(estilo);
         }
-        estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm auto; margin: 0; }`;
+        const ticketEl = document.getElementById('ticketImprimir');
+        const altoPx = ticketEl ? ticketEl.scrollHeight : 800;
+        const altoMm = Math.ceil(altoPx * 0.2646) + 10;
+        estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm ${altoMm}mm; margin: 0; }`;
         setTimeout(() => window.print(), 150);
     };
     const imgP = document.querySelector('#ticketImprimir img');

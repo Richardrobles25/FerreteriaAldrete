@@ -1740,20 +1740,14 @@ function cerrarTicketVenta() {
 function imprimirTicketPend() {
     cerrarTicketVenta();
     const _doImprimirP = () => {
-        requestAnimationFrame(() => {
-            const ticket = document.getElementById('ticketImprimir');
-            ticket.style.display = 'block';
-            const altoMm = Math.ceil(ticket.scrollHeight * 0.2646) + 4;
-            ticket.style.display = '';
-            let estilo = document.getElementById('__ticketPageStyle');
-            if (!estilo) {
-                estilo = document.createElement('style');
-                estilo.id = '__ticketPageStyle';
-                document.head.appendChild(estilo);
-            }
-            estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm ${altoMm}mm; margin: 0; }`;
-            setTimeout(() => window.print(), 150);
-        });
+        let estilo = document.getElementById('__ticketPageStyle');
+        if (!estilo) {
+            estilo = document.createElement('style');
+            estilo.id = '__ticketPageStyle';
+            document.head.appendChild(estilo);
+        }
+        estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm auto; margin: 0; }`;
+        setTimeout(() => window.print(), 150);
     };
     const imgP = document.querySelector('#ticketImprimir img');
     if (imgP && !imgP.complete) {

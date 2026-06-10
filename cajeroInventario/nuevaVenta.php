@@ -2417,23 +2417,16 @@ function imprimirTicket(ventaId) {
         .then(venta => {
             if (!venta || venta.error) { alert('No se pudo cargar el ticket.'); return; }
             generarTicketHTML(venta);
-            // Esperar a que cargue el logo (si hay) y luego medir alto e imprimir
+            // Esperar a que cargue el logo (si hay) y luego imprimir
             const _doImprimir = () => {
-                requestAnimationFrame(() => {
-                    const ticket = document.getElementById('ticketImprimir');
-                    ticket.style.display = 'block';
-                    const altoPx = ticket.scrollHeight;
-                    ticket.style.display = '';
-                    const altoMm = Math.ceil(altoPx * 0.2646) + 4;
-                    let estilo = document.getElementById('__ticketPageStyle');
-                    if (!estilo) {
-                        estilo = document.createElement('style');
-                        estilo.id = '__ticketPageStyle';
-                        document.head.appendChild(estilo);
-                    }
-                    estilo.textContent = `@page { size: 80mm ${altoMm}mm; margin: 0; }`;
-                    setTimeout(() => window.print(), 150);
-                });
+                let estilo = document.getElementById('__ticketPageStyle');
+                if (!estilo) {
+                    estilo = document.createElement('style');
+                    estilo.id = '__ticketPageStyle';
+                    document.head.appendChild(estilo);
+                }
+                estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm auto; margin: 0; }`;
+                setTimeout(() => window.print(), 150);
             };
             const imgTicket = document.querySelector('#ticketImprimir img');
             if (imgTicket && !imgTicket.complete) {

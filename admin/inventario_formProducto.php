@@ -321,12 +321,20 @@ if ($editando && $editando['categoria_id']) {
                     <div class="form-row-2">
                         <div class="form-group">
                             <label>Código *</label>
-                            <input type="text" name="codigo"
-                                value="<?= htmlspecialchars($_POST['codigo'] ?? $editando['codigo'] ?? '') ?>"
-                                placeholder="Ej. TUBO-3/4-PVC"
-                                oninput="this.value=this.value.toUpperCase()"
-                                autocomplete="off">
-                            <div class="hint">Único por sucursal. Puede ser código de barras.</div>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <input type="text" name="codigo" id="inputCodigo"
+                                    value="<?= htmlspecialchars($_POST['codigo'] ?? $editando['codigo'] ?? '') ?>"
+                                    placeholder="Ej. TUBO-3/4-PVC"
+                                    oninput="this.value=this.value.toUpperCase()"
+                                    autocomplete="off"
+                                    style="flex:1;">
+                                <button type="button" id="btnScanear" onclick="activarScaneo()"
+                                    title="Escanear código de barras"
+                                    style="padding:10px 12px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;cursor:pointer;font-size:16px;white-space:nowrap;flex-shrink:0;">
+                                    &#x2398;
+                                </button>
+                            </div>
+                            <div class="hint" id="hintCodigo">Único en el catálogo. Puedes escanear el código de barras con el lector.</div>
                         </div>
 
                         <!-- Categoría con autocomplete -->
@@ -409,40 +417,9 @@ if ($editando && $editando['categoria_id']) {
                     </div>
                 </div>
 
-                <!-- ── STOCK ── -->
-                <?php if ($todasSucursales): ?>
-                <div class="seccion" style="display:none;">
-                <?php else: ?>
+                <!-- ── TIPO DE VENTA Y UNIDAD (siempre visible) ── -->
                 <div class="seccion">
-                <?php endif; ?>
-                    <div class="seccion-titulo">Control de stock</div>
-                    <div class="form-row-3">
-                        <?php if (!$editando): ?>
-                        <div class="form-group">
-                            <label>Cantidad inicial</label>
-                            <input type="number" name="cantidad_inicial"
-                                value="<?= $_POST['cantidad_inicial'] ?? 0 ?>"
-                                class="js-zero-default js-stock-control"
-                                step="1" min="0" placeholder="0">
-                            <div class="hint">Stock con el que arranca.</div>
-                        </div>
-                        <?php endif; ?>
-                        <div class="form-group">
-                            <label>Stock mínimo</label>
-                            <input type="number" name="stock_minimo"
-                                value="<?= $_POST['stock_minimo'] ?? $stockEdicion['stock_minimo'] ?? 0 ?>"
-                                class="js-zero-default js-stock-control"
-                                step="1" min="0" placeholder="0">
-                            <div class="hint">Dispara alerta de reabasto.</div>
-                        </div>
-                        <div class="form-group">
-                            <label>Stock máximo</label>
-                            <input type="number" name="stock_maximo"
-                                value="<?= $_POST['stock_maximo'] ?? $stockEdicion['stock_maximo'] ?? 0 ?>"
-                                class="js-zero-default js-stock-control"
-                                step="1" min="0" placeholder="0">
-                        </div>
-                    </div>
+                    <div class="seccion-titulo">Tipo de venta</div>
 
                     <div class="form-group">
                         <label>Tipo de venta</label>
@@ -483,6 +460,42 @@ if ($editando && $editando['categoria_id']) {
                         <div style="font-size:11px;color:#aaa;margin-top:4px;">
                             Se muestra en el punto de venta junto a la cantidad. Administra unidades en
                             <a href="inventario_unidades.php" style="color:#14ace7;">Unidades de medida</a>.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── STOCK (oculto en modo todas las sucursales) ── -->
+                <?php if ($todasSucursales): ?>
+                <div class="seccion" style="display:none;">
+                <?php else: ?>
+                <div class="seccion">
+                <?php endif; ?>
+                    <div class="seccion-titulo">Control de stock</div>
+                    <div class="form-row-3">
+                        <?php if (!$editando): ?>
+                        <div class="form-group">
+                            <label>Cantidad inicial</label>
+                            <input type="number" name="cantidad_inicial"
+                                value="<?= $_POST['cantidad_inicial'] ?? 0 ?>"
+                                class="js-zero-default js-stock-control"
+                                step="1" min="0" placeholder="0">
+                            <div class="hint">Stock con el que arranca.</div>
+                        </div>
+                        <?php endif; ?>
+                        <div class="form-group">
+                            <label>Stock mínimo</label>
+                            <input type="number" name="stock_minimo"
+                                value="<?= $_POST['stock_minimo'] ?? $stockEdicion['stock_minimo'] ?? 0 ?>"
+                                class="js-zero-default js-stock-control"
+                                step="1" min="0" placeholder="0">
+                            <div class="hint">Dispara alerta de reabasto.</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Stock máximo</label>
+                            <input type="number" name="stock_maximo"
+                                value="<?= $_POST['stock_maximo'] ?? $stockEdicion['stock_maximo'] ?? 0 ?>"
+                                class="js-zero-default js-stock-control"
+                                step="1" min="0" placeholder="0">
                         </div>
                     </div>
                 </div>
@@ -768,6 +781,29 @@ document.getElementById('formProducto').addEventListener('submit', function() {
     }
     inp.name = ''; // Evitar duplicar
 });
+
+// ── Scanner de código de barras ───────────────────────────────────────────
+function activarScaneo() {
+    const input = document.getElementById('inputCodigo');
+    const btn   = document.getElementById('btnScanear');
+    const hint  = document.getElementById('hintCodigo');
+    input.focus();
+    input.style.borderColor = '#14ace7';
+    input.style.boxShadow   = '0 0 0 3px rgba(20,172,231,0.2)';
+    btn.style.background    = '#eef8ff';
+    btn.style.borderColor   = '#14ace7';
+    hint.textContent        = 'Listo para escanear — apunta el lector al código de barras...';
+    hint.style.color        = '#14ace7';
+    input.addEventListener('blur', function desactivar() {
+        input.style.borderColor = '';
+        input.style.boxShadow   = '';
+        btn.style.background    = '';
+        btn.style.borderColor   = '';
+        hint.textContent        = 'Único en el catálogo. Puedes escanear el código de barras con el lector.';
+        hint.style.color        = '';
+        input.removeEventListener('blur', desactivar);
+    });
+}
 
 // ── Inicializar margen al cargar en modo edición ───────────────────────────
 calcularMargen();

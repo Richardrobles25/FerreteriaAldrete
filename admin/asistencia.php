@@ -9,8 +9,10 @@ verificarRol(['Administrador']);
 
 // Eliminar registro
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'asistencia.php');
     $pdo->prepare("DELETE FROM asistencia WHERE asistencia_id = ?")->execute([intval($_POST['eliminar_id'])]);
-    header('Location: ' . $_SERVER['REQUEST_URI']);
+    $sep = strpos($_SERVER['REQUEST_URI'], '?') !== false ? '&' : '?';
+    header('Location: ' . $_SERVER['REQUEST_URI'] . $sep . 'msg=eliminado');
     exit();
 }
 
@@ -50,21 +52,11 @@ if ($ids) {
 
 // Stats
 $totalRegistros  = count($registros);
-$totalPendientes = count(array_filter($registros, fn($r) => $r['resolucion'] === 'Pendiente'));
 $totalHorasNT    = array_sum(array_column($registros, 'horas_no_trabajadas'));
 $totalHorasExtra = array_sum(array_column($registros, 'horas_extra'));
 
 $empleados   = $pdo->query("SELECT empleado_id, nombre FROM empleados WHERE activo=1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
-$tipos       = ['Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
-$resoluciones = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
-
-$colorRes = [
-    'Pendiente'      => ['bg'=>'#fff9e6','color'=>'#b7860b','border'=>'#f0b429'],
-    'Deducido'       => ['bg'=>'#fff0f0','color'=>'#c0392b','border'=>'#e74c3c'],
-    'Compensado'     => ['bg'=>'#f0fff0','color'=>'#1e8449','border'=>'#27ae60'],
-    'Justificado'    => ['bg'=>'#eef8ff','color'=>'#1a7db5','border'=>'#14ace7'],
-    'Pagado integro' => ['bg'=>'#f5f5f5','color'=>'#666','border'=>'#bbb'],
-];
+$tipos       = ['Asistencia normal','Falta','Tiempo fuera','Horas extra'];
 
 $filtrosActivos = $empleadoFiltro || $tipoFiltro
     || ($fechaInicio !== date('Y-m-d', strtotime('monday this week')))
@@ -104,6 +96,8 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
     .content { flex: 1; padding: 24px; overflow-y: auto; }
     .btn-nuevo { background: #14ace7; color: white; border: none; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
     .btn-nuevo:hover { background: #119dd4; }
+    .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
+    .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
     .filtro-group { display: flex; flex-direction: column; gap: 5px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
@@ -130,7 +124,6 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
     tr:hover td { background: #fafafa; }
     .badge-tipo { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; background: #f0f0f0; color: #555; }
     .badge-tipo.normal { background: #e8f8ee; color: #1e8449; }
-    .badge-res { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; border: 1px solid; }
     .tf-list { font-size: 11px; color: #888; margin-top: 3px; }
     .btn-editar { background: #f5f5f5; border: none; color: #555; padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; text-decoration: none; display: inline-block; }
     .btn-editar:hover { background: #eee; }
@@ -171,6 +164,12 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
     </div>
 
     <div class="content">
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'eliminado'): ?>
+            <div class="msg msg-exito">Registro eliminado correctamente.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'registrado'): ?>
+            <div class="msg msg-exito">Registro guardado correctamente.</div>
+        <?php endif; ?>
+
         <form method="GET">
             <div class="filtros">
                 <div class="filtro-group">
@@ -210,10 +209,6 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
                 <p>Registros</p>
                 <h3><?= $totalRegistros ?></h3>
             </div>
-            <div class="stat naranja">
-                <p>Pendientes</p>
-                <h3><?= $totalPendientes ?></h3>
-            </div>
             <div class="stat rojo">
                 <p>Hrs no trabajadas</p>
                 <h3><?= number_format($totalHorasNT, 1) ?></h3>
@@ -242,7 +237,6 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
                 </thead>
                 <tbody>
                 <?php foreach ($registros as $reg):
-                    $c = $colorRes[$reg['resolucion']] ?? $colorRes['Pendiente'];
                     $tfs = $tiemposFuera[$reg['asistencia_id']] ?? [];
                 ?>
                 <tr>
@@ -300,6 +294,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
         <p id="modalTexto">¿Seguro que deseas eliminar este registro?</p>
         <form method="POST" id="formEliminar">
             <input type="hidden" name="eliminar_id" id="eliminarId">
+            <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
             <div class="modal-btns">
                 <button type="button" class="btn-cancelar-modal" onclick="cerrarModal()">Cancelar</button>
                 <button type="submit" class="btn-confirmar-modal">Eliminar</button>

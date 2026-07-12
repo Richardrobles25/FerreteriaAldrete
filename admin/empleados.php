@@ -3,15 +3,17 @@ session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
 // Toggle activo
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'empleados.php');
     $eid = intval($_POST['toggle_id']);
     $pdo->prepare("UPDATE empleados SET activo = NOT activo WHERE empleado_id = ?")->execute([$eid]);
-    header('Location: empleados.php');
+    header('Location: empleados.php?msg=actualizado');
     exit();
 }
 
@@ -27,23 +29,6 @@ $empleados = $pdo->query("
     FROM empleados e
     ORDER BY e.activo DESC, e.nombre ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
-
-function calcVacaciones(string $fechaIngreso): int {
-    $hoy    = new DateTime();
-    $ingreso = new DateTime($fechaIngreso);
-    $anios  = (int)$hoy->diff($ingreso)->y;
-    if ($anios < 1) return 0;
-    return min($anios, 2) * 6;
-}
-
-function calcAntiguedad(string $fechaIngreso): string {
-    $hoy    = new DateTime();
-    $ingreso = new DateTime($fechaIngreso);
-    $diff   = $hoy->diff($ingreso);
-    if ($diff->y >= 1) return $diff->y . ' a&ntilde;o' . ($diff->y > 1 ? 's' : '');
-    if ($diff->m >= 1) return $diff->m . ' mes' . ($diff->m > 1 ? 'es' : '');
-    return $diff->d . ' d&iacute;a' . ($diff->d != 1 ? 's' : '');
-}
 
 $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
 ?>
@@ -106,6 +91,8 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
     .btn-toggle-on  { background: #fff0f0; border: none; color: #c0392b; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 11px; }
     .btn-toggle-off { background: #e8f8ee; border: none; color: #27ae60; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 11px; }
     .sin-resultados { padding: 48px; text-align: center; color: #aaa; font-size: 14px; }
+    .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
+    .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     @media (max-width: 768px) {
         .sidebar { position: fixed; top: 0; left: 0; height: 100%; z-index: 300; width: 0; transition: width 0.3s; }
         .sidebar.collapsed { width: 260px; box-shadow: 4px 0 16px rgba(0,0,0,.15); }
@@ -137,6 +124,12 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
             <a class="btn-nuevo" href="formEmpleado.php">+ Nuevo empleado</a>
         </div>
 
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'registrado'): ?>
+            <div class="msg msg-exito">Empleado registrado correctamente.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'actualizado'): ?>
+            <div class="msg msg-exito">Empleado actualizado correctamente.</div>
+        <?php endif; ?>
+
         <div class="stats">
             <div class="stat">
                 <p>Empleados activos</p>
@@ -155,7 +148,7 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                     <tr>
                         <th>Empleado</th>
                         <th>Fecha ingreso</th>
-                        <th>Antiguedad</th>
+                        <th>Antigüedad</th>
                         <th>Sueldo semanal</th>
                         <th>Vacaciones <?= date('Y') ?></th>
                         <th>Estado</th>
@@ -164,7 +157,7 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                 </thead>
                 <tbody>
                 <?php foreach ($empleados as $emp):
-                    $diasDisp  = calcVacaciones($emp['fecha_ingreso']);
+                    $diasDisp  = calcVacacionesDisponibles($emp['fecha_ingreso']);
                     $diasTom   = intval($emp['dias_tomados_anio']);
                     $diasRest  = max(0, $diasDisp - $diasTom);
                     $pct       = $diasDisp > 0 ? round(($diasTom / $diasDisp) * 100) : 0;
@@ -187,8 +180,9 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                     <td><span class="badge <?= $emp['activo'] ? 'badge-activo' : 'badge-inactivo' ?>"><?= $emp['activo'] ? 'Activo' : 'Inactivo' ?></span></td>
                     <td>
                         <a class="btn-editar" href="formEmpleado.php?id=<?= $emp['empleado_id'] ?>">Editar</a>
-                        <form method="POST" style="display:inline;">
+                        <form method="POST" style="display:inline;" onsubmit="return confirm('¿<?= $emp['activo'] ? 'Desactivar' : 'Activar' ?> a <?= htmlspecialchars(addslashes($emp['nombre']), ENT_QUOTES) ?>?')">
                             <input type="hidden" name="toggle_id" value="<?= $emp['empleado_id'] ?>">
+                            <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                             <button type="submit" class="<?= $emp['activo'] ? 'btn-toggle-on' : 'btn-toggle-off' ?>"><?= $emp['activo'] ? 'Desactivar' : 'Activar' ?></button>
                         </form>
                     </td>

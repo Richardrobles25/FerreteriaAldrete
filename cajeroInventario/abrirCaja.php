@@ -6,15 +6,6 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-// Auto-cerrar cajas huérfanas del usuario actual de días anteriores
-// (ocurre cuando el navegador se cerró sin hacer corte)
-$pdo->prepare("
-    UPDATE cajas
-    SET estado = 'Cerrada', cerrada_en = NOW(),
-        observaciones = CONCAT(COALESCE(observaciones,''), ' [Cerrada automáticamente al abrir nueva sesión]')
-    WHERE usuario_id = ? AND estado = 'Abierta' AND DATE(abierta_en) < CURDATE()
-")->execute([$_SESSION['usuario_id']]);
-
 // Verificar si ya tiene caja abierta hoy
 $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
 $stmt->execute([$_SESSION['usuario_id']]);

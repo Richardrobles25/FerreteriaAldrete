@@ -12,21 +12,8 @@ if (isset($_GET['eliminar'])) {
     requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
     $id = intval($_GET['eliminar']);
 
-    // Bug #2: Verificar saldo pendiente directamente en la tabla clientes
-    $stmtSaldo = $pdo->prepare("SELECT saldo_pendiente FROM clientes WHERE cliente_id = ?");
-    $stmtSaldo->execute([$id]);
-    if (floatval($stmtSaldo->fetchColumn() ?: 0) > 0.005) {
-        header('Location: clientes.php?msg=error_tiene_credito');
-        exit();
-    }
-
-    // Verificar que el cliente no tenga créditos activos antes de eliminar
-    $stmtCred = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
-    $stmtCred->execute([$id]);
-    if ($stmtCred->fetchColumn() > 0) {
-        header('Location: clientes.php?msg=error_tiene_credito');
-        exit();
-    }
+    // Nota: si el cliente debe un crédito, el frontend ya advirtió el monto antes de llegar aquí.
+    // No se bloquea la eliminación ni se toca la tabla creditos — la deuda queda registrada igual.
 
     // [AUTOFIX] BUG-03: Verificar que el cliente no tenga ventas pendientes antes de eliminar
     $stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
@@ -104,7 +91,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Búsqueda en tiempo real: se carga toda la lista y el JS filtra mientras se escribe
 $verInactivos = isset($_GET['ver_inactivos']) && $_GET['ver_inactivos'] === '1';
 $filtroActivo = $verInactivos ? '' : 'AND activo = 1';
-$stmt = $pdo->prepare("SELECT * FROM clientes WHERE 1=1 $filtroActivo ORDER BY nombre_completo ASC");
+$stmt = $pdo->prepare("
+    SELECT c.*, COALESCE((
+        SELECT SUM(saldo_pendiente) FROM creditos
+        WHERE cliente_id = c.cliente_id AND estado IN ('Activo','Vencido')
+    ), 0) AS deuda_total
+    FROM clientes c WHERE 1=1 $filtroActivo ORDER BY nombre_completo ASC
+");
 $stmt->execute();
 $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -267,7 +260,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php
                 // [AUTOFIX] BUG-03/BUG-05: Agregar mensajes de error para bloqueos y cliente no encontrado
                 $msgsExito = ['creado' => 'Cliente registrado.', 'editado' => 'Cliente actualizado.', 'eliminado' => 'Cliente eliminado.', 'no_encontrado' => 'Cliente no encontrado.'];
-                $msgsError = ['error_tiene_credito' => 'No se puede eliminar: el cliente tiene créditos activos.', 'error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.'];
+                $msgsError = ['error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.'];
                 $msgKey = $_GET['msg'];
                 if (isset($msgsExito[$msgKey])):
                 ?>
@@ -326,8 +319,13 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <div class="acciones">
                                     <?php if ($c['activo']): ?>
                                         <a class="btn-accion btn-editar" href="clientes.php?editar=<?= $c['cliente_id'] ?>">Editar</a>
+                                        <?php
+                                            $mensajeEliminar = $c['deuda_total'] > 0.005
+                                                ? 'Este cliente debe $' . number_format($c['deuda_total'], 2) . ' en créditos pendientes. Si lo eliminas, la deuda seguirá registrada y deberás seguir cobrándola por separado. ¿Eliminar de todas formas?'
+                                                : '¿Eliminar este cliente?';
+                                        ?>
                                         <!-- [AUTOFIX] SEC-01: Token CSRF en link destructivo -->
-                                        <a class="btn-accion btn-eliminar" href="clientes.php?eliminar=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
+                                        <a class="btn-accion btn-eliminar" href="clientes.php?eliminar=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('<?= htmlspecialchars(addslashes($mensajeEliminar), ENT_QUOTES) ?>')">Eliminar</a>
                                     <?php else: ?>
                                         <!-- [AUTOFIX] BUG-04: Botón reactivar para clientes inactivos -->
                                         <a class="btn-accion" style="background:#e8f5e9;color:#2e7d32;" href="clientes.php?toggle=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?><?= $verInactivos ? '&ver_inactivos=1' : '' ?>" onclick="return confirm('¿Reactivar este cliente?')">Reactivar</a>

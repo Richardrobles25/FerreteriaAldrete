@@ -3,26 +3,29 @@ session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 
 // Eliminar vacacion
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'vacaciones.php');
     $pdo->prepare("DELETE FROM vacaciones WHERE vacacion_id = ?")->execute([intval($_POST['eliminar_id'])]);
-    header('Location: vacaciones.php');
+    header('Location: vacaciones.php?msg=eliminado');
     exit();
 }
 
 // Cambiar estado
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'vacaciones.php');
     $vid    = intval($_POST['vacacion_id']);
     $estado = $_POST['nuevo_estado'];
     $estadosVal = ['Solicitado','Aprobado','Rechazado'];
     if (in_array($estado, $estadosVal)) {
         $pdo->prepare("UPDATE vacaciones SET estado=? WHERE vacacion_id=?")->execute([$estado, $vid]);
     }
-    header('Location: vacaciones.php');
+    header('Location: vacaciones.php?msg=actualizado');
     exit();
 }
 
@@ -51,14 +54,6 @@ $empleados = $pdo->query("
     WHERE e.activo = 1
     ORDER BY e.nombre
 ")->fetchAll(PDO::FETCH_ASSOC);
-
-function calcVacacionesDisponibles(string $fechaIngreso): int {
-    $hoy    = new DateTime();
-    $ingreso = new DateTime($fechaIngreso);
-    $anios  = (int)$hoy->diff($ingreso)->y;
-    if ($anios < 1) return 0;
-    return min($anios, 2) * 6;
-}
 
 // Dias tomados por empleado en el año actual
 $stmtTom = $pdo->prepare("
@@ -117,6 +112,8 @@ $aniosList = range(date('Y'), date('Y') - 3);
     .topbar-bar h3 { font-size: 15px; color: #222; font-weight: 700; }
     .btn-nuevo { background: #14ace7; color: white; border: none; padding: 9px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; text-decoration: none; }
     .btn-nuevo:hover { background: #119dd4; }
+    .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
+    .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     /* Resumen empleados */
     .resumen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap: 10px; margin-bottom: 20px; }
     .emp-card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; }
@@ -134,7 +131,6 @@ $aniosList = range(date('Y'), date('Y') - 3);
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
     .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .filtro-group select:focus { outline: none; border-color: #14ace7; }
-    .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     /* Tabla */
     .tabla-wrapper { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
@@ -194,6 +190,14 @@ $aniosList = range(date('Y'), date('Y') - 3);
             <a class="btn-nuevo" href="formVacacion.php">+ Registrar vacaciones</a>
         </div>
 
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'eliminado'): ?>
+            <div class="msg msg-exito">Registro eliminado correctamente.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'actualizado'): ?>
+            <div class="msg msg-exito">Estado actualizado correctamente.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'registrado'): ?>
+            <div class="msg msg-exito">Vacaciones registradas correctamente.</div>
+        <?php endif; ?>
+
         <!-- Resumen por empleado -->
         <div class="resumen-grid">
             <?php foreach ($empleados as $emp):
@@ -220,11 +224,11 @@ $aniosList = range(date('Y'), date('Y') - 3);
         </div>
 
         <!-- Filtros -->
-        <form method="GET">
+        <form method="GET" id="formFiltros">
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Empleado</label>
-                    <select name="empleado">
+                    <select name="empleado" onchange="document.getElementById('formFiltros').submit()">
                         <option value="0">Todos</option>
                         <?php foreach ($empleados as $emp): ?>
                             <option value="<?= $emp['empleado_id'] ?>" <?= $empleadoFiltro == $emp['empleado_id'] ? 'selected' : '' ?>><?= htmlspecialchars($emp['nombre']) ?></option>
@@ -232,14 +236,13 @@ $aniosList = range(date('Y'), date('Y') - 3);
                     </select>
                 </div>
                 <div class="filtro-group">
-                    <label>Ano</label>
-                    <select name="anio">
+                    <label>Año</label>
+                    <select name="anio" onchange="document.getElementById('formFiltros').submit()">
                         <?php foreach ($aniosList as $a): ?>
                             <option value="<?= $a ?>" <?= $anioFiltro == $a ? 'selected' : '' ?>><?= $a ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <button class="btn-filtrar" type="submit">Filtrar</button>
                 <a class="btn-limpiar" href="vacaciones.php">Limpiar</a>
             </div>
         </form>
@@ -254,7 +257,7 @@ $aniosList = range(date('Y'), date('Y') - 3);
                         <th>Desde</th>
                         <th>Hasta</th>
                         <th>Dias</th>
-                        <th>Ano</th>
+                        <th>Año</th>
                         <th>Estado</th>
                         <th>Notas</th>
                         <th>Acciones</th>
@@ -303,6 +306,7 @@ $aniosList = range(date('Y'), date('Y') - 3);
             <input type="hidden" name="vacacion_id" id="estadoVacId">
             <input type="hidden" name="nuevo_estado" id="nuevoEstado">
             <input type="hidden" name="cambiar_estado" value="1">
+            <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
             <div class="modal-btns">
                 <button type="button" class="btn-m btn-m-cancel" onclick="cerrarModales()">Cancelar</button>
                 <button type="button" class="btn-m btn-m-rechazado" onclick="setEstado('Rechazado')">Rechazar</button>
@@ -319,6 +323,7 @@ $aniosList = range(date('Y'), date('Y') - 3);
         <p id="textoEliminar">¿Seguro que deseas eliminar este registro?</p>
         <form method="POST" id="formEliminar">
             <input type="hidden" name="eliminar_id" id="eliminarId">
+            <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
             <div class="modal-btns">
                 <button type="button" class="btn-m btn-m-cancel" onclick="cerrarModales()">Cancelar</button>
                 <button type="submit" class="btn-m btn-m-eliminar">Eliminar</button>

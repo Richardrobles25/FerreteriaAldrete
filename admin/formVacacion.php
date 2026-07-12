@@ -3,6 +3,7 @@ session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
@@ -18,15 +19,9 @@ if ($esEdicion) {
     if (!$editando) { header('Location: vacaciones.php'); exit(); }
 }
 
-function calcVacDisp(string $fechaIngreso): int {
-    $hoy    = new DateTime();
-    $ingreso = new DateTime($fechaIngreso);
-    $anios  = (int)$hoy->diff($ingreso)->y;
-    if ($anios < 1) return 0;
-    return min($anios, 2) * 6;
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requerirCSRF($_POST['_token'] ?? '', 'formVacacion.php');
+
     $empleado_id  = intval($_POST['empleado_id']  ?? 0);
     $fecha_inicio = trim($_POST['fecha_inicio']   ?? '');
     $fecha_fin    = trim($_POST['fecha_fin']       ?? '');
@@ -45,17 +40,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $diasTomados = 0;
     if ($fecha_inicio && $fecha_fin && !$errores) {
-        $dtI = new DateTime($fecha_inicio);
-        $dtF = new DateTime($fecha_fin);
-        $diff = $dtI->diff($dtF);
-        $diasTomados = $diff->days + 1;
+        $diasTomados = contarDiasVacacion($fecha_inicio, $fecha_fin);
+        if ($diasTomados === 0) $errores[] = 'El periodo seleccionado solo abarca domingo (dia no laboral).';
 
         // Validate disponibles
         $stmtEmp = $pdo->prepare("SELECT fecha_ingreso FROM empleados WHERE empleado_id=?");
         $stmtEmp->execute([$empleado_id]);
         $empRow = $stmtEmp->fetch(PDO::FETCH_ASSOC);
         if ($empRow) {
-            $diasDisp = calcVacDisp($empRow['fecha_ingreso']);
+            $diasDisp = calcVacacionesDisponibles($empRow['fecha_ingreso']);
             if ($diasDisp === 0) {
                 $errores[] = 'Este empleado aun no tiene derecho a vacaciones.';
             } else {
@@ -63,8 +56,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmtTom = $pdo->prepare("
                     SELECT COALESCE(SUM(dias_tomados),0) AS total
                     FROM vacaciones
-                    WHERE empleado_id=? AND anio=? AND estado != 'Rechazado'" . ($vacacion_id ? " AND vacacion_id != $vacacion_id" : ""));
-                $stmtTom->execute([$empleado_id, $anio]);
+                    WHERE empleado_id=? AND anio=? AND estado != 'Rechazado' AND vacacion_id != ?");
+                $stmtTom->execute([$empleado_id, $anio, $vacacion_id]);
                 $yaUsados = intval($stmtTom->fetchColumn());
                 if ($yaUsados + $diasTomados > $diasDisp) {
                     $errores[] = "Este empleado solo tiene $diasDisp dias disponibles en $anio y ya uso $yaUsados. No puede tomar $diasTomados mas.";
@@ -79,20 +72,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 UPDATE vacaciones SET empleado_id=?, fecha_inicio=?, fecha_fin=?, dias_tomados=?, anio=?, estado=?, notas=?
                 WHERE vacacion_id=?
             ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null, $vacacion_id]);
+            header('Location: vacaciones.php?msg=actualizado');
         } else {
             $pdo->prepare("
                 INSERT INTO vacaciones (empleado_id, fecha_inicio, fecha_fin, dias_tomados, anio, estado, notas)
                 VALUES (?,?,?,?,?,?,?)
             ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null]);
+            header('Location: vacaciones.php?msg=registrado');
         }
-        header('Location: vacaciones.php');
         exit();
     }
 }
 
 $empleados = $pdo->query("
     SELECT e.empleado_id, e.nombre, e.fecha_ingreso
-    FROM empleados e WHERE e.activo=1 ORDER BY e.nombre
+    FROM empleados e
+    WHERE e.activo = 1
+      AND e.fecha_ingreso <= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)
+    ORDER BY e.nombre
 ")->fetchAll(PDO::FETCH_ASSOC);
 
 $v = [
@@ -190,6 +187,7 @@ $estadosVal = ['Solicitado','Aprobado','Rechazado'];
             <?php endif; ?>
 
             <form method="POST" id="mainForm">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <?php if ($esEdicion): ?>
                     <input type="hidden" name="vacacion_id" value="<?= $editando['vacacion_id'] ?>">
                 <?php endif; ?>
@@ -211,7 +209,7 @@ $estadosVal = ['Solicitado','Aprobado','Rechazado'];
                 <div class="form-row">
                     <div class="form-group">
                         <label>Fecha inicio</label>
-                        <input type="date" name="fecha_inicio" id="fechaInicio" value="<?= htmlspecialchars($v['fecha_inicio']) ?>" required onchange="calcDias()">
+                        <input type="date" name="fecha_inicio" id="fechaInicio" value="<?= htmlspecialchars($v['fecha_inicio']) ?>" required onchange="actualizarMinFechaFin(); calcDias();" <?= !$esEdicion ? 'min="' . date('Y-m-d') . '"' : '' ?>>
                     </div>
                     <div class="form-group">
                         <label>Fecha fin</label>
@@ -221,11 +219,9 @@ $estadosVal = ['Solicitado','Aprobado','Rechazado'];
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Ano vacacional</label>
-                        <select name="anio">
-                            <?php foreach (range(date('Y'), date('Y')-3) as $a): ?>
-                                <option value="<?= $a ?>" <?= $v['anio'] == $a ? 'selected' : '' ?>><?= $a ?></option>
-                            <?php endforeach; ?>
+                        <label>Año vacacional</label>
+                        <select name="anio" id="selAnio" data-selected="<?= intval($v['anio']) ?>">
+                            <option value="">-- Selecciona un empleado --</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -270,23 +266,44 @@ function calcVacacionesDisponibles(fechaIngreso) {
     return Math.min(anios, 2) * 6;
 }
 
+function actualizarAnios(fechaIngreso) {
+    var selAnio = document.getElementById('selAnio');
+    var anioDeseado = parseInt(selAnio.dataset.selected) || new Date().getFullYear();
+
+    var anioInicio = new Date(fechaIngreso).getFullYear() + 1; // primer año con derecho
+    var anioActual = new Date().getFullYear();
+
+    selAnio.innerHTML = '';
+    for (var a = anioActual; a >= anioInicio; a--) {
+        var opt = document.createElement('option');
+        opt.value = a;
+        opt.textContent = a;
+        if (a === anioDeseado) opt.selected = true;
+        selAnio.appendChild(opt);
+    }
+    // Si el valor deseado no estaba en el rango, selecciona el más reciente
+    if (!selAnio.value) selAnio.options[0].selected = true;
+}
+
 function actualizarInfo() {
     var sel = document.getElementById('selEmpleado');
     var eid = sel.value;
     var infoBox = document.getElementById('infoVac');
-    if (!eid || !empleadosData[eid]) { infoBox.style.display='none'; return; }
-    var diasDisp = calcVacacionesDisponibles(empleadosData[eid]);
-    if (diasDisp === 0) {
-        infoBox.innerHTML = 'Este empleado aun no tiene derecho a vacaciones (requiere minimo 1 año).';
-        infoBox.style.background = '#fff9e6';
-        infoBox.style.borderColor = '#f0b429';
-        infoBox.style.color = '#b7860b';
-    } else {
-        infoBox.innerHTML = 'Dias disponibles este año: <span>' + diasDisp + '</span>';
-        infoBox.style.background = '#eef8ff';
-        infoBox.style.borderColor = '#cce5f7';
-        infoBox.style.color = '#1a7db5';
+    var selAnio = document.getElementById('selAnio');
+
+    if (!eid || !empleadosData[eid]) {
+        infoBox.style.display = 'none';
+        selAnio.innerHTML = '<option value="">-- Selecciona un empleado --</option>';
+        return;
     }
+
+    actualizarAnios(empleadosData[eid]);
+
+    var diasDisp = calcVacacionesDisponibles(empleadosData[eid]);
+    infoBox.innerHTML = 'Dias disponibles este año: <span>' + diasDisp + '</span>';
+    infoBox.style.background = '#eef8ff';
+    infoBox.style.borderColor = '#cce5f7';
+    infoBox.style.color = '#1a7db5';
     infoBox.style.display = 'block';
     calcDias();
 }
@@ -298,12 +315,27 @@ function calcDias() {
     var sel = document.getElementById('selEmpleado');
     var eid = sel.value;
     if (!fi || !ff || !eid) return;
-    var d1 = new Date(fi), d2 = new Date(ff);
+    var d1 = new Date(fi + 'T12:00:00'), d2 = new Date(ff + 'T12:00:00');
     if (d2 < d1) return;
-    var dias = Math.round((d2 - d1) / 86400000) + 1;
+    // Contar dias excluyendo domingos (no son dia laboral)
+    var dias = 0;
+    var dt = new Date(d1);
+    while (dt <= d2) {
+        if (dt.getDay() !== 0) dias++;
+        dt.setDate(dt.getDate() + 1);
+    }
     var diasDisp = calcVacacionesDisponibles(empleadosData[eid] || '');
     if (diasDisp > 0 && infoBox.style.display !== 'none') {
-        infoBox.innerHTML = 'Dias disponibles: <span>' + diasDisp + '</span> | Solicitud: <span>' + dias + ' dias</span>';
+        infoBox.innerHTML = 'Dias disponibles: <span>' + diasDisp + '</span> | Solicitud: <span>' + dias + ' dias</span> <span style="font-weight:400;color:#999;">(sin contar domingos)</span>';
+    }
+}
+
+function actualizarMinFechaFin() {
+    var fi = document.getElementById('fechaInicio').value;
+    var ff = document.getElementById('fechaFin');
+    if (fi) {
+        ff.min = fi;
+        if (ff.value && ff.value < fi) ff.value = fi;
     }
 }
 
@@ -311,6 +343,7 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 
 // Init
 actualizarInfo();
+actualizarMinFechaFin();
 </script>
 </body>
 </html>

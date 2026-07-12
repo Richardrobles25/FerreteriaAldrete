@@ -36,6 +36,7 @@ function renderAdminSidebar(string $activeKey): void
                 <a class="menu-item<?= $isActive('rrhh_asistencia') . $isActive('rrhh_form_asistencia') ?>" href="asistencia.php" style="padding-left:28px;">Asistencia</a>
                 <a class="menu-item<?= $isActive('rrhh_semana') ?>" href="semanaLaboral.php" style="padding-left:28px;">Semana laboral</a>
                 <a class="menu-item<?= $isActive('rrhh_vacaciones') . $isActive('rrhh_form_vacacion') ?>" href="vacaciones.php" style="padding-left:28px;">Vacaciones</a>
+                <a class="menu-item<?= $isActive('rrhh_adelantos') ?>" href="adelantos.php" style="padding-left:28px;">Adelantos de sueldo</a>
             </div>
             <div class="divider"></div>
             <a class="menu-item<?= $isActive('gastos') ?>" href="gastos.php">Bitacora de gastos</a>

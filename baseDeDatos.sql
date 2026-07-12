@@ -444,7 +444,7 @@ CREATE TABLE IF NOT EXISTS asistencia (
     asistencia_id       INT AUTO_INCREMENT PRIMARY KEY,
     empleado_id         INT NOT NULL,
     fecha               DATE NOT NULL,
-    tipo                ENUM('Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra') NOT NULL,
+    tipo                ENUM('Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra') NOT NULL,
     hora_entrada        TIME NULL,
     hora_salida         TIME NULL,
     horas_no_trabajadas DECIMAL(5,2) DEFAULT 0.00,
@@ -482,3 +482,29 @@ ALTER TABLE sucursales
   ADD COLUMN ticket_pie_credito  TEXT NULL AFTER ticket_pie_efectivo,
   ADD COLUMN ticket_pie_terminal TEXT NULL AFTER ticket_pie_credito,
   ADD COLUMN ticket_nota_credito TEXT NULL AFTER ticket_pie_terminal;
+
+CREATE TABLE IF NOT EXISTS adelantos_sueldo (
+    adelanto_id  INT AUTO_INCREMENT PRIMARY KEY,
+    empleado_id  INT NOT NULL,
+    monto        DECIMAL(10,2) NOT NULL,
+    fecha        DATE NOT NULL,
+    motivo       VARCHAR(255),
+    estado       ENUM('Pendiente','Liquidado') DEFAULT 'Pendiente',
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (empleado_id) REFERENCES empleados(empleado_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Registro de pagos de nomina semanal (un pago por empleado por semana)
+CREATE TABLE IF NOT EXISTS pagos_nomina (
+    pago_id             INT AUTO_INCREMENT PRIMARY KEY,
+    empleado_id         INT NOT NULL,
+    semana_inicio       DATE NOT NULL,                        -- lunes de la semana pagada
+    sueldo_base         DECIMAL(10,2) NOT NULL,
+    deduccion           DECIMAL(10,2) NOT NULL DEFAULT 0,
+    bono                DECIMAL(10,2) NOT NULL DEFAULT 0,
+    adelanto_descontado DECIMAL(10,2) NOT NULL DEFAULT 0,
+    monto_pagado        DECIMAL(10,2) NOT NULL,
+    pagado_en           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_pago_empleado_semana (empleado_id, semana_inicio),
+    FOREIGN KEY (empleado_id) REFERENCES empleados(empleado_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

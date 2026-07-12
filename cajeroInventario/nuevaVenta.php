@@ -1162,7 +1162,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
 <script>
 // ── Estado global ────────────────────────────────────────────────────────────
-let carrito           = [];
+let carrito           = (function() {
+    try {
+        const guardado = JSON.parse(localStorage.getItem('carrito'));
+        return Array.isArray(guardado) ? guardado : [];
+    } catch (e) {
+        return [];
+    }
+})();
 let clienteActual     = null;
 let metodoPago        = null;
 let paquetesGlobales  = [];
@@ -1545,6 +1552,8 @@ function agregarPaquete(paq) {
 
 // ── Render carrito ───────────────────────────────────────────────────────────
 function renderCarrito() {
+    localStorage.setItem('carrito', JSON.stringify(carrito));
+
     const body  = document.getElementById('carritoBody');
     const tabla = document.getElementById('carritoTabla');
     const vacio = document.getElementById('carritoVacio');
@@ -2002,7 +2011,7 @@ function mostrarClientes(lista) {
                 onclick="seleccionarCliente(${c.cliente_id},'${esc(c.nombre_completo)}','${esc(c.telefono??'')}',${c.descuento_fijo},${c.credito_autorizado})">
                 <div>
                     <div class="resultado-nombre">${esc(c.nombre_completo)}</div>
-                    <div class="resultado-codigo">${esc(c.telefono??'')} ${c.descuento_fijo>0?'· Desc: '+c.descuento_fijo+'%':''}</div>
+                    <div class="resultado-codigo">${esc(c.telefono??'')} ${c.descuento_fijo>0?'· Desc: '+c.descuento_fijo+'%':''} ${c.credito_autorizado?'· <span style="color:#2e7d32;font-weight:600;">Crédito</span>':'· <span style="color:#c0392b;">Sin crédito</span>'}</div>
                 </div>
             </div>`).join('');
     }
@@ -2074,6 +2083,25 @@ function seleccionarMetodo(metodo, btn) {
         document.getElementById('mixtoTerminal').value = '0.00';
     }
     recalcularTodo(); verificarCobrar();
+}
+
+// ── Persistencia de cliente/método de pago/campos de pago (carrito ya se guarda en renderCarrito) ──
+function guardarEstadoVenta() {
+    const extra = {
+        clienteActual,
+        metodoPago,
+        descCliente: {
+            aplicar: document.getElementById('aplicarDescCliente')?.checked || false,
+            porc:    document.getElementById('porcDescCliente')?.value || ''
+        },
+        ajusteDanoActivo: document.getElementById('chkAjusteDano')?.checked || false,
+        pago: {
+            montoEfectivo:       document.getElementById('montoEfectivo')?.value || '',
+            transferReferencia:  document.getElementById('transferReferencia')?.value || '',
+            mixtoEfectivo:       document.getElementById('mixtoEfectivo')?.value || ''
+        }
+    };
+    localStorage.setItem('ventaExtra', JSON.stringify(extra));
 }
 
 // ── Cálculos ─────────────────────────────────────────────────────────────────
@@ -2232,6 +2260,7 @@ function verificarCobrar() {
         efectivoOk = total > 0 && recibido >= total;
     }
     document.getElementById('btnCobrar').disabled = !(carrito.length > 0 && metodoPago && referenciaOk && mixtoOk && efectivoOk);
+    guardarEstadoVenta();
 }
 
 // ── Preparar y enviar venta ──────────────────────────────────────────────────
@@ -2696,6 +2725,64 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
         }
     });
 });
+
+// ── Restaurar venta en curso (carrito, cliente, método de pago y campos) ─────
+(function restaurarEstadoVenta() {
+    renderCarrito();
+
+    let extra = null;
+    try { extra = JSON.parse(localStorage.getItem('ventaExtra')); } catch (e) {}
+    if (!extra) { recalcularTodo(); return; }
+
+    if (extra.clienteActual) {
+        const c = extra.clienteActual;
+        seleccionarCliente(c.id, c.nombre, c.telefono, c.descuento, c.credito);
+    }
+
+    if (extra.metodoPago) {
+        const labelMap = { Efectivo: 'Efectivo', Terminal: 'Terminal', Transferencia: 'Transferencia', Mixto: 'Mixto', Credito: 'Crédito' };
+        const btnMetodo = Array.from(document.querySelectorAll('.metodo-btn'))
+            .find(b => b.textContent.trim() === labelMap[extra.metodoPago]);
+        if (btnMetodo) seleccionarMetodo(extra.metodoPago, btnMetodo);
+    }
+
+    if (extra.pago) {
+        if (extra.pago.montoEfectivo)      document.getElementById('montoEfectivo').value      = extra.pago.montoEfectivo;
+        if (extra.pago.transferReferencia) document.getElementById('transferReferencia').value = extra.pago.transferReferencia;
+        if (extra.pago.mixtoEfectivo)      document.getElementById('mixtoEfectivo').value      = extra.pago.mixtoEfectivo;
+    }
+
+    // Forzar repintado real de un checkbox: leer offsetHeight solo recalcula layout,
+    // pero el widget nativo a veces no se repinta si el cambio viene solo de script.
+    // Sacarlo del flujo (display:none) y reinsertarlo obliga al navegador a redibujarlo.
+    function forzarRepaintCheckbox(el) {
+        const displayOriginal = el.style.display;
+        el.style.display = 'none';
+        void el.offsetHeight;
+        el.style.display = displayOriginal;
+    }
+
+    // El checkbox/porcentaje de descuento se restauran al final para que nada
+    // de lo anterior (seleccionarCliente, seleccionarMetodo) lo pise con su valor por defecto.
+    if (extra.clienteActual && extra.descCliente) {
+        const chkDescCliente = document.getElementById('aplicarDescCliente');
+        chkDescCliente.checked = !!extra.descCliente.aplicar;
+        forzarRepaintCheckbox(chkDescCliente);
+        if (extra.descCliente.porc !== '') document.getElementById('porcDescCliente').value = extra.descCliente.porc;
+    }
+
+    if (extra.ajusteDanoActivo) {
+        const chkDano = document.getElementById('chkAjusteDano');
+        chkDano.checked = true;
+        forzarRepaintCheckbox(chkDano);
+        // Si algún producto del carrito ya tiene un ajuste aplicado, dejarlo preseleccionado
+        const idxDanado = carrito.findIndex(item => item.ajuste_activo);
+        if (idxDanado >= 0) idxAjusteActual = idxDanado;
+        togglePanelAjuste(true);
+    }
+
+    recalcularTodo();
+})();
 </script>
 </body>
 </html>

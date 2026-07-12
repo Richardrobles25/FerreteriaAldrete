@@ -30,6 +30,8 @@ function timeToMinutes(string $t): int {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requerirCSRF($_POST['_token'] ?? '', 'formAsistencia.php');
+
     $empleado_id   = intval($_POST['empleado_id']  ?? 0);
     $fecha         = trim($_POST['fecha']          ?? '');
     $tipo          = trim($_POST['tipo']           ?? '');
@@ -43,11 +45,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $tfSalidas   = $_POST['tf_salida']  ?? [];
     $tfRegresos  = $_POST['tf_regreso'] ?? [];
 
+    // Tardanza y Salida temprana ya no se ofrecen (las cubre Tiempo fuera),
+    // pero siguen siendo validas para poder editar registros antiguos
     $tiposValidos     = ['Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
     $resolucionesVal  = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
 
     if (!$empleado_id)                          $errores[] = 'Selecciona un empleado.';
     if (!$fecha || !strtotime($fecha))          $errores[] = 'La fecha no es valida.';
+
+    // Un solo registro por empleado por fecha (al editar se excluye el registro actual)
+    if ($empleado_id && $fecha) {
+        $stmtDup = $pdo->prepare("SELECT COUNT(*) FROM asistencia WHERE empleado_id = ? AND fecha = ? AND asistencia_id != ?");
+        $stmtDup->execute([$empleado_id, $fecha, $asistencia_id]);
+        if ($stmtDup->fetchColumn() > 0) {
+            $errores[] = 'Este empleado ya tiene un registro en esa fecha. Edita el registro existente en lugar de crear otro.';
+        }
+    }
     if (!in_array($tipo, $tiposValidos))        $errores[] = 'El tipo no es valido.';
     if (!in_array($resolucion, $resolucionesVal)) $errores[] = 'La resolucion no es valida.';
 
@@ -55,10 +68,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$hora_entrada) $errores[] = 'La hora de entrada es obligatoria.';
         if (!$hora_salida)  $errores[] = 'La hora de salida es obligatoria.';
         if ($hora_entrada && $hora_salida && timeToMinutes($hora_salida) <= timeToMinutes($hora_entrada))
-            $errores[] = 'La hora de salida debe ser mayor a la de entrada.';
-    }
-    if ($tipo !== 'Falta' && $tipo !== 'Asistencia normal' && $hora_entrada && $hora_salida) {
-        if (timeToMinutes($hora_salida) <= timeToMinutes($hora_entrada))
             $errores[] = 'La hora de salida debe ser mayor a la de entrada.';
     }
 
@@ -139,19 +148,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        header('Location: asistencia.php');
+        header('Location: asistencia.php?msg=registrado');
         exit();
     }
 }
 
 $empleados   = $pdo->query("SELECT empleado_id, nombre FROM empleados WHERE activo=1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
-$tipos       = ['Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'];
+$tipos       = ['Asistencia normal','Falta','Tiempo fuera','Horas extra'];
+// Si se edita un registro antiguo con un tipo retirado, mantenerlo en el combo
+if ($editando && !in_array($editando['tipo'], $tipos)) $tipos[] = $editando['tipo'];
 $resoluciones = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
 
 $v = [
     'empleado_id'  => $_POST['empleado_id']  ?? $editando['empleado_id']  ?? '',
     'fecha'        => $_POST['fecha']        ?? $editando['fecha']        ?? date('Y-m-d'),
-    'tipo'         => $_POST['tipo']         ?? $editando['tipo']         ?? 'Tardanza',
+    'tipo'         => $_POST['tipo']         ?? $editando['tipo']         ?? 'Asistencia normal',
     'hora_entrada' => $_POST['hora_entrada'] ?? ($editando && $editando['hora_entrada'] ? substr($editando['hora_entrada'], 0, 5) : ''),
     'hora_salida'  => $_POST['hora_salida']  ?? ($editando && $editando['hora_salida']  ? substr($editando['hora_salida'],  0, 5) : ''),
     'razon'        => $_POST['razon']        ?? $editando['razon']        ?? '',
@@ -177,6 +188,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
+
+// Vacaciones aprobadas (para aviso en frontend al seleccionar empleado + fecha)
+$vacAprobadas = $pdo->query("
+    SELECT empleado_id, fecha_inicio, fecha_fin FROM vacaciones WHERE estado = 'Aprobado'
+")->fetchAll(PDO::FETCH_ASSOC);
+
+// Fechas que ya tienen registro por empleado (para bloquearlas en el formulario)
+$fechasOcupadas = [];
+foreach ($pdo->query("SELECT empleado_id, fecha, asistencia_id FROM asistencia")->fetchAll(PDO::FETCH_ASSOC) as $fo) {
+    $fechasOcupadas[$fo['empleado_id']][$fo['fecha']] = intval($fo['asistencia_id']);
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -219,7 +241,8 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     .section-label { font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 10px; border-top: 1px solid #f0f0f0; padding-top: 14px; }
     .tf-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
-    .tf-row input { flex: 1; }
+    .tf-row input { flex: 1; padding: 10px 12px; border: 1px solid #ddd; border-radius: 7px; font-size: 13px; font-family: Arial, sans-serif; }
+    .tf-row input:focus { outline: none; border-color: #14ace7; }
     .tf-sep { font-size: 12px; color: #bbb; white-space: nowrap; }
     .btn-rm-tf { background: #fff0f0; border: 1px solid #fdd; color: #c0392b; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0; }
     .btn-add-tf { background: #eef8ff; border: 1px solid #cce5f7; color: #14ace7; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; margin-top: 4px; }
@@ -271,6 +294,7 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
             <?php endif; ?>
 
             <form method="POST" id="mainForm">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <?php if ($esEdicion): ?>
                     <input type="hidden" name="asistencia_id" value="<?= $editando['asistencia_id'] ?>">
                 <?php endif; ?>
@@ -278,7 +302,7 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
                 <div class="form-row">
                     <div class="form-group">
                         <label>Empleado</label>
-                        <select name="empleado_id" required>
+                        <select name="empleado_id" id="selEmpleado" required onchange="verificarVacacion(); verificarFechaOcupada();">
                             <option value="">-- Seleccionar --</option>
                             <?php foreach ($empleados as $emp): ?>
                                 <option value="<?= $emp['empleado_id'] ?>" <?= $v['empleado_id'] == $emp['empleado_id'] ? 'selected' : '' ?>><?= htmlspecialchars($emp['nombre']) ?></option>
@@ -291,6 +315,14 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
                     </div>
                 </div>
 
+                <div id="avisoVacacion" style="display:none;background:#fff9e6;border:1px solid #f0b429;border-radius:7px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#b7860b;">
+                    <strong>Atenci&oacute;n:</strong> este empleado tiene vacaciones aprobadas para esta fecha. Verifica que corresponda registrar un incidente.
+                </div>
+
+                <div id="avisoFechaOcupada" style="display:none;background:#fff0f0;border:1px solid #fdd;border-radius:7px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#c0392b;">
+                    <strong>Fecha no disponible:</strong> este empleado ya tiene un registro en ese dia. Editalo desde la bitacora en lugar de crear otro.
+                </div>
+
                 <div class="form-group">
                     <label>Tipo de incidente</label>
                     <select name="tipo" id="selectTipo" required onchange="actualizarVista()">
@@ -300,27 +332,25 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
                     </select>
                 </div>
 
-                <!-- Info asistencia normal -->
-                <div id="infoNormal" style="display:none;background:#f0fff0;border:1px solid #b7dfb8;border-radius:7px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#1e8449;">
-                    Dia completo: si no capturas horas, el sistema asume que trabajo sus horas esperadas (9 hrs entre semana, 6 hrs sabado). Puedes capturar las horas reales si quieres mayor detalle.
-                </div>
+                <!-- Cuadro informativo contextual (se actualiza según el tipo) -->
+                <div id="infoContextual" style="display:none;border-radius:7px;padding:10px 14px;margin-bottom:14px;font-size:13px;"></div>
 
-                <!-- Seccion tiempos (oculta para Falta) -->
+                <!-- Seccion tiempos -->
                 <div id="seccionTiempos">
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Hora de entrada</label>
+                            <label id="lblEntrada">Hora de entrada</label>
                             <input type="time" name="hora_entrada" id="horaEntrada" value="<?= htmlspecialchars($v['hora_entrada']) ?>" onchange="calcular()">
                         </div>
                         <div class="form-group">
-                            <label>Hora de salida</label>
+                            <label id="lblSalida">Hora de salida</label>
                             <input type="time" name="hora_salida" id="horaSalida" value="<?= htmlspecialchars($v['hora_salida']) ?>" onchange="calcular()">
                         </div>
                     </div>
 
-                    <!-- Tiempos fuera (para todos los tipos excepto Falta) -->
+                    <!-- Intervalos de tiempo fuera (solo visible para tipo "Tiempo fuera") -->
                     <div id="seccionTF">
-                        <div class="section-label">Intervalos de tiempo fuera <span style="font-weight:400;text-transform:none;color:#bbb;">(opcional — turno partido, descansos, etc.)</span></div>
+                        <div class="section-label">Intervalos fuera <span style="font-weight:400;text-transform:none;color:#bbb;">— registra cada salida y regreso</span></div>
                         <div id="tfContainer">
                             <?php foreach ($intervalosForm as $idx => $intv): ?>
                             <div class="tf-row">
@@ -356,9 +386,9 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Razon</label>
-                    <input type="text" name="razon" value="<?= htmlspecialchars($v['razon']) ?>" placeholder="Ej. Llegó tarde por trafico" maxlength="500">
+                <div class="form-group" id="grupoRazon">
+                    <label id="lblRazon">Razon</label>
+                    <input type="text" name="razon" id="inputRazon" value="<?= htmlspecialchars($v['razon']) ?>" placeholder="" maxlength="500">
                 </div>
 
                 <div class="form-group">
@@ -378,35 +408,93 @@ if (!$intervalosForm) $intervalosForm[] = ['salida' => '', 'regreso' => ''];
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
+var tipoConfig = {
+    'Asistencia normal': {
+        tiempos: false, intervalos: false, required: false,
+        entrada: '',                       salida: '',
+        razon: 'Notas del dia',           razonPh: 'Ej. Sin novedad (opcional)',
+        infoColor: { bg:'#f0fff0', border:'#b7dfb8', text:'#1e8449' },
+        info: 'Dia completo sin incidente: se registran las horas esperadas completas (9 hrs entre semana, 6 hrs sabado).'
+    },
+    'Tardanza': {
+        tiempos: true,  intervalos: false, required: true,
+        entrada: 'Hora real de llegada',  salida: 'Hora de salida',
+        razon: 'Motivo de la tardanza',   razonPh: 'Ej. Trafico, transporte, se le paso...',
+        infoColor: { bg:'#fff9e6', border:'#f0b429', text:'#b7860b' },
+        info: 'Captura la hora real a la que llego el empleado para calcular automaticamente las horas no trabajadas.'
+    },
+    'Falta': {
+        tiempos: false, intervalos: false, required: false,
+        entrada: '',                       salida: '',
+        razon: 'Motivo de la falta',      razonPh: 'Ej. Enfermedad, permiso sin goce...',
+        infoColor: { bg:'#fff0f0', border:'#fdd', text:'#c0392b' },
+        info: 'Se contara el dia completo como no trabajado (9 hrs entre semana, 6 hrs sabado).'
+    },
+    'Salida temprana': {
+        tiempos: true,  intervalos: false, required: true,
+        entrada: 'Hora de entrada',        salida: 'Hora de salida anticipada',
+        razon: 'Motivo de la salida',      razonPh: 'Ej. Cita medica, emergencia familiar...',
+        infoColor: { bg:'#fff9e6', border:'#f0b429', text:'#b7860b' },
+        info: 'Captura la hora a la que el empleado salio antes de terminar su jornada.'
+    },
+    'Tiempo fuera': {
+        tiempos: true,  intervalos: true,  required: true,
+        entrada: 'Hora real de llegada',   salida: 'Hora real de salida',
+        razon: 'Motivo del tiempo fuera',  razonPh: 'Ej. Llego tarde, salio antes, mandado, cita medica...',
+        infoColor: { bg:'#fff9e6', border:'#f0b429', text:'#b7860b' },
+        info: 'Captura las horas reales de llegada y salida (cubre tardanzas y salidas tempranas). Si ademas salio a media jornada, registra abajo cada intervalo fuera.'
+    },
+    'Horas extra': {
+        tiempos: true,  intervalos: true,  required: true,
+        entrada: 'Hora de entrada',        salida: 'Hora de salida real',
+        razon: 'Motivo de las horas extra', razonPh: 'Ej. Pedido urgente, inventario, cierre...',
+        infoColor: { bg:'#f0fff0', border:'#b7dfb8', text:'#1e8449' },
+        info: 'Las horas por encima de la jornada se pagan al 1.5x de la tarifa normal.'
+    }
+};
+
 function actualizarVista() {
     var tipo = document.getElementById('selectTipo').value;
-    var secTiempos = document.getElementById('seccionTiempos');
-    var secTF      = document.getElementById('seccionTF');
-    var lblEntrada = document.querySelector('label[for_entrada]') || document.querySelector('#seccionTiempos .form-row .form-group:first-child label');
+    var cfg  = tipoConfig[tipo] || tipoConfig['Asistencia normal'];
 
-    if (tipo === 'Falta') {
-        secTiempos.classList.add('hidden');
-        secTF.classList.add('hidden');
-    } else {
-        secTiempos.classList.remove('hidden');
-        secTF.classList.remove('hidden');
+    // Mostrar / ocultar secciones
+    document.getElementById('seccionTiempos').classList.toggle('hidden', !cfg.tiempos);
+    document.getElementById('seccionTF').classList.toggle('hidden', !cfg.intervalos);
+
+    // Si las horas quedan ocultas, limpiarlas para que no se envien valores viejos
+    if (!cfg.tiempos) {
+        document.getElementById('horaEntrada').value = '';
+        document.getElementById('horaSalida').value  = '';
     }
 
-    // Para asistencia normal, las horas son opcionales
-    var esNormal = tipo === 'Asistencia normal';
-    var inputs = document.querySelectorAll('#seccionTiempos input[type=time]');
-    inputs.forEach(function(inp) {
-        if (esNormal) {
-            inp.removeAttribute('required');
-            inp.placeholder = 'Opcional';
-        } else {
-            inp.placeholder = '';
-        }
-    });
+    // Required en hora entrada/salida
+    var horaEnt = document.getElementById('horaEntrada');
+    var horaSal = document.getElementById('horaSalida');
+    if (cfg.required) {
+        horaEnt.setAttribute('required', '');
+        horaSal.setAttribute('required', '');
+        horaEnt.removeAttribute('placeholder');
+        horaSal.removeAttribute('placeholder');
+    } else {
+        horaEnt.removeAttribute('required');
+        horaSal.removeAttribute('required');
+        horaEnt.placeholder = 'Opcional';
+        horaSal.placeholder = 'Opcional';
+    }
 
-    // Etiqueta informativa
-    var infoNormal = document.getElementById('infoNormal');
-    if (infoNormal) infoNormal.style.display = esNormal ? 'block' : 'none';
+    // Labels dinámicos
+    document.getElementById('lblEntrada').textContent = cfg.entrada;
+    document.getElementById('lblSalida').textContent  = cfg.salida;
+    document.getElementById('lblRazon').textContent   = cfg.razon;
+    document.getElementById('inputRazon').placeholder = cfg.razonPh;
+
+    // Cuadro informativo contextual
+    var box = document.getElementById('infoContextual');
+    box.textContent         = cfg.info;
+    box.style.display       = 'block';
+    box.style.background    = cfg.infoColor.bg;
+    box.style.border        = '1px solid ' + cfg.infoColor.border;
+    box.style.color         = cfg.infoColor.text;
 
     calcular();
 }
@@ -436,6 +524,13 @@ function calcular() {
     if (tipo === 'Falta') {
         document.getElementById('calcTrabajadas').textContent   = '0 h';
         document.getElementById('calcNoTrabajadas').textContent = esperadas + ' h';
+        document.getElementById('calcExtra').textContent        = '0 h';
+        return;
+    }
+
+    if (tipo === 'Asistencia normal') {
+        document.getElementById('calcTrabajadas').textContent   = esperadas + ' h';
+        document.getElementById('calcNoTrabajadas').textContent = '0 h';
         document.getElementById('calcExtra').textContent        = '0 h';
         return;
     }
@@ -489,9 +584,52 @@ function quitarTF(btn) {
     }
 }
 
+// Vacaciones aprobadas para verificar en frontend
+var vacAprobadas = <?= json_encode(array_map(fn($v) => [
+    'empleado_id'  => (string)$v['empleado_id'],
+    'fecha_inicio' => $v['fecha_inicio'],
+    'fecha_fin'    => $v['fecha_fin'],
+], $vacAprobadas)) ?>;
+
+function verificarVacacion() {
+    var empId = document.getElementById('selEmpleado').value;
+    var fecha = document.getElementById('inputFecha').value;
+    var aviso = document.getElementById('avisoVacacion');
+    if (!empId || !fecha) { aviso.style.display = 'none'; return; }
+    var enVacacion = vacAprobadas.some(function(v) {
+        return v.empleado_id === empId && fecha >= v.fecha_inicio && fecha <= v.fecha_fin;
+    });
+    aviso.style.display = enVacacion ? 'block' : 'none';
+}
+
+// Fechas con registro existente por empleado: { empleado_id: { 'YYYY-MM-DD': asistencia_id } }
+var fechasOcupadas = <?= json_encode($fechasOcupadas) ?>;
+var editandoId     = <?= $editando ? intval($editando['asistencia_id']) : 0 ?>;
+
+function verificarFechaOcupada() {
+    var empId = document.getElementById('selEmpleado').value;
+    var fechaInput = document.getElementById('inputFecha');
+    var fecha = fechaInput.value;
+    var aviso = document.getElementById('avisoFechaOcupada');
+
+    var ocupada = empId && fecha
+        && fechasOcupadas[empId]
+        && fechasOcupadas[empId][fecha]
+        && fechasOcupadas[empId][fecha] !== editandoId;
+
+    if (ocupada) {
+        aviso.style.display = 'block';
+        fechaInput.value = '';
+    } else {
+        aviso.style.display = 'none';
+    }
+}
+
 // Init on load
 actualizarVista();
-document.getElementById('inputFecha').addEventListener('change', calcular);
+document.getElementById('inputFecha').addEventListener('change', function() { verificarFechaOcupada(); calcular(); verificarVacacion(); });
+verificarVacacion();
+verificarFechaOcupada();
 </script>
 </body>
 </html>

@@ -267,7 +267,7 @@ if (isset($_GET['get_creditos_cliente'])) {
 
 // Clientes con deuda activa (globales — un cliente puede tener créditos en varias sucursales)
 $stmt = $pdo->prepare("
-    SELECT c.cliente_id, c.nombre_completo, c.telefono,
+    SELECT c.cliente_id, c.nombre_completo, c.telefono, c.activo,
            COUNT(cr.credito_id)                                      AS num_creditos,
            SUM(cr.saldo_pendiente)                                   AS total_pendiente,
            MIN(cr.created_at)                                        AS primer_credito,
@@ -280,7 +280,9 @@ $stmt = $pdo->prepare("
     ORDER BY tiene_vencido DESC, total_pendiente DESC
 ");
 $stmt->execute();
-$clientesDeuda = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$clientesDeudaTodos     = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$clientesDeuda          = array_values(array_filter($clientesDeudaTodos, fn($cl) => $cl['activo']));
+$clientesDeudaInactivos = array_values(array_filter($clientesDeudaTodos, fn($cl) => !$cl['activo']));
 
 // Estadísticas globales de créditos (todas las sucursales)
 $totales = $pdo->query("
@@ -594,6 +596,63 @@ $totales = $pdo->query("
                 </tbody>
             </table>
         </div>
+
+        <?php if (count($clientesDeudaInactivos) > 0): ?>
+        <!-- Clientes inactivos (eliminados) que aún deben dinero -->
+        <div class="tabla-top" style="margin-top:24px;">
+            <h3 style="font-size:14px;color:#666;">Clientes inactivos con deuda pendiente</h3>
+        </div>
+        <div class="tabla-wrapper">
+            <table class="tabla-creditos">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Cliente</th>
+                        <th>Créditos</th>
+                        <th>Total pendiente</th>
+                        <th>Próximo vencimiento</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($clientesDeudaInactivos as $i => $cl): ?>
+                    <tr style="opacity:0.7;">
+                        <td style="color:#bbb;font-size:12px;"><?= $i + 1 ?></td>
+                        <td>
+                            <div style="font-weight:700;color:#222;">
+                                <?= htmlspecialchars($cl['nombre_completo']) ?>
+                                <span style="font-size:10px;background:#f5f5f5;color:#999;padding:1px 6px;border-radius:99px;margin-left:5px;">Inactivo</span>
+                            </div>
+                            <?php if ($cl['telefono']): ?>
+                                <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($cl['telefono']) ?></div>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= intval($cl['num_creditos']) ?></td>
+                        <td style="font-weight:700;color:#c0392b;">$<?= number_format($cl['total_pendiente'], 2) ?></td>
+                        <td>
+                            <?php if ($cl['proxima_fecha']): ?>
+                                <?= date('d/m/Y', strtotime($cl['proxima_fecha'])) ?>
+                            <?php else: ?>
+                                <span style="color:#ccc;">—</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if ($cl['tiene_vencido']): ?>
+                                <span class="badge-vencido">Vencido</span>
+                            <?php else: ?>
+                                <span class="badge-activo-tbl">Activo</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <button class="btn-cobrar" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver / Cobrar</button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
 
     </div>
 </div>

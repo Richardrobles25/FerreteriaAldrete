@@ -19,6 +19,8 @@ if ($esEdicion) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requerirCSRF($_POST['_token'] ?? '', 'formEmpleado.php');
+
     $nombre         = trim($_POST['nombre']         ?? '');
     $fecha_ingreso  = trim($_POST['fecha_ingreso']  ?? '');
     $sueldo_semanal = floatval(str_replace(',', '', $_POST['sueldo_semanal'] ?? 0));
@@ -27,6 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($nombre === '')                                    $errores[] = 'El nombre es obligatorio.';
     if (!$fecha_ingreso || !strtotime($fecha_ingreso))    $errores[] = 'La fecha de ingreso no es valida.';
+    elseif ($fecha_ingreso > date('Y-m-d'))               $errores[] = 'La fecha de ingreso no puede ser en el futuro.';
     if ($sueldo_semanal <= 0)                             $errores[] = 'El sueldo semanal debe ser mayor a $0.';
 
     if (empty($errores)) {
@@ -35,13 +38,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 UPDATE empleados SET nombre=?, fecha_ingreso=?, sueldo_semanal=?, activo=?
                 WHERE empleado_id=?
             ")->execute([$nombre, $fecha_ingreso, $sueldo_semanal, $activo, $empleado_id]);
+            header('Location: empleados.php?msg=actualizado');
         } else {
             $pdo->prepare("
                 INSERT INTO empleados (nombre, fecha_ingreso, sueldo_semanal, activo)
                 VALUES (?, ?, ?, 1)
             ")->execute([$nombre, $fecha_ingreso, $sueldo_semanal]);
+            header('Location: empleados.php?msg=registrado');
         }
-        header('Location: empleados.php');
         exit();
     }
 }
@@ -137,6 +141,7 @@ $v = [
             <?php endif; ?>
 
             <form method="POST">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <?php if ($esEdicion): ?>
                     <input type="hidden" name="empleado_id" value="<?= $editando['empleado_id'] ?>">
                 <?php endif; ?>
@@ -148,7 +153,7 @@ $v = [
 
                 <div class="form-group">
                     <label>Fecha de ingreso</label>
-                    <input type="date" name="fecha_ingreso" value="<?= htmlspecialchars($v['fecha_ingreso']) ?>" required>
+                    <input type="date" name="fecha_ingreso" value="<?= htmlspecialchars($v['fecha_ingreso']) ?>" max="<?= date('Y-m-d') ?>" required>
                 </div>
 
                 <div class="form-group">

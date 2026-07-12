@@ -52,21 +52,6 @@ $empleados = $pdo->query("
     ORDER BY e.nombre
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Handle resolucion semanal por empleado (POST)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['resolver_empleado'])) {
-    $eid       = intval($_POST['empleado_id']);
-    $resolucion = trim($_POST['resolucion_semana']);
-    $resVal    = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
-    if (in_array($resolucion, $resVal)) {
-        $pdo->prepare("
-            UPDATE asistencia SET resolucion = ?
-            WHERE empleado_id = ? AND fecha BETWEEN ? AND ?
-        ")->execute([$resolucion, $eid, $lunes, $sabado]);
-    }
-    header('Location: semanaLaboral.php?semana=' . $lunes);
-    exit();
-}
-
 // Registros de asistencia acumulados hasta el corte
 // DAYOFWEEK: 1=Dom, 2=Lun...7=Sab → sabado=7 → 6hrs, resto=9hrs
 $stmtA = $pdo->prepare("
@@ -79,9 +64,7 @@ $stmtA = $pdo->prepare("
                     - horas_no_trabajadas + horas_extra
                ELSE 0 END)         AS total_horas_trabajadas,
            SUM(CASE WHEN tipo = 'Asistencia normal' THEN 1 ELSE 0 END) AS dias_normales,
-           SUM(CASE WHEN tipo = 'Falta'             THEN 1 ELSE 0 END) AS dias_falta,
-           SUM(CASE WHEN resolucion != 'Pendiente' AND tipo != 'Asistencia normal' THEN 1 ELSE 0 END) AS resueltos,
-           SUM(CASE WHEN tipo != 'Asistencia normal' AND tipo != 'Falta' THEN 1 ELSE 0 END) AS total_incidentes
+           SUM(CASE WHEN tipo = 'Falta'             THEN 1 ELSE 0 END) AS dias_falta
     FROM asistencia
     WHERE fecha BETWEEN ? AND ?
     GROUP BY empleado_id
@@ -109,10 +92,7 @@ foreach ($empleados as $emp) {
     $horasTrabajadas = floatval($asistenciaMap[$eid]['total_horas_trabajadas'] ?? 0);
     $diasNormales    = intval($asistenciaMap[$eid]['dias_normales']          ?? 0);
     $diasFalta       = intval($asistenciaMap[$eid]['dias_falta']             ?? 0);
-    $totalInc        = intval($asistenciaMap[$eid]['total_incidentes']       ?? 0);
-    $resueltos       = intval($asistenciaMap[$eid]['resueltos']              ?? 0);
     $totalReg        = intval($asistenciaMap[$eid]['total_registros']        ?? 0);
-    $todoResuelto    = $totalInc > 0 && $resueltos === $totalInc;
 
     $horasCompensadas   = min($horasNT, $horasExtra);
     $horasNetaDeducir   = round($horasNT    - $horasCompensadas, 2);
@@ -143,10 +123,84 @@ foreach ($empleados as $emp) {
         'deduccion'        => $deduccion,
         'bono'             => $bono,
         'pago_final'       => $pagoFinal,
-        'total_inc'        => $totalInc,
-        'todo_resuelto'    => $todoResuelto,
     ];
 }
+
+// Vacaciones aprobadas que caen en esta semana
+$stmtVac = $pdo->prepare("
+    SELECT empleado_id,
+           GREATEST(fecha_inicio, ?) AS desde,
+           LEAST(fecha_fin,    ?)    AS hasta
+    FROM vacaciones
+    WHERE estado = 'Aprobado'
+      AND fecha_inicio <= ?
+      AND fecha_fin    >= ?
+");
+$stmtVac->execute([$lunes, $sabado, $sabado, $lunes]);
+$vacMap = [];
+foreach ($stmtVac->fetchAll(PDO::FETCH_ASSOC) as $vr) {
+    $dias = (new DateTime($vr['desde']))->diff(new DateTime($vr['hasta']))->days + 1;
+    $vacMap[$vr['empleado_id']] = ($vacMap[$vr['empleado_id']] ?? 0) + $dias;
+}
+
+// Adelantos por empleado de ESTA semana (el adelanto se descuenta del sueldo
+// de la semana en que se pidio, sin importar si ya se marco liquidado)
+$stmtAdel = $pdo->prepare("
+    SELECT empleado_id, SUM(monto) AS total
+    FROM adelantos_sueldo
+    WHERE fecha BETWEEN ? AND ?
+    GROUP BY empleado_id
+");
+$stmtAdel->execute([$lunes, $sabado]);
+$adelantosMap = [];
+foreach ($stmtAdel->fetchAll(PDO::FETCH_ASSOC) as $ar) {
+    $adelantosMap[$ar['empleado_id']] = floatval($ar['total']);
+}
+
+// Registrar pago de nomina (se coloca aqui porque necesita $filas y $adelantosMap ya calculados)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pagar_empleado'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'semanaLaboral.php');
+    $eidPago = intval($_POST['empleado_id']);
+
+    $filaPago = null;
+    foreach ($filas as $f) {
+        if ($f['empleado_id'] === $eidPago) { $filaPago = $f; break; }
+    }
+
+    if ($filaPago) {
+        $adelantoPago = $adelantosMap[$eidPago] ?? 0;
+        $montoPagado  = max(0, $filaPago['pago_final'] - $adelantoPago);
+        try {
+            $pdo->prepare("
+                INSERT INTO pagos_nomina (empleado_id, semana_inicio, sueldo_base, deduccion, bono, adelanto_descontado, monto_pagado)
+                VALUES (?,?,?,?,?,?,?)
+            ")->execute([$eidPago, $lunes, $filaPago['sueldo'], $filaPago['deduccion'], $filaPago['bono'], $adelantoPago, $montoPagado]);
+
+            // El pago ya descuenta el adelanto de la semana: liquidarlo automaticamente
+            $pdo->prepare("
+                UPDATE adelantos_sueldo SET estado = 'Liquidado'
+                WHERE empleado_id = ? AND fecha BETWEEN ? AND ? AND estado = 'Pendiente'
+            ")->execute([$eidPago, $lunes, $sabado]);
+
+            header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=pagado');
+        } catch (PDOException $e) {
+            // Clave unica: ya existe un pago de esa semana para ese empleado
+            header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=ya_pagado');
+        }
+        exit();
+    }
+    header('Location: semanaLaboral.php?semana=' . $lunes);
+    exit();
+}
+
+// Pagos ya registrados de esta semana
+$stmtPagos = $pdo->prepare("SELECT * FROM pagos_nomina WHERE semana_inicio = ?");
+$stmtPagos->execute([$lunes]);
+$pagosMap = [];
+foreach ($stmtPagos->fetchAll(PDO::FETCH_ASSOC) as $pg) {
+    $pagosMap[$pg['empleado_id']] = $pg;
+}
+$totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']), $pagosMap));
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -186,6 +240,8 @@ foreach ($empleados as $emp) {
     .nav-semana h3 { flex: 1; text-align: center; font-size: 14px; color: #222; font-weight: 700; }
     .nav-semana input[type=date] { padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .nav-semana button { background: #14ace7; color: white; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
+    .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     .stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
     .stat { background: white; border-radius: 8px; padding: 14px 20px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; flex: 1; min-width: 120px; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; }
@@ -195,7 +251,7 @@ foreach ($empleados as $emp) {
     .stat.verde { border-top-color: #27ae60; }
     .stat.verde h3 { color: #1e8449; }
     .tabla-wrapper { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: auto; }
-    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
     thead { background: #f9f9f9; }
     th { padding: 11px 12px; text-align: left; font-size: 10px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid #eee; white-space: nowrap; }
     td { padding: 11px 12px; font-size: 12px; color: #444; border-bottom: 0.5px solid #f5f5f5; vertical-align: middle; white-space: nowrap; }
@@ -210,8 +266,10 @@ foreach ($empleados as $emp) {
     .pago-mas { color: #1e8449; }
     .pago-menos { color: #c0392b; }
     .sin-inc { color: #bbb; font-size: 11px; }
-    .btn-resolver { background: #fff9e6; border: 1px solid #f0b429; color: #b7860b; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600; white-space: nowrap; }
-    .btn-resolver:hover { background: #fef3cd; }
+    .btn-pagar { background: #27ae60; border: none; color: white; padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .btn-pagar:hover { background: #1e8449; }
+    .pagado-chip { font-size: 11px; color: #1e8449; font-weight: 600; white-space: nowrap; }
+    .pagado-fecha { font-size: 10px; color: #aaa; margin-top: 2px; }
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 500; align-items: center; justify-content: center; }
     .modal-overlay.visible { display: flex; }
     .modal { background: white; border-radius: 10px; padding: 24px; width: 360px; max-width: 90%; }
@@ -248,6 +306,12 @@ foreach ($empleados as $emp) {
     </div>
 
     <div class="content">
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'pagado'): ?>
+            <div class="msg msg-exito">Pago registrado correctamente. El adelanto de la semana (si habia) quedo liquidado.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'ya_pagado'): ?>
+            <div class="msg" style="background:#fff9e6;color:#b7860b;border-left:3px solid #f0b429;">Este empleado ya tiene un pago registrado para esta semana.</div>
+        <?php endif; ?>
+
         <!-- Navegacion de semana -->
         <div class="nav-semana">
             <a href="semanaLaboral.php?semana=<?= $semanaAnterior ?>">&larr; Anterior</a>
@@ -286,6 +350,10 @@ foreach ($empleados as $emp) {
                 <p>Total a pagar</p>
                 <h3>$<?= number_format($totalFinal, 2) ?></h3>
             </div>
+            <div class="stat verde">
+                <p>Pagado esta semana</p>
+                <h3>$<?= number_format($totalPagadoSemana, 2) ?> <span style="font-size:11px;font-weight:400;color:#999;">(<?= count($pagosMap) ?>/<?= count($filas) ?> empleados)</span></h3>
+            </div>
         </div>
 
         <!-- Tabla por empleado -->
@@ -298,19 +366,22 @@ foreach ($empleados as $emp) {
                         <th>Hrs trabajadas</th>
                         <th>Hrs no trab.</th>
                         <th>Hrs extra</th>
-                        <th>Hrs compensadas</th>
-                        <th>A deducir</th>
-                        <th>Extra neta</th>
-                        <th>Deduccion ($)</th>
-                        <th>Bono extra ($)</th>
+                        <th>Ajuste ($)</th>
                         <th>Pago final</th>
-                        <th>Estado semana</th>
+                        <th>Pago</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($filas as $f): ?>
                 <tr>
-                    <td style="font-weight:600;"><?= htmlspecialchars($f['empleado']) ?></td>
+                    <td style="font-weight:600;">
+                        <?= htmlspecialchars($f['empleado']) ?>
+                        <?php if (isset($vacMap[$f['empleado_id']])): ?>
+                            <div style="font-size:10px;background:#eef8ff;color:#1a7db5;border:1px solid #cce5f7;border-radius:99px;padding:1px 8px;display:inline-block;margin-top:3px;white-space:nowrap;">
+                                De vacaciones &mdash; <?= $vacMap[$f['empleado_id']] ?> d&iacute;a<?= $vacMap[$f['empleado_id']] != 1 ? 's' : '' ?> esta semana
+                            </div>
+                        <?php endif; ?>
+                    </td>
                     <td>$<?= number_format($f['sueldo'], 2) ?></td>
                     <td>
                         <?php if ($f['total_reg'] > 0): ?>
@@ -325,37 +396,62 @@ foreach ($empleados as $emp) {
                     </td>
                     <td><?= $f['horas_nt'] > 0 ? '<span class="num-rojo">' . number_format($f['horas_nt'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
                     <td><?= $f['horas_extra'] > 0 ? '<span class="num-verde">+' . number_format($f['horas_extra'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
-                    <td><?= $f['horas_comp'] > 0 ? '<span class="num-azul">' . number_format($f['horas_comp'], 2) . ' h</span>' : '<span class="sin-inc">—</span>' ?></td>
-                    <td><?= $f['horas_neta_ded'] > 0 ? '<span class="num-rojo">' . number_format($f['horas_neta_ded'], 2) . ' h</span>' : '<span class="sin-inc">—</span>' ?></td>
-                    <td><?= $f['horas_extra_neta'] > 0 ? '<span class="num-verde">+' . number_format($f['horas_extra_neta'], 2) . ' h</span>' : '<span class="sin-inc">—</span>' ?></td>
-                    <td><?= $f['deduccion'] > 0 ? '<span class="num-rojo">-$' . number_format($f['deduccion'], 2) . '</span>' : '<span class="sin-inc">—</span>' ?></td>
-                    <td><?= $f['bono'] > 0 ? '<span class="num-verde">+$' . number_format($f['bono'], 2) . '</span>' : '<span class="sin-inc">—</span>' ?></td>
+                    <td>
+                        <?php $ajuste = $f['bono'] - $f['deduccion']; ?>
+                        <?php if ($ajuste < 0): ?>
+                            <span class="num-rojo">-$<?= number_format(abs($ajuste), 2) ?></span>
+                        <?php elseif ($ajuste > 0): ?>
+                            <span class="num-verde">+$<?= number_format($ajuste, 2) ?></span>
+                        <?php else: ?>
+                            <span class="sin-inc">—</span>
+                        <?php endif; ?>
+                        <?php if ($f['horas_comp'] > 0): ?>
+                            <div style="font-size:10px;color:#1a7db5;margin-top:2px;"><?= number_format($f['horas_comp'], 2) ?> h compensadas</div>
+                        <?php endif; ?>
+                    </td>
                     <td>
                         <span class="pago-final <?= $f['pago_final'] < $f['sueldo'] ? 'pago-menos' : ($f['pago_final'] > $f['sueldo'] ? 'pago-mas' : '') ?>">
                             $<?= number_format($f['pago_final'], 2) ?>
                         </span>
+                        <?php
+                            $adelantoPend = $adelantosMap[$f['empleado_id']] ?? 0;
+                            if ($adelantoPend > 0):
+                                $pagoReal = max(0, $f['pago_final'] - $adelantoPend);
+                        ?>
+                            <div style="font-size:10px;color:#c0392b;margin-top:3px;">- $<?= number_format($adelantoPend, 2) ?> adelanto</div>
+                            <div style="font-size:12px;font-weight:700;color:#222;border-top:1px solid #eee;margin-top:2px;padding-top:2px;">= $<?= number_format($pagoReal, 2) ?></div>
+                        <?php endif; ?>
                     </td>
                     <td>
-                        <?php if ($f['total_inc'] === 0): ?>
-                            <span class="sin-inc">Sin incidentes</span>
-                        <?php elseif ($f['todo_resuelto']): ?>
-                            <span style="color:#27ae60;font-weight:600;font-size:11px;">&#10003; Resuelto</span>
+                        <?php
+                            $pagoReg      = $pagosMap[$f['empleado_id']] ?? null;
+                            $adelantoFila = $adelantosMap[$f['empleado_id']] ?? 0;
+                            $aPagar       = max(0, $f['pago_final'] - $adelantoFila);
+                        ?>
+                        <?php if ($pagoReg): ?>
+                            <div class="pagado-chip">&#10003; Pagado $<?= number_format($pagoReg['monto_pagado'], 2) ?></div>
+                            <div class="pagado-fecha"><?= date('d/m/Y H:i', strtotime($pagoReg['pagado_en'])) ?></div>
                         <?php else: ?>
-                            <button class="btn-resolver" onclick="abrirResolver(<?= $f['empleado_id'] ?>, '<?= htmlspecialchars(addslashes($f['empleado'])) ?>')">
-                                Resolver
-                            </button>
+                            <form method="POST" style="display:inline;"
+                                  onsubmit="return confirm('¿Registrar pago de $<?= number_format($aPagar, 2) ?> a <?= htmlspecialchars(addslashes($f['empleado']), ENT_QUOTES) ?> por la semana <?= $etiquetaSemana ?>?<?= $adelantoFila > 0 ? ' Se descuenta $' . number_format($adelantoFila, 2) . ' de adelanto y quedara liquidado.' : '' ?><?= !$semanaCompleta ? ' OJO: la semana aun esta en curso, el calculo es parcial.' : '' ?>')">
+                                <input type="hidden" name="pagar_empleado" value="1">
+                                <input type="hidden" name="empleado_id" value="<?= $f['empleado_id'] ?>">
+                                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                                <button type="submit" class="btn-pagar">Pagar $<?= number_format($aPagar, 2) ?></button>
+                            </form>
                         <?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; ?>
                 <?php if (count($filas) > 1): ?>
                 <tr class="tr-total">
-                    <td colspan="2">TOTAL</td>
+                    <td>TOTAL</td>
                     <td>$<?= number_format($totalSueldos, 2) ?></td>
-                    <td colspan="5"></td>
-                    <td><?= $totalDeducciones > 0 ? '-$' . number_format($totalDeducciones, 2) : '—' ?></td>
-                    <td><?= $totalBonos > 0 ? '+$' . number_format($totalBonos, 2) : '—' ?></td>
+                    <td colspan="3"></td>
+                    <?php $ajusteTotal = $totalBonos - $totalDeducciones; ?>
+                    <td><?= $ajusteTotal < 0 ? '-$' . number_format(abs($ajusteTotal), 2) : ($ajusteTotal > 0 ? '+$' . number_format($ajusteTotal, 2) : '—') ?></td>
                     <td>$<?= number_format($totalFinal, 2) ?></td>
+                    <td></td>
                 </tr>
                 <?php endif; ?>
                 </tbody>
@@ -363,49 +459,13 @@ foreach ($empleados as $emp) {
         </div>
 
         <div style="margin-top:12px;font-size:11px;color:#aaa;padding:0 4px;">
-            * Semana laboral de lunes a sabado (51 hrs). Tarifa hora normal = sueldo / 51. Tarifa hora extra = tarifa x 1.5. Las horas extra primero compensan horas debidas; el excedente se paga al 1.5x.
+            * Semana de lunes a sabado (51 hrs). El ajuste se calcula asi: las horas extra primero recuperan las horas debidas (compensadas); si aun debe horas se descuentan (sueldo/51 por hora) y si le sobran extras se pagan a 1.5x.
         </div>
-    </div>
-</div>
-
-<!-- Modal resolver semana -->
-<div class="modal-overlay" id="modalResolver">
-    <div class="modal">
-        <h3>Resolver semana</h3>
-        <p id="textoResolver">Marca como quedo la semana de este empleado.</p>
-        <form method="POST" id="formResolver">
-            <input type="hidden" name="resolver_empleado" value="1">
-            <input type="hidden" name="empleado_id" id="resolverEmpId">
-            <select name="resolucion_semana">
-                <option value="Deducido">Deducido — se desconto del sueldo</option>
-                <option value="Compensado">Compensado — recupero las horas</option>
-                <option value="Justificado">Justificado — excusa valida, sin descuento</option>
-                <option value="Pagado integro">Pagado integro — se pago sin descuento</option>
-            </select>
-            <div class="modal-btns">
-                <button type="button" class="btn-m-cancel" onclick="cerrarModal()">Cancelar</button>
-                <button type="submit" class="btn-m-ok">Aplicar</button>
-            </div>
-        </form>
     </div>
 </div>
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-
-function abrirResolver(empId, nombre) {
-    document.getElementById('resolverEmpId').value = empId;
-    document.getElementById('textoResolver').textContent = 'Marca como quedo la semana de ' + nombre + '.';
-    document.getElementById('modalResolver').classList.add('visible');
-}
-
-function cerrarModal() {
-    document.getElementById('modalResolver').classList.remove('visible');
-}
-
-document.getElementById('modalResolver').addEventListener('click', function(e) {
-    if (e.target === this) cerrarModal();
-});
 </script>
 </body>
 </html>

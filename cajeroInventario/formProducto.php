@@ -131,11 +131,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ")->execute([$producto_id,$_SESSION['sucursal_id'],$cantidad_inicial,$stock_minimo,$stock_maximo]);
 
             if ($cantidad_inicial > 0) {
+                // [FIX] Se agrega sucursal_id: antes quedaba NULL y el movimiento
+                // no aparecía en el historial de ninguna sucursal
                 $pdo->prepare("
                     INSERT INTO movimientos_inventario
-                    (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
-                    VALUES (?,?,'Entrada',?,0,?,'Inventario inicial')
-                ")->execute([$producto_id,$_SESSION['usuario_id'],$cantidad_inicial,$cantidad_inicial]);
+                    (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
+                    VALUES (?,?,?,'Entrada',?,0,?,'Inventario inicial')
+                ")->execute([$producto_id,$_SESSION['usuario_id'],$_SESSION['sucursal_id'],$cantidad_inicial,$cantidad_inicial]);
             }
         }
 

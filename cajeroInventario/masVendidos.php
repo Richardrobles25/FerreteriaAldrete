@@ -31,6 +31,9 @@ $stmt = $pdo->prepare("
         p.precio_venta
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
+    -- [FIX] Filtrar las ventas por la sucursal seleccionada (venta → caja → sucursal);
+    -- antes solo se filtraba el stock mostrado y los totales sumaban TODAS las sucursales
+    JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
     JOIN productos p ON vp.producto_id = p.producto_id
     LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
@@ -40,7 +43,7 @@ $stmt = $pdo->prepare("
     ORDER BY total_vendido DESC
     LIMIT $limite
 ");
-$stmt->execute([$sucursal, $fechaDesde]);
+$stmt->execute([$sucursal, $sucursal, $fechaDesde]);
 $masVendidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Total del periodo para calcular porcentaje
@@ -48,8 +51,9 @@ $stmtTotal = $pdo->prepare("
     SELECT COALESCE(SUM(vp.cantidad),0)
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
+    -- [FIX] Mismo filtro por sucursal de la venta que en la consulta principal
+    JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
     JOIN productos p ON vp.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
 ");
 $stmtTotal->execute([$sucursal, $fechaDesde]);

@@ -64,9 +64,11 @@ $stmtH = $pdo->prepare("
            pr.nombre AS nombre_proveedor
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     LEFT JOIN proveedores pr ON m.proveedor_id = pr.proveedor_id
-    WHERE m.tipo = 'Entrada'
+    -- [FIX] Filtrar por la sucursal del MOVIMIENTO (antes se filtraba solo que el producto
+    -- existiera en la sucursal y se veían entradas de otras sucursales).
+    -- Se incluyen los registros viejos sin sucursal (NULL) para no ocultar historial antiguo.
+    WHERE m.tipo = 'Entrada' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
     ORDER BY m.created_at DESC
     LIMIT 25
 ");

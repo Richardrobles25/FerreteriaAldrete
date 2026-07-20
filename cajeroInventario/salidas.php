@@ -54,8 +54,9 @@ $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-    WHERE m.tipo = 'Salida'
+    -- [FIX] Filtrar por la sucursal del MOVIMIENTO (antes se veían salidas de otras sucursales
+    -- si el producto también existía aquí). NULL = registros viejos sin sucursal, se conservan.
+    WHERE m.tipo = 'Salida' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
     ORDER BY m.created_at DESC LIMIT 30
 ");
 $stmt->execute([$_SESSION['sucursal_id']]);

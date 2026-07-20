@@ -631,9 +631,12 @@ $stmtHN = $pdo->prepare("
            COUNT(DISTINCT m.producto_id) AS num_productos
     FROM devoluciones d
     JOIN ventas v ON d.venta_id = v.venta_id
+    -- [FIX] Filtrar por la sucursal de la VENTA devuelta (venta → caja → sucursal);
+    -- antes bastaba con que el producto existiera en esta sucursal y se veían
+    -- devoluciones de otras sucursales.
+    JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
     JOIN movimientos_inventario m ON m.devolucion_id = d.devolucion_id AND m.tipo = 'Entrada'
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     GROUP BY d.devolucion_id
     ORDER BY d.procesada_en DESC
     LIMIT 30
@@ -646,9 +649,10 @@ $stmtHV = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    -- [FIX] Filtrar por la sucursal del movimiento; registros viejos sin sucursal (NULL) se conservan
     WHERE m.motivo LIKE 'Devolucion venta #%'
       AND m.devolucion_id IS NULL
+      AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
     ORDER BY m.created_at DESC LIMIT 20
 ");
 $stmtHV->execute([$_SESSION['sucursal_id']]);

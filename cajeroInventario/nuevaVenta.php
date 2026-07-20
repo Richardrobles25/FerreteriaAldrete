@@ -422,6 +422,105 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         } else {
         $pdo->beginTransaction();
         try {
+            // [FIX] SEC: Recalcular y validar los totales en el servidor.
+            // subtotal/descuento/comision/total llegan del navegador y podían manipularse
+            // con las DevTools (F12). Aquí se verifica que cuadren con los productos reales.
+
+            // 1) Suma de los productos a precio final (los precios por ítem se validan
+            //    más abajo contra precio_compra, y los de paquete contra el precio del paquete)
+            $sumaItems = 0.0;
+            foreach ($items as $it) {
+                $cantVal = floatval($it['cantidad'] ?? 0);
+                $precVal = floatval($it['precio'] ?? -1);
+                if ($cantVal <= 0 || $precVal < 0) {
+                    throw new Exception('El carrito contiene cantidades o precios inválidos.');
+                }
+                $sumaItems += $cantVal * $precVal;
+            }
+            $sumaItems = round($sumaItems, 2);
+
+            // 2) Validar paquetes: que existan, estén completos y su importe cuadre con su precio
+            $gruposPaq = [];
+            foreach ($items as $it) {
+                $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
+                if ($pqIdVal) {
+                    $gruposPaq[$pqIdVal]['monto']   = ($gruposPaq[$pqIdVal]['monto'] ?? 0) + floatval($it['cantidad']) * floatval($it['precio']);
+                    $gruposPaq[$pqIdVal]['items'][] = $it;
+                }
+            }
+            foreach ($gruposPaq as $pqIdVal => $grupo) {
+                $stmtPqVal = $pdo->prepare("SELECT precio_paquete FROM paquetes WHERE paquete_id = ? AND activo = 1");
+                $stmtPqVal->execute([$pqIdVal]);
+                $precioPaqVal = $stmtPqVal->fetchColumn();
+                if ($precioPaqVal === false) {
+                    throw new Exception('El carrito contiene un paquete inválido.');
+                }
+                $stmtReqVal = $pdo->prepare("SELECT producto_id, cantidad FROM paquete_productos WHERE paquete_id = ?");
+                $stmtReqVal->execute([$pqIdVal]);
+                $reqsPaq = [];
+                foreach ($stmtReqVal->fetchAll(PDO::FETCH_ASSOC) as $rReq) {
+                    $reqsPaq[intval($rReq['producto_id'])] = floatval($rReq['cantidad']);
+                }
+                $combosPaq = null;
+                foreach ($grupo['items'] as $it) {
+                    $pidVal = intval($it['producto_id']);
+                    if (!isset($reqsPaq[$pidVal]) || $reqsPaq[$pidVal] <= 0) {
+                        throw new Exception('Un producto del carrito no pertenece al paquete indicado.');
+                    }
+                    $cVal = floatval($it['cantidad']) / $reqsPaq[$pidVal];
+                    if ($combosPaq === null) {
+                        $combosPaq = $cVal;
+                    } elseif (abs($cVal - $combosPaq) > 0.001) {
+                        throw new Exception('Las cantidades del paquete no son consistentes.');
+                    }
+                }
+                if (count($grupo['items']) !== count($reqsPaq)) {
+                    throw new Exception('El paquete del carrito está incompleto.');
+                }
+                if (abs($grupo['monto'] - floatval($precioPaqVal) * $combosPaq) > 0.05) {
+                    throw new Exception('El importe del paquete no cuadra con su precio.');
+                }
+            }
+
+            // 3) Descuento de cliente implícito = descuento enviado − descuentos por ítem
+            //    (las promos y ajustes ya vienen reflejados en el precio de cada ítem)
+            $descuentoCliente = round($descuento - (round($subtotal, 2) - $sumaItems), 2);
+            if ($descuentoCliente < -0.05) {
+                throw new Exception('El descuento de la venta no cuadra con los productos.');
+            }
+            $descuentoCliente = max(0.0, $descuentoCliente);
+
+            // Tope: el descuento de cliente no puede exceder su porcentaje autorizado
+            $descMaxPct = 0.0;
+            if ($cliente_id) {
+                $stmtDescCli = $pdo->prepare("SELECT COALESCE(descuento_fijo, 0) FROM clientes WHERE cliente_id = ?");
+                $stmtDescCli->execute([$cliente_id]);
+                $descMaxPct = floatval($stmtDescCli->fetchColumn());
+            }
+            if ($descuentoCliente > round($sumaItems * $descMaxPct / 100, 2) + 0.05) {
+                throw new Exception('El descuento excede el autorizado para el cliente.');
+            }
+
+            // 4) Comisión de terminal esperada según el porcentaje configurado en la sucursal
+            $pctComisionSrv = floatval($sucursalTicket['comision_terminal_pct'] ?? 0);
+            $baseCobro      = round($sumaItems - $descuentoCliente, 2);
+            if ($metodo_pago === 'Terminal') {
+                $comisionEsperada = round($baseCobro * $pctComisionSrv / 100, 2);
+            } elseif ($metodo_pago === 'Mixto' && $monto_efectivo > 0 && $monto_efectivo < $baseCobro - 0.005) {
+                $comisionEsperada = round(($baseCobro - $monto_efectivo) * $pctComisionSrv / 100, 2);
+            } else {
+                $comisionEsperada = 0.0;
+            }
+            if (abs($comision_terminal - $comisionEsperada) > 0.05) {
+                throw new Exception('La comisión de terminal no cuadra. Recarga la página e intenta de nuevo.');
+            }
+
+            // 5) Total esperado = productos − descuento de cliente + comisión
+            $totalEsperado = round($baseCobro + $comisionEsperada, 2);
+            if (abs($total - $totalEsperado) > 0.05) {
+                throw new Exception('El total de la venta no cuadra con los productos. Recarga la página e intenta de nuevo.');
+            }
+
             // Validar límite de crédito antes de generar folio
             if ($metodo_pago === 'Credito' && $cliente_id) {
                 $stmtLimite = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");

@@ -224,8 +224,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $subtotal     = floatval($_POST['subtotal'] ?? 0);
         $descuento    = floatval($_POST['descuento'] ?? 0);
         $total        = floatval($_POST['total'] ?? 0);
-        // Ventas pendientes solo admiten Efectivo, Crédito y Transferencia
-        $metodo_pago  = in_array($_POST['metodo_pago'] ?? '', ['Efectivo', 'Crédito', 'Transferencia']) ? $_POST['metodo_pago'] : 'Efectivo';
+        // Ventas pendientes solo admiten Efectivo, Credito y Transferencia
+        // [FIX] 'Credito' sin acento: el ENUM ventas.metodo_pago solo acepta 'Credito'.
+        // Con acento, MySQL estricto (servidor) rechaza el INSERT y MariaDB (local) guarda '' silenciosamente.
+        $metodo_pago  = in_array($_POST['metodo_pago'] ?? '', ['Efectivo', 'Credito', 'Transferencia']) ? $_POST['metodo_pago'] : 'Efectivo';
         $ref_transf   = ($metodo_pago === 'Transferencia') ? trim($_POST['referencia_transferencia'] ?? '') : null;
         $monto_efectivo = ($metodo_pago === 'Efectivo') ? floatval($_POST['monto_efectivo'] ?? 0) : 0;
         $cambio         = ($metodo_pago === 'Efectivo') ? floatval($_POST['cambio']         ?? 0) : 0;
@@ -261,8 +263,99 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
             $pdo->beginTransaction();
             try {
+                // [FIX] SEC: Recalcular y validar los totales en el servidor.
+                // subtotal/descuento/total llegan del navegador y podían manipularse con las
+                // DevTools (F12). Aquí se verifica que cuadren con los productos reales.
+                $sumaItems = 0.0;
+                foreach ($items as $it) {
+                    $cantVal = floatval($it['cantidad'] ?? 0);
+                    $precVal = floatval($it['precio'] ?? -1);
+                    if ($cantVal <= 0 || $precVal < 0) {
+                        throw new Exception('El carrito contiene cantidades o precios inválidos.');
+                    }
+                    $sumaItems += $cantVal * $precVal;
+
+                    // Precio mínimo para ítems sueltos: no menor al 50% del precio de compra
+                    $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
+                    if (!$pqIdVal) {
+                        $stmtPC = $pdo->prepare("SELECT precio_compra FROM productos WHERE producto_id = ?");
+                        $stmtPC->execute([intval($it['producto_id'] ?? 0)]);
+                        $precioCompraVal = floatval($stmtPC->fetchColumn());
+                        if ($precioCompraVal > 0 && $precVal < ($precioCompraVal * 0.5)) {
+                            throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                        }
+                    }
+                }
+                $sumaItems = round($sumaItems, 2);
+
+                // Validar paquetes: que existan, estén completos y su importe cuadre con su precio
+                $gruposPaq = [];
+                foreach ($items as $it) {
+                    $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
+                    if ($pqIdVal) {
+                        $gruposPaq[$pqIdVal]['monto']   = ($gruposPaq[$pqIdVal]['monto'] ?? 0) + floatval($it['cantidad']) * floatval($it['precio']);
+                        $gruposPaq[$pqIdVal]['items'][] = $it;
+                    }
+                }
+                foreach ($gruposPaq as $pqIdVal => $grupo) {
+                    $stmtPqVal = $pdo->prepare("SELECT precio_paquete FROM paquetes WHERE paquete_id = ? AND activo = 1");
+                    $stmtPqVal->execute([$pqIdVal]);
+                    $precioPaqVal = $stmtPqVal->fetchColumn();
+                    if ($precioPaqVal === false) {
+                        throw new Exception('El carrito contiene un paquete inválido.');
+                    }
+                    $stmtReqVal = $pdo->prepare("SELECT producto_id, cantidad FROM paquete_productos WHERE paquete_id = ?");
+                    $stmtReqVal->execute([$pqIdVal]);
+                    $reqsPaq = [];
+                    foreach ($stmtReqVal->fetchAll(PDO::FETCH_ASSOC) as $rReq) {
+                        $reqsPaq[intval($rReq['producto_id'])] = floatval($rReq['cantidad']);
+                    }
+                    $combosPaq = null;
+                    foreach ($grupo['items'] as $it) {
+                        $pidVal = intval($it['producto_id']);
+                        if (!isset($reqsPaq[$pidVal]) || $reqsPaq[$pidVal] <= 0) {
+                            throw new Exception('Un producto del carrito no pertenece al paquete indicado.');
+                        }
+                        $cVal = floatval($it['cantidad']) / $reqsPaq[$pidVal];
+                        if ($combosPaq === null) {
+                            $combosPaq = $cVal;
+                        } elseif (abs($cVal - $combosPaq) > 0.001) {
+                            throw new Exception('Las cantidades del paquete no son consistentes.');
+                        }
+                    }
+                    if (count($grupo['items']) !== count($reqsPaq)) {
+                        throw new Exception('El paquete del carrito está incompleto.');
+                    }
+                    if (abs($grupo['monto'] - floatval($precioPaqVal) * $combosPaq) > 0.05) {
+                        throw new Exception('El importe del paquete no cuadra con su precio.');
+                    }
+                }
+
+                // Descuento de cliente implícito = descuento enviado − descuentos por ítem (promos)
+                $descuentoCliente = round($descuento - (round($subtotal, 2) - $sumaItems), 2);
+                if ($descuentoCliente < -0.05) {
+                    throw new Exception('El descuento de la venta no cuadra con los productos.');
+                }
+                $descuentoCliente = max(0.0, $descuentoCliente);
+
+                $descMaxPct = 0.0;
+                if ($cliente_id) {
+                    $stmtDescCli = $pdo->prepare("SELECT COALESCE(descuento_fijo, 0) FROM clientes WHERE cliente_id = ?");
+                    $stmtDescCli->execute([$cliente_id]);
+                    $descMaxPct = floatval($stmtDescCli->fetchColumn());
+                }
+                if ($descuentoCliente > round($sumaItems * $descMaxPct / 100, 2) + 0.05) {
+                    throw new Exception('El descuento excede el autorizado para el cliente.');
+                }
+
+                // Total esperado = productos − descuento de cliente (pendientes no usan terminal)
+                $totalEsperado = round($sumaItems - $descuentoCliente, 2);
+                if (abs($total - $totalEsperado) > 0.05) {
+                    throw new Exception('El total de la venta no cuadra con los productos. Recarga la página e intenta de nuevo.');
+                }
+
                 // Validar límite de crédito antes de generar folio
-                if ($metodo_pago === 'Crédito' && $cliente_id) {
+                if ($metodo_pago === 'Credito' && $cliente_id) {
                     $stmtLimite = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");
                     $stmtLimite->execute([$cliente_id]);
                     $clienteCredito = $stmtLimite->fetch(PDO::FETCH_ASSOC);
@@ -801,7 +894,7 @@ $paquesData = array_values($paqAgrupados);
                             style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
                             <option value="Efectivo">Efectivo</option>
                             <option value="Transferencia">Transferencia</option>
-                            <option value="Crédito" id="optCreditoPend" style="display:none;">Crédito</option>
+                            <option value="Credito" id="optCreditoPend" style="display:none;">Crédito</option>
                         </select>
                     </div>
 
@@ -1393,7 +1486,7 @@ function seleccionarClientePend(id) {
         optCredito.disabled = true;
         // Si ya estaba seleccionado Crédito, resetear
         const sel = document.getElementById('metodoPagoPend');
-        if (sel.value === 'Crédito') {
+        if (sel.value === 'Credito') {
             sel.value = 'Efectivo';
             cambiarMetodoPend('Efectivo');
         }
@@ -1405,7 +1498,7 @@ function seleccionarClientePend(id) {
 function quitarClientePend() {
     // Si método es Crédito, resetear
     const sel = document.getElementById('metodoPagoPend');
-    if (sel.value === 'Crédito') {
+    if (sel.value === 'Credito') {
         sel.value = 'Efectivo';
         cambiarMetodoPend('Efectivo');
     }
@@ -1463,7 +1556,7 @@ const datosTicket = <?= json_encode([
 ]) ?>;
 
 function cambiarMetodoPend(valor) {
-    if (valor === 'Crédito') {
+    if (valor === 'Credito') {
         if (!clientePendActual || !clientePendActual.credito) {
             alert('Selecciona un cliente con crédito autorizado para usar este método de pago.');
             document.getElementById('metodoPagoPend').value = 'Efectivo';

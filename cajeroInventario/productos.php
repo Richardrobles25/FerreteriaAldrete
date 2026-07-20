@@ -252,13 +252,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
 
         if ($productoEliminar) {
             $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $_SESSION['sucursal_id']]);
+            // [FIX] Se agrega sucursal_id: antes quedaba NULL y el movimiento
+            // no aparecía en el historial de ninguna sucursal
             $pdo->prepare("
                 INSERT INTO movimientos_inventario
-                (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-                VALUES (?, ?, 'Ajuste', ?, ?, 0, ?)
+                (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+                VALUES (?, ?, ?, 'Ajuste', ?, ?, 0, ?)
             ")->execute([
                 $id,
                 $_SESSION['usuario_id'],
+                $_SESSION['sucursal_id'],
                 $productoEliminar['stock_actual'],
                 $productoEliminar['stock_actual'],
                 'Producto eliminado: ' . $motivo

@@ -1,28 +1,44 @@
 # Sistema Ferretería Aldrete — Contexto Completo
 
+> Última actualización: 2026-07-20
+
 ## 1. Descripción General
 
-Sistema web de punto de venta (POS) e inventario para **Ferretería Aldrete**, desarrollado en PHP con PDO/MySQL. Soporta múltiples sucursales, 4 roles de usuario, control de inventario, créditos a clientes, transferencias entre sucursales y generación de reportes en PDF/Excel.
+Sistema web de punto de venta (POS), inventario y recursos humanos para **Ferretería Aldrete**, desarrollado en PHP con PDO/MySQL. Soporta múltiples sucursales, 4 roles de usuario, control de inventario, créditos a clientes con mora automática, gastos, nómina de empleados, transferencias entre sucursales y generación de reportes en PDF/Excel.
 
-- **Servidor:** DigitalOcean Droplet — `146.190.40.160`
-- **Base de datos:** MySQL 8.0.45 en `146.190.40.160:3306`, BD `ferreteria_aldrete`
+- **Servidor de producción:** DigitalOcean Droplet — `146.190.40.160` (SSH: `ssh root@146.190.40.160`)
+- **Base de datos:** MySQL 8.0.45, BD `ferreteria_aldrete`. En el servidor corre en `127.0.0.1:3306`; acepta también conexión remota directa a `146.190.40.160:3306`.
 - **Zona horaria:** `America/Mazatlan` (UTC-7)
-- **Desarrollo local:** `php -S localhost:8000` desde VS Code
+- **Desarrollo local:** XAMPP (`php -S localhost:8000` o Apache de XAMPP) con MySQL local (`root` sin contraseña)
+- **Rama de trabajo actual:** `nuevoCatalogo`
+- **Módulo principal de desarrollo:** `cajeroInventario/` — es el que se modifica primero; `cajero/` e `inventario/` los ajusta el usuario por separado después.
 
 ---
 
 ## 2. Infraestructura y Configuración
 
 ### Conexión a BD (`config/database.php`)
+El archivo trae **ambos bloques**, con el de LOCAL activo por defecto y el de SERVIDOR comentado — hay que alternar manualmente según dónde se despliegue:
 ```php
-$host     = '146.190.40.160'; // Desarrollo local
+/*── SERVIDOR (DigitalOcean) ─────────────────────────────
+$host     = '127.0.0.1';
 $port     = '3306';
 $db       = 'ferreteria_aldrete';
 $user     = 'ferreteria';
 $password = 'Ferreteria2024$';
+//───────────────────────────────────────────────────────*/
+
+// ── LOCAL (XAMPP) ─────────────────────────────────────
+$host     = '127.0.0.1';
+$port     = '3306';
+$db       = 'ferreteria_aldrete';
+$user     = 'root';
+$password = ''; // XAMPP root sin contraseña
 ```
 
-> En el servidor de producción (Apache/Nginx) usar `$host = '127.0.0.1'` y `$port = '3306'`.
+> ⚠️ Antes de subir cambios al servidor hay que recordar descomentar el bloque SERVIDOR y comentar el LOCAL (o viceversa al bajar). Es manual, no hay detección automática de entorno.
+> Desde el servidor mismo, para entrar a MySQL por consola: `mysql -u ferreteria -p ferreteria_aldrete`.
+> El cliente `mysql.exe` de XAMPP (MariaDB) **no puede** conectarse al MySQL 8 del servidor remoto (falla `caching_sha2_password`); para consultas remotas desde Windows usar un script PHP con PDO vía `C:\xampp\php\php.exe`.
 
 - Archivo alternativo: `config/databaseRailway.php` (Railway — actualmente no usado)
 - PDO con `ATTR_PERSISTENT => true` (conexiones persistentes — pendiente de quitar)
@@ -338,6 +354,66 @@ tipo ENUM(Retiro/Ingreso), monto, nota, devolucion_id FK
 categoria_id, nombre
 ```
 
+### Tabla: `categorias_gastos`
+```
+categoria_gasto_id, nombre, activo
+```
+> Semilla inicial: Vehículos, Mantenimiento, Servicios básicos, Herramientas y equipo, Otros.
+
+### Tabla: `gastos`
+```
+gasto_id, sucursal_id FK, usuario_id FK, categoria_gasto_id FK,
+descripcion, monto, fecha, notas, created_at
+```
+
+### Tabla: `movimientos_mora`
+```
+mora_id, credito_id FK, monto, saldo_base, porcentaje, created_at
+```
+> `sucursales.porcentaje_mora` define el % aplicado; `creditos.mora_acumulada` acumula el total generado por crédito.
+
+### Tabla: `empleados`
+```
+empleado_id, nombre, fecha_ingreso, sueldo_semanal, activo, created_at
+```
+
+### Tabla: `asistencia`
+```
+asistencia_id, empleado_id FK, fecha,
+tipo ENUM(Asistencia normal/Tardanza/Falta/Salida temprana/Tiempo fuera/Horas extra),
+hora_entrada, hora_salida, horas_no_trabajadas, horas_extra, razon,
+resolucion ENUM(Pendiente/Deducido/Compensado/Justificado/Pagado integro), notas
+```
+
+### Tabla: `asistencia_tiempos_fuera`
+```
+tiempo_id, asistencia_id FK, hora_salida, hora_regreso
+```
+> Permite registrar múltiples salidas/regresos dentro del mismo día de asistencia.
+
+### Tabla: `vacaciones`
+```
+vacacion_id, empleado_id FK, fecha_inicio, fecha_fin, dias_tomados, anio,
+estado ENUM(Solicitado/Aprobado/Rechazado), notas, created_at
+```
+
+### Tabla: `adelantos_sueldo`
+```
+adelanto_id, empleado_id FK, monto, fecha, motivo,
+estado ENUM(Pendiente/Liquidado), created_at
+```
+
+### Tabla: `pagos_nomina`
+```
+pago_id, empleado_id FK, semana_inicio (lunes), sueldo_base, deduccion, bono,
+adelanto_descontado, monto_pagado, pagado_en
+```
+> Único por `(empleado_id, semana_inicio)` — un pago de nómina por empleado por semana.
+
+### Columnas agregadas a tablas existentes
+- `sucursales`: `porcentaje_mora`, `ticket_pie_efectivo`, `ticket_pie_credito`, `ticket_pie_terminal`, `ticket_nota_credito` (pie de ticket personalizado por método de pago)
+- `creditos`: `mora_acumulada`
+
 ---
 
 ## 7. Módulos por Rol
@@ -372,9 +448,18 @@ categoria_id, nombre
 | `cortes.php` | Historial de cortes de caja |
 | `historial.php` | Historial de movimientos de inventario |
 | `creditos.php`, `abonos.php`, `clientes.php` | Vista admin de créditos y clientes |
+| `gastos.php`, `formGasto.php` | CRUD de gastos por sucursal y categoría |
+| `empleados.php`, `formEmpleado.php` | CRUD de empleados (RH) |
+| `asistencia.php`, `formAsistencia.php` | Registro de asistencia, tardanzas, faltas, horas extra |
+| `vacaciones.php`, `formVacacion.php` | Solicitud/aprobación de vacaciones |
+| `adelantos.php` | Adelantos de sueldo a empleados |
+| `semanaLaboral.php` | Cálculo y pago de nómina semanal (usa `pagos_nomina`) |
 | `export_helper.php` | Funciones compartidas de exportación PDF/Excel |
 | `_admin_sidebar.php` | Componente sidebar del menú lateral |
 | `_admin_sucursal_filtro.php` | Filtro de sucursal para reportes admin |
+| `_sync_admin_modules.ps1` | Script PowerShell para sincronizar módulos entre roles (ver nota abajo) |
+
+> El módulo RH (`empleados`, `asistencia`, `vacaciones`, `adelantos`, `semanaLaboral`) y `gastos` son exclusivos de Administrador — no existen versiones en `cajero/`, `inventario/` ni `cajeroInventario/`.
 
 ### INVENTARIO (`/inventario/`)
 
@@ -409,13 +494,15 @@ categoria_id, nombre
 | `historialCortes.php` | Cortes del usuario actual |
 | `clientes.php` | CRUD clientes, protección si tiene deuda activa |
 | `creditos.php` | Pago de créditos distribuido FIFO por múltiples créditos |
-| `abonos.php` | (posiblemente obsoleto, no aparece en menú) |
+| `abonos.php` | Flujo viejo de abonos, huérfano (sin enlaces en el menú). El flujo vigente es `creditos.php`. El usuario decidió conservarlo por ahora y borrarlo más adelante — **no reportar como hallazgo nuevo**. Tiene defectos conocidos: no marca `[Terminal]`/`[Transferencia]` en `movimientos_caja` (descuadra el corte), valida saldo contra el crédito del GET pero abona al del POST, no maneja Mixto, sin CSRF. |
 
 ### INVENTARIO/CAJERO (`/cajeroInventario/`)
 
-Rol combinado con todas las funciones de Cajero + Inventario. Diferencia importante:
-- **Puede editar precios/datos de productos del catálogo global** ⚠️
-- **Puede crear categorías y unidades** ⚠️ (inconsistencia con rol Administrador)
+Rol combinado con todas las funciones de Cajero + Inventario. Es el **módulo principal de desarrollo activo** (rama `nuevoCatalogo`); `cajero/` e `inventario/` se sincronizan manualmente después.
+
+- **Estado actual del código (2026-07-20):** `formProducto.php` todavía permite crear/editar directamente en el catálogo global de `productos`, y `categorias.php`/`unidades.php` permiten crear categorías y unidades — igual que Administrador ⚠️.
+- **Diseño intencional según el usuario:** el rol Inventario/Cajero **no debería** crear ni editar productos, categorías ni unidades — esas operaciones son exclusivas de Administrador. El catálogo de productos es global; este rol solo debería poder **agregar un producto ya existente del catálogo global al inventario de su sucursal** (activarlo en `stock_sucursal` con stock inicial en 0), no crear productos nuevos.
+- Hay trabajo en progreso sin commitear sobre `devoluciones.php`, `entradas.php`, `formProducto.php`, `masVendidos.php`, `nuevaVenta.php`, `productos.php`, `salidas.php`, `ventasPendientes.php` — posiblemente enfocado en corregir esta discrepancia.
 
 Archivos: mismos que Cajero + mismos que Inventario dentro de `/cajeroInventario/`.
 
@@ -571,7 +658,8 @@ Incluido en todos los módulos con opción de exportar. Contiene funciones reuti
 | SEC-02 | CRÍTICO | `config/database.php` | Credenciales hardcodeadas en código. Errores de BD expuestos al usuario con `die()`. |
 | SEC-03 | ALTO | Múltiples archivos | Falta CSRF en transferencias, entradas y salidas (solo aplica en algunos módulos). |
 | SEC-04 | ALTO | `creditos.php` | Saldo pendiente no usa `FOR UPDATE` — race condition posible en abonos simultáneos. |
-| SEC-05 | MEDIO | `cajeroInventario/formProducto.php` | Inventario/Cajero puede editar precios del catálogo global (debería ser solo admin). |
+| SEC-05 | MEDIO | `cajeroInventario/formProducto.php`, `categorias.php`, `unidades.php` | Inventario/Cajero puede crear/editar productos, categorías y unidades del catálogo global (debería ser solo admin; ver §7 nota de diseño intencional). Hay WIP sin commitear en estos archivos que podría estar corrigiendo esto. |
+| SEC-09 | INFO | `cajeroInventario/abonos.php` | Flujo huérfano de abonos con varios defectos (sin CSRF, no maneja Mixto, no marca movimientos_caja). Conservado a propósito por el usuario — no tocar sin instrucción explícita. |
 | SEC-06 | MEDIO | `inventario/masVendidos.php` | Selector permite ver datos de otras sucursales. |
 | SEC-07 | MEDIO | `devoluciones.php` | Sin límite de días para iniciar una devolución. |
 | SEC-08 | BAJO | `config/database.php` | `ATTR_PERSISTENT => true` puede causar fugas de conexión bajo carga. |
@@ -582,11 +670,13 @@ Incluido en todos los módulos con opción de exportar. Contiene funciones reuti
 
 | Archivo | Contenido |
 |---------|-----------|
-| `CAJERO_INVENTARIO_FUNCIONES.md` | Inventario de 37 archivos del módulo CajeroInventario con tablas BD y roles |
-| `PENDIENTES.md` | TODOs: config VPS, TablePlus, 8 fixes de seguridad críticos |
+| `CAJERO_INVENTARIO_FUNCIONES.md` | Inventario de archivos del módulo CajeroInventario con tablas BD y roles |
+| `PENDIENTES.md` | TODOs: config VPS, TablePlus, fixes de seguridad críticos |
 | `PRUEBAS_CAJERO.md` | ~346 casos de prueba: caja, ventas, clientes, inventario, proveedores, seguridad |
 | `ContextoDeProyecto.docx` | Contexto inicial del proyecto |
+| `entrevista1.docx` | Entrevista con el usuario/negocio |
 | `Funcionalidades del Sistema Ferreteria.xlsx` | Matriz de funcionalidades |
+| `ferreteria_aldrete.dump`, `ferreteria_aldrete.sql` | Backups del esquema/datos de la BD |
 
 ---
 
@@ -595,9 +685,10 @@ Incluido en todos los módulos con opción de exportar. Contiene funciones reuti
 | Métrica | Valor |
 |---------|-------|
 | Roles de usuario | 4 |
-| Tablas en BD | ~22 |
-| Archivos PHP activos | ~94 |
-| Módulos del sistema | 13+ |
+| Tablas en BD | ~31 (22 originales + gastos/mora + 5 de RH) |
+| Módulos del sistema | Admin, Inventario, Cajero, Inventario/Cajero, RH, Gastos |
 | Casos de prueba documentados | ~346 |
-| Fixes de seguridad pendientes | 8 |
-| Dependencias Composer | 2 |
+| Fixes de seguridad pendientes | 9 (ver §12) |
+| Dependencias Composer | 2 (phpspreadsheet, mpdf) |
+
+> Nota: los conteos de archivos/tablas de versiones anteriores de este documento quedaron desactualizados por el crecimiento del módulo RH/Gastos y el módulo `admin/` (que ahora replica sub-módulos `cajero_*` e `inventario_*` con prefijo). No se recalculó un conteo exacto de archivos PHP en esta actualización.

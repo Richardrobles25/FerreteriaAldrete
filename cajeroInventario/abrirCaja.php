@@ -188,7 +188,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
         <div class="form-card">
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'sinCaja'): ?>
                 <div class="alerta-box" style="background:#fff3e0;border-color:#ffb74d;color:#e65100;">
-                    ⚠ Necesitas abrir una caja para acceder a ese módulo.
+                    ⚠ Necesitas abrir una caja para acceder a ese módulo.<br>
+                    <span style="font-size:12px;opacity:.85;">Sesión actual: <strong><?= htmlspecialchars($_SESSION['nombre_completo']) ?> (<?= htmlspecialchars($_SESSION['rol'] ?? '') ?>)</strong>. La caja es por usuario — si la abriste con otra cuenta, inicia sesión con esa cuenta.</span>
                 </div>
             <?php endif; ?>
             <?php if ($cajaAbierta): ?>

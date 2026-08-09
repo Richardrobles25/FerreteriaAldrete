@@ -10,6 +10,11 @@ $sucursalId = intval($_SESSION['sucursal_id']);
 
 // Eliminar unidad
 if (isset($_GET['eliminar'])) {
+    // [FIX-C5] Solo Administrador puede eliminar unidades de medida
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: unidades.php?msg=no_autorizado');
+        exit();
+    }
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'unidades.php');
     $id = intval($_GET['eliminar']);
@@ -31,6 +36,13 @@ if (isset($_GET['eliminar'])) {
 
 // Guardar unidad (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-C5] Solo Administrador puede crear/editar unidades de medida
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: unidades.php?msg=no_autorizado');
+        exit();
+    }
+    // [FIX-CSRF-01] Verificar CSRF antes de crear/editar unidad (antes solo ?eliminar= lo tenia)
+    requerirCSRF($_POST['_token'] ?? '', 'unidades.php');
     $nombre = trim($_POST['nombre'] ?? '');
     $id     = intval($_POST['unidad_id'] ?? 0);
 
@@ -224,6 +236,8 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-exito">Unidad eliminada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
                     <div class="msg msg-error">No puedes eliminar esta unidad porque tiene productos asociados.</div>
+                <?php elseif ($_GET['msg'] === 'no_autorizado'): ?>
+                    <div class="msg msg-error">No tienes permisos para esta acción. Solo el Administrador puede crear, editar o eliminar unidades de medida.</div>
                 <?php endif; ?>
             <?php endif; ?>
 
@@ -274,6 +288,8 @@ if (isset($_GET['editar'])) {
             <div class="card">
                 <h3><?= $editando ? 'Editar unidad' : 'Nueva unidad' ?></h3>
                 <form method="POST">
+                    <!-- [FIX-CSRF-01] Token CSRF para proteger crear/editar unidad -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="unidad_id" value="<?= $editando['unidad_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>

@@ -37,6 +37,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['movimiento_caja'])) {
     $tipoMov  = in_array($_POST['tipo_mov'] ?? '', ['Retiro','Ingreso']) ? $_POST['tipo_mov'] : null;
     $montoMov = floatval($_POST['monto_mov'] ?? 0);
     $notaMov  = trim($_POST['nota_mov'] ?? '');
+    // [FIX] Este es el UNICO lugar donde el cajero escribe una nota totalmente libre para
+    // movimientos_caja. corteCaja.php e historialVentas.php clasifican el dinero como
+    // "no efectivo" si la nota termina en "[Terminal]"/"[Transferencia]", y como abono o
+    // devolucion si empieza con ciertas frases — todas generadas por el propio sistema en
+    // otras pantallas. Si por coincidencia el cajero escribiera aqui un texto que terminara
+    // o empezara igual, ese movimiento se clasificaria mal sin que nadie lo note. Se
+    // neutraliza el texto libre para que nunca pueda coincidir con esas marcas reservadas.
+    $notaMov = str_replace(['[Terminal]', '[Transferencia]'], ['(Terminal)', '(Transferencia)'], $notaMov);
+    foreach (['Pago crédito', 'Abono de crédito', 'Devolución folio', 'Cancelación devolución'] as $prefijoReservado) {
+        if (mb_stripos($notaMov, $prefijoReservado) === 0) {
+            $notaMov = 'Nota: ' . $notaMov;
+            break;
+        }
+    }
     if ($tipoMov && $montoMov > 0.004 && $notaMov !== '') {
         $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,?,?,?)")
             ->execute([$caja['caja_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $tipoMov, $montoMov, $notaMov]);
@@ -389,6 +403,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         $errorVenta = 'Método de pago inválido.';
     }
 
+    // [FIX-A1] Verificar CSRF antes de procesar la venta. Se usa verificarCSRF() (no
+    // requerirCSRF()) para poder responder en JSON cuando la peticion es AJAX, igual que
+    // las demas validaciones de este bloque.
+    if (!$errorVenta && !verificarCSRF($_POST['_token'] ?? '')) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'Token de seguridad inválido. Recarga la página e intenta de nuevo.']);
+            exit();
+        }
+        $errorVenta = 'Token de seguridad inválido. Recarga la página e intenta de nuevo.';
+    }
+
     // [AUTOFIX] N-03: Validar que credito requiere cliente
     if (!$errorVenta && $metodo_pago === 'Credito' && !$cliente_id) {
         if (!empty($_POST['_ajax'])) {
@@ -521,6 +547,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 throw new Exception('El total de la venta no cuadra con los productos. Recarga la página e intenta de nuevo.');
             }
 
+            // 6) [FIX] Validar y normalizar los montos de pago en el servidor.
+            // corteCaja.php suma monto_efectivo/monto_terminal tal cual se guardan;
+            // antes venian del navegador sin verificarse y un error de captura (p. ej.
+            // teclear $600 de efectivo en un mixto de $500) inflaba el efectivo esperado
+            // del corte y generaba faltantes fantasma.
+            if ($metodo_pago === 'Efectivo') {
+                if ($monto_efectivo < $totalEsperado - 0.005) {
+                    throw new Exception('La cantidad recibida en efectivo es menor al total de la venta.');
+                }
+                $monto_efectivo = round($monto_efectivo, 2);
+                $monto_terminal = 0.0;
+                $cambio         = round($monto_efectivo - $totalEsperado, 2);
+            } elseif ($metodo_pago === 'Terminal' || $metodo_pago === 'Transferencia') {
+                $monto_efectivo = 0.0;
+                $monto_terminal = $totalEsperado;
+                $cambio         = 0.0;
+            } elseif ($metodo_pago === 'Credito') {
+                $monto_efectivo = 0.0;
+                $monto_terminal = 0.0;
+                $cambio         = 0.0;
+            } elseif ($metodo_pago === 'Mixto') {
+                if ($monto_efectivo <= 0.005) {
+                    throw new Exception('El pago mixto requiere una parte en efectivo mayor a cero.');
+                }
+                if ($monto_efectivo >= $baseCobro - 0.005) {
+                    throw new Exception('El efectivo cubre el total de la venta. Usa el método Efectivo en lugar de Mixto.');
+                }
+                $monto_efectivo = round($monto_efectivo, 2);
+                // La parte de terminal se deriva en el servidor: resto + comisión
+                $monto_terminal = round(($baseCobro - $monto_efectivo) + $comisionEsperada, 2);
+                $cambio         = 0.0;
+            }
+
             // Validar límite de crédito antes de generar folio
             if ($metodo_pago === 'Credito' && $cliente_id) {
                 $stmtLimite = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");
@@ -576,12 +635,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
                 // [AUTOFIX] SEC-02: Validar precio contra precio_compra de la BD
                 // El precio final no puede ser menor al 50% del precio de compra (umbral de seguridad)
+                // general contra manipulacion vía DevTools — aplica a ventas normales,
+                // promociones y precio mayoreo, que si pueden legitimamente ir por debajo
+                // del precio_compra segun como se configuren.
+                // [FIX] Para items CON ajuste por daño (nota_ajuste no vacia), la propia
+                // pantalla ya exige un piso mas estricto: precio >= precio_compra completo
+                // (ver aplicarAjuste() en el JS). El servidor solo exigia el 50%, dejando
+                // una brecha donde alguien con las herramientas de desarrollador podia
+                // colar un precio "dañado" por debajo de ese piso mas estricto. Se alinea
+                // el servidor con la regla de la pantalla SOLO para items con ajuste.
                 if (empty($paqId)) {
                     $stmtPrecioComp = $pdo->prepare("SELECT precio_compra FROM productos WHERE producto_id = ?");
                     $stmtPrecioComp->execute([$item['producto_id']]);
                     $precioCompraDB = floatval($stmtPrecioComp->fetchColumn());
-                    if ($precioCompraDB > 0 && $precioFinal < ($precioCompraDB * 0.5)) {
-                        throw new Exception("Precio inválido para el producto. Verifica el carrito.");
+                    if ($precioCompraDB > 0) {
+                        $pisoMinimo = ($notaAjuste !== '') ? $precioCompraDB : ($precioCompraDB * 0.5);
+                        if ($precioFinal < $pisoMinimo - 0.005) {
+                            throw new Exception("Precio inválido para el producto. Verifica el carrito.");
+                        }
                     }
                 }
 
@@ -1115,6 +1186,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 </div>
 
                 <form method="POST" id="formVenta">
+                    <!-- [FIX-A1] Token CSRF para proteger la confirmacion de venta -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="confirmar_venta" value="1">
                     <input type="hidden" name="items" id="inputItems">
                     <input type="hidden" name="cliente_id" id="inputClienteId">
@@ -1626,8 +1699,27 @@ function agregarPaquete(paq) {
         alert('No hay stock suficiente para armar ni un combo de "' + paq.nombre + '".');
         return;
     }
-    const ids = paq.productos.map(p => parseInt(p.producto_id));
-    carrito   = carrito.filter(i => i.tipo === 'paquete' || !ids.includes(parseInt(i.producto_id)));
+    // [FIX] Antes se eliminaban del carrito TODAS las filas sueltas de estos productos,
+    // sin importar cuanto tenia cada una, aunque el paquete solo necesitara una parte
+    // (5 tornillos sueltos + paquete que usa 2 -> se perdian los 3 restantes en silencio).
+    // Ahora solo se resta la cantidad que el paquete realmente consume de cada producto;
+    // el resto se queda visible en el carrito como fila suelta.
+    const reqPorProducto = {};
+    paq.productos.forEach(p => {
+        reqPorProducto[parseInt(p.producto_id)] = parseFloat(p.cantidad_requerida || p.cantidad_req || 1);
+    });
+    Object.keys(reqPorProducto).forEach(idStr => {
+        const pid = parseInt(idStr);
+        let faltantePorConsumir = reqPorProducto[pid];
+        carrito.forEach(item => {
+            if (faltantePorConsumir <= 0) return;
+            if (item.tipo === 'paquete' || parseInt(item.producto_id) !== pid) return;
+            const consumido = Math.min(item.cantidad, faltantePorConsumir);
+            item.cantidad = parseFloat((item.cantidad - consumido).toFixed(3));
+            faltantePorConsumir -= consumido;
+        });
+    });
+    carrito = carrito.filter(i => i.tipo === 'paquete' || i.cantidad > 0.0009);
     carrito.push({
         producto_id:       null,
         paquete_id:        parseInt(paq.paquete_id),
@@ -2107,7 +2199,7 @@ function mostrarClientes(lista) {
     } else {
         drop.innerHTML = lista.map(c => `
             <div class="resultado-item"
-                onclick="seleccionarCliente(${c.cliente_id},'${esc(c.nombre_completo)}','${esc(c.telefono??'')}',${c.descuento_fijo},${c.credito_autorizado})">
+                onclick="seleccionarCliente(${c.cliente_id},'${escAtribJs(c.nombre_completo)}','${esc(c.telefono??'')}',${c.descuento_fijo},${c.credito_autorizado})">
                 <div>
                     <div class="resultado-nombre">${esc(c.nombre_completo)}</div>
                     <div class="resultado-codigo">${esc(c.telefono??'')} ${c.descuento_fijo>0?'· Desc: '+c.descuento_fijo+'%':''} ${c.credito_autorizado?'· <span style="color:#2e7d32;font-weight:600;">Crédito</span>':'· <span style="color:#c0392b;">Sin crédito</span>'}</div>
@@ -2805,6 +2897,15 @@ document.addEventListener('click', function(e) {
 // ── Utilidad ─────────────────────────────────────────────────────────────────
 function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+// [FIX-C1] Escapa un valor para insertarlo dentro de un string JS de comillas simples
+// que a su vez va dentro de un atributo HTML (onclick="...('...')"). esc() por si solo
+// no basta ahi: el navegador decodifica las entidades HTML del atributo ANTES de
+// ejecutar el JS, asi que un nombre con comilla podia cerrar el string y ejecutar
+// codigo. Se escapan primero las comillas para el string JS y luego se aplica esc()
+// para el atributo — mismo criterio que ya usa clientes.php con addslashes() en PHP.
+function escAtribJs(str) {
+    return esc(String(str||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
 }
 
 // [AUTOFIX] N-05: Usar el porcentaje real de la sucursal en lugar del valor hardcodeado 4.6

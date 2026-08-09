@@ -105,6 +105,12 @@ if (isset($_GET['buscar_venta'])) {
         $stmt->execute([$_SESSION['sucursal_id'], $folio_num, $mes, $anio]);
         $venta = $stmt->fetch(PDO::FETCH_ASSOC);
 
+        // Limite de tiempo: solo se aceptan devoluciones de ventas con menos de 7 dias
+        if ($venta && strtotime($venta['created_at']) < strtotime('-7 days')) {
+            echo json_encode(['error' => 'esta venta tiene mas de 7 dias de antiguedad; ya no es posible registrar devoluciones.']);
+            exit();
+        }
+
         if ($venta) {
             $stmtP = $pdo->prepare("
                 SELECT vp.*, p.nombre_producto, p.codigo,
@@ -155,7 +161,7 @@ if (isset($_GET['cancelar_dev'])) {
     // podría corromper stock e historial financiero de otras sucursales.
     $stmtD = $pdo->prepare("
         SELECT d.*, v.total AS total_actual, v.estado AS estado_actual,
-               v.comision_terminal, v.metodo_pago, v.folio
+               v.comision_terminal, v.metodo_pago, v.folio, v.caja_id AS caja_id_venta
         FROM devoluciones d
         JOIN ventas v ON d.venta_id = v.venta_id
         JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
@@ -210,13 +216,35 @@ if (isset($_GET['cancelar_dev'])) {
         $nuevoEstado = intval($stmtOtras->fetchColumn()) > 0 ? 'Modificado' : 'Completada';
         $pdo->prepare("UPDATE ventas SET estado = ? WHERE venta_id = ?")->execute([$nuevoEstado, $dev['venta_id']]);
 
-        // Si era crédito, restaurar saldo
-        $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Liquidado')");
+        // Monto total de los Retiros que la devolución original registro en movimientos_caja
+        // (sea por Terminal/Mixto/Transferencia, por Efectivo de otra caja, o por el
+        // reembolso de abonos ya pagados en una venta a crédito — ver mas abajo). Se usa
+        // tanto para restaurar el saldo del crédito correctamente como para regresar el
+        // efectivo exacto al cancelar, en vez de asumir que siempre es igual a $totalDevuelto.
+        $stmtHuboRet = $pdo->prepare("SELECT COALESCE(SUM(monto),0) AS monto, MAX(nota) AS nota FROM movimientos_caja WHERE devolucion_id = ? AND tipo = 'Retiro'");
+        $stmtHuboRet->execute([$devolucion_id]);
+        $retiroInfo       = $stmtHuboRet->fetch(PDO::FETCH_ASSOC);
+        $montoRetiroOrig  = floatval($retiroInfo['monto'] ?? 0);
+        $notaRetiroOrig   = $retiroInfo['nota'] ?? '';
+        $huboRetiro       = $montoRetiroOrig > 0.001;
+        $esCreditoDev     = in_array($dev['metodo_pago'] ?? '', ['Credito', 'Crédito'], true);
+
+        // Si era crédito, restaurar saldo.
+        // [FIX] Antes siempre sumaba $totalDevuelto completo al saldo. Si la devolución
+        // original habia reembolsado en efectivo un excedente (porque el cliente ya
+        // habia abonado mas de lo que quedaba pendiente), sumar todo $totalDevuelto de
+        // vuelta inflaba el saldo mas alla de lo que realmente se debia antes de
+        // devolver. La reduccion real que sufrio el saldo fue $totalDevuelto menos lo
+        // que se reembolso en efectivo (montoRetiroOrig) — eso es lo que hay que restaurar.
+        $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido','Liquidado')");
         $stmtCred->execute([$dev['venta_id']]);
         $cred = $stmtCred->fetch(PDO::FETCH_ASSOC);
         if ($cred) {
+            $reduccionOriginal = $esCreditoDev
+                ? max(0.0, round($totalDevuelto - $montoRetiroOrig, 2))
+                : $totalDevuelto;
             $pdo->prepare("UPDATE creditos SET saldo_pendiente = saldo_pendiente + ?, estado = 'Activo' WHERE credito_id = ?")
-                ->execute([$totalDevuelto, $cred['credito_id']]);
+                ->execute([$reduccionOriginal, $cred['credito_id']]);
         }
 
         // Marcar devolución como cancelada
@@ -224,16 +252,29 @@ if (isset($_GET['cancelar_dev'])) {
             ->execute([$_SESSION['usuario_id'], $nota_cancel ?: null, $devolucion_id]);
 
         // Registrar ingreso de efectivo DENTRO de la transacción.
-        // Al cancelar la devolución el cliente regresa el efectivo — debe quedar en caja.
-        // Solo para Terminal/Mixto/Transferencia (igual que el Retiro original).
-        $metodosQueNecesitanIngreso = ['Terminal', 'Mixto', 'Transferencia'];
-        if (in_array($dev['metodo_pago'] ?? '', $metodosQueNecesitanIngreso, true)) {
+        // Al cancelar la devolución el cliente regresa el EFECTIVO (el reembolso siempre
+        // fue en efectivo) — debe quedar en caja y contar en el corte como dinero fisico.
+        // Se registra el Ingreso cuando:
+        // - La devolución original registro un Retiro (Terminal/Mixto/Transferencia, Efectivo
+        //   de otra caja, o el reembolso de abonos ya pagados en un crédito), o
+        // - Fue devolución en Efectivo sin retiro (misma caja) pero la cancelación ocurre
+        //   en una caja distinta: la restauracion de ventas.total cae en la caja original,
+        //   asi que el efectivo que entra hoy necesita su propio registro.
+        $necesitaIngreso  = $huboRetiro || (!$esCreditoDev && intval($dev['caja_id_venta']) !== $cajaId);
+        $montoIngreso     = $huboRetiro ? $montoRetiroOrig : $totalDevuelto;
+        if ($necesitaIngreso) {
             $folioCancelNota = $dev['folio'] ?? $dev['venta_id'];
-            // [AUTOFIX] Mismo sufijo que el Retiro original → corteCaja sabe que no entra a caja física
-            $sufIngresoC = ($dev['metodo_pago'] === 'Transferencia') ? ' [Transferencia]' : ' [Terminal]';
-            $notaIngreso = 'Cancelación devolución folio #' . $folioCancelNota . $sufIngresoC;
+            // Sin sufijo [Terminal]/[Transferencia]: el dinero SI entra al cajon.
+            // Excepcion (compatibilidad): si el Retiro original es anterior a este cambio y
+            // trae el sufijo viejo, el Ingreso lleva el mismo sufijo para que el par
+            // retiro/ingreso se anule igual en corteCaja y no genere sobrante fantasma.
+            $sufLegacy = '';
+            if ($huboRetiro && preg_match('/(\[(?:Terminal|Transferencia)\])$/', (string)$notaRetiroOrig, $mLeg)) {
+                $sufLegacy = ' ' . $mLeg[1];
+            }
+            $notaIngreso = 'Cancelación devolución folio #' . $folioCancelNota . ' (' . ($dev['metodo_pago'] ?? '') . ')' . $sufLegacy;
             $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota, devolucion_id) VALUES (?,?,?,'Ingreso',?,?,?)")
-                ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $totalDevuelto, $notaIngreso, $devolucion_id]);
+                ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $montoIngreso, $notaIngreso, $devolucion_id]);
         }
 
         $pdo->commit();
@@ -248,6 +289,8 @@ if (isset($_GET['cancelar_dev'])) {
 
 // Procesar devolución
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-A1] Verificar CSRF antes de procesar la devolución
+    requerirCSRF($_POST['_token'] ?? '', 'devoluciones.php');
     $venta_id      = intval($_POST['venta_id'] ?? 0);
     $productos_dev = json_decode($_POST['productos_devolver'] ?? '[]', true);
     $motivo        = trim($_POST['motivo'] ?? '');
@@ -260,7 +303,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // [AUTOFIX] D-02: Verificar que la venta pertenezca a la sucursal del cajero antes de procesar
         // [AUTOFIX] Se agregan subtotal y descuento para calcular el factor neto proporcional al devolver
         $stmtV = $pdo->prepare("
-            SELECT v.metodo_pago, v.cliente_id, v.folio,
+            SELECT v.metodo_pago, v.cliente_id, v.folio, v.caja_id, v.created_at,
                    v.subtotal AS venta_subtotal, v.descuento AS venta_descuento
             FROM ventas v
             JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
@@ -270,6 +313,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ventaInfo = $stmtV->fetch(PDO::FETCH_ASSOC);
         if (!$ventaInfo) {
             $errores[] = 'La venta no pertenece a esta sucursal o no existe.';
+        }
+
+        // Limite de tiempo: solo se aceptan devoluciones de ventas con menos de 7 dias
+        if ($ventaInfo && strtotime($ventaInfo['created_at']) < strtotime('-7 days')) {
+            $errores[] = 'Solo se pueden devolver ventas con menos de 7 dias de antiguedad.';
         }
 
         $stmtVendidos = $pdo->prepare("
@@ -583,31 +631,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ->execute([$nuevoEstado, $venta_id]);
                 }
 
-                // Si era crédito, actualizar el saldo
+                // Si era crédito, actualizar el saldo.
+                // [FIX] Reembolso de crédito con abonos previos: si el cliente ya habia
+                // pagado (via abonos) mas de lo que la venta vale despues de esta
+                // devolucion, ese excedente ya estaba en efectivo/terminal/transferencia
+                // en manos del negocio y debe regresarsele. Antes solo se hacia
+                // saldo_pendiente = max(0, saldo - totalDevuelto), perdiendo ese dinero
+                // sin dejar ningun rastro. Ahora el excedente se reembolsa en efectivo
+                // (politica: los reembolsos siempre son en efectivo) y queda registrado
+                // como un Retiro igual que cualquier otra devolucion.
+                $reembolsoExcedenteCredito = 0.0;
                 if ($ventaInfo['metodo_pago'] === 'Credito' && $ventaInfo['cliente_id']) {
-                    $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente FROM creditos WHERE venta_id = ? AND estado = 'Activo'");
+                    // Se incluye 'Vencido' ademas de 'Activo': un credito vencido tambien
+                    // debe reducir su saldo (y, si aplica, reembolsar el excedente) al
+                    // devolver productos de esa venta.
+                    $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido')");
                     $stmtCred->execute([$venta_id]);
                     $cred = $stmtCred->fetch(PDO::FETCH_ASSOC);
                     if ($cred) {
-                        $nuevoSaldo  = max(0, $cred['saldo_pendiente'] - $totalDevuelto);
-                        $nuevoEstado = $nuevoSaldo <= 0 ? 'Liquidado' : 'Activo';
+                        $saldoAntesCredito = floatval($cred['saldo_pendiente']);
+                        $nuevoSaldo        = max(0.0, round($saldoAntesCredito - $totalDevuelto, 2));
+                        $nuevoEstadoCred   = $nuevoSaldo <= 0.001 ? 'Liquidado' : 'Activo';
                         $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
-                            ->execute([$nuevoSaldo, $nuevoEstado, $cred['credito_id']]);
+                            ->execute([$nuevoSaldo, $nuevoEstadoCred, $cred['credito_id']]);
+
+                        $reembolsoExcedenteCredito = max(0.0, round($totalDevuelto - $saldoAntesCredito, 2));
                     }
                 }
 
                 // Registrar salida de efectivo en caja DENTRO de la transacción.
                 // Si falla, toda la devolución se revierte — sin estados inconsistentes.
-                // Solo para Terminal/Mixto/Transferencia: en Efectivo la reducción ya queda
-                // en ventas.total y corteCaja la recoge; agregar Retiro contaría doble.
-                $metodosQueNecesitanRetiro = ['Terminal', 'Mixto', 'Transferencia'];
-                if (in_array($metodoVenta, $metodosQueNecesitanRetiro, true)) {
-                    $folioDevNota = $ventaInfo['folio'] ?? $venta_id;
-                    // [AUTOFIX] Agregar sufijo al Retiro para que corteCaja lo excluya del efectivo físico
-                    $sufRetirod   = ($metodoVenta === 'Transferencia') ? ' [Transferencia]' : ' [Terminal]';
-                    $notaRetiro   = 'Devolución folio #' . $folioDevNota . $sufRetirod;
+                // Politica del negocio: el reembolso SIEMPRE se entrega en efectivo (sin importar
+                // el metodo de pago original), asi que el Retiro cuenta como salida de caja fisica
+                // y corteCaja lo resta del efectivo esperado.
+                // - Terminal/Mixto/Transferencia: siempre se registra el retiro (esas ventas no
+                //   estan en el bucket de efectivo del corte, no hay doble conteo).
+                // - Efectivo: solo si la venta es de OTRA caja; si es de la caja actual la
+                //   reduccion de ventas.total ya la recoge corteCaja y un retiro contaria doble.
+                // - Credito: normalmente no sale dinero (se descuenta del saldo pendiente), salvo
+                //   el excedente calculado arriba cuando el cliente ya habia abonado de mas.
+                $necesitaRetiro = in_array($metodoVenta, ['Terminal', 'Mixto', 'Transferencia'], true)
+                    || ($metodoVenta === 'Efectivo' && intval($ventaInfo['caja_id']) !== $cajaId)
+                    || ($metodoVenta === 'Credito' && $reembolsoExcedenteCredito > 0.001);
+                if ($necesitaRetiro) {
+                    $folioDevNota  = $ventaInfo['folio'] ?? $venta_id;
+                    $montoRetiro   = ($metodoVenta === 'Credito') ? $reembolsoExcedenteCredito : $totalDevuelto;
+                    // Sin sufijo [Terminal]/[Transferencia]: el dinero SI sale del cajon.
+                    // Se anota el metodo entre parentesis solo como referencia para el cajero.
+                    $notaRetiro    = ($metodoVenta === 'Credito')
+                        ? 'Reembolso devolución crédito folio #' . $folioDevNota . ' (abonos ya pagados)'
+                        : 'Devolución folio #' . $folioDevNota . ' (' . $metodoVenta . ')';
                     $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota, devolucion_id) VALUES (?,?,?,'Retiro',?,?,?)")
-                        ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $totalDevuelto, $notaRetiro, $devolucion_id]);
+                        ->execute([$cajaId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $montoRetiro, $notaRetiro, $devolucion_id]);
                 }
 
                 $pdo->commit();
@@ -870,6 +945,8 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
                 <div class="resumen-dev" id="resumenDevolucion"></div>
 
                 <form method="POST" id="formDevolucion">
+                    <!-- [FIX-A1] Token CSRF para proteger el registro de devolución -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="venta_id" id="inputVentaIdHidden">
                     <input type="hidden" name="productos_devolver" id="inputProdsDev">
 
@@ -1134,6 +1211,13 @@ function actualizarResumen() {
 
     if (totalADevolver <= 0.001) { resumen.style.display = 'none'; return; }
 
+    // [FIX] Guardar el monto RAW (antes del descuento global de cliente) para poder
+    // calcular la comisión mas abajo con la MISMA base que usa el servidor
+    // (subtotalFinalDevuelto en devoluciones.php). totalADevolver se sobreescribe
+    // justo despues con el monto YA con el descuento aplicado (el que se muestra al
+    // cajero), por eso hay que copiarlo antes de que eso pase.
+    const subtotalFinalDevueltoRaw = totalADevolver;
+
     // Aplicar SOLO el descuento global del cliente (no los descuentos por-ítem que ya están en precio_final).
     // perItemDiscount = diferencia entre subtotalBruto y subtotalFinal (promos + ajustes daño ya en precio_final)
     // clientDiscount  = ventas.descuento - perItemDiscount (porcentaje de descuento global del cliente)
@@ -1152,15 +1236,43 @@ function actualizarResumen() {
 
     const metodo = ventaActual.metodo_pago || 'Efectivo';
 
-    // Comisión proporcional SOLO para Terminal y Mixto — Transferencia y Efectivo no tienen comisión
-    // [AUTOFIX] La tasa se calcula como comision / neto_pagado (total - comision), en la misma escala
-    // que totalADevolver (precio_unitario × factorNeto). Antes usaba precio_final / sumaRestante
-    // lo que daba una escala distinta y producía una comision incorrecta.
+    // [FIX] Comisión proporcional — replica EXACTAMENTE la formula que usa el servidor en
+    // devoluciones.php (bloque "Comisión de terminal esperada" / seccion 2 del procesamiento):
+    //
+    //   sumaRestanteFinal = SUM(precio_final × restante) de TODAS las filas de la venta,
+    //                       donde restante = max(0, cantidad_fila − total_ya_devuelto_del_producto)
+    //                       (el "total ya devuelto" se agrupa por producto_id SIN separar
+    //                       por paquete_id — igual que el SQL real: JOIN ... GROUP BY producto_id)
+    //   ratio             = min(1, subtotalFinalDevuelto_raw / sumaRestanteFinal)
+    //   comisionDevuelta  = comisionTotal_actual × ratio
+    //
+    // Antes esta funcion usaba tasaComision = comisionTotal / (venta.total − comisionTotal),
+    // que en la PRIMERA devolucion de una venta coincide por casualidad con la formula real,
+    // pero en la SEGUNDA (o posteriores) devolucion parcial de la misma venta con descuento
+    // de cliente ya no coincide, porque esa formula solo "recupera" el % de comision original
+    // en vez de calcular que proporcion del saldo restante se esta devolviendo ahora.
     const tieneComisionTerminal = (metodo === 'Terminal' || metodo === 'Mixto');
     const comisionTotal = tieneComisionTerminal ? parseFloat(ventaActual.comision_terminal || 0) : 0;
-    const netoPagado    = parseFloat(ventaActual.total || 0) - comisionTotal; // total sin comisión
-    const tasaComision  = (netoPagado > 0.001 && comisionTotal > 0.001) ? comisionTotal / netoPagado : 0;
-    const comisionProp  = Math.round(totalADevolver * tasaComision * 100) / 100;
+
+    // Total ya devuelto por producto_id (ignora paquete_id, igual que la subconsulta SQL
+    // del servidor: "GROUP BY mi.producto_id"). Cada fila de ventaActual.productos ya trae
+    // su propio cantidad_devuelta calculado por clave compuesta producto+paquete; sumarlos
+    // por producto_id reproduce el mismo total que agrupar directamente por producto_id.
+    const devueltaPorProductoId = {};
+    (ventaActual.productos || []).forEach(p => {
+        const pid = parseInt(p.producto_id);
+        devueltaPorProductoId[pid] = (devueltaPorProductoId[pid] || 0) + (parseFloat(p.cantidad_devuelta) || 0);
+    });
+    const sumaRestanteFinal = (ventaActual.productos || []).reduce((s, p) => {
+        const pid      = parseInt(p.producto_id);
+        const restante = Math.max(0, parseFloat(p.cantidad || 0) - (devueltaPorProductoId[pid] || 0));
+        return s + parseFloat(p.precio_final || 0) * restante;
+    }, 0);
+
+    const tasaComision = (sumaRestanteFinal > 0.001 && comisionTotal > 0.001)
+        ? Math.min(1, subtotalFinalDevueltoRaw / sumaRestanteFinal)
+        : 0;
+    const comisionProp = Math.round(comisionTotal * tasaComision * 100) / 100;
 
     // [AUTOFIX] Las devoluciones siempre se entregan en efectivo sin importar cómo se pagó originalmente
     // Crédito es la única excepción: se descuenta del saldo pendiente

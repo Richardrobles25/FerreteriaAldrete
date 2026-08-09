@@ -32,6 +32,8 @@ $cajasAbiertas = $stmtAbiertas->fetchColumn();
 
 $erroresApertura = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
+    // [FIX-A1] Verificar CSRF antes de procesar la apertura de caja
+    requerirCSRF($_POST['_token'] ?? '', 'abrirCaja.php');
     $monto_apertura_raw = $_POST['monto_apertura'] ?? '';
     $monto_apertura     = floatval($monto_apertura_raw);
     $observaciones      = trim($_POST['observaciones'] ?? '');
@@ -217,6 +219,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     </div>
                 <?php endif; ?>
                 <form method="POST">
+                    <!-- [FIX-A1] Token CSRF para proteger la apertura de caja -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Monto inicial en caja *</label>
                         <!-- [AUTOFIX] VALIDACION-1A-1: min="0.01" y required para bloquear $0 y vacío -->

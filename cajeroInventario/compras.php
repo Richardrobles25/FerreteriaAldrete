@@ -12,15 +12,18 @@ $detalle    = null;
 $detalleProductos = [];
 
 if ($verDetalle) {
+    // [FIX-M2] Se agrega "AND cp.sucursal_id = ?" (mismo filtro que ya usa la lista de la
+    // izquierda) para que no se pueda ver el detalle de una compra de otra sucursal
+    // adivinando/incrementando el numero en "?ver=".
     $stmt = $pdo->prepare("
         SELECT cp.*, p.nombre AS nombre_proveedor, s.nombre AS nombre_sucursal, u.nombre_completo AS usuario
         FROM compras_proveedor cp
         JOIN proveedores p ON cp.proveedor_id = p.proveedor_id
         JOIN sucursales s ON cp.sucursal_id = s.sucursal_id
         JOIN usuarios u ON cp.usuario_id = u.usuario_id
-        WHERE cp.compras_proveedor_id = ?
+        WHERE cp.compras_proveedor_id = ? AND cp.sucursal_id = ?
     ");
-    $stmt->execute([$verDetalle]);
+    $stmt->execute([$verDetalle, $_SESSION['sucursal_id']]);
     $detalle = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($detalle) {
@@ -38,70 +41,118 @@ if ($verDetalle) {
 // Procesar nueva compra
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
+    // [FIX-A1] Verificar CSRF antes de procesar la compra
+    requerirCSRF($_POST['_token'] ?? '', 'compras.php');
     $proveedor_id = intval($_POST['proveedor_id'] ?? 0);
     $notas        = trim($_POST['notas'] ?? '');
     $items        = json_decode($_POST['items'] ?? '[]', true);
 
     if (!$proveedor_id)    $errores[] = 'Selecciona un proveedor.';
-    if (empty($items))     $errores[] = 'Agrega al menos un producto.';
+    if (!is_array($items) || empty($items)) $errores[] = 'Agrega al menos un producto.';
+
+    // [FIX] Validar cada item ANTES de escribir nada en la base de datos.
+    // Antes cantidad/precio_unitario se usaban tal cual venian del carrito: una cantidad
+    // negativa restaba stock en vez de sumarlo (registrado como si fuera una "compra"),
+    // y un precio negativo dejaba totales negativos en el historial.
+    if (empty($errores)) {
+        foreach ($items as $idx => $item) {
+            $prodIdChk = intval($item['producto_id'] ?? 0);
+            $cantChk   = floatval($item['cantidad'] ?? 0);
+            $precChk   = floatval($item['precio_unitario'] ?? -1);
+            if ($prodIdChk <= 0) {
+                $errores[] = 'Uno de los productos del carrito es inválido.';
+                break;
+            }
+            if ($cantChk <= 0) {
+                $errores[] = 'La cantidad de "' . ($item['nombre_producto'] ?? 'un producto') . '" debe ser mayor a 0.';
+                break;
+            }
+            if ($precChk < 0) {
+                $errores[] = 'El precio unitario de "' . ($item['nombre_producto'] ?? 'un producto') . '" no puede ser negativo.';
+                break;
+            }
+        }
+    }
 
     if (empty($errores)) {
-        $total = array_sum(array_map(fn($i) => $i['cantidad'] * $i['precio_unitario'], $items));
+        // [FIX] Envolver toda la compra en una transacción: si algo falla a la mitad
+        // (por ejemplo un producto que ya no existe), antes se quedaban productos ya
+        // insertados con su stock ya sumado, sin la compra completa. Ahora, si algo
+        // falla, se revierte todo — o se guarda completa, o no se guarda nada.
+        $pdo->beginTransaction();
+        try {
+            $total = array_sum(array_map(fn($i) => floatval($i['cantidad']) * floatval($i['precio_unitario']), $items));
 
-        $stmt = $pdo->prepare("INSERT INTO compras_proveedor (proveedor_id, usuario_id, sucursal_id, total, notas) VALUES (?,?,?,?,?)");
-        $stmt->execute([$proveedor_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $total, $notas]);
-        $compra_id = $pdo->lastInsertId();
+            $stmt = $pdo->prepare("INSERT INTO compras_proveedor (proveedor_id, usuario_id, sucursal_id, total, notas) VALUES (?,?,?,?,?)");
+            $stmt->execute([$proveedor_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $total, $notas]);
+            $compra_id = $pdo->lastInsertId();
 
-        foreach ($items as $item) {
-            $subtotal = $item['cantidad'] * $item['precio_unitario'];
-            $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
-                ->execute([$compra_id, $item['producto_id'], $item['cantidad'], $item['precio_unitario'], $subtotal]);
+            foreach ($items as $item) {
+                $prodId   = intval($item['producto_id']);
+                $cantidad = floatval($item['cantidad']);
+                $precio   = floatval($item['precio_unitario']);
+                $subtotal = round($cantidad * $precio, 2);
 
-            $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
-            $stmtS->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
-            $stockAnterior = $stmtS->fetchColumn();
-            $stockNuevo    = $stockAnterior + $item['cantidad'];
+                $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
+                    ->execute([$compra_id, $prodId, $cantidad, $precio, $subtotal]);
 
-            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $item['producto_id'], $_SESSION['sucursal_id']]);
+                // Candado sobre la fila de stock para evitar condicion de carrera con
+                // ventas u otras compras simultaneas sobre el mismo producto.
+                $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtS->execute([$prodId, $_SESSION['sucursal_id']]);
+                $stockActualRow = $stmtS->fetchColumn();
+                if ($stockActualRow === false) {
+                    throw new Exception('Uno de los productos no tiene inventario configurado en esta sucursal.');
+                }
+                $stockAnterior = floatval($stockActualRow);
+                $stockNuevo    = $stockAnterior + $cantidad;
 
-            // Actualizar precios si el usuario lo solicitó
-            if (!empty($item['actualizar_precio'])) {
-                $nuevoPrecioCompra = floatval($item['precio_unitario']);
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $prodId, $_SESSION['sucursal_id']]);
 
-                // Obtener precios actuales para calcular los márgenes
-                $stmtPrecios = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
-                $stmtPrecios->execute([$item['producto_id']]);
-                $precios = $stmtPrecios->fetch(PDO::FETCH_ASSOC);
+                // Actualizar precios si el usuario lo solicitó
+                if (!empty($item['actualizar_precio'])) {
+                    $nuevoPrecioCompra = $precio;
 
-                $precioCompraViejo = floatval($precios['precio_compra']);
-                $precioVentaViejo  = floatval($precios['precio_venta']);
-                $precioMayoreoViejo = floatval($precios['precio_mayoreo']);
+                    // Obtener precios actuales para calcular los márgenes
+                    $stmtPrecios = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
+                    $stmtPrecios->execute([$prodId]);
+                    $precios = $stmtPrecios->fetch(PDO::FETCH_ASSOC);
 
-                // Calcular nuevos precios manteniendo el mismo margen de ganancia
-                if ($precioCompraViejo > 0) {
-                    $margenVenta    = ($precioVentaViejo - $precioCompraViejo) / $precioCompraViejo;
-                    $margenMayoreo  = $precioMayoreoViejo > 0
-                        ? ($precioMayoreoViejo - $precioCompraViejo) / $precioCompraViejo
-                        : 0;
-                    $nuevoPrecioVenta   = round($nuevoPrecioCompra * (1 + $margenVenta), 2);
-                    $nuevoPrecioMayoreo = $precioMayoreoViejo > 0
-                        ? round($nuevoPrecioCompra * (1 + $margenMayoreo), 2)
-                        : $precioMayoreoViejo;
-                } else {
-                    $nuevoPrecioVenta   = $precioVentaViejo;
-                    $nuevoPrecioMayoreo = $precioMayoreoViejo;
+                    $precioCompraViejo = floatval($precios['precio_compra']);
+                    $precioVentaViejo  = floatval($precios['precio_venta']);
+                    $precioMayoreoViejo = floatval($precios['precio_mayoreo']);
+
+                    // Calcular nuevos precios manteniendo el mismo margen de ganancia
+                    if ($precioCompraViejo > 0) {
+                        $margenVenta    = ($precioVentaViejo - $precioCompraViejo) / $precioCompraViejo;
+                        $margenMayoreo  = $precioMayoreoViejo > 0
+                            ? ($precioMayoreoViejo - $precioCompraViejo) / $precioCompraViejo
+                            : 0;
+                        $nuevoPrecioVenta   = round($nuevoPrecioCompra * (1 + $margenVenta), 2);
+                        $nuevoPrecioMayoreo = $precioMayoreoViejo > 0
+                            ? round($nuevoPrecioCompra * (1 + $margenMayoreo), 2)
+                            : $precioMayoreoViejo;
+                    } else {
+                        $nuevoPrecioVenta   = $precioVentaViejo;
+                        $nuevoPrecioMayoreo = $precioMayoreoViejo;
+                    }
+
+                    $pdo->prepare("UPDATE productos SET precio_compra = ?, precio_venta = ?, precio_mayoreo = ? WHERE producto_id = ?")
+                        ->execute([$nuevoPrecioCompra, $nuevoPrecioVenta, $nuevoPrecioMayoreo, $prodId]);
                 }
 
-                $pdo->prepare("UPDATE productos SET precio_compra = ?, precio_venta = ?, precio_mayoreo = ? WHERE producto_id = ?")
-                    ->execute([$nuevoPrecioCompra, $nuevoPrecioVenta, $nuevoPrecioMayoreo, $item['producto_id']]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,?,'Entrada',?,?,?,?,?)")
+                    ->execute([$prodId, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
             }
 
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,?,'Entrada',?,?,?,?,?)")
-                ->execute([$item['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $item['cantidad'], $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
+            $pdo->commit();
+            header('Location: compras.php?msg=creado');
+            exit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            error_log('[Ferreteria/compras] Error al registrar compra: ' . $e->getMessage());
+            $errores[] = 'Error al registrar la compra. Verifica los productos e intenta de nuevo.';
         }
-
-        header('Location: compras.php?msg=creado');
-        exit();
     }
 }
 
@@ -401,6 +452,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
 
                 <form method="POST" id="formCompra">
+                    <!-- [FIX-A1] Token CSRF para proteger el registro de compra -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="proveedor_id" id="inputProveedorId">
                     <input type="hidden" name="items" id="inputItemsCompra">
                     <div class="form-group" style="margin-top:12px;">

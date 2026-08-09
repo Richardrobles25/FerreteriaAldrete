@@ -53,9 +53,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             elseif ($precioPromo >= $prod['precio_venta']) {
                 $error = 'El precio promocional ($' . number_format($precioPromo,2) . ') debe ser menor al precio normal ($' . number_format($prod['precio_venta'],2) . ').';
             } else {
-                $pdo->prepare("INSERT INTO promociones (producto_id, precio_promocional, fecha_inicio, fecha_fin, descripcion, usuario_id) VALUES (?,?,?,?,?,?)")
-                    ->execute([$productoId, $precioPromo, $fechaInicio, $fechaFin, $descripcion ?: null, $_SESSION['usuario_id']]);
-                $msg = 'Promoción creada para "' . htmlspecialchars($prod['nombre_producto']) . '".';
+                // [FIX] No permitir crear una promoción que se traslape en fechas con otra
+                // promoción YA ACTIVA del mismo producto. Antes se podían tener dos promos
+                // vigentes al mismo tiempo (ej. 30% y 50%) y el módulo de ventas terminaba
+                // aplicando la que el código encontrara al final del recorrido (la más cara),
+                // en vez de que aquí se avisara del conflicto antes de que existiera.
+                // Traslape de rangos [A_inicio,A_fin] y [B_inicio,B_fin]:
+                // se traslapan si A_inicio <= B_fin Y A_fin >= B_inicio.
+                $stmtSolape = $pdo->prepare("
+                    SELECT promocion_id, precio_promocional, fecha_inicio, fecha_fin
+                    FROM promociones
+                    WHERE producto_id = ? AND activo = 1
+                      AND fecha_inicio <= ? AND fecha_fin >= ?
+                    LIMIT 1
+                ");
+                $stmtSolape->execute([$productoId, $fechaFin, $fechaInicio]);
+                $solape = $stmtSolape->fetch(PDO::FETCH_ASSOC);
+                if ($solape) {
+                    $error = 'Ya existe una promoción activa para "' . htmlspecialchars($prod['nombre_producto']) . '" del '
+                        . date('d/m/Y', strtotime($solape['fecha_inicio'])) . ' al ' . date('d/m/Y', strtotime($solape['fecha_fin']))
+                        . ' (precio $' . number_format($solape['precio_promocional'], 2) . '). '
+                        . 'Desactívala primero o ajusta las fechas para que no se traslapen.';
+                } else {
+                    $pdo->prepare("INSERT INTO promociones (producto_id, precio_promocional, fecha_inicio, fecha_fin, descripcion, usuario_id) VALUES (?,?,?,?,?,?)")
+                        ->execute([$productoId, $precioPromo, $fechaInicio, $fechaFin, $descripcion ?: null, $_SESSION['usuario_id']]);
+                    $msg = 'Promoción creada para "' . htmlspecialchars($prod['nombre_producto']) . '".';
+                }
             }
         }
 
@@ -66,8 +89,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($accion === 'activar') {
         $id = intval($_POST['promocion_id'] ?? 0);
-        $pdo->prepare("UPDATE promociones SET activo = 1 WHERE promocion_id = ?")->execute([$id]);
-        $msg = 'Promoción reactivada.';
+        // [FIX] Reactivar una promoción también puede reintroducir un traslape: si se creó
+        // otra promoción del mismo producto mientras esta estaba desactivada, al reactivarla
+        // podrían quedar dos vigentes al mismo tiempo. Se aplica la misma validación que al crear.
+        $stmtProm = $pdo->prepare("SELECT producto_id, fecha_inicio, fecha_fin FROM promociones WHERE promocion_id = ?");
+        $stmtProm->execute([$id]);
+        $promAct = $stmtProm->fetch(PDO::FETCH_ASSOC);
+        if (!$promAct) {
+            $error = 'Promoción no encontrada.';
+        } else {
+            $stmtSolapeAct = $pdo->prepare("
+                SELECT promocion_id FROM promociones
+                WHERE producto_id = ? AND activo = 1 AND promocion_id != ?
+                  AND fecha_inicio <= ? AND fecha_fin >= ?
+                LIMIT 1
+            ");
+            $stmtSolapeAct->execute([$promAct['producto_id'], $id, $promAct['fecha_fin'], $promAct['fecha_inicio']]);
+            if ($stmtSolapeAct->fetch()) {
+                $error = 'No se puede reactivar: se traslapa en fechas con otra promoción activa del mismo producto. Desactívala primero.';
+            } else {
+                $pdo->prepare("UPDATE promociones SET activo = 1 WHERE promocion_id = ?")->execute([$id]);
+                $msg = 'Promoción reactivada.';
+            }
+        }
 
     } elseif ($accion === 'eliminar') {
         $id = intval($_POST['promocion_id'] ?? 0);

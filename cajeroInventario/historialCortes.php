@@ -13,6 +13,11 @@ $params = [$_SESSION['usuario_id']];
 
 if ($fecha) { $where .= " AND DATE(c.abierta_en) = ?"; $params[] = $fecha; }
 
+// [FIX] Mismos estados que corteCaja.php ('Completada','Modificado','Devuelto'):
+// tras una devolución parcial la venta pasa a 'Modificado' y antes desaparecía de este
+// historial aunque el corte de esa noche sí la contó — los números no coincidían.
+// También se acepta 'Crédito' con acento (registros viejos) y se agregan los buckets
+// de Transferencia y la parte terminal de Mixto para que el desglose sume el total.
 $stmt = $pdo->prepare("
     SELECT c.*,
         s.nombre AS nombre_sucursal,
@@ -20,11 +25,13 @@ $stmt = $pdo->prepare("
         COALESCE(SUM(v.total),0) AS total_cobrado,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo' THEN v.total ELSE 0 END),0) AS ef,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal' THEN v.total ELSE 0 END),0) AS term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Credito' THEN v.total ELSE 0 END),0) AS cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef
+        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('Credito','Crédito') THEN v.total ELSE 0 END),0) AS cred,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_terminal ELSE 0 END),0) AS mixto_term,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) AS transf
     FROM cajas c
     JOIN sucursales s ON c.sucursal_id = s.sucursal_id
-    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado = 'Completada'
+    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado IN ('Completada','Modificado','Devuelto')
     $where
     GROUP BY c.caja_id
     ORDER BY c.abierta_en DESC
@@ -58,7 +65,7 @@ if ($verCorte) {
                    cl.nombre_completo AS cliente
             FROM ventas v
             LEFT JOIN clientes cl ON v.cliente_id = cl.cliente_id
-            WHERE v.caja_id = ? AND v.estado = 'Completada'
+            WHERE v.caja_id = ? AND v.estado IN ('Completada','Modificado','Devuelto')
             ORDER BY v.created_at ASC
         ");
         $stmtV->execute([$verCorte]);
@@ -252,9 +259,13 @@ if ($verCorte) {
             <?php if (count($cortes) > 0): ?>
                 <?php foreach ($cortes as $c): ?>
                 <?php
+                    // [FIX-C9] diferencia=NULL significa que la caja se cerro automaticamente
+                    // (sin arqueo real), no que "no hubo diferencia". Antes ?? 0 volvia ambos
+                    // casos indistinguibles y se mostraba "Cuadrada" para turnos nunca contados.
+                    $difSinVerificar = $c['diferencia'] === null;
                     $dif = floatval($c['diferencia'] ?? 0);
-                    $difClass = $dif == 0 ? 'dif-ok' : ($dif < 0 ? 'dif-neg' : 'dif-pos');
-                    $difLabel = $dif == 0 ? 'Cuadrada' : ($dif < 0 ? '-$'.number_format(abs($dif),2) : '+$'.number_format($dif,2));
+                    $difClass = $difSinVerificar ? 'dif-neg' : ($dif == 0 ? 'dif-ok' : ($dif < 0 ? 'dif-neg' : 'dif-pos'));
+                    $difLabel = $difSinVerificar ? 'Sin verificar' : ($dif == 0 ? 'Cuadrada' : ($dif < 0 ? '-$'.number_format(abs($dif),2) : '+$'.number_format($dif,2)));
                     $esSeleccionado = $verCorte === intval($c['caja_id']);
                 ?>
                 <a href="historialCortes.php?ver=<?= $c['caja_id'] ?><?= $fecha?'&fecha='.$fecha:'' ?>"
@@ -286,8 +297,11 @@ if ($verCorte) {
                     </div>
                     <div class="corte-desglose">
                         <span>Ef: $<?= number_format($c['ef']+$c['mixto_ef'],2) ?></span>
-                        <span>Term: $<?= number_format($c['term'],2) ?></span>
+                        <span>Term: $<?= number_format($c['term']+$c['mixto_term'],2) ?></span>
                         <span>Cred: $<?= number_format($c['cred'],2) ?></span>
+                        <?php if (floatval($c['transf']) > 0): ?>
+                        <span>Transf: $<?= number_format($c['transf'],2) ?></span>
+                        <?php endif; ?>
                     </div>
                 </a>
                 <?php endforeach; ?>
@@ -312,7 +326,13 @@ if ($verCorte) {
                         <div class="det-fila"><span>Monto apertura</span><span>$<?= number_format($detalleCorte['monto_apertura'],2) ?></span></div>
                     </div>
 
-                    <?php if ($detalleCorte['estado'] === 'Cerrada'): ?>
+                    <?php if ($detalleCorte['estado'] === 'Cerrada' && $detalleCorte['diferencia'] === null): ?>
+                    <!-- [FIX-C9] Cierre automatico (sin arqueo real) — no mostrar montos NULL como $0.00 "cuadrada" -->
+                    <div class="det-seccion">
+                        <h4>Resultado del corte</h4>
+                        <div class="dif-box faltante">⚠ Cierre automático — no se registró un conteo de efectivo para este turno.</div>
+                    </div>
+                    <?php elseif ($detalleCorte['estado'] === 'Cerrada'): ?>
                     <div class="det-seccion">
                         <h4>Resultado del corte</h4>
                         <div class="det-fila"><span>Efectivo esperado</span><span>$<?= number_format($detalleCorte['monto_esperado']??0,2) ?></span></div>

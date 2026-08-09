@@ -9,6 +9,10 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 // Acciones sobre transferencia existente
 $_accionData = $_POST + $_GET;
 if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['id']))) {
+    // [FIX-A1] Verificar CSRF una sola vez: todas las acciones de este bloque
+    // (aprobar, rechazar, enviar, recibir, editar_cantidad, aceptar/rechazar_modificacion)
+    // pasan por aqui antes de llegar a su respectivo elseif.
+    requerirCSRF($_accionData['_token'] ?? '', 'transferencias.php');
     $id         = intval($_accionData['id'] ?? $_GET['id'] ?? 0);
     $accion     = $_accionData['accion'];
     $miSucursal = $_SESSION['sucursal_id'];
@@ -71,49 +75,135 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
         $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
             ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
     } elseif ($accion === 'enviar') {
-        $pdo->prepare("UPDATE transferencias SET estado='En tránsito' WHERE transferencias_id=? AND estado='Aprobada' AND sucursal_origen_id=?")
-            ->execute([$id, $miSucursal]);
+        // El stock del origen se descuenta AL ENVIAR (antes se descontaba hasta que el
+        // destino confirmaba recepcion, lo que permitia al origen seguir vendiendo
+        // mercancia que ya iba en camino y dejaba transferencias atoradas en transito).
+        $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? AND estado = 'Aprobada' AND sucursal_origen_id = ?");
+        $stmt->execute([$id, $miSucursal]);
+        $transf = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($transf) {
+            $pdo->beginTransaction();
+            try {
+                // [FIX-A2] Volver a leer y bloquear la transferencia dentro de la transaccion
+                // (mismo patron que en 'recibir'). El chequeo de arriba (linea 77-79) se hizo
+                // sin candado; un doble clic/doble envio podia pasar el chequeo dos veces y
+                // descontar el stock de origen por duplicado.
+                $stmtLockEnv = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+                $stmtLockEnv->execute([$id]);
+                $transf = $stmtLockEnv->fetch(PDO::FETCH_ASSOC);
+                if (!$transf || $transf['estado'] !== 'Aprobada' || $transf['sucursal_origen_id'] != $miSucursal) {
+                    $pdo->rollBack();
+                    header('Location: transferencias.php?msg=enviar'); exit();
+                }
+
+                // Candado sobre la fila de stock para evitar que una venta simultanea
+                // descuente el mismo stock mientras se procesa el envio
+                $stmtOr = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtOr->execute([$transf['producto_id'], $miSucursal]);
+                $stockOr = $stmtOr->fetchColumn();
+
+                if ($stockOr === false || floatval($stockOr) < floatval($transf['cantidad'])) {
+                    $pdo->rollBack();
+                    header('Location: transferencias.php?msg=error_stock_envio'); exit();
+                }
+
+                $stockAntOrigen   = floatval($stockOr);
+                $stockNuevoOrigen = $stockAntOrigen - floatval($transf['cantidad']);
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                    ->execute([$stockNuevoOrigen, $transf['producto_id'], $miSucursal]);
+                // El "#id" en el motivo marca que esta transferencia YA desconto el origen
+                // al enviar — recibir usa esa marca para no descontar doble (compatibilidad
+                // con transferencias enviadas antes de este cambio).
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
+                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $miSucursal, $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen, 'Transferencia enviada #' . $id]);
+
+                $pdo->prepare("UPDATE transferencias SET estado='En tránsito' WHERE transferencias_id=? AND estado='Aprobada' AND sucursal_origen_id=?")
+                    ->execute([$id, $miSucursal]);
+
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                error_log('[Ferreteria/transferencias] Error al enviar #' . $id . ': ' . $e->getMessage());
+                header('Location: transferencias.php?msg=error_envio'); exit();
+            }
+        }
     } elseif ($accion === 'recibir') {
         $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ?");
         $stmt->execute([$id]);
         $transf = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($transf && $transf['estado'] === 'En tránsito' && $transf['sucursal_destino_id'] == $miSucursal) {
-            $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
-            $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
-            $prodOrigen = $stmtOrigen->fetch(PDO::FETCH_ASSOC);
+            $pdo->beginTransaction();
+            try {
+                // [FIX-C8] Volver a leer y bloquear la transferencia dentro de la transaccion.
+                // El chequeo de arriba (linea 116-120) se hizo sin candado; si dos peticiones
+                // (doble clic/doble envio) llegan casi juntas, ambas lo pasarian y ambas sumarian
+                // el stock al destino. Al relockear aqui con FOR UPDATE y revalidar el estado,
+                // la segunda peticion encuentra la transferencia ya "Entregada" y no hace nada.
+                $stmtLock = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+                $stmtLock->execute([$id]);
+                $transf = $stmtLock->fetch(PDO::FETCH_ASSOC);
+                if (!$transf || $transf['estado'] !== 'En tránsito' || $transf['sucursal_destino_id'] != $miSucursal) {
+                    $pdo->rollBack();
+                    header('Location: transferencias.php?msg=recibir'); exit();
+                }
 
-            if ($prodOrigen && $prodOrigen['stock_actual'] >= $transf['cantidad']) {
-                // Descontar stock del origen
-                $stockAntOrigen   = $prodOrigen['stock_actual'];
-                $stockNuevoOrigen = $stockAntOrigen - $transf['cantidad'];
-                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-                    ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
-                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
+                // ¿El origen ya desconto su stock al enviar? (transferencias nuevas lo hacen;
+                // las que quedaron "En tránsito" antes del cambio no, y hay que descontarlo aqui)
+                $stmtMarca = $pdo->prepare("
+                    SELECT COUNT(*) FROM movimientos_inventario
+                    WHERE tipo = 'Transferencia' AND motivo = ? AND sucursal_id = ?
+                ");
+                $stmtMarca->execute(['Transferencia enviada #' . $id, $transf['sucursal_origen_id']]);
+                $origenYaDescontado = intval($stmtMarca->fetchColumn()) > 0;
+
+                if (!$origenYaDescontado) {
+                    // Ruta de compatibilidad: transferencia enviada con la logica anterior
+                    $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                    $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
+                    $stockOrLegacy = $stmtOrigen->fetchColumn();
+
+                    if ($stockOrLegacy === false || floatval($stockOrLegacy) < floatval($transf['cantidad'])) {
+                        $pdo->rollBack();
+                        header('Location: transferencias.php?msg=error_stock_recibir'); exit();
+                    }
+                    $stockAntOrigen   = floatval($stockOrLegacy);
+                    $stockNuevoOrigen = $stockAntOrigen - floatval($transf['cantidad']);
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                        ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
+                        ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
+                }
 
                 // Sumar stock al destino — mismo producto_id (catálogo compartido)
-                $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+                $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
                 $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
-                $prodDest = $stmtDest->fetch(PDO::FETCH_ASSOC);
+                $stockDest = $stmtDest->fetchColumn();
 
-                if ($prodDest) {
-                    $stockAntDest   = $prodDest['stock_actual'];
-                    $stockNuevoDest = $stockAntDest + $transf['cantidad'];
+                if ($stockDest !== false) {
+                    $stockAntDest   = floatval($stockDest);
+                    $stockNuevoDest = $stockAntDest + floatval($transf['cantidad']);
                     $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                         ->execute([$stockNuevoDest, $transf['producto_id'], $transf['sucursal_destino_id']]);
                 } else {
                     // Primera vez que este producto llega a la sucursal destino
-                    $stockNuevoDest = $transf['cantidad'];
+                    $stockNuevoDest = floatval($transf['cantidad']);
                     $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
                         ->execute([$transf['producto_id'], $transf['sucursal_destino_id'], $stockNuevoDest]);
                     $stockAntDest = 0;
                 }
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia recibida')")
-                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
+                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest, 'Transferencia recibida #' . $id]);
 
                 $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
                     ->execute([$_SESSION['usuario_id'], $id]);
+
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                error_log('[Ferreteria/transferencias] Error al recibir #' . $id . ': ' . $e->getMessage());
+                header('Location: transferencias.php?msg=error_recibir'); exit();
             }
         }
     }
@@ -123,6 +213,8 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
 // Nueva solicitud — multi-producto, YO soy el DESTINO (quien pide), ORIGEN = otra sucursal
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-A1] Verificar CSRF antes de procesar la nueva solicitud de transferencia
+    requerirCSRF($_POST['_token'] ?? '', 'transferencias.php');
     $sucursal_origen_id = intval($_POST['sucursal_origen_id'] ?? 0);
     $notas              = trim($_POST['notas'] ?? '');
     $items              = json_decode($_POST['items_transf'] ?? '[]', true);
@@ -429,14 +521,19 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                     'solicitado'      => 'Solicitud enviada. La sucursal origen debe aprobarla.',
                     'aprobar'         => 'Transferencia aprobada. Se agrego una nota para la sucursal que recibira el pedido.',
                     'rechazar'        => 'Transferencia rechazada.',
-                    'enviar'          => 'Productos marcados como enviados. La sucursal destino debe confirmar la recepcion.',
-                    'recibir'         => 'Recepcion confirmada. El stock fue actualizado en ambas sucursales.',
+                    'enviar'          => 'Productos enviados. El stock ya se desconto de tu sucursal; la sucursal destino debe confirmar la recepcion.',
+                    'recibir'         => 'Recepcion confirmada. El stock fue sumado a tu sucursal.',
                     'cantidad_editada'       => 'Cantidad modificada. La sucursal destino debe confirmar el cambio.',
                     'aceptar_modificacion'  => 'Cambio de cantidad aceptado. La transferencia continua como Aprobada.',
                     'rechazar_modificacion' => 'Cambio de cantidad rechazado. La transferencia volvio a estado Pendiente.',
                     'error_stock_editar'    => 'No se puede guardar: la cantidad ingresada supera el stock disponible en la sucursal origen.',
+                    'error_stock_envio'     => 'No se puede enviar: ya no hay stock suficiente en tu sucursal para esta transferencia. Edita la cantidad o rechazala.',
+                    'error_envio'           => 'Error al registrar el envio. Intenta de nuevo.',
+                    'error_stock_recibir'   => 'No se puede confirmar: la sucursal origen ya no tiene stock suficiente registrado. Contacta a la sucursal origen.',
+                    'error_recibir'         => 'Error al confirmar la recepcion. Intenta de nuevo.',
                 ]; ?>
-                <div class="msg msg-exito"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
+                <?php $esMsgError = str_starts_with($_GET['msg'], 'error'); ?>
+                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>
 
             <!-- Filtro de fechas -->
@@ -509,27 +606,31 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     $stockOrigenJs = floatval($t['stock_origen'] ?? 0);
                                 ?>
                                 <?php if ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
-                                        <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</a>
-                                        <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Rechazar esta solicitud de transferencia?')">Rechazar</a>
+                                        <!-- [FIX-A1] Token CSRF en enlaces destructivos -->
+                                        <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</a>
+                                        <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Rechazar esta solicitud de transferencia?')">Rechazar</a>
                                         <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
                                         <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
-                                        <a class="btn-accion btn-enviar" href="transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Confirmar que ya enviaste los productos?')">Marcar enviado</a>
+                                        <!-- [FIX-A1] Token CSRF en enlace destructivo -->
+                                        <a class="btn-accion btn-enviar" href="transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Confirmar que ya enviaste los productos?')">Marcar enviado</a>
                                     <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
+                                        <!-- [FIX-A1] Token CSRF en enlaces destructivos -->
                                         <a class="btn-accion btn-aceptar-mod"
-                                           href="transferencias.php?accion=aceptar_modificacion&id=<?= $t['transferencias_id'] ?>"
+                                           href="transferencias.php?accion=aceptar_modificacion&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                                            onclick="return confirm('Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
                                             ✓ Aceptar cantidad
                                         </a>
                                         <a class="btn-accion btn-rechazar-mod"
-                                           href="transferencias.php?accion=rechazar_modificacion&id=<?= $t['transferencias_id'] ?>"
+                                           href="transferencias.php?accion=rechazar_modificacion&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                                            onclick="return confirm('Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
                                             ✕ Rechazar cambio
                                         </a>
                                     <?php elseif ($t['estado'] === 'Modificada' && $esMiOrigen): ?>
                                         <span style="color:#283593;font-size:11px;font-style:italic;">Esperando confirmacion del destino</span>
                                     <?php elseif ($t['estado'] === 'En tránsito' && !$esMiOrigen): ?>
-                                        <a class="btn-accion btn-recibir" href="transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>" onclick="return confirm('Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</a>
+                                        <!-- [FIX-A1] Token CSRF en enlace destructivo -->
+                                        <a class="btn-accion btn-recibir" href="transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</a>
                                     <?php else: ?>
                                         <span style="color:#aaa;font-size:11px;">—</span>
                                     <?php endif; ?>
@@ -556,6 +657,8 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                 <?php endif; ?>
 
                 <form method="POST" id="formTransf">
+                    <!-- [FIX-A1] Token CSRF para proteger la nueva solicitud de transferencia -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="items_transf" id="inputItemsTransf">
 
                     <div class="form-group">
@@ -858,6 +961,8 @@ document.addEventListener('keydown', function(e) {
 
 <!-- Form editar cantidad -->
 <form id="formEditarCantidadTransf" method="POST" action="transferencias.php" style="display:none;">
+    <!-- [FIX-A1] Token CSRF para proteger la edicion de cantidad -->
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
     <input type="hidden" name="accion" value="editar_cantidad">
     <input type="hidden" id="inputEditarTransfId" name="id">
     <input type="hidden" id="inputEditarNuevaCantidad" name="nueva_cantidad">

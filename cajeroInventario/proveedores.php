@@ -28,6 +28,8 @@ if (isset($_GET['editar'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-CSRF-01] Verificar CSRF antes de crear/editar proveedor (antes solo ?eliminar=/?toggle= lo tenian)
+    requerirCSRF($_POST['_token'] ?? '', 'proveedores.php');
     $nombre    = trim($_POST['nombre'] ?? '');
     $telefono  = trim($_POST['telefono'] ?? '');
     $correo    = trim($_POST['correo'] ?? '');
@@ -330,6 +332,8 @@ if ($editando) {
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>
                 <form method="POST">
+                    <!-- [FIX-CSRF-01] Token CSRF para proteger crear/editar proveedor -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="proveedor_id" value="<?= $editando['proveedor_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>
@@ -382,6 +386,11 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 // ── Sistema de tags para áreas ──────────────────────────────────────────────
 const todasLasAreas = <?= json_encode(array_values(array_map(fn($c) => ['id' => $c['categoria_id'], 'nombre' => $c['nombre']], $categorias))) ?>;
 let areasSeleccionadas = <?= json_encode(array_values(array_map(fn($id) => intval($id), $catsEditando))) ?>;
+// [FIX-C7] Este archivo no tenia ninguna funcion de limpieza para insertar texto en el DOM.
+// Se agrega la misma esc() ya usada en otros archivos del proyecto (nuevaVenta.php, formProducto.php).
+function esc(str) {
+    return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 
 function renderAreasTags() {
     const tags = document.getElementById('areasTags');
@@ -393,7 +402,7 @@ function renderAreasTags() {
         if (!area) return;
         const tag = document.createElement('span');
         tag.className = 'area-tag';
-        tag.innerHTML = area.nombre + '<button type="button" onclick="quitarArea(' + id + ')">×</button>';
+        tag.innerHTML = esc(area.nombre) + '<button type="button" onclick="quitarArea(' + id + ')">×</button>';
         tags.appendChild(tag);
         const inp = document.createElement('input');
         inp.type = 'hidden';
@@ -417,7 +426,7 @@ function filtrarAreasDropdown(q) {
         drop.innerHTML = '<div style="padding:10px;text-align:center;color:#aaa;font-size:12px;">Sin resultados</div>';
     } else {
         drop.innerHTML = disponibles.map(a =>
-            '<div class="area-opcion" onclick="agregarArea(' + a.id + ')">' + a.nombre + '</div>'
+            '<div class="area-opcion" onclick="agregarArea(' + a.id + ')">' + esc(a.nombre) + '</div>'
         ).join('');
     }
     drop.style.display = 'block';

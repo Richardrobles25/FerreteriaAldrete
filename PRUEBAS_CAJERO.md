@@ -4,6 +4,10 @@
 **Usuario admin:** admin / 1234  
 **Fecha:** 2026-05-22  
 
+> ⚠️ **Nota (2026-08-02):** la contraseña `1234` para `inventarioCajero` ya no es válida contra la base de datos local actual (se comprobó al verificar la auditoría de seguridad de esa fecha) — probablemente se cambió en algún momento después de escribirse este script. El usuario `inventarioCajero` (rol Inventario/Cajero, sucursal 1) sigue existiendo y activo; solo hace falta actualizar o restablecer su contraseña para volver a usar este script tal cual.
+
+> ℹ️ **Nota (2026-08-02):** además de este checklist manual, el rol pasó por dos auditorías automatizadas de seguridad/QA (revisión de código + pruebas HTTP en vivo contra el sistema real, incluyendo condiciones de carrera con peticiones simultáneas genuinas). Todos los hallazgos Críticos y Altos de ambas quedaron corregidos y verificados — detalle completo en `CAJERO_INVENTARIO_FUNCIONES.md` y la tabla de `CONTEXTO_SISTEMA.md` (§12, SEC-01 a SEC-25). Esto cubre en buena parte el Módulo 7 (Seguridad General) de abajo — en particular SEC01/SEC04/SEC05 de este documento y V23 (recalculo de precio en servidor) ya están confirmados como resueltos.
+
 > **Cómo usar este script:**  
 > Ejecuta cada caso en orden. Anota en la columna "Resultado real" lo que ocurrió.  
 > ✅ = Pasó como se esperaba | ❌ = Falló | ⚠️ = Comportamiento extraño

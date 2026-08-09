@@ -17,7 +17,9 @@ $totalTurno  = 0;
 $pendientes  = 0;
 
 if ($cajaActual) {
-    $stmtV = $pdo->prepare("SELECT COUNT(*), COALESCE(SUM(total),0) FROM ventas WHERE caja_id = ? AND estado = 'Completada'");
+    // [FIX] Mismos estados que corteCaja.php: una venta con devolución parcial pasa a
+    // 'Modificado' y debe seguir contando en el total del turno (con su total ya reducido)
+    $stmtV = $pdo->prepare("SELECT COUNT(*), COALESCE(SUM(total),0) FROM ventas WHERE caja_id = ? AND estado IN ('Completada','Modificado','Devuelto')");
     $stmtV->execute([$cajaActual['caja_id']]);
     [$ventasTurno, $totalTurno] = $stmtV->fetch(PDO::FETCH_NUM);
 
@@ -36,15 +38,14 @@ $stmtStock->execute([$_SESSION['sucursal_id']]);
 $stockBajo = $stmtStock->fetchColumn();
 
 // Clientes con deuda (igual que creditos.php)
-// [AUTOFIX] P-05/SEC-07: Filtrar por sucursal del cajero, no mostrar deudores de todas las sucursales
-$stmtCred = $pdo->prepare("
+// Decision de negocio (2026-07-31): los creditos son GLOBALES — el cliente puede pagar
+// su deuda en cualquier sucursal porque es la misma empresa. Este contador debe coincidir
+// con lo que muestra creditos.php (que tambien es global).
+$stmtCred = $pdo->query("
     SELECT COUNT(DISTINCT cr.cliente_id)
     FROM creditos cr
-    JOIN ventas v ON cr.venta_id = v.venta_id
-    JOIN cajas c ON v.caja_id = c.caja_id
-    WHERE cr.estado IN ('Activo', 'Vencido') AND c.sucursal_id = ?
+    WHERE cr.estado IN ('Activo', 'Vencido')
 ");
-$stmtCred->execute([$_SESSION['sucursal_id']]);
 $creditosActivos = $stmtCred->fetchColumn();
 
 // Notificaciones de transferencias

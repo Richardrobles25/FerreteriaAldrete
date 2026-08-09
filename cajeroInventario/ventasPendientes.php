@@ -9,10 +9,12 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 // Verificar que hay caja abierta; si no, redirigir a abrirCaja
 $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
 $_stmtCajaGuard->execute([$_SESSION['usuario_id']]);
-if (!$_stmtCajaGuard->fetchColumn()) {
+$cajaActualId = $_stmtCajaGuard->fetchColumn();
+if (!$cajaActualId) {
     header('Location: abrirCaja.php?msg=sinCaja');
     exit();
 }
+$cajaActualId = intval($cajaActualId); // caja abierta del usuario — se usa al liquidar
 
 // Datos de la sucursal para el ticket
 $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
@@ -38,13 +40,23 @@ if (isset($_GET['liquidar'])) {
     if ($ventaLiq) {
         $pdo->beginTransaction();
         try {
-            // Marcar como completada.
-            // [AUTOFIX] Al pasar a 'Completada', corteCaja.php automáticamente incluye esta
-            // venta en resumen['ef'] (Efectivo) o en total_cobrado (Transferencia) vía la
-            // query sobre ventas WHERE caja_id = ? AND estado IN ('Completada','Modificado','Devuelto').
-            // NO se inserta en movimientos_caja para evitar doble conteo: la venta ya
-            // está asociada a la caja activa (caja_id fue asignado al crear la pendiente).
-            $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ?")->execute([$venta_id]);
+            // Marcar como completada y REASIGNAR la venta a la caja abierta actual.
+            // Antes conservaba el caja_id de cuando se creo la pendiente: si esa caja ya
+            // estaba cerrada (pendiente de un dia anterior), el dinero cobrado hoy entraba
+            // al cajon actual pero la venta se sumaba al turno viejo → sobrante en el corte
+            // de hoy y el corte cerrado del dia anterior cambiaba retroactivamente.
+            // Al reasignar a la caja actual, corteCaja.php incluye esta venta en
+            // resumen['ef'] (Efectivo) o en su bucket correspondiente del turno donde
+            // realmente se cobro. NO se inserta en movimientos_caja para evitar doble conteo.
+            // [FIX-NC2] "AND estado='Pendiente'" en el WHERE: si "Cancelar" se disparo casi al
+            // mismo tiempo sobre esta misma venta y ya gano la carrera, este UPDATE no afecta
+            // ninguna fila y se aborta la liquidacion completa (linea siguiente) ANTES de tocar
+            // el stock — evita que una venta quede "Cancelada" con el stock ya descontado.
+            $stmtLiq = $pdo->prepare("UPDATE ventas SET estado = 'Completada', caja_id = ? WHERE venta_id = ? AND estado = 'Pendiente'");
+            $stmtLiq->execute([$cajaActualId, $venta_id]);
+            if ($stmtLiq->rowCount() === 0) {
+                throw new Exception('ya_no_pendiente');
+            }
 
             // Descontar stock ahora que se confirma la entrega
             $stmtItems = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
@@ -82,6 +94,8 @@ if (isset($_GET['liquidar'])) {
             $pdo->rollBack();
             if ($e->getMessage() === 'stock_insuficiente') {
                 header('Location: ventasPendientes.php?msg=error_sin_stock');
+            } elseif ($e->getMessage() === 'ya_no_pendiente') {
+                header('Location: ventasPendientes.php?msg=error_acceso');
             } else {
                 header('Location: ventasPendientes.php?msg=error_liquidar');
             }
@@ -115,13 +129,20 @@ if (isset($_GET['cancelar'])) {
     // El stock nunca fue descontado al crear la pendiente, así que solo se cancela la venta
     $pdo->beginTransaction();
     try {
-        $pdo->prepare("UPDATE ventas SET estado = 'Cancelada' WHERE venta_id = ?")->execute([$venta_id]);
+        // [FIX-NC2] "AND estado='Pendiente'" en el WHERE: si "Liquidar" se disparo casi al
+        // mismo tiempo sobre esta misma venta y ya gano la carrera (ya la marco Completada y
+        // descontó stock), este UPDATE no debe pisar ese resultado.
+        $stmtCancel = $pdo->prepare("UPDATE ventas SET estado = 'Cancelada' WHERE venta_id = ? AND estado = 'Pendiente'");
+        $stmtCancel->execute([$venta_id]);
+        if ($stmtCancel->rowCount() === 0) {
+            throw new Exception('ya_no_pendiente');
+        }
         $pdo->commit();
         header('Location: ventasPendientes.php?msg=cancelado');
         exit();
     } catch (Exception $e) {
         $pdo->rollBack();
-        header('Location: ventasPendientes.php?msg=error_cancelar');
+        header('Location: ventasPendientes.php?msg=' . ($e->getMessage() === 'ya_no_pendiente' ? 'error_acceso' : 'error_cancelar'));
         exit();
     }
 }

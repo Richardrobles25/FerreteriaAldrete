@@ -500,9 +500,9 @@ adelanto_descontado, monto_pagado, pagado_en
 
 Rol combinado con todas las funciones de Cajero + Inventario. Es el **módulo principal de desarrollo activo** (rama `nuevoCatalogo`); `cajero/` e `inventario/` se sincronizan manualmente después.
 
-- **Estado actual del código (2026-07-20):** `formProducto.php` todavía permite crear/editar directamente en el catálogo global de `productos`, y `categorias.php`/`unidades.php` permiten crear categorías y unidades — igual que Administrador ⚠️.
-- **Diseño intencional según el usuario:** el rol Inventario/Cajero **no debería** crear ni editar productos, categorías ni unidades — esas operaciones son exclusivas de Administrador. El catálogo de productos es global; este rol solo debería poder **agregar un producto ya existente del catálogo global al inventario de su sucursal** (activarlo en `stock_sucursal` con stock inicial en 0), no crear productos nuevos.
-- Hay trabajo en progreso sin commitear sobre `devoluciones.php`, `entradas.php`, `formProducto.php`, `masVendidos.php`, `nuevaVenta.php`, `productos.php`, `salidas.php`, `ventasPendientes.php` — posiblemente enfocado en corregir esta discrepancia.
+- **Estado actual del código (2026-08-02):** `categorias.php` y `unidades.php` de este módulo ya **no** permiten crear/editar/eliminar a Inventario/Cajero — solo Administrador (✅ resuelto, ver SEC-05 en §12). `formProducto.php` **sigue** permitiendo editar cualquier producto del catálogo global (incluso de otra sucursal) y crear productos nuevos pese al bloqueo aparente en pantalla — **decisión del dueño: se deja así** (SEC-05b en §12), el catálogo es global por diseño.
+- **Diseño intencional según el usuario:** el rol Inventario/Cajero **no debería** crear ni editar categorías ni unidades — esas operaciones ya son exclusivas de Administrador (resuelto). Sobre productos, el dueño decidió mantener el comportamiento actual de `formProducto.php` tal cual está.
+- Auditoría de seguridad completa del módulo realizada 2026-08-02 (ver `CAJERO_INVENTARIO_FUNCIONES.md`, sección final, y §12 de este documento). Se corrigieron 9 hallazgos (XSS almacenado, CSRF, condiciones de carrera, restricción de rol, y el display de cajas auto-cerradas).
 
 Archivos: mismos que Cajero + mismos que Inventario dentro de `/cajeroInventario/`.
 
@@ -652,17 +652,42 @@ Incluido en todos los módulos con opción de exportar. Contiene funciones reuti
 
 ## 12. Seguridad — Issues Conocidos
 
-| ID | Severidad | Módulo | Problema |
-|----|-----------|--------|----------|
-| SEC-01 | CRÍTICO | `nuevaVenta.php` | Total calculado en browser, sin revalidación server-side. Manipulable con DevTools. |
-| SEC-02 | CRÍTICO | `config/database.php` | Credenciales hardcodeadas en código. Errores de BD expuestos al usuario con `die()`. |
-| SEC-03 | ALTO | Múltiples archivos | Falta CSRF en transferencias, entradas y salidas (solo aplica en algunos módulos). |
-| SEC-04 | ALTO | `creditos.php` | Saldo pendiente no usa `FOR UPDATE` — race condition posible en abonos simultáneos. |
-| SEC-05 | MEDIO | `cajeroInventario/formProducto.php`, `categorias.php`, `unidades.php` | Inventario/Cajero puede crear/editar productos, categorías y unidades del catálogo global (debería ser solo admin; ver §7 nota de diseño intencional). Hay WIP sin commitear en estos archivos que podría estar corrigiendo esto. |
-| SEC-09 | INFO | `cajeroInventario/abonos.php` | Flujo huérfano de abonos con varios defectos (sin CSRF, no maneja Mixto, no marca movimientos_caja). Conservado a propósito por el usuario — no tocar sin instrucción explícita. |
-| SEC-06 | MEDIO | `inventario/masVendidos.php` | Selector permite ver datos de otras sucursales. |
-| SEC-07 | MEDIO | `devoluciones.php` | Sin límite de días para iniciar una devolución. |
-| SEC-08 | BAJO | `config/database.php` | `ATTR_PERSISTENT => true` puede causar fugas de conexión bajo carga. |
+> Última revisión: auditoría exhaustiva del rol Inventario/Cajero, 2026-08-02 (ver `CAJERO_INVENTARIO_FUNCIONES.md` para el detalle completo con reproducción/causa raíz/solución de cada hallazgo).
+
+| ID | Severidad | Módulo | Problema | Estado |
+|----|-----------|--------|----------|--------|
+| SEC-01 | CRÍTICO | `nuevaVenta.php` | Total calculado en browser, sin revalidación server-side. Manipulable con DevTools. | ✅ Resuelto (ya recalcula todo server-side) |
+| SEC-02 | CRÍTICO | `config/database.php` | Credenciales hardcodeadas en código. Errores de BD expuestos al usuario con `die()`. | ⚠️ Pendiente — el dueño del proyecto rotará la contraseña y la sacará del repositorio una vez cerrados los demás pendientes. El `die()` con mensaje técnico sigue igual. |
+| SEC-03 | ALTO | Transferencias, entradas, salidas, nueva venta, corte/apertura de caja, devoluciones, compras | Falta CSRF | ✅ Resuelto 2026-08-02 en los 8 archivos (incluye las 7 acciones de transferencias) |
+| SEC-04 | ALTO | `creditos.php` | Saldo pendiente no usa `FOR UPDATE` — race condition posible en abonos simultáneos. | ✅ Resuelto 2026-08-02 |
+| SEC-05 | MEDIO | `categorias.php`, `unidades.php` | Inventario/Cajero podía crear/editar categorías y unidades del catálogo global | ✅ Resuelto 2026-08-02 — solo Administrador |
+| SEC-05b | MEDIO | `cajeroInventario/formProducto.php` | Puede editar cualquier producto del catálogo (no solo los de su sucursal) y crear productos nuevos pese al bloqueo aparente | ❌ **Decisión del dueño (2026-08-02): se deja así** — catálogo compartido por diseño, riesgo de creación considerado bajo |
+| SEC-09 | INFO | `cajeroInventario/abonos.php` | Flujo huérfano de abonos con varios defectos (sin CSRF, no maneja Mixto, no marca movimientos_caja). Conservado a propósito por el usuario — no tocar sin instrucción explícita. | Sin cambios |
+| SEC-06 | INFO | `masVendidos.php` | Selector permite ver datos de otras sucursales. | ❌ **Confirmado intencional (2026-08-02)** — no es un bug, las sucursales trabajan coordinadas |
+| SEC-07 | MEDIO | `devoluciones.php` | Sin límite de días para iniciar una devolución. | ✅ Ya resuelto antes de esta auditoría (límite de 7 días vigente) |
+| SEC-08 | BAJO | `config/database.php` | `ATTR_PERSISTENT => true` puede causar fugas de conexión bajo carga. | ✅ Ya resuelto antes de esta auditoría (el array de opciones del PDO está vacío) |
+| SEC-10 | CRÍTICO | `creditos.php`, `nuevaVenta.php` | XSS almacenado: un nombre de cliente con comilla rompía el atributo `onclick` y ejecutaba JS arbitrario | ✅ Resuelto 2026-08-02 |
+| SEC-11 | CRÍTICO | `productos.php` | XSS almacenado en el modal "Agregar del catálogo" (nombre/código/categoría sin escapar bien) | ✅ Resuelto 2026-08-02 |
+| SEC-12 | CRÍTICO | `proveedores.php` | XSS almacenado en el selector de áreas (sin ningún escape) | ✅ Resuelto 2026-08-02 |
+| SEC-13 | CRÍTICO | `transferencias.php` | Recibir una transferencia dos veces (doble clic) duplicaba el stock del destino | ✅ Resuelto 2026-08-02 |
+| SEC-14 | ALTO | `transferencias.php` | Enviar una transferencia dos veces (doble clic) duplicaba el descuento de stock en origen | ✅ Resuelto 2026-08-02 |
+| SEC-15 | CRÍTICO | `historialCortes.php` | Cajas cerradas automáticamente (sesión abandonada) se mostraban como "Cuadrada" con $0.00 sin verificación real | ✅ Resuelto 2026-08-02 |
+| SEC-16 | ALTO | `entradas.php`, `salidas.php` | Sin `FOR UPDATE` al actualizar stock — condición de carrera entre dos movimientos simultáneos del mismo producto | ✅ Resuelto 2026-08-02 |
+| SEC-17 | BAJA | `productos.php` | Panel de "Importar Excel" sin botón que lo muestre (código sin usar); el handler de backend sigue sin verificación de rol propia | Sin cambios — bajo riesgo mientras no sea alcanzable desde la UI |
+| SEC-18 | MEDIA | `corteCaja.php` | Cierre de caja sin candado contra doble envío — un doble clic podía sobrescribir el corte con otro monto | ✅ Resuelto 2026-08-02 |
+| SEC-19 | MEDIA | `compras.php` | Detalle de compra (`?ver=`) sin filtro de sucursal — se podía ver el detalle de una compra de otra sucursal adivinando el ID | ✅ Resuelto 2026-08-02 |
+| SEC-20 | ALTA | `proveedores.php` | El formulario de crear/editar proveedor no tenía CSRF (solo `?eliminar=`/`?toggle=` lo tenían) — sin ningún candado de rol que lo mitigara, se confirmó explotable creando un proveedor real sin token en una prueba en vivo | ✅ Resuelto 2026-08-02, verificado contra el sistema real |
+| SEC-21 | MEDIA | `categorias.php`, `unidades.php` | Mismo caso que SEC-20 en sus formularios de crear/editar — mitigado desde SEC-05 (solo Administrador llega ahí), pero el candado de CSRF en si tambien faltaba | ✅ Resuelto 2026-08-02 |
+| SEC-22 | CRÍTICO | `creditos.php` | Mora automática (aplicada al cargar la pantalla) podía aplicarse más de una vez por condición de carrera — bloque sin `FOR UPDATE`, distinto al del abono que ya lo tenía | ✅ Resuelto 2026-08-02, verificado con 5 peticiones simultáneas reales |
+| SEC-23 | CRÍTICO | `ventasPendientes.php` | "Liquidar" y "Cancelar" (acciones distintas, ninguna protección de doble-clic existente las cubría) podían chocar entre sí y dejar stock descontado bajo una venta marcada como Cancelada | ✅ Resuelto 2026-08-02, verificado con 5 rondas de peticiones simultáneas reales |
+| SEC-24 | CRÍTICO | `formProducto.php` | CSRF ausente en la edición del catálogo global — documentado desde la primera auditoría (ver SEC-05b) pero nunca corregido hasta ahora | ✅ Resuelto 2026-08-02, verificado en vivo (ataque bloqueado, edición legítima intacta) |
+| SEC-25 | ALTA | `productos.php` | CSRF ausente en "eliminar producto" y "agregar del catálogo" (alcance: solo la sucursal propia, no cruza sucursales) | ✅ Resuelto 2026-08-02, verificado en vivo |
+
+**Nota metodológica (2026-08-02):** tras corregir los hallazgos anteriores, se construyó una batería de ~116 pruebas automatizadas contra el sistema real (login, todas las pantallas, y pruebas de concurrencia genuina con peticiones simultáneas de verdad para los fixes de doble-clic) en vez de solo revisar el código. 114 pasaron a la primera; los 2 hallazgos SEC-20/SEC-21 se descubrieron precisamente gracias a esas pruebas y se corrigieron y reverificaron en vivo el mismo día.
+
+**Cierre de la auditoría del rol Inventario/Cajero (2026-08-02):** con SEC-18 a SEC-21 se dan por atendidos y **verificados en vivo** todos los hallazgos Críticos y Altos de esta pasada, salvo SEC-02 (credencial de BD, pendiente de que el dueño la rote) y SEC-05b/SEC-06 (decisiones explícitas de dejarlos así). El dueño del proyecto continúa ahora con el rol Administrador; los hallazgos Medios/Bajos que quedaron sin tocar están listados en `PENDIENTES.md`.
+
+**Cierre de la auditoría adversarial final (2026-08-02):** una segunda auditoría independiente, que ignoró deliberadamente las correcciones anteriores y reconcilió ~4 meses de datos reales de la base de datos (folios, stock, cajas, créditos), encontró SEC-22 a SEC-25 — ya corregidos y verificados en vivo con concurrencia real (peticiones HTTP simultáneas genuinas, no secuenciales). Con esto no queda ningún hallazgo Crítico ni Alto abierto en el rol Inventario/Cajero. Se registraron además dos observaciones operativas sin ID de SEC (no son bugs de código): un cliente inactivo con deuda que los listados no muestran por defecto, y una transferencia pendiente de aprobar desde hace 77 días sin recordatorio — ver `PENDIENTES.md`.
 
 ---
 

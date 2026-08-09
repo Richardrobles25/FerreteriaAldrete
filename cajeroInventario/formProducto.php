@@ -55,6 +55,9 @@ if ($esEdicion) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-NC3] Verificar CSRF: este formulario no tenia ninguna validacion de token,
+    // a diferencia de proveedores.php/categorias.php/unidades.php que ya la tienen.
+    requerirCSRF($_POST['_token'] ?? '', 'formProducto.php');
     $codigo           = strtoupper(trim($_POST['codigo'] ?? ''));
     $nombre_producto  = trim($_POST['nombre_producto'] ?? '');
     $descripcion      = trim($_POST['descripcion'] ?? '');
@@ -361,6 +364,7 @@ if ($editando && $editando['categoria_id']) {
             <?php endif; ?>
 
             <form method="POST" id="formProducto">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <input type="hidden" name="producto_id" value="<?= $editando['producto_id'] ?? 0 ?>">
                 <input type="hidden" name="categoria_id" id="hiddenCategoriaId" value="<?= $editando['categoria_id'] ?? '' ?>">
 

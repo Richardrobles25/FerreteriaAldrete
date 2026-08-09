@@ -20,9 +20,14 @@ try {
 }
 
 // Aplicar mora a créditos vencidos que aún no la tienen (mora_acumulada = 0)
+// [FIX-NC1] Bloquear cada credito con FOR UPDATE dentro de una transaccion antes de leer su
+// saldo_pendiente: esta consulta corre en cada carga de la pagina, y sin candado, dos cargas
+// casi simultaneas podian leer el mismo saldo base y aplicar/registrar la mora dos veces, o
+// pisar un abono hecho justo en medio.
 try {
+    $pdo->beginTransaction();
     $stmtMoraList = $pdo->query("
-        SELECT cr.credito_id, cr.saldo_pendiente, s.porcentaje_mora
+        SELECT cr.credito_id, s.porcentaje_mora
         FROM creditos cr
         JOIN ventas v     ON cr.venta_id     = v.venta_id
         JOIN cajas  ca    ON v.caja_id       = ca.caja_id
@@ -30,7 +35,14 @@ try {
         WHERE cr.estado = 'Vencido' AND cr.mora_acumulada = 0 AND s.porcentaje_mora > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
-        $saldoBase  = round(floatval($cm['saldo_pendiente']), 2);
+        $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, mora_acumulada FROM creditos WHERE credito_id = ? FOR UPDATE");
+        $stmtLockCred->execute([$cm['credito_id']]);
+        $credLock = $stmtLockCred->fetch(PDO::FETCH_ASSOC);
+        // Revalidar dentro del candado: otra peticion pudo haber aplicado la mora, o un abono
+        // pudo haber cambiado el saldo, mientras esta esperaba.
+        if (!$credLock || floatval($credLock['mora_acumulada']) != 0) continue;
+
+        $saldoBase  = round(floatval($credLock['saldo_pendiente']), 2);
         $pct        = floatval($cm['porcentaje_mora']);
         $moraAmt    = round($saldoBase * $pct / 100, 2);
         $nuevoSaldo = round($saldoBase + $moraAmt, 2);
@@ -39,7 +51,9 @@ try {
         $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje) VALUES (?,?,?,?)")
             ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct]);
     }
+    $pdo->commit();
 } catch (\PDOException $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
     error_log('[Ferreteria/creditos] Error al aplicar mora: ' . $e->getMessage());
 }
 
@@ -99,12 +113,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         if ($monto <= 0) throw new Exception('El monto debe ser mayor a 0.');
         if (!in_array($metodo, ['Efectivo','Terminal','Transferencia','Mixto'])) throw new Exception('Selecciona el método de pago.');
         if ($metodo === 'Transferencia' && $referencia === '') throw new Exception('Ingresa la referencia de la transferencia.');
-        if ($metodo === 'Mixto' && $monto_ef <= 0) throw new Exception('Ingresa el monto en efectivo para el pago mixto.');
+        // [FIX] Igual que en nuevaVenta.php: monto_efectivo/monto_terminal llegaban del
+        // navegador sin verificarse contra $monto. Si no cuadraban (error de captura o un
+        // valor viejo que quedo en el formulario), el Ingreso registrado en movimientos_caja
+        // no coincidia con el efectivo real que entro y el corte de caja marcaba una
+        // diferencia que no existia. Ahora el servidor recalcula monto_terminal a partir
+        // de monto_efectivo (ya validado) en vez de confiar en el valor recibido.
+        if ($metodo === 'Mixto') {
+            if ($monto_ef <= 0.005) throw new Exception('Ingresa el monto en efectivo para el pago mixto.');
+            if ($monto_ef >= $monto - 0.005) throw new Exception('El efectivo cubre el pago completo. Usa el método Efectivo en lugar de Mixto.');
+            $monto_ef = round($monto_ef, 2);
+        }
 
         $stmtCl = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE cliente_id = ?");
         $stmtCl->execute([$cliente_id]);
         $clienteNombre = $stmtCl->fetchColumn();
         if (!$clienteNombre) throw new Exception('Cliente no encontrado.');
+
+        // [FIX-A5] Bloquear las filas de creditos del cliente dentro de la transaccion para
+        // evitar que dos abonos simultaneos lean el mismo saldo_pendiente y uno sobrescriba
+        // al otro (perdida de actualizacion). Se adelanta el beginTransaction() a antes de
+        // esta lectura; lo que sigue (validacion de monto, calculo de comision) no toca la
+        // base de datos, asi que no le afecta quedar dentro de la transaccion.
+        $pdo->beginTransaction();
 
         // Créditos del cliente, del más antiguo al más reciente (globales — el cliente paga en cualquier sucursal)
         $stmtCrs = $pdo->prepare("
@@ -112,6 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             FROM creditos
             WHERE cliente_id = ? AND estado IN ('Activo', 'Vencido')
             ORDER BY created_at ASC
+            FOR UPDATE
         ");
         $stmtCrs->execute([$cliente_id]);
         $creditsRows = $stmtCrs->fetchAll(PDO::FETCH_ASSOC);
@@ -126,15 +158,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         if ($metodo === 'Terminal' && $comisionPct > 0) {
             $comisionTotal = round($monto * $comisionPct / 100, 2);
         }
-        if ($metodo === 'Mixto' && $comisionPct > 0 && $monto_ef < $monto) {
-            $baseTerminal  = $monto - $monto_ef;
-            $comisionTotal = round($baseTerminal * $comisionPct / 100, 2);
+        if ($metodo === 'Mixto') {
+            // monto_terminal se recalcula server-side: base restante (ya validada > 0) + comisión.
+            // Reemplaza el valor recibido del navegador para que coincida exactamente con
+            // lo que se registrara en movimientos_caja.
+            $baseTerminal  = round($monto - $monto_ef, 2);
+            $comisionTotal = $comisionPct > 0 ? round($baseTerminal * $comisionPct / 100, 2) : 0.0;
+            $monto_term    = round($baseTerminal + $comisionTotal, 2);
         }
         if ($metodo === 'Transferencia' && $referencia !== '') {
             $notas = 'Ref: ' . $referencia . ($notas !== '' ? ' — ' . $notas : '');
         }
-
-        $pdo->beginTransaction();
 
         // Aplicar FIFO: liquidar créditos del más antiguo al más reciente
         $restante = $monto;
@@ -586,7 +620,11 @@ $totales = $pdo->query("
                             <?php endif; ?>
                         </td>
                         <td>
-                            <button class="btn-cobrar" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver / Cobrar</button>
+                            <!-- [FIX-C1] addslashes() antes de htmlspecialchars(): el navegador decodifica las
+                                 entidades HTML del atributo onclick antes de ejecutar el JS, asi que un nombre
+                                 con comilla podia cerrar el string y ejecutar codigo. Mismo patron que ya usa
+                                 clientes.php para el onclick del boton Eliminar. -->
+                            <button class="btn-cobrar" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars(addslashes($cl['nombre_completo']), ENT_QUOTES) ?>')">Ver / Cobrar</button>
                         </td>
                     </tr>
                     <?php endforeach; ?>
@@ -645,7 +683,11 @@ $totales = $pdo->query("
                             <?php endif; ?>
                         </td>
                         <td>
-                            <button class="btn-cobrar" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars($cl['nombre_completo'], ENT_QUOTES) ?>')">Ver / Cobrar</button>
+                            <!-- [FIX-C1] addslashes() antes de htmlspecialchars(): el navegador decodifica las
+                                 entidades HTML del atributo onclick antes de ejecutar el JS, asi que un nombre
+                                 con comilla podia cerrar el string y ejecutar codigo. Mismo patron que ya usa
+                                 clientes.php para el onclick del boton Eliminar. -->
+                            <button class="btn-cobrar" onclick="abrirDetalles(<?= $cl['cliente_id'] ?>, '<?= htmlspecialchars(addslashes($cl['nombre_completo']), ENT_QUOTES) ?>')">Ver / Cobrar</button>
                         </td>
                     </tr>
                     <?php endforeach; ?>

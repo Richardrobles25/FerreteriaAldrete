@@ -8,6 +8,11 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
+    // [FIX-C5] Solo Administrador puede eliminar categorías (catálogo global compartido)
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: categorias.php?msg=no_autorizado');
+        exit();
+    }
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'categorias.php');
     $id = intval($_GET['eliminar']);
@@ -26,6 +31,13 @@ if (isset($_GET['eliminar'])) {
 
 // Guardar categoría (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-C5] Solo Administrador puede crear/editar categorías (catálogo global compartido)
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: categorias.php?msg=no_autorizado');
+        exit();
+    }
+    // [FIX-CSRF-01] Verificar CSRF antes de crear/editar categoria (antes solo ?eliminar= lo tenia)
+    requerirCSRF($_POST['_token'] ?? '', 'categorias.php');
     $nombre = trim($_POST['nombre'] ?? '');
     $id     = intval($_POST['categoria_id'] ?? 0);
 
@@ -212,6 +224,8 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-exito">Categoría eliminada correctamente.</div>
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
                     <div class="msg msg-error">No puedes eliminar esta categoría porque tiene productos asociados.</div>
+                <?php elseif ($_GET['msg'] === 'no_autorizado'): ?>
+                    <div class="msg msg-error">No tienes permisos para esta acción. Solo el Administrador puede crear, editar o eliminar categorías.</div>
                 <?php endif; ?>
             <?php endif; ?>
 
@@ -262,6 +276,8 @@ if (isset($_GET['editar'])) {
             <div class="card">
                 <h3><?= $editando ? 'Editar categoría' : 'Nueva categoría' ?></h3>
                 <form method="POST">
+                    <!-- [FIX-CSRF-01] Token CSRF para proteger crear/editar categoria -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="categoria_id" value="<?= $editando['categoria_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>

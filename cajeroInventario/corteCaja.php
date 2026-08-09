@@ -33,9 +33,11 @@ $stmtVentas = $pdo->prepare("
 $stmtVentas->execute([$caja['caja_id']]);
 $resumen = $stmtVentas->fetch(PDO::FETCH_ASSOC);
 
-// Ventas pendientes sin liquidar
-$stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE caja_id = ? AND estado = 'Pendiente'");
-$stmtPend->execute([$caja['caja_id']]);
+// Ventas pendientes sin liquidar — del USUARIO, no solo de la caja actual:
+// las pendientes creadas en turnos anteriores tambien deben avisarse antes de cerrar
+// (al liquidarlas se reasignan a la caja abierta en ese momento)
+$stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE usuario_id = ? AND estado = 'Pendiente'");
+$stmtPend->execute([$_SESSION['usuario_id']]);
 $ventasPendientes = $stmtPend->fetchColumn();
 
 // Movimientos de caja (retiros e ingresos) del turno actual
@@ -48,20 +50,25 @@ $stmtMov = $pdo->prepare("
 $stmtMov->execute([$caja['caja_id']]);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
-// Separar ingresos: efectivo vs terminal/transferencia (no cuentan como físico en caja)
+// Separar ingresos: efectivo vs terminal/transferencia (no cuentan como físico en caja).
+// El sufijo [Terminal]/[Transferencia] al final de la nota lo escriben los abonos de
+// crédito pagados con tarjeta o transferencia (creditos.php) — ese dinero no entra al cajón.
 $ingresosCash   = array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso' && !preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota']));
 $ingresosNoCash = array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso' &&  preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota']));
 $totalIngresosCash   = array_sum(array_column(array_values($ingresosCash),   'monto'));
 $totalIngresosNoCash = array_sum(array_column(array_values($ingresosNoCash), 'monto'));
 $totalIngresos       = $totalIngresosCash + $totalIngresosNoCash;
-// [AUTOFIX] Separar retiros: efectivo vs terminal/transferencia (devoluciones no-efectivo no salen de la caja física)
+// Retiros: los reembolsos por devolución SIEMPRE se entregan en efectivo (política del
+// negocio), así que los retiros de devolución ya NO llevan sufijo y cuentan como salida
+// de caja física. Los retiros con sufijo [Terminal]/[Transferencia] son solo registros
+// antiguos (anteriores al cambio) y se mantienen excluidos para no alterar cortes viejos.
 $retirosCash         = array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro' && !preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota'] ?? ''));
 $retirosNoCash       = array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro' &&  preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota'] ?? ''));
 $totalRetiros        = array_sum(array_column(array_values($retirosCash),   'monto'));
 $totalRetirosNoCash  = array_sum(array_column(array_values($retirosNoCash), 'monto'));
 
 // Efectivo esperado = apertura + ventas en efectivo + ingresos en efectivo - retiros en efectivo
-// Los retiros de devoluciones por Terminal/Transferencia NO reducen la caja física
+// (los retiros incluyen los reembolsos de devoluciones, que siempre salen del cajón)
 $efectivoEsperado = floatval($caja['monto_apertura'])
                   + floatval($resumen['ef'])
                   + floatval($resumen['mixto_ef'])
@@ -71,6 +78,8 @@ $efectivoEsperado = floatval($caja['monto_apertura'])
 // Procesar cierre
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-A1] Verificar CSRF antes de procesar el cierre de caja
+    requerirCSRF($_POST['_token'] ?? '', 'corteCaja.php');
     // [AUTOFIX] VALIDACION-1B-1: Verificar que el campo no esté vacío antes de convertir a float.
     // floatval('') = 0.0, lo que permitía cerrar sin escribir nada.
     $monto_cierre_raw = $_POST['monto_cierre'] ?? '';
@@ -87,6 +96,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errores)) {
         $diferencia = $monto_cierre - $efectivoEsperado;
 
+        // [FIX-M1] Se agrega "AND estado = 'Abierta'": un doble envio del formulario
+        // (doble clic, reenvio) ya no sobrescribe el corte con otro monto — el UPDATE
+        // simplemente no afecta ninguna fila si la caja ya quedo cerrada por el primer envio.
         $pdo->prepare("
             UPDATE cajas SET
                 estado = 'Cerrada',
@@ -95,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 diferencia = ?,
                 observaciones = ?,
                 cerrada_en = NOW()
-            WHERE caja_id = ?
+            WHERE caja_id = ? AND estado = 'Abierta'
         ")->execute([$monto_cierre, $efectivoEsperado, $diferencia, $observaciones, $caja['caja_id']]);
 
         header('Location: inicioCajeroInventario.php?msg=cajaCerrada');
@@ -332,7 +344,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila negativo"><span>- Retiros de caja (efectivo)</span><span>-$<?= number_format($totalRetiros,2) ?></span></div>
                     <?php endif; ?>
                     <?php if ($totalRetirosNoCash > 0): ?>
-                    <div class="fila" style="font-size:12px;color:#888;"><span>↙ Devoluciones terminal/transferencia <em style="font-size:11px;">(no salen de la caja física)</em></span><span>-$<?= number_format($totalRetirosNoCash,2) ?></span></div>
+                    <div class="fila" style="font-size:12px;color:#888;"><span>↙ Devoluciones antiguas terminal/transferencia <em style="font-size:11px;">(registros previos al cambio; no restan del físico)</em></span><span>-$<?= number_format($totalRetirosNoCash,2) ?></span></div>
                     <?php endif; ?>
                     <div class="fila total-ef">
                         <span>Total esperado en caja</span>
@@ -352,6 +364,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <form method="POST" onsubmit="return confirmarCierre()">
+                    <!-- [FIX-A1] Token CSRF para proteger el cierre de caja -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Monto contado en caja *</label>
                         <!-- [AUTOFIX] VALIDACION-1B-1: required evita envío vacío desde el navegador -->

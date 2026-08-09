@@ -9,6 +9,8 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 $errores = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-A1] Verificar CSRF antes de procesar la salida
+    requerirCSRF($_POST['_token'] ?? '', 'salidas.php');
     $producto_id = intval($_POST['producto_id'] ?? 0);
     $cantidad    = floatval($_POST['cantidad'] ?? 0);
     $motivo      = trim($_POST['motivo'] ?? '');
@@ -33,18 +35,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($cantidad > $prod['stock_actual']) {
             $errores[] = 'La cantidad no puede ser mayor al stock actual (' . floatval($prod['stock_actual']) . ' disponibles).';
         } else {
-            $stockAnterior = floatval($prod['stock_actual']);
-            $stockNuevo    = $stockAnterior - $cantidad;
+            // [FIX-A5] Bloquear la fila de stock dentro de una transaccion y revalidar con el
+            // valor mas reciente: dos salidas simultaneas del mismo producto podian pisarse
+            // (perdida de actualizacion) o dejar stock negativo si ambas pasaban el chequeo
+            // de arriba con el mismo valor leido antes de escribir.
+            $pdo->beginTransaction();
+            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtLockStock->execute([$producto_id, $_SESSION['sucursal_id']]);
+            $stockAnterior = floatval($stmtLockStock->fetchColumn());
 
-            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $_SESSION['sucursal_id']]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
-                ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo]);
+            if ($cantidad > $stockAnterior) {
+                $pdo->rollBack();
+                $errores[] = 'La cantidad no puede ser mayor al stock actual (' . $stockAnterior . ' disponibles).';
+            } else {
+                $stockNuevo = $stockAnterior - $cantidad;
 
-            // [AUTOFIX] INFO-3E-1: Redirigir con msg=exito_minimo si quedó bajo el mínimo
-            $stockMinimo = floatval($prod['stock_minimo'] ?? 0);
-            $msgRedir = ($stockMinimo > 0 && $stockNuevo < $stockMinimo) ? 'exito_minimo' : 'exito';
-            header('Location: salidas.php?msg=' . $msgRedir);
-            exit();
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $_SESSION['sucursal_id']]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
+                    ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $cantidad, $stockAnterior, $stockNuevo, $motivo]);
+                $pdo->commit();
+
+                // [AUTOFIX] INFO-3E-1: Redirigir con msg=exito_minimo si quedó bajo el mínimo
+                $stockMinimo = floatval($prod['stock_minimo'] ?? 0);
+                $msgRedir = ($stockMinimo > 0 && $stockNuevo < $stockMinimo) ? 'exito_minimo' : 'exito';
+                header('Location: salidas.php?msg=' . $msgRedir);
+                exit();
+            }
         }
     }
 }
@@ -240,6 +256,8 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
 
                 <form method="POST">
+                    <!-- [FIX-A1] Token CSRF para proteger el registro de salida -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Producto *</label>
                         <div class="prod-busq-wrap">

@@ -242,6 +242,8 @@ if (isset($_GET['plantilla'])) {
 
 // Eliminar producto con motivo
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto'])) {
+    // [FIX-NA1] Verificar CSRF: esta accion no tenia ninguna validacion de token.
+    requerirCSRF($_POST['_token'] ?? '', 'productos.php');
     $id     = intval($_POST['producto_id'] ?? 0);
     $motivo = trim($_POST['motivo_eliminacion'] ?? '');
 
@@ -299,6 +301,8 @@ if (isset($_GET['catalogo_disponible'])) {
 
 // POST: agregar producto(s) del catálogo a esta sucursal
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) {
+    // [FIX-NA1] Verificar CSRF: esta accion no tenia ninguna validacion de token.
+    requerirCSRF($_POST['_token'] ?? '', 'productos.php');
     $productos_ids  = $_POST['producto_id']  ?? [];
     $stocks_actual  = $_POST['stock_actual'] ?? [];
     $stocks_minimo  = $_POST['stock_minimo'] ?? [];
@@ -786,10 +790,12 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 
 <form method="POST" id="formAgregarCatalogo" style="display:none;">
     <input type="hidden" name="agregar_catalogo" value="1">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
 </form>
 
 <form method="POST" id="formEliminarProducto" style="display:none;">
     <input type="hidden" name="eliminar_producto" value="1">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
     <input type="hidden" name="producto_id" id="inputEliminarProductoId">
     <input type="hidden" name="motivo_eliminacion" id="inputEliminarProductoMotivo">
 </form>
@@ -887,8 +893,10 @@ function cargarCatalogo(q) {
             }
             const yaSeleccionados = new Set([...document.querySelectorAll('.sel-item')].map(e => e.dataset.id));
             lista.innerHTML = data.map(p => {
-                const esc   = s => String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-                const cat   = p.categoria ? ' · ' + p.categoria : '';
+                // [FIX-C6] esc() ahora cubre tambien < > ' (antes solo & y "), y cat (categoria)
+                // ahora pasa por esc() — antes se insertaba cruda en el innerHTML de abajo.
+                const esc   = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+                const cat   = p.categoria ? ' · ' + esc(p.categoria) : '';
                 const precio = parseFloat(p.precio_venta || 0).toFixed(2);
                 const enLista = yaSeleccionados.has(String(p.producto_id));
                 const btnBg  = enLista ? '#388e3c' : '#14ace7';
@@ -930,8 +938,12 @@ function seleccionarProductoCat(btn) {
     const fila = document.createElement('div');
     fila.className = 'sel-item';
     fila.dataset.id = id;
+    // [FIX-C6] Escapar nombre antes de insertarlo: viene de dataset.nombre (el navegador lo
+    // devuelve ya decodificado), asi que hay que volver a limpiarlo aqui antes de meterlo
+    // en innerHTML, sin depender del esc() de cargarCatalogo() (funcion distinta).
+    const nombreSeguro = nombre.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     fila.innerHTML = `
-        <span style="font-size:12px;font-weight:600;color:#222;">${nombre}</span>
+        <span style="font-size:12px;font-weight:600;color:#222;">${nombreSeguro}</span>
         <input type="number" class="inp-stock-actual" min="0" step="0.01" placeholder="Inicial" title="Stock inicial">
         <input type="number" class="inp-stock-min"    min="0" step="0.01" placeholder="Mín"     title="Stock mínimo">
         <input type="number" class="inp-stock-max"    min="0" step="0.01" placeholder="Máx"     title="Stock máximo">

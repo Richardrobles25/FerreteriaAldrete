@@ -48,7 +48,7 @@
 | Estado de caja | Detecta si hay caja abierta, muestra turno # y monto de apertura |
 | Stats del turno | Ventas completadas, total cobrado, pendientes, clientes con deuda, productos con stock bajo |
 | Alerta de stock bajo | Cuenta `stock_actual <= stock_minimo` en la sucursal del cajero |
-| Alerta de créditos | Cuenta clientes con crédito Activo o Vencido **filtrado por sucursal** |
+| Alerta de créditos | Cuenta clientes con crédito Activo o Vencido **global (todas las sucursales)** — decisión 2026-07-31: la deuda se puede pagar en cualquier sucursal |
 | Notificaciones de transferencias | 4 tipos: pendientes de aprobar, aprobadas a enviar, en tránsito para recibir, modificadas para confirmar |
 | Accesos rápidos | Links a: Nueva venta, Entradas, Clientes, Inventario, Créditos, Transferencias |
 | Últimas ventas del turno | Las últimas 5 ventas de la caja actual |
@@ -197,7 +197,7 @@
 | Función | Lo que hace realmente |
 |---------|-----------------------|
 | Actualizar vencidos | Al cargar, marca como Vencido los créditos con `fecha_limite < hoy` |
-| Listado de créditos | Créditos activos y vencidos de la sucursal del cajero |
+| Listado de créditos | Créditos activos y vencidos **globales (todas las sucursales)** — el cliente paga en cualquier sucursal (decisión 2026-07-31) |
 | Pago distribuido automáticamente | Registra un pago y lo distribuye desde el crédito más antiguo al más reciente |
 | Métodos de pago | Efectivo, Terminal, Transferencia, Mixto |
 | Comisión de terminal | Calcula y registra comisión según el porcentaje configurado en la sucursal |
@@ -250,29 +250,29 @@
 
 ---
 
-### `categorias.php` — Categorías ⚠️
+### `categorias.php` — Categorías ✅
 
 | Función | Lo que hace realmente |
 |---------|-----------------------|
-| Listado de categorías | Todas las categorías activas |
-| **Alta de categoría** | Crear categoría nueva (nombre) |
-| **Edición de categoría** | Modificar nombre |
-| **Desactivar/Reactivar** | Con protección: no elimina si tiene productos activos |
+| Listado de categorías | Todas las categorías activas (visible para Inventario/Cajero) |
+| **Alta de categoría** | Solo `Administrador` — ver nota |
+| **Edición de categoría** | Solo `Administrador` — ver nota |
+| **Desactivar/Reactivar** | Solo `Administrador`. Con protección: no elimina si tiene productos activos |
 
-> ⚠️ Según el planteamiento, el cajero/inventario **NO debería crear ni editar categorías** (son parte del catálogo global). Actualmente sí puede hacerlo. Pendiente de decisión.
+> ✅ **Resuelto (2026-08-02):** el cajero/inventario **ya no puede** crear, editar ni eliminar categorías — se agregó verificación de rol (`$_SESSION['rol'] === 'Administrador'`) antes de cada acción de escritura. El listado sigue visible para consulta. Ver auditoría al final de este documento (hallazgo C5).
 
 ---
 
-### `unidades.php` — Unidades de medida ⚠️
+### `unidades.php` — Unidades de medida ✅
 
 | Función | Lo que hace realmente |
 |---------|-----------------------|
-| Listado de unidades | Pieza, metro, kg, litro, etc. |
-| **Alta de unidad** | Crear unidad nueva |
-| **Edición de unidad** | Modificar nombre/símbolo |
-| **Desactivar/Reactivar** | Baja lógica |
+| Listado de unidades | Pieza, metro, kg, litro, etc. (visible para Inventario/Cajero) |
+| **Alta de unidad** | Solo `Administrador` — ver nota |
+| **Edición de unidad** | Solo `Administrador` — ver nota |
+| **Desactivar/Reactivar** | Baja lógica, solo `Administrador` |
 
-> ⚠️ Mismo caso que categorías. El cajero/inventario actualmente puede crear y editar unidades de medida. Pendiente de decisión.
+> ✅ **Resuelto (2026-08-02):** mismo caso que categorías — el cajero/inventario ya no puede crear, editar ni eliminar unidades de medida. Ver auditoría al final de este documento (hallazgo C5).
 
 ---
 
@@ -382,7 +382,7 @@
 | Selector de sucursal | Permite ver el reporte de **cualquier sucursal** (no solo la propia) |
 | Límite de resultados | Configurable (default: 20 productos) |
 
-> ⚠️ El selector de sucursal en `masVendidos.php` permite ver datos de otras sucursales. Revisar si eso es correcto.
+> ✅ **Confirmado por el dueño del proyecto (2026-08-02):** el selector de sucursal en `masVendidos.php` es **intencional** — las sucursales trabajan coordinadas y siempre van a poder ver la información entre sí. No se modifica.
 
 ---
 
@@ -393,18 +393,18 @@
 | **Ventas** | Nueva venta, historial, pendientes (domicilio), devoluciones | — |
 | **Caja** | Abrir, cerrar, historial de cortes, retiros/ingresos | — |
 | **Clientes** | Alta, edición, desactivar | — |
-| **Créditos** | Ver créditos de su sucursal, registrar pagos, historial de abonos | Ver créditos de otras sucursales |
+| **Créditos** | Ver créditos de todas las sucursales, registrar pagos (se abonan FIFO al crédito más antiguo del cliente), historial de abonos | — |
 | **Productos** | Ver catálogo, exportar PDF/Excel, editar producto | Crear producto nuevo |
 | **Stock** | Entradas manuales, salidas/mermas | — |
 | **Movimientos** | Ver historial de la sucursal | — |
-| **Categorías** | ⚠️ Actualmente puede crear y editar | Según planteamiento, NO debería |
-| **Unidades** | ⚠️ Actualmente puede crear y editar | Según planteamiento, NO debería |
+| **Categorías** | Solo consulta (✅ resuelto 2026-08-02) | Crear / editar / eliminar — solo Administrador |
+| **Unidades** | Solo consulta (✅ resuelto 2026-08-02) | Crear / editar / eliminar — solo Administrador |
 | **Proveedores** | Alta, edición, desactivar | — |
 | **Compras** | Registrar compra (actualiza stock inmediatamente) | — |
 | **Transferencias** | Flujo completo entre sucursales | — |
 | **Paquetes** | Solo lectura | Crear / editar |
 | **Promociones** | Solo lectura | Crear / editar |
-| **Más vendidos** | Ver reporte (puede ver otras sucursales) | — |
+| **Más vendidos** | Ver reporte de cualquier sucursal (por diseño, confirmado) | — |
 
 ---
 
@@ -412,11 +412,75 @@
 
 | # | Archivo | Situación |
 |---|---------|-----------|
-| 1 | `abonos.php` | No está en el menú pero existe. Parece obsoleto; `creditos.php` cubre todo lo que hace |
-| 2 | `categorias.php` | El cajero/inventario puede crear y editar categorías del catálogo global |
-| 3 | `unidades.php` | El cajero/inventario puede crear y editar unidades de medida |
-| 4 | `formProducto.php` | Puede editar precios de venta/mayoreo del catálogo global |
-| 5 | `masVendidos.php` | Tiene selector de sucursal; puede ver reporte de otras sucursales |
-| 6 | `devoluciones.php` | No hay límite de días para iniciar una devolución |
-| 7 | `ventasPendientes.php` | Inconsistencia `'Crédito'` vs `'Credito'` en BD |
+| 1 | `abonos.php` | No está en el menú pero existe. Confirmado obsoleto/huérfano; `creditos.php` cubre todo lo que hace. No se elimina por ahora (pendiente del dueño del proyecto) |
+| 2 | `categorias.php` | ✅ **Resuelto 2026-08-02** — ya no puede crear/editar/eliminar categorías, solo Administrador |
+| 3 | `unidades.php` | ✅ **Resuelto 2026-08-02** — ya no puede crear/editar/eliminar unidades, solo Administrador |
+| 4 | `formProducto.php` | Puede editar precios de venta/mayoreo del catálogo global, incluso de productos que no son de su sucursal (IDOR — auditoría hallazgo C3). **Decisión del dueño (2026-08-02): se deja así**, el catálogo es compartido entre sucursales por diseño. También permite crear productos nuevos pese al bloqueo aparente en pantalla (hallazgo C4) — **decisión: bajo riesgo, se deja así** |
+| 5 | `masVendidos.php` | Selector de sucursal muestra reporte de cualquier sucursal. **Confirmado por el dueño (2026-08-02): es intencional**, las sucursales trabajan coordinadas |
+| 6 | `devoluciones.php` | ✅ Corregido en una revisión anterior a esta auditoría — ya existe límite de 7 días para iniciar una devolución (política vigente: reembolso siempre en efectivo) |
+| 7 | `ventasPendientes.php` | Sigue pendiente — inconsistencia `'Crédito'` vs `'Credito'` en BD (con/sin acento) |
 | 8 | `compras.php` | No tiene estado Pendiente/Recibida; el stock se actualiza al registrar, no al recibir |
+
+---
+
+## Auditoría de seguridad y QA — 2026-08-02
+
+Auditoría exhaustiva del rol `Inventario/Cajero` (lectura completa del código, esquema real de BD y datos vivos). Reporte completo con reproducción, causa raíz y solución de cada hallazgo, publicado como artefacto en la conversación de esa fecha. Resumen de lo corregido y lo pendiente:
+
+### Corregido en esta sesión
+
+| Hallazgo | Descripción | Archivo(s) |
+|----------|-------------|------------|
+| C1 (Crítica) | XSS almacenado: un nombre de cliente con comillas rompía el atributo `onclick` y ejecutaba JS arbitrario al abrir un crédito o seleccionar el cliente en una venta | `creditos.php`, `nuevaVenta.php` |
+| C5 (Crítica) | Categorías y unidades de medida sin restricción de rol para crear/editar/eliminar | `categorias.php`, `unidades.php` |
+| C6 (Crítica) | XSS almacenado en el modal "Agregar del catálogo" (nombre/código de producto y categoría sin escapar correctamente) | `productos.php` |
+| C7 (Crítica) | XSS almacenado en el selector de "Áreas que abastece" al dar de alta un proveedor (sin ningún escape) | `proveedores.php` |
+| C8 (Crítica) | Recibir una transferencia dos veces (doble clic) duplicaba el stock del destino | `transferencias.php` |
+| C9 (Crítica) | Cajas cerradas automáticamente (sesión abandonada) se mostraban como "Cuadrada" con $0.00 sin verificación real | `historialCortes.php` |
+| A1 (Alta) | CSRF ausente en: confirmar venta, abrir/cerrar caja, procesar devolución, registrar compra/entrada/salida, y las 7 acciones de transferencias (aprobar/rechazar/enviar/recibir/editar cantidad/aceptar-rechazar modificación) | `nuevaVenta.php`, `corteCaja.php`, `abrirCaja.php`, `devoluciones.php`, `compras.php`, `entradas.php`, `salidas.php`, `transferencias.php` |
+| A2 (Alta) | Enviar una transferencia dos veces (doble clic) duplicaba el descuento de stock en origen | `transferencias.php` |
+| A5 (Alta) | Pérdida de actualización (sin bloqueo de fila) en entradas, salidas y abono de crédito — dos operaciones simultáneas del mismo producto/cliente podían pisarse entre sí | `entradas.php`, `salidas.php`, `creditos.php` |
+| M1 (Media) | Cierre de caja sin candado contra doble envío — podía sobrescribir el corte con otro monto | `corteCaja.php` |
+| M2 (Media) | Detalle de compra (`?ver=`) sin filtro de sucursal — se podía ver el detalle de una compra de otra sucursal adivinando el ID | `compras.php` |
+
+### Recalificado tras verificar contra el código real
+
+| Hallazgo | Nota |
+|----------|------|
+| C2 | El panel de "Importar Excel" en `productos.php` no tiene ningún botón que lo muestre en pantalla (`toggleImport()` nunca se llama) — recalificado de Crítica a Baja. El handler de backend sigue sin protección de rol propia, pero no es alcanzable desde la interfaz actual |
+
+### Pendiente por decisión del dueño del proyecto (no se modifica)
+
+| Hallazgo | Decisión |
+|----------|----------|
+| C3 — `formProducto.php` permite editar cualquier producto del catálogo (IDOR, no valida que sea de la sucursal propia) | Se deja así: el catálogo es compartido entre sucursales por diseño |
+| C4 — `formProducto.php` permite crear productos nuevos pese al bloqueo aparente | Se deja así: riesgo bajo |
+| A4 — `masVendidos.php` permite ver el reporte de cualquier sucursal | Se deja así: es intencional, las sucursales trabajan coordinadas |
+| A6 — Credencial de la base de datos de producción en texto plano en `config/database.php` (comentada, pero presente) | Pendiente — el dueño del proyecto la rotará y limpiará una vez terminados los demás pendientes |
+
+### Sigue abierto — no auditado a fondo en esta pasada (Medios/Bajos del reporte completo)
+
+KPIs de `historialVentas.php`/`historial.php` que no coinciden con la tabla mostrada cuando no hay filtro de fecha, falta de validación de nombre duplicado en categorías/unidades (antes de que fueran solo-Administrador), validación incompleta de negativos en productos tipo "Suelto", mensajes de error técnicos expuestos en la importación de Excel, y la inconsistencia `'Crédito'`/`'Credito'` de la fila 7 de arriba. Detalle completo en el reporte de auditoría de esa fecha.
+
+### Cierre de esta auditoría (2026-08-02)
+
+Con M1 y M2 corregidos, quedan atendidos todos los hallazgos Críticos y Altos del rol Inventario/Cajero, salvo A6 (credencial de BD — pendiente de que el dueño la rote, ahora que sigue con el rol Administrador) y las decisiones explícitas de dejar C3/C4/A4 tal cual. Los pendientes Medios/Bajos que quedaron sin tocar están listados arriba y en `PENDIENTES.md`.
+
+---
+
+## Auditoría Adversarial Final — 2026-08-02 (segunda pasada)
+
+Segunda auditoría, independiente y adversarial: ignoró deliberadamente las correcciones de la auditoría anterior, reconcilió ~4 meses de datos reales de la base de datos (folios, stock, cajas, créditos) y reprodujo condiciones de carrera con peticiones HTTP simultáneas reales. Reporte completo publicado como artefacto en la conversación de esa fecha. Confirmó sano el núcleo financiero/inventario (0 folios duplicados, 0 stock negativo, 0 cajas duplicadas, 39/40 créditos reconcilian exactos) y encontró 4 hallazgos nuevos que ninguna auditoría anterior había cerrado — los 4 ya corregidos y verificados en vivo:
+
+| Hallazgo | Descripción | Archivo(s) | Verificación |
+|----------|-------------|------------|--------------|
+| NC1 (Crítica) | La mora automática de créditos podía aplicarse más de una vez por condición de carrera (mismo patrón que A5, pero en un bloque que nunca se tocó) | `creditos.php` | 5 peticiones simultáneas reales sobre un crédito recién vencido → mora aplicada exactamente 1 vez. Reverificado: abono, venta a crédito y stock siguen intactos |
+| NC2 (Crítica) | "Liquidar" y "Cancelar" una venta pendiente podían chocar entre sí (son botones/acciones distintas, ninguna protección de doble-clic existente los cubría) y dejar stock descontado bajo una venta marcada como Cancelada | `ventasPendientes.php` | 5 rondas de `liquidar`+`cancelar` disparados verdaderamente simultáneos sobre la misma venta → resultado siempre consistente (Cancelada conserva stock, Completada lo descuenta) |
+| NC3 (Crítica) | CSRF seguía ausente en la edición del catálogo global — documentado desde la primera auditoría pero nunca corregido (a diferencia de proveedores/categorías/unidades, sin ningún candado de rol que lo mitigara) | `formProducto.php` | Ataque simulado (sin token y con token forjado) bloqueado, producto sin cambios; edición legítima con token válido sigue funcionando |
+| NA1 (Alta) | CSRF ausente en "eliminar producto" y "agregar del catálogo" (alcance limitado a la sucursal propia, no cruza sucursales) | `productos.php` | Mismo patrón de prueba que NC3: ataque bloqueado en ambas acciones, operación legítima con token válido sigue funcionando |
+
+Observaciones operativas nuevas (no son bugs de código, quedaron sin tocar — ver `PENDIENTES.md`): un cliente inactivo con deuda que los listados no muestran por defecto (NM1), y una transferencia pendiente de aprobar desde hace 77 días sin recordatorio (NM2).
+
+### Cierre de la auditoría adversarial (2026-08-02)
+
+Con NC1, NC2, NC3 y NA1 corregidos y verificados en vivo, no queda ningún hallazgo Crítico ni Alto abierto de esta segunda auditoría. Siguen en pie las mismas decisiones explícitas del dueño del proyecto (C3/C4/A4 se dejan así, A6 pendiente de que el dueño rote la credencial) y las observaciones operativas NM1/NM2. El dueño del proyecto continúa con el rol Administrador.

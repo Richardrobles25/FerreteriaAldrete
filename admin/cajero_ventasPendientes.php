@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -6,78 +6,470 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-// Liquidar venta pendiente
+if ($sucursalVista === 0) {
+    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    exit();
+}
+
+// Verificar que hay caja abierta en la sucursal elegida; si no, redirigir a abrirCaja
+$_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
+$_stmtCajaGuard->execute([$_SESSION['usuario_id'], $sucursalVista]);
+$cajaActualId = $_stmtCajaGuard->fetchColumn();
+if (!$cajaActualId) {
+    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    exit();
+}
+$cajaActualId = intval($cajaActualId); // caja abierta del usuario — se usa al liquidar
+
+// Datos de la sucursal para el ticket
+$stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
+$stmtSuc->execute([$sucursalVista]);
+$sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
+
+// Liquidar venta pendiente (el folio ya fue asignado al crear)
 if (isset($_GET['liquidar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'cajero_ventasPendientes.php');
     $venta_id = intval($_GET['liquidar']);
-    $pdo->prepare("UPDATE ventas SET estado = 'Completada' WHERE venta_id = ? AND estado = 'Pendiente'")->execute([$venta_id]);
-    header('Location: cajero_ventasPendientes.php?msg=liquidado');
+
+    // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
+    $stmtV = $pdo->prepare("
+        SELECT v.venta_id, v.cliente_id, v.metodo_pago, v.total
+        FROM ventas v
+        JOIN cajas c ON v.caja_id = c.caja_id
+        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ?
+    ");
+    $stmtV->execute([$venta_id, $_SESSION['usuario_id']]);
+    $ventaLiq = $stmtV->fetch(PDO::FETCH_ASSOC);
+
+    if ($ventaLiq) {
+        $pdo->beginTransaction();
+        try {
+            // Marcar como completada y REASIGNAR la venta a la caja abierta actual.
+            // Antes conservaba el caja_id de cuando se creo la pendiente: si esa caja ya
+            // estaba cerrada (pendiente de un dia anterior), el dinero cobrado hoy entraba
+            // al cajon actual pero la venta se sumaba al turno viejo → sobrante en el corte
+            // de hoy y el corte cerrado del dia anterior cambiaba retroactivamente.
+            // Al reasignar a la caja actual, corteCaja.php incluye esta venta en
+            // resumen['ef'] (Efectivo) o en su bucket correspondiente del turno donde
+            // realmente se cobro. NO se inserta en movimientos_caja para evitar doble conteo.
+            // [FIX-NC2] "AND estado='Pendiente'" en el WHERE: si "Cancelar" se disparo casi al
+            // mismo tiempo sobre esta misma venta y ya gano la carrera, este UPDATE no afecta
+            // ninguna fila y se aborta la liquidacion completa (linea siguiente) ANTES de tocar
+            // el stock — evita que una venta quede "Cancelada" con el stock ya descontado.
+            $stmtLiq = $pdo->prepare("UPDATE ventas SET estado = 'Completada', caja_id = ? WHERE venta_id = ? AND estado = 'Pendiente'");
+            $stmtLiq->execute([$cajaActualId, $venta_id]);
+            if ($stmtLiq->rowCount() === 0) {
+                throw new Exception('ya_no_pendiente');
+            }
+
+            // Descontar stock ahora que se confirma la entrega
+            $stmtItems = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
+            $stmtItems->execute([$venta_id]);
+            foreach ($stmtItems->fetchAll(PDO::FETCH_ASSOC) as $it) {
+                $stmtSt = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtSt->execute([$it['producto_id'], $sucursalVista]);
+                $stockAnt = floatval($stmtSt->fetchColumn() ?: 0);
+                // Bug #3: Bloquear liquidación si no hay stock suficiente
+                if ($stockAnt < floatval($it['cantidad'])) {
+                    throw new Exception('stock_insuficiente');
+                }
+                $stockNvo = max(0, $stockAnt - floatval($it['cantidad']));
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                    ->execute([$stockNvo, $it['producto_id'], $sucursalVista]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta domicilio confirmada')")
+                    ->execute([$it['producto_id'], $_SESSION['usuario_id'], $sucursalVista, floatval($it['cantidad']), $stockAnt, $stockNvo]);
+            }
+
+            // Si es pago a crédito, crear registro en tabla creditos
+            $metodoPagoLiq = trim($ventaLiq['metodo_pago']);
+            if (($metodoPagoLiq === 'Crédito' || $metodoPagoLiq === 'Credito') && $ventaLiq['cliente_id']) {
+                $stmtCheck = $pdo->prepare("SELECT credito_id FROM creditos WHERE venta_id = ? LIMIT 1");
+                $stmtCheck->execute([$venta_id]);
+                if (!$stmtCheck->fetchColumn()) {
+                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', DATE_ADD(CURDATE(), INTERVAL 15 DAY))")
+                        ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total']]);
+                }
+            }
+
+            $pdo->commit();
+            header('Location: cajero_ventasPendientes.php?msg=liquidado');
+            exit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            if ($e->getMessage() === 'stock_insuficiente') {
+                header('Location: cajero_ventasPendientes.php?msg=error_sin_stock');
+            } elseif ($e->getMessage() === 'ya_no_pendiente') {
+                header('Location: cajero_ventasPendientes.php?msg=error_acceso');
+            } else {
+                header('Location: cajero_ventasPendientes.php?msg=error_liquidar');
+            }
+            exit();
+        }
+    }
+
+    // [AUTOFIX] BUG-02: Si la venta no pertenece al usuario, mostrar error en lugar de éxito
+    header('Location: cajero_ventasPendientes.php?msg=error_acceso');
     exit();
 }
 
 // Cancelar venta pendiente
 if (isset($_GET['cancelar'])) {
+    // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
+    requerirCSRF($_GET['_token'] ?? '', 'cajero_ventasPendientes.php');
     $venta_id = intval($_GET['cancelar']);
 
-    // Devolver stock
-    $stmtProd = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
-    $stmtProd->execute([$venta_id]);
-    $productos = $stmtProd->fetchAll(PDO::FETCH_ASSOC);
-
-    foreach ($productos as $p) {
-        $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-        $stmtS->execute([$p['producto_id']]);
-        $stockAnterior = $stmtS->fetchColumn();
-        $stockNuevo = $stockAnterior + $p['cantidad'];
-
-        $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $p['producto_id']]);
-        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,'Cancelación venta pendiente')")
-            ->execute([$p['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $p['cantidad'], $stockAnterior, $stockNuevo]);
+    // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
+    $stmtOwn = $pdo->prepare("
+        SELECT v.venta_id FROM ventas v
+        JOIN cajas c ON v.caja_id = c.caja_id
+        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ?
+    ");
+    $stmtOwn->execute([$venta_id, $_SESSION['usuario_id']]);
+    if (!$stmtOwn->fetch()) {
+        header('Location: cajero_ventasPendientes.php?msg=error_acceso');
+        exit();
     }
 
-    $pdo->prepare("UPDATE ventas SET estado = 'Cancelada' WHERE venta_id = ?")->execute([$venta_id]);
-    header('Location: cajero_ventasPendientes.php?msg=cancelado');
+    // El stock nunca fue descontado al crear la pendiente, así que solo se cancela la venta
+    $pdo->beginTransaction();
+    try {
+        // [FIX-NC2] "AND estado='Pendiente'" en el WHERE: si "Liquidar" se disparo casi al
+        // mismo tiempo sobre esta misma venta y ya gano la carrera (ya la marco Completada y
+        // descontó stock), este UPDATE no debe pisar ese resultado.
+        $stmtCancel = $pdo->prepare("UPDATE ventas SET estado = 'Cancelada' WHERE venta_id = ? AND estado = 'Pendiente'");
+        $stmtCancel->execute([$venta_id]);
+        if ($stmtCancel->rowCount() === 0) {
+            throw new Exception('ya_no_pendiente');
+        }
+        $pdo->commit();
+        header('Location: cajero_ventasPendientes.php?msg=cancelado');
+        exit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        header('Location: cajero_ventasPendientes.php?msg=' . ($e->getMessage() === 'ya_no_pendiente' ? 'error_acceso' : 'error_cancelar'));
+        exit();
+    }
+}
+
+// Endpoint: obtener ticket JSON
+if (isset($_GET['get_ticket_venta'])) {
+    $venta_id = intval($_GET['get_ticket_venta']);
+    // [AUTOFIX] SEC-04: Verificar que la venta pertenece a la caja del usuario actual
+    // [AUTOFIX] P-05: Reemplazado SELECT * por columnas especificas
+    $stmt = $pdo->prepare("
+        SELECT v.venta_id, v.folio, v.created_at, v.caja_id, v.cliente_id,
+               v.subtotal, v.descuento, v.comision_terminal, v.total,
+               v.metodo_pago, v.referencia_transferencia, v.estado,
+               v.monto_efectivo, v.monto_terminal, v.cambio
+        FROM ventas v
+        JOIN cajas c ON v.caja_id = c.caja_id
+        WHERE v.venta_id = ? AND c.usuario_id = ?
+    ");
+    $stmt->execute([$venta_id, $_SESSION['usuario_id']]);
+    $venta = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$venta) {
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Venta no encontrada']);
+        exit();
+    }
+
+    $stmtProds = $pdo->prepare("
+        SELECT vp.venta_productos_id, vp.producto_id, vp.cantidad,
+               vp.precio_unitario, vp.precio_final, vp.subtotal,
+               vp.paquete_id, vp.nota_ajuste,
+               p.nombre_producto, p.codigo,
+               pk.nombre AS paquete_nombre, pk.precio_paquete
+        FROM venta_productos vp
+        JOIN productos p ON vp.producto_id = p.producto_id
+        LEFT JOIN paquetes pk ON pk.paquete_id = vp.paquete_id
+        WHERE vp.venta_id = ?
+    ");
+    $stmtProds->execute([$venta_id]);
+    $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtCaja = $pdo->prepare("SELECT numero_turno FROM cajas WHERE caja_id = ?");
+    $stmtCaja->execute([$venta['caja_id']]);
+    $numTurno = $stmtCaja->fetchColumn() ?: 1;
+
+    $stmtCliente = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE cliente_id = ?");
+    $stmtCliente->execute([$venta['cliente_id']]);
+    $cliente = $stmtCliente->fetchColumn() ?: 'Consumidor final';
+
+    // [AUTOFIX] B-01: Eliminada query redundante incorrecta (comparaba sucursal_id con caja_id)
+    // Solo se usa sucData que hace el JOIN correcto cajas → sucursales
+    $sucData = $pdo->prepare("SELECT s.* FROM sucursales s JOIN cajas c ON c.sucursal_id = s.sucursal_id WHERE c.caja_id = ?");
+    $sucData->execute([$venta['caja_id']]);
+    $sucursal = $sucData->fetch(PDO::FETCH_ASSOC) ?: $sucursalTicket;
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'venta_id'  => $venta['venta_id'],
+        'folio'     => $venta['folio'],
+        'fecha'     => $venta['created_at'],
+        'turno'     => $numTurno,
+        'cliente'   => $cliente,
+        'productos' => $productos,
+        'subtotal'           => $venta['subtotal'],
+        'descuento'          => $venta['descuento'],
+        'comision_terminal'  => $venta['comision_terminal'] ?? 0,
+        'total'              => $venta['total'],
+        'metodo_pago'        => $venta['metodo_pago'],
+        'referencia_transferencia' => $venta['referencia_transferencia'],
+        'estado'    => $venta['estado'],
+        'sucursal' => [
+            'nombre' => $sucursal['nombre'] ?? 'FERRETERIA ALDRETE',
+            'datos_ticket' => $sucursal['datos_ticket'] ?? '',
+            'logo_url' => $sucursal['logo_url'] ?? '',
+            'banco' => $sucursal['banco'] ?? '',
+            'titular_cuenta' => $sucursal['titular_cuenta'] ?? '',
+            'numero_cuenta' => $sucursal['numero_cuenta'] ?? '',
+            'clabe_interbancaria' => $sucursal['clabe_interbancaria'] ?? '',
+            'alias_tarjeta' => $sucursal['alias_tarjeta'] ?? ''
+        ]
+    ]);
     exit();
 }
 
 // Crear venta pendiente (domicilio)
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $stmt = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
-    $stmt->execute([$_SESSION['usuario_id']]);
+    // [AUTOFIX] SEC-03: Verificar CSRF token en formulario POST
+    requerirCSRF($_POST['_token'] ?? '', 'cajero_ventasPendientes.php');
+    // [FIX] Re-verificar la caja abierta EN LA SUCURSAL ELEGIDA (antes no filtraba por
+    // sucursal_id: un admin con dos cajas abiertas en sucursales distintas al mismo tiempo
+    // podia terminar registrando la pendiente contra la caja equivocada).
+    $stmt = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
+    $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
     $caja = $stmt->fetchColumn();
 
     if (!$caja) {
         $errores[] = 'Debes tener una caja abierta para registrar ventas.';
     } else {
-        $items      = json_decode($_POST['items'] ?? '[]', true);
-        $cliente_id = intval($_POST['cliente_id'] ?? 0) ?: null;
-        $notas      = trim($_POST['notas'] ?? '');
-        $subtotal   = floatval($_POST['subtotal'] ?? 0);
-        $total      = floatval($_POST['total'] ?? 0);
+        $items        = json_decode($_POST['items'] ?? '[]', true);
+        $cliente_id   = intval($_POST['cliente_id'] ?? 0) ?: null;
+        $notas        = trim($_POST['notas'] ?? '');
+        $subtotal     = floatval($_POST['subtotal'] ?? 0);
+        $descuento    = floatval($_POST['descuento'] ?? 0);
+        $total        = floatval($_POST['total'] ?? 0);
+        // Ventas pendientes solo admiten Efectivo, Credito y Transferencia
+        // [FIX] 'Credito' sin acento: el ENUM ventas.metodo_pago solo acepta 'Credito'.
+        // Con acento, MySQL estricto (servidor) rechaza el INSERT y MariaDB (local) guarda '' silenciosamente.
+        $metodo_pago  = in_array($_POST['metodo_pago'] ?? '', ['Efectivo', 'Credito', 'Transferencia']) ? $_POST['metodo_pago'] : 'Efectivo';
+        $ref_transf   = ($metodo_pago === 'Transferencia') ? trim($_POST['referencia_transferencia'] ?? '') : null;
+        $monto_efectivo = ($metodo_pago === 'Efectivo') ? floatval($_POST['monto_efectivo'] ?? 0) : 0;
+        $cambio         = ($metodo_pago === 'Efectivo') ? floatval($_POST['cambio']         ?? 0) : 0;
 
-        if (!empty($items)) {
-            $pdo->prepare("INSERT INTO ventas (caja_id, cliente_id, usuario_id, subtotal, total, metodo_pago, estado, notas) VALUES (?,?,?,?,?,'Efectivo','Pendiente',?)")
-                ->execute([$caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $total, $notas]);
-            $venta_id = $pdo->lastInsertId();
+        // Bug #7: Validar carrito antes de cualquier otra validación
+        if (empty($items)) {
+            $errores[] = 'Agrega al menos un producto a la venta.';
+        }
 
-            foreach ($items as $item) {
-                $subtotalItem = $item['cantidad'] * $item['precio'];
-                $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
-                    ->execute([$venta_id, $item['producto_id'], $item['cantidad'], $item['precio'], $subtotalItem]);
-
-                // Descontar stock
-                $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-                $stmtS->execute([$item['producto_id']]);
-                $stockAnterior = $stmtS->fetchColumn();
-                $stockNuevo = $stockAnterior - $item['cantidad'];
-                $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta pendiente domicilio')")
-                    ->execute([$item['producto_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $item['cantidad'], $stockAnterior, $stockNuevo]);
+        // Validar monto_efectivo obligatorio y suficiente en backend
+        if (empty($errores) && $metodo_pago === 'Efectivo') {
+            if ($monto_efectivo <= 0) {
+                $errores[] = 'El monto en efectivo que entrega el cliente es obligatorio.';
+            } elseif ($monto_efectivo < $total - 0.005) {
+                $errores[] = 'El monto en efectivo ($' . number_format($monto_efectivo, 2) . ') es menor al total ($' . number_format($total, 2) . ').';
             }
+        }
 
-            header('Location: cajero_ventasPendientes.php?msg=creado');
-            exit();
+        // Validar referencia obligatoria para Transferencia
+        if (empty($errores) && $metodo_pago === 'Transferencia' && empty($ref_transf)) {
+            $errores[] = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
+        }
+
+        if (!empty($items) && empty($errores)) {
+            // Mutex por mes/año — mismo lock que nuevaVenta para evitar colisión entre módulos
+            $mesFolio      = date('m');
+            $anioFolio     = date('Y');
+            $folioLock     = 'folio_ventas_' . $anioFolio . '_' . $mesFolio;
+            $lockAdquirido = $pdo->query("SELECT GET_LOCK(" . $pdo->quote($folioLock) . ", 10)")->fetchColumn();
+
+            if (!$lockAdquirido) {
+                $errores[] = 'El sistema está procesando otra venta. Intenta de nuevo en unos segundos.';
+            } else {
+            $pdo->beginTransaction();
+            try {
+                // [FIX] SEC: Recalcular y validar los totales en el servidor.
+                // subtotal/descuento/total llegan del navegador y podían manipularse con las
+                // DevTools (F12). Aquí se verifica que cuadren con los productos reales.
+                $sumaItems = 0.0;
+                foreach ($items as $it) {
+                    $cantVal = floatval($it['cantidad'] ?? 0);
+                    $precVal = floatval($it['precio'] ?? -1);
+                    if ($cantVal <= 0 || $precVal < 0) {
+                        throw new Exception('El carrito contiene cantidades o precios inválidos.');
+                    }
+                    $sumaItems += $cantVal * $precVal;
+
+                    // Precio mínimo para ítems sueltos: no menor al 50% del precio de compra
+                    $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
+                    if (!$pqIdVal) {
+                        $stmtPC = $pdo->prepare("SELECT precio_compra FROM productos WHERE producto_id = ?");
+                        $stmtPC->execute([intval($it['producto_id'] ?? 0)]);
+                        $precioCompraVal = floatval($stmtPC->fetchColumn());
+                        if ($precioCompraVal > 0 && $precVal < ($precioCompraVal * 0.5)) {
+                            throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                        }
+                    }
+                }
+                $sumaItems = round($sumaItems, 2);
+
+                // Validar paquetes: que existan, estén completos y su importe cuadre con su precio
+                $gruposPaq = [];
+                foreach ($items as $it) {
+                    $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
+                    if ($pqIdVal) {
+                        $gruposPaq[$pqIdVal]['monto']   = ($gruposPaq[$pqIdVal]['monto'] ?? 0) + floatval($it['cantidad']) * floatval($it['precio']);
+                        $gruposPaq[$pqIdVal]['items'][] = $it;
+                    }
+                }
+                foreach ($gruposPaq as $pqIdVal => $grupo) {
+                    $stmtPqVal = $pdo->prepare("SELECT precio_paquete FROM paquetes WHERE paquete_id = ? AND activo = 1");
+                    $stmtPqVal->execute([$pqIdVal]);
+                    $precioPaqVal = $stmtPqVal->fetchColumn();
+                    if ($precioPaqVal === false) {
+                        throw new Exception('El carrito contiene un paquete inválido.');
+                    }
+                    $stmtReqVal = $pdo->prepare("SELECT producto_id, cantidad FROM paquete_productos WHERE paquete_id = ?");
+                    $stmtReqVal->execute([$pqIdVal]);
+                    $reqsPaq = [];
+                    foreach ($stmtReqVal->fetchAll(PDO::FETCH_ASSOC) as $rReq) {
+                        $reqsPaq[intval($rReq['producto_id'])] = floatval($rReq['cantidad']);
+                    }
+                    $combosPaq = null;
+                    foreach ($grupo['items'] as $it) {
+                        $pidVal = intval($it['producto_id']);
+                        if (!isset($reqsPaq[$pidVal]) || $reqsPaq[$pidVal] <= 0) {
+                            throw new Exception('Un producto del carrito no pertenece al paquete indicado.');
+                        }
+                        $cVal = floatval($it['cantidad']) / $reqsPaq[$pidVal];
+                        if ($combosPaq === null) {
+                            $combosPaq = $cVal;
+                        } elseif (abs($cVal - $combosPaq) > 0.001) {
+                            throw new Exception('Las cantidades del paquete no son consistentes.');
+                        }
+                    }
+                    if (count($grupo['items']) !== count($reqsPaq)) {
+                        throw new Exception('El paquete del carrito está incompleto.');
+                    }
+                    if (abs($grupo['monto'] - floatval($precioPaqVal) * $combosPaq) > 0.05) {
+                        throw new Exception('El importe del paquete no cuadra con su precio.');
+                    }
+                }
+
+                // Descuento de cliente implícito = descuento enviado − descuentos por ítem (promos)
+                $descuentoCliente = round($descuento - (round($subtotal, 2) - $sumaItems), 2);
+                if ($descuentoCliente < -0.05) {
+                    throw new Exception('El descuento de la venta no cuadra con los productos.');
+                }
+                $descuentoCliente = max(0.0, $descuentoCliente);
+
+                $descMaxPct = 0.0;
+                if ($cliente_id) {
+                    $stmtDescCli = $pdo->prepare("SELECT COALESCE(descuento_fijo, 0) FROM clientes WHERE cliente_id = ?");
+                    $stmtDescCli->execute([$cliente_id]);
+                    $descMaxPct = floatval($stmtDescCli->fetchColumn());
+                }
+                if ($descuentoCliente > round($sumaItems * $descMaxPct / 100, 2) + 0.05) {
+                    throw new Exception('El descuento excede el autorizado para el cliente.');
+                }
+
+                // Total esperado = productos − descuento de cliente (pendientes no usan terminal)
+                $totalEsperado = round($sumaItems - $descuentoCliente, 2);
+                if (abs($total - $totalEsperado) > 0.05) {
+                    throw new Exception('El total de la venta no cuadra con los productos. Recarga la página e intenta de nuevo.');
+                }
+
+                // Validar límite de crédito antes de generar folio
+                if ($metodo_pago === 'Credito' && $cliente_id) {
+                    $stmtLimite = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");
+                    $stmtLimite->execute([$cliente_id]);
+                    $clienteCredito = $stmtLimite->fetch(PDO::FETCH_ASSOC);
+                    if (!$clienteCredito) {
+                        throw new Exception('Cliente no encontrado o inactivo.');
+                    }
+                    if (!$clienteCredito['credito_autorizado']) {
+                        throw new Exception('El cliente no tiene crédito autorizado.');
+                    }
+                    if (floatval($clienteCredito['limite_credito']) <= 0) {
+                        throw new Exception('El límite de crédito del cliente no está configurado.');
+                    }
+                    $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
+                    $stmtDeuda->execute([$cliente_id]);
+                    $deudaActual = floatval($stmtDeuda->fetchColumn());
+                    $disponible  = floatval($clienteCredito['limite_credito']) - $deudaActual;
+                    if ($deudaActual + $total > floatval($clienteCredito['limite_credito']) + 0.005) {
+                        throw new Exception('La venta excede el límite de crédito. Disponible: $' . number_format(max(0, $disponible), 2));
+                    }
+                }
+
+                // Generar folio secuencial mensual (mismo criterio que nuevaVenta.php)
+                $stmtFolio = $pdo->prepare("
+                    SELECT COALESCE(MAX(CAST(folio AS UNSIGNED)), 0) + 1
+                    FROM ventas
+                    WHERE folio IS NOT NULL AND MONTH(created_at) = ? AND YEAR(created_at) = ?
+                ");
+                $stmtFolio->execute([$mesFolio, $anioFolio]);
+                $numFolio = intval($stmtFolio->fetchColumn());
+                $folio    = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
+
+                // [AUTOFIX] BUG-01: descuento estaba fijo en 0 literal y $descuento iba a comision_terminal
+                // Corregido: descuento=? recibe $descuento, comision_terminal=0 literal (pendientes no usan terminal)
+                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,0,?,?,?,0,?,'Pendiente',?,?)")
+                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
+                $venta_id = $pdo->lastInsertId();
+
+                // Stock NO se descuenta al crear — se descuenta solo cuando se liquida (entrega confirmada)
+                // Pero sí se valida que el stock disponible (actual menos comprometido en otras pendientes) sea suficiente
+                foreach ($items as $item) {
+                    $precioOrig   = floatval($item['precio_normal'] ?? $item['precio']);
+                    $precioFinal  = floatval($item['precio']);
+                    $cantidadItem = floatval($item['cantidad']);
+                    $subtotalItem = $cantidadItem * $precioFinal;
+                    $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
+
+                    // Validar stock disponible = stock_actual - comprometido en otras pendientes activas
+                    $stmtStockActual = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                    $stmtStockActual->execute([$item['producto_id'], $sucursalVista]);
+                    $stockActual = floatval($stmtStockActual->fetchColumn() ?: 0);
+
+                    $stmtComprometido = $pdo->prepare("
+                        SELECT COALESCE(SUM(vp.cantidad), 0)
+                        FROM venta_productos vp
+                        JOIN ventas v ON vp.venta_id = v.venta_id
+                        JOIN cajas c ON v.caja_id = c.caja_id
+                        WHERE vp.producto_id = ?
+                          AND v.estado = 'Pendiente'
+                          AND c.sucursal_id = ?
+                    ");
+                    $stmtComprometido->execute([$item['producto_id'], $sucursalVista]);
+                    $stockComprometido = floatval($stmtComprometido->fetchColumn() ?: 0);
+
+                    $stockDisponible = $stockActual - $stockComprometido;
+                    if ($stockDisponible < $cantidadItem) {
+                        throw new Exception('Stock insuficiente para uno o más productos. Disponible: ' . number_format(max(0, $stockDisponible), 2));
+                    }
+
+                    $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal, paquete_id) VALUES (?,?,?,?,?,?,?)")
+                        ->execute([$venta_id, $item['producto_id'], $cantidadItem, $precioOrig, $precioFinal, $subtotalItem, $paqId]);
+                }
+
+                $pdo->commit();
+                $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
+                // Pasar venta_id para auto-abrir el ticket de impresión al volver
+                header('Location: cajero_ventasPendientes.php?msg=creado&ticket=' . $venta_id);
+                exit();
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
+                $errores[] = $e->getMessage();
+            }
+            } // fin if lockAdquirido
         }
     }
 }
@@ -95,12 +487,83 @@ $stmt->execute([$_SESSION['usuario_id']]);
 $pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos para agregar
-$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 AND ss.stock_actual > 0 ORDER BY p.nombre_producto");
-$stmt->execute([$_SESSION['sucursal_id']]);
+$stmt = $pdo->prepare("
+    SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, ss.stock_actual, p.tipo_venta
+    FROM productos p
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE p.activo = 1 AND ss.activo = 1 AND ss.stock_actual > 0
+    ORDER BY p.nombre_producto
+");
+$stmt->execute([$sucursalVista]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Promociones activas para esta sucursal
+$stmtPromosPend = $pdo->prepare("
+    SELECT pr.producto_id, pr.precio_promocional, pr.descripcion
+    FROM promociones pr
+    JOIN productos p ON pr.producto_id = p.producto_id
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE 1=1
+      AND (pr.fecha_inicio IS NULL OR pr.fecha_inicio <= CURDATE())
+      AND (pr.fecha_fin    IS NULL OR pr.fecha_fin    >= CURDATE())
+      AND pr.activo = 1
+");
+$stmtPromosPend->execute([$sucursalVista]);
+$promosPendById = [];
+foreach ($stmtPromosPend->fetchAll(PDO::FETCH_ASSOC) as $promo) {
+    $promosPendById[(int)$promo['producto_id']] = [
+        'precio_promo' => floatval($promo['precio_promocional']),
+        'descripcion'  => $promo['descripcion'] ?? '',
+    ];
+}
+
 // Clientes
-$clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+try {
+    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, COALESCE(descuento_fijo,0) as descuento, COALESCE(credito_autorizado,0) as credito FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $clientes = $pdo->query("SELECT cliente_id, nombre_completo, 0 as descuento, 0 as credito FROM clientes WHERE activo = 1 ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Paquetes activos — se usa LEFT JOIN sin filtro de stock para que aparezcan todos,
+// incluyendo los que tienen algún producto en 0. El JS calcula combos disponibles.
+// Con INNER JOIN + stock > 0: si todos los productos tienen stock=0, el paquete
+// desaparece del buscador aunque exista. Con LEFT JOIN el paquete siempre aparece
+// (como "Sin stock") y el cálculo de combos es correcto.
+$stmtPaq = $pdo->prepare("
+    SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
+           pp.producto_id, pp.cantidad AS cantidad_requerida,
+           p.nombre_producto,
+           COALESCE(ss.stock_actual, 0) AS stock_actual
+    FROM paquetes pk
+    JOIN paquete_productos pp ON pp.paquete_id = pk.paquete_id
+    JOIN productos p ON p.producto_id = pp.producto_id AND p.activo = 1
+    LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE pk.activo = 1
+    ORDER BY pk.nombre, pp.producto_id
+");
+$stmtPaq->execute([$sucursalVista]);
+$paqFilas = $stmtPaq->fetchAll(PDO::FETCH_ASSOC);
+$paqAgrupados = [];
+foreach ($paqFilas as $f) {
+    $pid = intval($f['paquete_id']);
+    if (!isset($paqAgrupados[$pid])) {
+        $paqAgrupados[$pid] = [
+            'paquete_id'    => $pid,
+            'codigo'        => $f['codigo'],
+            'nombre'        => $f['nombre'],
+            'precio_paquete'=> floatval($f['precio_paquete']),
+            'texto'         => mb_strtolower($f['codigo'] . ' ' . $f['nombre']),
+            'productos'     => [],
+        ];
+    }
+    $paqAgrupados[$pid]['productos'][] = [
+        'producto_id'        => intval($f['producto_id']),
+        'nombre_producto'    => $f['nombre_producto'],
+        'cantidad_requerida' => floatval($f['cantidad_requerida']),
+        'stock_actual'       => floatval($f['stock_actual']),  // stock real para calcular combos en JS
+    ];
+}
+$paquesData = array_values($paqAgrupados);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -123,6 +586,7 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     .menu-item:hover { background: #eef8ff; color: #14ace7; }
     .menu-item.active { background: #eef8ff; border-left-color: #14ace7; color: #14ace7; font-weight: 600; }
     .divider { height: 1px; background: #f0f0f0; margin: 6px 8px; }
+    .menu-label { padding: 8px 16px 4px; font-size: 10px; font-weight: 700; color: #14ace7; text-transform: uppercase; letter-spacing: 0.5px; }
     .sidebar-footer { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 11px; color: #bbb; white-space: nowrap; }
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f7f7f7; }
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
@@ -157,30 +621,16 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     .form-group input:focus, .form-group select:focus { outline: none; border-color: #14ace7; }
     .carrito-mini { border: 0.5px solid #eee; border-radius: 6px; padding: 10px; margin-bottom: 12px; min-height: 60px; }
     .carrito-vacio-mini { text-align: center; color: #aaa; font-size: 12px; padding: 14px; }
-    .item-mini { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 0.5px solid #f5f5f5; font-size: 12px; }
+    .item-mini { display: flex; align-items: center; gap: 4px; padding: 6px 0; border-bottom: 0.5px solid #f5f5f5; font-size: 12px; min-width: 0; }
     .item-mini:last-child { border-bottom: none; }
     .btn-quitar-mini { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 14px; }
     .total-mini { display: flex; justify-content: space-between; font-size: 14px; font-weight: 700; color: #222; padding-top: 8px; border-top: 1px solid #eee; margin-top: 4px; }
     .btn-guardar { width: 100%; background: #14ace7; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-guardar:hover { background: #1196cb; }
     .sin-pendientes { text-align: center; color: #aaa; padding: 40px; font-size: 13px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
-    @media (max-width: 768px) {
-        body { overflow-x: hidden; }
-        .sidebar { position: fixed; top: 0; left: 0; height: 100%; z-index: 300; width: 0; transition: width 0.3s; }
-        .sidebar.collapsed { width: 260px; box-shadow: 4px 0 16px rgba(0,0,0,.15); }
-        .main { width: 100%; }
-        .topbar { padding: 0 12px; height: 48px; }
-        .topbar h2 { font-size: 13px; }
-        .topbar-right { gap: 8px; font-size: 12px; }
-        .topbar-right > span { display: none; }
-        .content { padding: 12px !important; display: block !important; }
-        .content > div + div { margin-top: 12px; }
-        .card { overflow-x: auto; }
-        th, td { padding: 8px 10px; font-size: 12px; }
-        .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
-        .logout-btn { padding: 5px 10px; font-size: 11px; }
-    }
-    </style>
+    .busqueda-pend { width: 100%; margin-bottom: 12px; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .busqueda-pend:focus { outline: none; border-color: #14ace7; }
+</style>
 
 <?php renderAdminSidebar('cajero_ventas_pendientes'); ?>
 
@@ -188,7 +638,7 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Ventas pendientes</h2>
+            <h2>Ventas pendientes — <?= htmlspecialchars($nombreSucursalVista) ?></h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
@@ -200,13 +650,31 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
         <!-- Lista de pendientes -->
         <div>
             <?php if (isset($_GET['msg'])): ?>
-                <?php $msgs = ['creado'=>'Venta pendiente registrada.','liquidado'=>'Venta liquidada correctamente.','cancelado'=>'Venta cancelada y stock devuelto.']; ?>
-                <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
+                <?php
+                // [AUTOFIX] BUG-06: Agregar todos los mensajes posibles con su clase correcta
+                $msgsExito = [
+                    'creado'    => 'Venta pendiente registrada.',
+                    'liquidado' => 'Venta liquidada correctamente.',
+                    'cancelado' => 'Venta cancelada y stock devuelto.',
+                ];
+                $msgsError = [
+                    'error_acceso'    => 'Acceso denegado: la venta no pertenece a tu caja.',
+                    'error_cancelar'  => 'Error al cancelar la venta. Intenta de nuevo.',
+                    'error_liquidar'  => 'Error al liquidar la venta. Intenta de nuevo.',
+                    'error_sin_stock' => 'No se puede liquidar: uno o más productos no tienen stock suficiente.',
+                ];
+                $msgKey = $_GET['msg'];
+                if (isset($msgsExito[$msgKey])): ?>
+                    <div class="msg msg-exito"><?= $msgsExito[$msgKey] ?></div>
+                <?php elseif (isset($msgsError[$msgKey])): ?>
+                    <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;"><?= $msgsError[$msgKey] ?></div>
+                <?php endif; ?>
             <?php endif; ?>
+            <input type="text" class="busqueda-pend" id="buscarPendientes" placeholder="Buscar cliente, notas o producto..." oninput="filtrarPendientes(this.value)">
 
             <?php if (count($pendientes) > 0): ?>
                 <?php foreach ($pendientes as $p): ?>
-                <div class="pendiente-item">
+                <div class="pendiente-item" data-pendiente-texto="<?= htmlspecialchars(mb_strtolower(($p['cliente'] ?? 'cliente general') . ' ' . ($p['notas'] ?? ''))) ?>">
                     <div class="pendiente-header">
                         <div class="pendiente-info">
                             <h4><?= htmlspecialchars($p['cliente'] ?? 'Cliente general') ?></h4>
@@ -214,20 +682,67 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
                             <?php if ($p['notas']): ?><p style="color:#14ace7;"><?= htmlspecialchars($p['notas']) ?></p><?php endif; ?>
                         </div>
                         <div class="pendiente-acciones">
-                            <a class="btn-accion btn-liquidar" href="cajero_ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Liquidar esta venta?')">Liquidar</a>
-                            <a class="btn-accion btn-cancelar" href="cajero_ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>" onclick="return confirm('¿Cancelar y devolver stock?')">Cancelar</a>
+                            <button class="btn-accion" type="button" style="background:#e3f2fd;color:#1565c0;" onclick="abrirTicketVenta(<?= $p['venta_id'] ?>)">🖨️ Ticket</button>
+                            <!-- [AUTOFIX] SEC-01: Token CSRF en links destructivos -->
+                            <a class="btn-accion btn-liquidar" href="cajero_ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Liquidar esta venta?')">Liquidar</a>
+                            <a class="btn-accion btn-cancelar" href="cajero_ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Cancelar y devolver stock?')">Cancelar</a>
                         </div>
                     </div>
                     <?php
-                    $stmtProd = $pdo->prepare("SELECT vp.cantidad, vp.precio_unitario, p.nombre_producto FROM venta_productos vp JOIN productos p ON vp.producto_id = p.producto_id WHERE vp.venta_id = ?");
+                    $stmtProd = $pdo->prepare("
+                        SELECT vp.cantidad, vp.precio_unitario, vp.precio_final, vp.subtotal,
+                               vp.paquete_id, pk.nombre AS paquete_nombre, pk.precio_paquete,
+                               p.nombre_producto
+                        FROM venta_productos vp
+                        JOIN productos p ON vp.producto_id = p.producto_id
+                        LEFT JOIN paquetes pk ON pk.paquete_id = vp.paquete_id
+                        WHERE vp.venta_id = ?
+                        ORDER BY vp.paquete_id, vp.venta_productos_id
+                    ");
                     $stmtProd->execute([$p['venta_id']]);
                     $prods = $stmtProd->fetchAll(PDO::FETCH_ASSOC);
+
+                    // Agrupar: paquetes como una fila, productos individuales normal
+                    // combos = round(subtotal_acumulado / precio_paquete) — exacto porque el precio se distribuye proporcionalmente
+                    $paqTotales = [];   // paquete_id => ['nombre'=>, 'subtotal'=>, 'precio_paquete'=>]
+                    $prodsSueltos = [];
+                    foreach ($prods as $prod) {
+                        if (!empty($prod['paquete_id'])) {
+                            $pid = intval($prod['paquete_id']);
+                            if (!isset($paqTotales[$pid])) {
+                                $paqTotales[$pid] = [
+                                    'nombre'         => $prod['paquete_nombre'],
+                                    'subtotal'       => 0.0,
+                                    'precio_paquete' => floatval($prod['precio_paquete'] ?? 0),
+                                ];
+                            }
+                            $paqTotales[$pid]['subtotal'] += floatval($prod['subtotal']);
+                        } else {
+                            $prodsSueltos[] = $prod;
+                        }
+                    }
                     ?>
                     <div class="pendiente-productos">
-                        <?php foreach ($prods as $prod): ?>
+                        <?php foreach ($paqTotales as $paqRow):
+                            $precioPaq = $paqRow['precio_paquete'];
+                            $combos    = ($precioPaq > 0.001)
+                                ? (int) round($paqRow['subtotal'] / $precioPaq)
+                                : 1;
+                        ?>
+                        <div class="prod-row">
+                            <span>📦 <?= htmlspecialchars($paqRow['nombre']) ?> × <?= $combos ?></span>
+                            <span>$<?= number_format($paqRow['subtotal'], 2) ?></span>
+                        </div>
+                        <?php endforeach; ?>
+                        <?php foreach ($prodsSueltos as $prod): ?>
+                        <?php
+                            $precioMostrar = (!empty($prod['precio_final']) && floatval($prod['precio_final']) > 0)
+                                ? floatval($prod['precio_final'])
+                                : floatval($prod['precio_unitario']);
+                        ?>
                         <div class="prod-row">
                             <span><?= htmlspecialchars($prod['nombre_producto']) ?> × <?= $prod['cantidad'] ?></span>
-                            <span>$<?= number_format($prod['precio_unitario'] * $prod['cantidad'],2) ?></span>
+                            <span>$<?= number_format($precioMostrar * $prod['cantidad'], 2) ?></span>
                         </div>
                         <?php endforeach; ?>
                     </div>
@@ -249,36 +764,167 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
 
                 <div class="form-group">
                     <label>Agregar producto</label>
-                    <select id="selectProd" onchange="agregarProd(this)">
-                        <option value="">-- Selecciona un producto --</option>
-                        <?php foreach ($productos as $p): ?>
-                            <option value="<?= $p['producto_id'] ?>" data-nombre="<?= htmlspecialchars($p['nombre_producto']) ?>" data-precio="<?= $p['precio_venta'] ?>">
-                                <?= htmlspecialchars($p['nombre_producto']) ?> — $<?= number_format($p['precio_venta'],2) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <div style="position:relative;">
+                        <input type="text" id="buscarProductoPendiente" placeholder="Buscar por nombre o código..."
+                            autocomplete="off"
+                            oninput="filtrarProductosPendientes(this.value)"
+                            onfocus="filtrarProductosPendientes(this.value)"
+                            onblur="setTimeout(ocultarDropPend, 200)"
+                            style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                        <div id="dropdownProdsPend"
+                            style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e0e0e0;border-radius:6px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px;"></div>
+                    </div>
+                    <!-- Panel cantidad tras seleccionar producto -->
+                    <div id="prodSelPend" style="display:none;background:#f0f9ff;border:1px solid #dbeafe;border-radius:6px;padding:10px 12px;margin-top:8px;">
+                        <div style="font-size:13px;font-weight:600;color:#1565c0;margin-bottom:4px;" id="prodSelPendNombre"></div>
+                        <div style="font-size:12px;color:#555;margin-bottom:6px;">
+                            Disponible: <span id="prodSelPendStock" style="font-weight:600;color:#2e7d32;"></span>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <label style="font-size:12px;color:#555;white-space:nowrap;">Cantidad:</label>
+                            <input type="number" id="inputCantPend" min="1" step="1" value="1" inputmode="numeric"
+                                style="width:80px;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                oninput="sanitizarCantPend()"
+                                onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarAgregarProdPend();}">
+                            <span id="prodSelPendPrecio" style="font-size:12px;color:#14ace7;font-weight:600;"></span>
+                            <button type="button" onclick="confirmarAgregarProdPend()"
+                                style="flex:1;background:#14ace7;color:white;border:none;padding:8px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Agregar</button>
+                            <button type="button" onclick="cancelarSelPend()"
+                                style="background:white;color:#666;border:1px solid #ddd;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;">✕</button>
+                        </div>
+                    </div>
+                    <!-- Panel cantidad tras seleccionar paquete -->
+                    <div id="paqSelPend" style="display:none;background:#fffde7;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-top:8px;">
+                        <div style="font-size:13px;font-weight:600;color:#795548;margin-bottom:2px;" id="paqSelPendNombre"></div>
+                        <div style="font-size:11px;color:#888;margin-bottom:6px;" id="paqSelPendSubprods"></div>
+                        <div style="font-size:12px;color:#555;margin-bottom:6px;">
+                            Combos disponibles: <span id="paqSelPendStock" style="font-weight:600;color:#2e7d32;"></span>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <label style="font-size:12px;color:#555;white-space:nowrap;">Combos:</label>
+                            <input type="number" id="inputCantPaq" min="1" step="1" value="1" inputmode="numeric"
+                                style="width:80px;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                onkeydown="if(event.key==='Enter'){event.preventDefault();confirmarAgregarPaqPend();}">
+                            <span id="paqSelPendPrecio" style="font-size:12px;color:#e65100;font-weight:600;"></span>
+                            <button type="button" onclick="confirmarAgregarPaqPend()"
+                                style="flex:1;background:#f57c00;color:white;border:none;padding:8px 10px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Agregar</button>
+                            <button type="button" onclick="cancelarSelPaqPend()"
+                                style="background:white;color:#666;border:1px solid #ddd;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;">✕</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="carrito-mini" id="carritoMini">
                     <div class="carrito-vacio-mini">Sin productos</div>
                 </div>
-                <div class="total-mini" id="totalMini" style="display:none;">
-                    <span>Total</span><span id="totalValor">$0.00</span>
+                <div class="total-mini" id="totalMini" style="display:none;flex-direction:column;gap:2px;">
+                    <div id="descuentoLinea" style="display:none;justify-content:space-between;font-size:12px;color:#2e7d32;font-weight:500;">
+                        <span>Descuento</span><span id="descuentoValor">-$0.00</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#222;">
+                        <span>Total</span><span id="totalValor">$0.00</span>
+                    </div>
                 </div>
 
                 <form method="POST" id="formPendiente">
-                    <input type="hidden" name="items" id="inputItemsPend">
-                    <input type="hidden" name="subtotal" id="inputSubtotalPend">
-                    <input type="hidden" name="total" id="inputTotalPend">
+                    <!-- [AUTOFIX] SEC-03: CSRF token obligatorio en formulario POST -->
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                    <input type="hidden" name="items"           id="inputItemsPend">
+                    <input type="hidden" name="subtotal"        id="inputSubtotalPend">
+                    <input type="hidden" name="descuento"       id="inputDescuentoPend">
+                    <input type="hidden" name="total"           id="inputTotalPend">
+                    <input type="hidden" name="cliente_id"      id="inputClienteIdPend">
+                    <input type="hidden" name="monto_efectivo"  id="inputMontoEfectivoPend">
+                    <input type="hidden" name="monto_terminal"  id="inputMontoTerminalPend">
+                    <input type="hidden" name="cambio"          id="inputCambioPend">
 
                     <div class="form-group" style="margin-top:14px;">
                         <label>Cliente (opcional)</label>
-                        <select name="cliente_id">
-                            <option value="">Sin cliente</option>
-                            <?php foreach ($clientes as $c): ?>
-                                <option value="<?= $c['cliente_id'] ?>"><?= htmlspecialchars($c['nombre_completo']) ?></option>
-                            <?php endforeach; ?>
+                        <div style="position:relative;">
+                            <input type="text" id="buscarClientePend" placeholder="Buscar cliente..."
+                                autocomplete="off"
+                                oninput="filtrarClientesPend(this.value)"
+                                onfocus="filtrarClientesPend(this.value)"
+                                onblur="setTimeout(ocultarDropClientes, 200)"
+                                style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <div id="dropClientesPend" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e0e0e0;border-radius:6px;max-height:180px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:2px;"></div>
+                        </div>
+                        <div id="clienteSelPend" style="display:none;background:#f0f9ff;border:1px solid #dbeafe;border-radius:6px;padding:8px 12px;margin-top:6px;align-items:center;gap:8px;">
+                            <span id="clienteSelNombrePend" style="flex:1;font-size:13px;font-weight:600;color:#1565c0;"></span>
+                            <button type="button" onclick="quitarClientePend()" style="background:none;border:none;color:#aaa;font-size:16px;cursor:pointer;margin-left:auto;line-height:1;">✕</button>
+                        </div>
+                    </div>
+
+                    <div id="descClientePendGrupo" style="display:none;background:#f0faf4;border:1px solid #c8e6c9;border-radius:8px;padding:12px 14px;margin-bottom:13px;">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:10px;">
+                            <input type="checkbox" id="aplicarDescPend" onchange="recalcularTotalPend()" style="cursor:pointer;width:16px;height:16px;accent-color:#2e7d32;">
+                            <span style="font-size:13px;font-weight:600;color:#2e7d32;">Aplicar descuento al cliente</span>
+                        </label>
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span style="font-size:12px;color:#555;white-space:nowrap;">Porcentaje:</span>
+                            <input type="number" id="inputDescClientePend" min="0" step="0.1"
+                                oninput="recalcularTotalPend()"
+                                onblur="clampearDescClientePend()"
+                                style="width:80px;padding:6px 10px;border:1px solid #a5d6a7;border-radius:6px;font-size:13px;background:white;">
+                            <span id="descMaxPendLabel" style="font-size:12px;color:#888;"></span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Método de pago</label>
+                        <!-- [AUTOFIX] Emojis eliminados de opciones de pago -->
+                        <select name="metodo_pago" id="metodoPagoPend" onchange="cambiarMetodoPend(this.value)"
+                            style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Transferencia">Transferencia</option>
+                            <option value="Credito" id="optCreditoPend" style="display:none;">Crédito</option>
                         </select>
+                    </div>
+
+                    <!-- Efectivo: monto a cobrar + cambio -->
+                    <div id="camposEfectivoPend" style="display:none;background:#f0faf4;border:1px solid #c8e6c9;border-radius:6px;padding:10px 12px;margin-bottom:13px;font-size:13px;">
+                        <!-- [AUTOFIX] Emoji eliminado del encabezado del panel de efectivo -->
+                        <div style="font-weight:600;color:#2e7d32;margin-bottom:8px;">Pago en efectivo</div>
+                        <div style="margin-bottom:8px;">
+                            <!-- [AUTOFIX] Campo obligatorio: monto_efectivo es requerido para registrar la venta -->
+                            <label style="font-size:12px;color:#c0392b;display:block;margin-bottom:3px;">Monto que entrega el cliente *</label>
+                            <input type="number" id="montoEfectivoPend" placeholder="0.00" step="0.01" min="0" inputmode="decimal"
+                                style="width:100%;padding:8px 10px;border:1px solid #a5d6a7;border-radius:6px;font-size:13px;"
+                                oninput="calcularCambioPend()">
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;">
+                            <span id="cambioPendLabel" style="color:#555;">Cambio</span>
+                            <span id="cambioPendValor" style="color:#2e7d32;">$0.00</span>
+                        </div>
+                    </div>
+
+                    <!-- Transferencia: referencia obligatoria + datos bancarios -->
+                    <div id="refTransfPendGrupo" style="display:none;">
+                        <div class="form-group">
+                            <label>Referencia bancaria</label>
+                            <input type="text" name="referencia_transferencia" id="refTransfPend"
+                                placeholder="Folio o número de referencia"
+                                style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                        </div>
+                        <?php
+                            $tb = trim($sucursalTicket['banco']               ?? '');
+                            $tt = trim($sucursalTicket['titular_cuenta']      ?? '');
+                            $tc = trim($sucursalTicket['numero_cuenta']       ?? '');
+                            $tl = trim($sucursalTicket['clabe_interbancaria'] ?? '');
+                            $ta = trim($sucursalTicket['alias_tarjeta']       ?? '');
+                        ?>
+                        <div style="font-size:12px;line-height:1.9;background:#f0f8ff;border:1px solid #b3e0f7;border-radius:6px;padding:10px 12px;color:#333;margin-bottom:13px;">
+                            <div style="font-size:11px;font-weight:700;color:#1565c0;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">Datos para la transferencia</div>
+                            <?php if ($tb || $tt || $tc || $tl): ?>
+                                <?php if ($tb): ?><div><strong>Banco:</strong> <?= htmlspecialchars($tb) ?></div><?php endif; ?>
+                                <?php if ($tt): ?><div><strong>Titular:</strong> <?= htmlspecialchars($tt) ?></div><?php endif; ?>
+                                <?php if ($tc): ?><div><strong>No. cuenta:</strong> <?= htmlspecialchars($tc) ?></div><?php endif; ?>
+                                <?php if ($tl): ?><div><strong>CLABE:</strong> <?= htmlspecialchars($tl) ?></div><?php endif; ?>
+                                <?php if ($ta): ?><div><strong>Alias:</strong> <?= htmlspecialchars($ta) ?></div><?php endif; ?>
+                            <?php else: ?>
+                                <span style="color:#aaa;">Sin datos bancarios configurados.<br>Agrégalos en Configuración → Sucursal.</span>
+                            <?php endif; ?>
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -293,24 +939,396 @@ $clientes = $pdo->query("SELECT cliente_id, nombre_completo FROM clientes WHERE 
     </div>
 </div>
 
+<!-- Modal: Ticket venta pendiente -->
+<div class="modal-overlay" id="modalTicketVentaPend" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;padding:20px;z-index:999;" aria-hidden="true">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:90mm;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e8e8e8;">
+            <h3 style="margin:0;font-size:16px;color:#333;">Ticket de venta</h3>
+            <button type="button" onclick="cerrarTicketVenta()" style="background:none;border:none;font-size:24px;color:#aaa;cursor:pointer;padding:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">×</button>
+        </div>
+        <div id="ticketContenidoVentaPend" style="margin-bottom:16px;"></div>
+        <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:16px;">
+            <button type="button" onclick="imprimirTicketPend()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
+            <button type="button" onclick="cerrarTicketVenta()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Ticket oculto para impresión -->
+<div id="ticketImprimir"></div>
+
+<style>
+.modal-overlay.visible { display: flex !important; }
+
+/* ── Ticket térmico 80mm ── */
+@page { size: 80mm auto; margin: 0; }
+@media print {
+    html, body {
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+    }
+    body > * { display: none !important; }
+    #ticketImprimir {
+        display: block !important;
+        page-break-after: avoid;
+        break-after: avoid;
+    }
+}
+#ticketImprimir {
+    display: none;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    width: 72mm;
+    margin: 0;
+    padding: 3mm 4mm 2mm;
+}
+#ticketImprimir .t-centro { text-align: center; }
+#ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
+#ticketImprimir .t-fila   { display: flex; justify-content: space-between; }
+#ticketImprimir .t-bold   { font-weight: bold; }
+#ticketImprimir .t-grande { font-size: 13px; font-weight: bold; }
+/* Mismo estilo para preview en modal */
+#ticketContenidoVentaPend .t-centro { text-align: center; }
+#ticketContenidoVentaPend .t-linea  { border-top: 1px dashed #aaa; margin: 4px 0; }
+#ticketContenidoVentaPend .t-fila   { display: flex; justify-content: space-between; }
+#ticketContenidoVentaPend .t-bold   { font-weight: bold; }
+#ticketContenidoVentaPend .t-grande { font-size: 13px; font-weight: bold; }
+</style>
+
 <script>
 let carritoP = [];
+let prodSelPendActual = null;
+let paqSelPendActual  = null;
+let clientePendActual = null;
+
+const prodsPend = <?= json_encode(array_values(array_map(function($p) use ($promosPendById) {
+    $pid          = (int)$p['producto_id'];
+    $precioNormal = floatval($p['precio_venta']);
+    $tienePromo   = isset($promosPendById[$pid]) && floatval($promosPendById[$pid]['precio_promo']) < $precioNormal - 0.001;
+    $precioFinal  = $tienePromo ? floatval($promosPendById[$pid]['precio_promo']) : $precioNormal;
+    return [
+        'producto_id'   => $pid,
+        'nombre'        => $p['nombre_producto'],
+        'codigo'        => $p['codigo'],
+        'precio'        => $precioFinal,
+        'precio_normal' => $precioNormal,
+        'tiene_promo'   => $tienePromo,
+        'promo_desc'    => $tienePromo ? ($promosPendById[$pid]['descripcion'] ?? '') : '',
+        'stock'         => floatval($p['stock_actual']),
+        'tipo'          => $p['tipo_venta'],
+        'texto'         => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
+    ];
+}, $productos))) ?>;
+
+const paqsData = <?= json_encode($paquesData) ?>;
+
+const clientesPend = <?= json_encode(array_values(array_map(fn($c) => [
+    'id'        => (int)$c['cliente_id'],
+    'nombre'    => $c['nombre_completo'],
+    'descuento' => floatval($c['descuento']),
+    'credito'   => intval($c['credito']),
+    'texto'     => mb_strtolower($c['nombre_completo']),
+], $clientes))) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 
-function agregarProd(sel) {
-    const opt = sel.options[sel.selectedIndex];
-    if (!sel.value) return;
-    const id     = parseInt(sel.value);
-    const nombre = opt.dataset.nombre;
-    const precio = parseFloat(opt.dataset.precio);
-    const existe = carritoP.find(i => i.producto_id === id);
-    if (existe) { existe.cantidad++; }
-    else { carritoP.push({ producto_id: id, nombre, precio, cantidad: 1 }); }
-    sel.value = '';
+// Al cargar: mostrar Efectivo por defecto y auto-abrir ticket si viene ?ticket=ID tras crear venta
+document.addEventListener('DOMContentLoaded', function() {
+    cambiarMetodoPend('Efectivo');
+    const params  = new URLSearchParams(window.location.search);
+    const ticketId = parseInt(params.get('ticket') || '0', 10);
+    if (ticketId > 0) {
+        // Limpiar el param de la URL sin recargar para no re-abrir en F5
+        const url = new URL(window.location.href);
+        url.searchParams.delete('ticket');
+        history.replaceState(null, '', url.toString());
+        // Imprimir ticket directamente sin abrir modal
+        fetch(`cajero_historialVentas.php?detalle_venta=${ticketId}`)
+            .then(r => r.json())
+            .then(venta => {
+                if (!venta) return;
+                generarTicketHTML(venta);
+                imprimirTicketPend();
+            })
+            .catch(() => {});
+    }
+});
+
+/* ── Calcular combos disponibles de un paquete ── */
+function calcularStockComboPend(productos) {
+    if (!productos || !productos.length) return 0;
+    // Usa p.stock_actual (enviado desde PHP via LEFT JOIN) en vez de buscar en prodsPend.
+    // Esto garantiza que productos con stock=0 se consideren correctamente aunque no
+    // aparezcan en prodsPend (que solo incluye productos con stock > 0).
+    return Math.floor(Math.min(...productos.map(p => {
+        const req        = parseFloat(p.cantidad_requerida || 1);
+        const stockBase  = parseFloat(p.stock_actual || 0);
+        const enCarrito  = carritoP
+            .filter(i => i.tipo !== 'paquete' && i.producto_id === parseInt(p.producto_id))
+            .reduce((s, i) => s + i.cantidad, 0);
+        // También contar los que consume el propio paquete si ya hay en carritoP
+        const enPaq = carritoP
+            .filter(i => i.tipo === 'paquete')
+            .reduce((s, i) => {
+                const sub = (i.productos_paquete || []).find(sp => sp.producto_id === parseInt(p.producto_id));
+                return s + (sub ? sub.cantidad_requerida * i.cantidad : 0);
+            }, 0);
+        const stockDisp = Math.max(0, stockBase - enCarrito - enPaq);
+        return req > 0 ? stockDisp / req : 0;
+    })));
+}
+
+/* ── Búsqueda de productos (+ paquetes) ── */
+function filtrarProductosPendientes(q) {
+    const drop = document.getElementById('dropdownProdsPend');
+    const qn = normalizar(q);
+
+    // Filtrar paquetes
+    const paqsFiltrados = (qn
+        ? paqsData.filter(pq => normalizar(pq.texto).includes(qn))
+        : paqsData.slice(0, 10)
+    ).map(pq => ({ ...pq, maxCombos: calcularStockComboPend(pq.productos) }));
+
+    // Filtrar productos
+    const resultados = qn ? prodsPend.filter(p => normalizar(p.texto).includes(qn)) : prodsPend.slice(0, 40);
+
+    if (!paqsFiltrados.length && !resultados.length) {
+        drop.innerHTML = '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
+        drop.style.display = 'block';
+        return;
+    }
+
+    let html = '';
+
+    // Sección productos (primero)
+    if (resultados.length) {
+        if (paqsFiltrados.length) {
+            html += `<div style="padding:6px 12px 3px;font-size:10px;font-weight:700;color:#14ace7;text-transform:uppercase;letter-spacing:.5px;">Productos</div>`;
+        }
+        html += resultados.map(p => {
+            const stockStr = p.tipo === 'Suelto'
+                ? p.stock.toFixed(3).replace(/\.?0+$/, '')
+                : Math.floor(p.stock);
+            const stockColor = p.stock <= 0 ? '#c0392b' : (p.stock <= 5 ? '#e67e22' : '#2e7d32');
+            return `<div onclick="seleccionarProdPend(${p.producto_id})"
+                style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;display:flex;align-items:center;gap:8px;min-width:0;"
+                onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${p.nombre}</span>
+                <span style="font-size:11px;color:#aaa;white-space:nowrap;flex-shrink:0;">${p.codigo}</span>
+                <span style="font-size:11px;color:${stockColor};font-weight:600;white-space:nowrap;flex-shrink:0;">Stock: ${stockStr}</span>
+                <span style="font-size:13px;color:#14ace7;font-weight:600;white-space:nowrap;flex-shrink:0;">$${p.precio.toFixed(2)}</span>
+            </div>`;
+        }).join('');
+    }
+
+    // Sección paquetes (al final)
+    if (paqsFiltrados.length) {
+        html += `<div style="padding:6px 12px 3px;font-size:10px;font-weight:700;color:#f57c00;text-transform:uppercase;letter-spacing:.5px;background:#fff8e1;${resultados.length ? 'border-top:0.5px solid #eee;' : ''}">📦 Paquetes</div>`;
+        html += paqsFiltrados.map(pq => {
+            const disponible = pq.maxCombos > 0;
+            const label = disponible
+                ? `${pq.maxCombos} combo${pq.maxCombos !== 1 ? 's' : ''}`
+                : 'Sin stock';
+            const labelColor = disponible ? '#2e7d32' : '#c0392b';
+            const subprods = pq.productos.map(p => `${p.nombre_producto}×${p.cantidad_requerida}`).join(', ');
+            return `<div onclick="${disponible ? `seleccionarPaqPend(${pq.paquete_id})` : 'alert(\'Sin stock suficiente para armar este combo.\')'}"
+                style="padding:8px 12px;cursor:pointer;border-bottom:0.5px solid #fff3e0;display:flex;align-items:center;gap:8px;min-width:0;background:#fffde7;${!disponible ? 'opacity:.6;' : ''}"
+                onmouseover="this.style.background='#fff3e0'" onmouseout="this.style.background='#fffde7'">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(pq.nombre)}</div>
+                    <div style="font-size:10px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(pq.codigo)} · ${esc(subprods)}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                    <div style="font-size:13px;color:#e65100;font-weight:700;">$${parseFloat(pq.precio_paquete).toFixed(2)}</div>
+                    <div style="font-size:11px;font-weight:600;color:${labelColor};">${label}</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    drop.innerHTML = html;
+    drop.style.display = 'block';
+}
+
+function ocultarDropPend() {
+    document.getElementById('dropdownProdsPend').style.display = 'none';
+}
+
+function seleccionarProdPend(id) {
+    const prod = prodsPend.find(p => p.producto_id === id);
+    if (!prod) return;
+    prodSelPendActual = prod;
+    paqSelPendActual  = null;
+    document.getElementById('buscarProductoPendiente').value = '';
+    document.getElementById('dropdownProdsPend').style.display = 'none';
+    document.getElementById('paqSelPend').style.display = 'none'; // ocultar panel paquete si estaba abierto
+    document.getElementById('prodSelPendNombre').textContent = prod.nombre + ' — ' + prod.codigo;
+    document.getElementById('prodSelPendPrecio').textContent = '$' + prod.precio.toFixed(2) + ' c/u';
+
+    // Stock disponible (descontando carrito individual y paquetes)
+    const enCarrito  = carritoP.filter(i => i.tipo !== 'paquete' && i.producto_id === prod.producto_id).reduce((a, i) => a + i.cantidad, 0);
+    const enPaquetes = carritoP.filter(i => i.tipo === 'paquete').reduce((s, i) => {
+        const sub = (i.productos_paquete || []).find(sp => sp.producto_id === prod.producto_id);
+        return s + (sub ? sub.cantidad_requerida * i.cantidad : 0);
+    }, 0);
+    const disponible = Math.max(0, prod.stock - enCarrito - enPaquetes);
+    const stockSpan = document.getElementById('prodSelPendStock');
+    const stockStr = prod.tipo === 'Suelto'
+        ? disponible.toFixed(3).replace(/\.?0+$/, '')
+        : Math.floor(disponible);
+    stockSpan.textContent = stockStr;
+    stockSpan.style.color = disponible <= 0 ? '#c0392b' : (disponible <= 5 ? '#e67e22' : '#2e7d32');
+
+    const inp = document.getElementById('inputCantPend');
+    if (prod.tipo === 'Suelto') {
+        inp.step = '0.001'; inp.min = '0.001'; inp.setAttribute('inputmode','decimal');
+    } else {
+        inp.step = '1'; inp.min = '1'; inp.setAttribute('inputmode','numeric');
+    }
+    inp.max = disponible > 0 ? disponible : 0;
+    inp.value = disponible > 0 ? (prod.tipo === 'Suelto' ? Math.min(1, disponible) : 1) : '';
+    document.getElementById('prodSelPend').style.display = 'block';
+    setTimeout(() => inp.select(), 50);
+}
+
+function sanitizarCantPend() {
+    if (!prodSelPendActual || prodSelPendActual.tipo === 'Suelto') return;
+    const inp = document.getElementById('inputCantPend');
+    if (inp.value !== '' && inp.value.includes('.')) {
+        const n = parseFloat(inp.value);
+        if (!isNaN(n)) inp.value = Math.floor(n) || '';
+    }
+}
+
+function confirmarAgregarProdPend() {
+    if (!prodSelPendActual) return;
+    const cantidad = parseFloat(document.getElementById('inputCantPend').value) || 0;
+    if (cantidad <= 0) { alert('Ingresa una cantidad válida.'); return; }
+
+    // Validar que no supere el stock disponible (incluyendo lo que consumen paquetes)
+    const enCarrito  = carritoP.filter(i => i.tipo !== 'paquete' && i.producto_id === prodSelPendActual.producto_id).reduce((a, i) => a + i.cantidad, 0);
+    const enPaquetes = carritoP.filter(i => i.tipo === 'paquete').reduce((s, i) => {
+        const sub = (i.productos_paquete || []).find(sp => sp.producto_id === prodSelPendActual.producto_id);
+        return s + (sub ? sub.cantidad_requerida * i.cantidad : 0);
+    }, 0);
+    const disponible = Math.max(0, prodSelPendActual.stock - enCarrito - enPaquetes);
+    if (cantidad > disponible + 0.0001) {
+        const disp = prodSelPendActual.tipo === 'Suelto'
+            ? disponible.toFixed(3).replace(/\.?0+$/, '')
+            : Math.floor(disponible);
+        alert('Stock insuficiente. Disponible: ' + disp);
+        return;
+    }
+
+    const { producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc } = prodSelPendActual;
+    const existe = carritoP.find(i => i.producto_id === producto_id);
+    if (existe) { existe.cantidad += cantidad; }
+    else { carritoP.push({ producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc, cantidad }); }
+
+    // Ocultar panel sin reabrir el dropdown
+    prodSelPendActual = null;
+    document.getElementById('prodSelPend').style.display = 'none';
+    document.getElementById('inputCantPend').value = 1;
+    document.getElementById('buscarProductoPendiente').value = '';
     renderCarritoMini();
 }
 
+function cancelarSelPend() {
+    prodSelPendActual = null;
+    document.getElementById('prodSelPend').style.display = 'none';
+    document.getElementById('inputCantPend').value = 1;
+    document.getElementById('buscarProductoPendiente').value = '';
+    document.getElementById('buscarProductoPendiente').focus();
+}
+
+/* ── Paquetes ── */
+function seleccionarPaqPend(paqueteId) {
+    const paq = paqsData.find(p => p.paquete_id === paqueteId);
+    if (!paq) return;
+    const maxCombos = calcularStockComboPend(paq.productos);
+    if (maxCombos < 1) { alert('Sin stock suficiente para armar este combo.'); return; }
+
+    paqSelPendActual = { ...paq, maxCombos };
+    document.getElementById('buscarProductoPendiente').value = '';
+    document.getElementById('dropdownProdsPend').style.display = 'none';
+    document.getElementById('prodSelPend').style.display = 'none'; // ocultar panel producto si estaba abierto
+
+    document.getElementById('paqSelPendNombre').textContent = '📦 ' + paq.nombre + ' — ' + paq.codigo;
+    document.getElementById('paqSelPendSubprods').textContent =
+        paq.productos.map(p => `${p.nombre_producto} ×${p.cantidad_requerida}`).join(' · ');
+    const stockSpan = document.getElementById('paqSelPendStock');
+    stockSpan.textContent = maxCombos;
+    stockSpan.style.color = maxCombos <= 2 ? '#e67e22' : '#2e7d32';
+    document.getElementById('paqSelPendPrecio').textContent = '$' + parseFloat(paq.precio_paquete).toFixed(2) + ' c/combo';
+
+    const inp = document.getElementById('inputCantPaq');
+    inp.max   = maxCombos;
+    inp.value = 1;
+    document.getElementById('paqSelPend').style.display = 'block';
+    setTimeout(() => inp.select(), 50);
+}
+
+function confirmarAgregarPaqPend() {
+    if (!paqSelPendActual) return;
+    const cantInput = parseFloat(document.getElementById('inputCantPaq').value) || 0;
+    const cantidad  = Math.floor(cantInput);
+    if (cantidad < 1) { alert('Ingresa al menos 1 combo.'); return; }
+    const maxCombos = calcularStockComboPend(paqSelPendActual.productos);
+    if (cantidad > maxCombos) {
+        alert('Stock insuficiente. Máximo: ' + maxCombos + ' combo' + (maxCombos !== 1 ? 's' : '') + '.');
+        return;
+    }
+
+    // Si ya hay un paquete igual en carritoP, incrementar; si no, agregar
+    const existe = carritoP.find(i => i.tipo === 'paquete' && i.paquete_id === paqSelPendActual.paquete_id);
+    if (existe) {
+        const nuevaCant = existe.cantidad + cantidad;
+        const nuevoMax  = calcularStockComboPend(paqSelPendActual.productos);
+        if (nuevaCant > nuevoMax + existe.cantidad) {
+            alert('Sin stock suficiente para ' + nuevaCant + ' combos.');
+            return;
+        }
+        existe.cantidad = nuevaCant;
+        existe.stock    = Math.floor(calcularStockComboPend(paqSelPendActual.productos)) + nuevaCant; // reajustar máximo
+    } else {
+        carritoP.push({
+            paquete_id:        paqSelPendActual.paquete_id,
+            producto_id:       null,
+            nombre:            '📦 ' + paqSelPendActual.nombre,
+            precio:            parseFloat(paqSelPendActual.precio_paquete),
+            precio_normal:     parseFloat(paqSelPendActual.precio_paquete),
+            tiene_promo:       false,
+            promo_desc:        '',
+            cantidad:          cantidad,
+            stock:             maxCombos,
+            tipo:              'paquete',
+            productos_paquete: paqSelPendActual.productos.map(p => ({
+                producto_id:        parseInt(p.producto_id),
+                nombre_producto:    p.nombre_producto,
+                cantidad_requerida: parseFloat(p.cantidad_requerida)
+            }))
+        });
+    }
+
+    paqSelPendActual = null;
+    document.getElementById('paqSelPend').style.display = 'none';
+    document.getElementById('inputCantPaq').value = 1;
+    document.getElementById('buscarProductoPendiente').value = '';
+    renderCarritoMini();
+}
+
+function cancelarSelPaqPend() {
+    paqSelPendActual = null;
+    document.getElementById('paqSelPend').style.display = 'none';
+    document.getElementById('inputCantPaq').value = 1;
+    document.getElementById('buscarProductoPendiente').value = '';
+    document.getElementById('buscarProductoPendiente').focus();
+}
+
+/* ── Carrito ── */
 function renderCarritoMini() {
     const div = document.getElementById('carritoMini');
     const tot = document.getElementById('totalMini');
@@ -319,30 +1337,503 @@ function renderCarritoMini() {
         tot.style.display = 'none';
         return;
     }
-    let total = 0;
-    div.innerHTML = carritoP.map((i,idx) => {
-        total += i.cantidad * i.precio;
+    div.innerHTML = carritoP.map((i, idx) => {
+        if (i.tipo === 'paquete') {
+            const subprods = (i.productos_paquete || [])
+                .map(p => `${p.nombre_producto}×${p.cantidad_requerida}`)
+                .join(', ');
+            return `<div class="item-mini" style="flex-direction:column;align-items:flex-start;background:#fffde7;border-radius:4px;padding:6px 8px;gap:2px;border-bottom:0.5px solid #fff3e0;">
+                <div style="display:flex;align-items:center;width:100%;gap:4px;">
+                    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;font-size:12px;">${esc(i.nombre)}</span>
+                    <span style="white-space:nowrap;color:#555;font-size:12px;margin:0 4px;">×${i.cantidad}</span>
+                    <span style="color:#e65100;font-weight:700;font-size:12px;white-space:nowrap;">$${(i.precio * i.cantidad).toFixed(2)}</span>
+                    <button class="btn-quitar-mini" onclick="quitarProd(${idx})">×</button>
+                </div>
+                <div style="font-size:10px;color:#aaa;white-space:normal;word-break:break-word;">${esc(subprods)}</div>
+            </div>`;
+        }
+        const cantStr = Number.isInteger(i.cantidad) ? i.cantidad : i.cantidad.toFixed(3).replace(/\.?0+$/, '');
+        const precioDisplay = i.tiene_promo
+            ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${i.precio_normal.toFixed(2)}</span> <span style="color:#2e7d32;font-weight:700;font-size:12px;">$${i.precio.toFixed(2)}</span>`
+            : `<span style="color:#14ace7;font-weight:600;font-size:12px;">$${i.precio.toFixed(2)}</span>`;
         return `<div class="item-mini">
-            <span>${i.nombre} × ${i.cantidad} = $${(i.cantidad*i.precio).toFixed(2)}</span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(i.nombre)}</span>
+            <span style="white-space:nowrap;color:#555;font-size:12px;margin:0 6px;">×${cantStr}</span>
+            ${precioDisplay}
             <button class="btn-quitar-mini" onclick="quitarProd(${idx})">×</button>
         </div>`;
     }).join('');
-    document.getElementById('totalValor').textContent = '$'+total.toFixed(2);
     tot.style.display = 'flex';
+    recalcularTotalPend();
 }
 
 function quitarProd(i) { carritoP.splice(i,1); renderCarritoMini(); }
 
+function recalcularTotalPend() {
+    // Subtotal bruto: precio original (antes de promos)
+    const subtotalBruto = carritoP.reduce((a, i) => a + (i.cantidad * (i.precio_normal ?? i.precio)), 0);
+    // Ahorro por promociones
+    const ahorroPromos = carritoP.reduce((a, i) => {
+        if (i.tiene_promo && i.precio_normal > i.precio) {
+            return a + (i.cantidad * (i.precio_normal - i.precio));
+        }
+        return a;
+    }, 0);
+    const subtotalConPromo = subtotalBruto - ahorroPromos;
+
+    const aplicarDesc = document.getElementById('aplicarDescPend').checked;
+    const descPorc = (clientePendActual && clientePendActual.descuento > 0 && aplicarDesc)
+        ? Math.min(parseFloat(document.getElementById('inputDescClientePend').value || 0), clientePendActual.descuento)
+        : 0;
+    const descCliente    = subtotalConPromo * (descPorc / 100);
+    const descuentoTotal = ahorroPromos + descCliente;
+
+    // Sin comisión terminal en ventas a domicilio
+    const total = subtotalBruto - descuentoTotal;
+
+    document.getElementById('totalValor').textContent = '$' + total.toFixed(2);
+
+    const lineaDesc = document.getElementById('descuentoLinea');
+    lineaDesc.style.display = (descuentoTotal > 0.004 && carritoP.length) ? 'flex' : 'none';
+    document.getElementById('descuentoValor').textContent = '-$' + descuentoTotal.toFixed(2);
+
+    // Guardar bases para calcularCambioPend
+    document.getElementById('inputSubtotalPend').value  = subtotalBruto.toFixed(2);
+    document.getElementById('inputDescuentoPend').value = descuentoTotal.toFixed(2);
+    document.getElementById('inputTotalPend').value     = total.toFixed(2);
+
+    const metodo = document.getElementById('metodoPagoPend').value;
+    document.getElementById('inputMontoTerminalPend').value = '0.00';
+    if (metodo === 'Efectivo') {
+        calcularCambioPend();
+    } else {
+        // Transferencia o Crédito: montos simples, sin cambio
+        document.getElementById('inputMontoEfectivoPend').value = '0.00';
+        document.getElementById('inputCambioPend').value        = '0.00';
+    }
+}
+
+/* ── Búsqueda de clientes ── */
+function filtrarClientesPend(q) {
+    const qn = normalizar(q);
+    const drop = document.getElementById('dropClientesPend');
+    const resultados = qn ? clientesPend.filter(c => normalizar(c.texto).includes(qn)) : clientesPend.slice(0, 30);
+    if (!resultados.length) {
+        drop.innerHTML = '<div style="padding:10px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
+    } else {
+        drop.innerHTML = resultados.map(c => `
+            <div onclick="seleccionarClientePend(${c.id})"
+                style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;font-size:13px;"
+                onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
+                ${c.nombre}
+                ${c.descuento > 0 ? `<span style="font-size:11px;color:#2e7d32;font-weight:600;margin-left:4px;">${c.descuento}% desc.</span>` : ''}
+                ${c.credito  > 0 ? `<span style="font-size:11px;color:#1565c0;font-weight:600;margin-left:4px;">Crédito</span>` : ''}
+            </div>
+        `).join('');
+    }
+    drop.style.display = 'block';
+}
+
+function ocultarDropClientes() {
+    document.getElementById('dropClientesPend').style.display = 'none';
+}
+
+function seleccionarClientePend(id) {
+    clientePendActual = clientesPend.find(c => c.id === id);
+    if (!clientePendActual) return;
+    ocultarDropClientes();
+    document.getElementById('buscarClientePend').value = '';
+    document.getElementById('inputClienteIdPend').value = clientePendActual.id;
+    document.getElementById('clienteSelNombrePend').textContent = clientePendActual.nombre;
+    document.getElementById('clienteSelPend').style.display = 'flex';
+
+    // Descuento
+    const descGrupo = document.getElementById('descClientePendGrupo');
+    if (clientePendActual.descuento > 0) {
+        document.getElementById('aplicarDescPend').checked = true;
+        document.getElementById('inputDescClientePend').value = clientePendActual.descuento.toFixed(1);
+        document.getElementById('inputDescClientePend').max   = clientePendActual.descuento;
+        document.getElementById('descMaxPendLabel').textContent = 'Máximo: ' + parseFloat(clientePendActual.descuento).toFixed(1) + '%';
+        descGrupo.style.display = 'block';
+    } else {
+        descGrupo.style.display = 'none';
+    }
+
+    // Crédito: solo habilitar si el cliente tiene crédito autorizado
+    const optCredito = document.getElementById('optCreditoPend');
+    if (clientePendActual.credito > 0) {
+        optCredito.style.display = '';
+        optCredito.disabled = false;
+    } else {
+        optCredito.style.display = 'none';
+        optCredito.disabled = true;
+        // Si ya estaba seleccionado Crédito, resetear
+        const sel = document.getElementById('metodoPagoPend');
+        if (sel.value === 'Credito') {
+            sel.value = 'Efectivo';
+            cambiarMetodoPend('Efectivo');
+        }
+    }
+
+    recalcularTotalPend();
+}
+
+function quitarClientePend() {
+    // Si método es Crédito, resetear
+    const sel = document.getElementById('metodoPagoPend');
+    if (sel.value === 'Credito') {
+        sel.value = 'Efectivo';
+        cambiarMetodoPend('Efectivo');
+    }
+    // Ocultar opción Crédito
+    const optCredito = document.getElementById('optCreditoPend');
+    optCredito.style.display = 'none';
+    optCredito.disabled = true;
+
+    clientePendActual = null;
+    document.getElementById('inputClienteIdPend').value = '';
+    document.getElementById('buscarClientePend').value  = '';
+    document.getElementById('clienteSelPend').style.display = 'none';
+    document.getElementById('descClientePendGrupo').style.display = 'none';
+    document.getElementById('aplicarDescPend').checked = false;
+    document.getElementById('inputDescClientePend').value = 0;
+    recalcularTotalPend();
+}
+
+function clampearDescClientePend() {
+    if (!clientePendActual) return;
+    const input  = document.getElementById('inputDescClientePend');
+    const maximo = parseFloat(clientePendActual.descuento || 0);
+    let valor = parseFloat(input.value || 0);
+    if (isNaN(valor) || valor < 0) valor = 0;
+    if (valor > maximo) valor = maximo;
+    input.value = valor.toFixed(1);
+    recalcularTotalPend();
+}
+
+/* ── Filtro lista pendientes ── */
+function filtrarPendientes(q) {
+    q = normalizar(q);
+    document.querySelectorAll('.pendiente-item').forEach(function(item) {
+        const texto = normalizar(item.dataset.pendienteTexto || item.textContent);
+        item.style.display = texto.includes(q) ? '' : 'none';
+    });
+}
+
+/* ── Método de pago ── */
+const porcComisionPend = <?= floatval($sucursalTicket['comision_terminal_pct'] ?? 0) ?>;
+const datosTicket = <?= json_encode([
+    'nombre'           => $sucursalTicket['nombre']           ?? 'Ferretería Aldrete',
+    'rfc'              => $sucursalTicket['rfc']              ?? '',
+    'direccion'        => $sucursalTicket['direccion']        ?? '',
+    'telefono'         => $sucursalTicket['telefono']         ?? '',
+    'datos_ticket'        => $sucursalTicket['datos_ticket']        ?? '',
+    'ticket_logo'         => $sucursalTicket['ticket_logo']         ?? null,
+    'ticket_font_size'    => intval($sucursalTicket['ticket_font_size'] ?? 12),
+    'ticket_ancho_mm'     => intval($sucursalTicket['ticket_ancho_mm']  ?? 58),
+    'ticket_pie'          => $sucursalTicket['ticket_pie']          ?? '',
+    'ticket_pie_efectivo' => $sucursalTicket['ticket_pie_efectivo'] ?? '',
+    'ticket_pie_credito'  => $sucursalTicket['ticket_pie_credito']  ?? '',
+    'ticket_pie_terminal' => $sucursalTicket['ticket_pie_terminal'] ?? '',
+    'ticket_nota_credito' => $sucursalTicket['ticket_nota_credito'] ?? '',
+]) ?>;
+
+function cambiarMetodoPend(valor) {
+    if (valor === 'Credito') {
+        if (!clientePendActual || !clientePendActual.credito) {
+            alert('Selecciona un cliente con crédito autorizado para usar este método de pago.');
+            document.getElementById('metodoPagoPend').value = 'Efectivo';
+            valor = 'Efectivo';
+        }
+    }
+    // Mostrar/ocultar paneles según método
+    document.getElementById('camposEfectivoPend').style.display = valor === 'Efectivo'      ? 'block' : 'none';
+    document.getElementById('refTransfPendGrupo').style.display = valor === 'Transferencia' ? 'block' : 'none';
+
+    if (valor === 'Efectivo') {
+        document.getElementById('montoEfectivoPend').value     = '';
+        document.getElementById('cambioPendValor').textContent = '$0.00';
+        document.getElementById('cambioPendLabel').textContent = 'Cambio';
+        document.getElementById('cambioPendLabel').style.color = '#555';
+        document.getElementById('cambioPendValor').style.color = '#2e7d32';
+    }
+    recalcularTotalPend();
+}
+
+function calcularCambioPend() {
+    const total    = parseFloat(document.getElementById('totalValor').textContent.replace(/[^0-9.]/g, '')) || 0;
+    const recibido = parseFloat(document.getElementById('montoEfectivoPend').value) || 0;
+    const falta    = total - recibido;
+    const cambio   = recibido >= total ? recibido - total : 0;
+    const elLabel  = document.getElementById('cambioPendLabel');
+    const elValor  = document.getElementById('cambioPendValor');
+    if (recibido > 0 && falta > 0.005) {
+        elLabel.textContent = 'Falta';
+        elLabel.style.color = '#c0392b';
+        elValor.textContent = '-$' + falta.toFixed(2);
+        elValor.style.color = '#c0392b';
+    } else {
+        elLabel.textContent = 'Cambio';
+        elLabel.style.color = '#555';
+        elValor.textContent = '$' + cambio.toFixed(2);
+        elValor.style.color = '#2e7d32';
+    }
+    document.getElementById('inputMontoEfectivoPend').value = recibido.toFixed(2);
+    document.getElementById('inputCambioPend').value        = cambio.toFixed(2);
+}
+
 function prepararPendiente() {
     if (!carritoP.length) { alert('Agrega al menos un producto.'); return false; }
-    const total = carritoP.reduce((a,i) => a+(i.cantidad*i.precio),0);
-    document.getElementById('inputItemsPend').value    = JSON.stringify(carritoP.map(i=>({producto_id:i.producto_id,cantidad:i.cantidad,precio:i.precio})));
-    document.getElementById('inputSubtotalPend').value = total.toFixed(2);
-    document.getElementById('inputTotalPend').value    = total.toFixed(2);
+
+    const metodo = document.getElementById('metodoPagoPend').value;
+
+    // Validar referencia bancaria
+    if (metodo === 'Transferencia') {
+        const ref = document.getElementById('refTransfPend').value.trim();
+        if (!ref) {
+            alert('El número de referencia bancaria es obligatorio para pago por Transferencia.');
+            document.getElementById('refTransfPend').focus();
+            return false;
+        }
+    }
+
+    // [AUTOFIX] Validar monto_efectivo obligatorio y suficiente antes de enviar
+    if (metodo === 'Efectivo') {
+        const montoInput = document.getElementById('montoEfectivoPend');
+        const montoVal   = parseFloat(montoInput.value) || 0;
+        const totalVal   = parseFloat(document.getElementById('inputTotalPend').value) || 0;
+        if (!montoInput.value || montoVal <= 0) {
+            alert('El monto en efectivo que entrega el cliente es obligatorio.');
+            montoInput.focus();
+            return false;
+        }
+        if (montoVal < totalVal - 0.005) {
+            alert('El cliente debe entregar al menos $' + totalVal.toFixed(2) + '.\nMonto ingresado: $' + montoVal.toFixed(2));
+            montoInput.focus();
+            return false;
+        }
+        calcularCambioPend();
+    }
+
+    // Expandir paquetes en productos individuales con precio proporcional
+    const itemsExpandidos = [];
+    for (const i of carritoP) {
+        if (i.tipo === 'paquete') {
+            const totalReq = (i.productos_paquete || []).reduce((s, p) => s + p.cantidad_requerida, 0);
+            for (const prod of (i.productos_paquete || [])) {
+                const precioProp = totalReq > 0
+                    ? (i.precio * prod.cantidad_requerida) / totalReq
+                    : 0;
+                itemsExpandidos.push({
+                    producto_id:   prod.producto_id,
+                    cantidad:      prod.cantidad_requerida * i.cantidad,
+                    precio:        parseFloat((precioProp / prod.cantidad_requerida).toFixed(4)),
+                    precio_normal: parseFloat((precioProp / prod.cantidad_requerida).toFixed(4)),
+                    paquete_id:    i.paquete_id,
+                });
+            }
+        } else {
+            itemsExpandidos.push({
+                producto_id:   i.producto_id,
+                cantidad:      i.cantidad,
+                precio:        i.precio,
+                precio_normal: i.precio_normal ?? i.precio,
+            });
+        }
+    }
+    document.getElementById('inputItemsPend').value = JSON.stringify(itemsExpandidos);
+    // Los demás inputs (subtotal, descuento, total, comision, monto_efectivo, monto_terminal, cambio)
+    // ya fueron actualizados por recalcularTotalPend() / calcularMixtoPend() / calcularCambioPend()
     return true;
 }
+
+/* ── Ticket de venta pendiente ── */
+function fmt(n) { return parseFloat(n||0).toFixed(2); }
+function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function generarTicketHTML(venta) {
+    const fecha = venta.fecha_formateada || venta.created_at;
+
+    const elTicket = document.getElementById('ticketImprimir');
+    elTicket.style.fontSize = datosTicket.ticket_font_size + 'px';
+    elTicket.style.width    = datosTicket.ticket_ancho_mm  + 'mm';
+
+    let html = '';
+    if (datosTicket.ticket_logo) {
+        const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    }
+    html += `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
+
+    if (datosTicket.datos_ticket) {
+        html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(datosTicket.datos_ticket)}</div>`;
+    } else {
+        if (datosTicket.rfc)       html += `<div class="t-centro">RFC: ${esc(datosTicket.rfc)}</div>`;
+        if (datosTicket.direccion) html += `<div class="t-centro">${esc(datosTicket.direccion)}</div>`;
+        if (datosTicket.telefono)  html += `<div class="t-centro">Tel: ${esc(datosTicket.telefono)}</div>`;
+    }
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Folio:</span><span>${venta.folio || ('#'+venta.venta_id)}</span></div>
+        <div class="t-fila"><span>Fecha:</span><span>${esc(fecha)}</span></div>
+        <div class="t-fila"><span>Cajero:</span><span>${esc(venta.cajero || '—')}</span></div>`;
+
+    if (venta.cliente) {
+        html += `<div class="t-fila"><span>Cliente:</span><span>${esc(venta.cliente)}</span></div>`;
+    }
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>Producto</span><span>Importe</span></div>
+        <div class="t-linea"></div>`;
+
+    let ahorroPromoTicket = 0;
+    const productos = venta.productos || [];
+
+    // Agrupar por paquete_id: los que tienen paquete se consolidan en una sola fila
+    // combos = round(subtotal_acumulado / precio_paquete) — exacto porque el precio se distribuye proporcionalmente
+    const paqMap = {};   // paquete_id -> { nombre, subtotal, precio_paquete }
+    const prodsSueltos = [];
+    productos.forEach(p => {
+        if (p.paquete_id) {
+            const pid = String(p.paquete_id);
+            if (!paqMap[pid]) {
+                paqMap[pid] = {
+                    nombre:         p.paquete_nombre || ('Paquete #' + pid),
+                    subtotal:       0,
+                    precio_paquete: parseFloat(p.precio_paquete || 0)
+                };
+            }
+            paqMap[pid].subtotal += parseFloat(p.subtotal || 0);
+        } else {
+            prodsSueltos.push(p);
+        }
+    });
+
+    // Renderizar paquetes primero
+    Object.values(paqMap).forEach(pq => {
+        const combos    = pq.precio_paquete > 0.001 ? Math.round(pq.subtotal / pq.precio_paquete) : 1;
+        const combosStr = combos + (combos === 1 ? ' combo' : ' combos');
+        html += `<div>📦 ${esc(pq.nombre)}</div>`;
+        html += `<div class="t-fila"><span>${combosStr}</span><span>$${fmt(pq.subtotal)}</span></div>`;
+    });
+
+    // Renderizar productos sueltos
+    prodsSueltos.forEach(p => {
+        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
+        const precioOrig  = parseFloat(p.precio_unitario);
+        const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
+        const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
+
+        if (tienePromo) ahorroPromoTicket += (precioOrig - precioFinal) * parseFloat(p.cantidad);
+
+        html += `<div>${esc(p.nombre_producto)}</div>`;
+        if (tienePromo) {
+            html += `<div style="font-size:10px;text-decoration:line-through;color:#888;">$${fmt(precioOrig)}/u (precio normal)</div>`;
+            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioFinal)}</span><span>$${fmt(p.subtotal)}</span></div>`;
+        } else {
+            const precioUsado = tieneAjuste ? precioFinal : precioOrig;
+            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span><span>$${fmt(p.subtotal)}</span></div>`;
+            if (tieneAjuste) html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
+        }
+    });
+
+    html += `<div class="t-linea"></div>`;
+
+    if (parseFloat(venta.descuento) > 0) {
+        html += `<div class="t-fila"><span>Subtotal</span><span>$${fmt(venta.subtotal)}</span></div>`;
+    }
+    if (parseFloat(venta.comision_terminal) > 0) {
+        html += `<div class="t-fila"><span>Comisión terminal</span><span>$${fmt(venta.comision_terminal)}</span></div>`;
+    }
+    if (parseFloat(venta.descuento) > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${fmt(venta.descuento)}</span></div>`;
+    }
+
+    html += `
+        <div class="t-fila t-bold t-grande">
+            <span>TOTAL</span><span>$${fmt(venta.total)}</span>
+        </div>
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
+
+    if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
+        html += `
+        <div class="t-fila"><span>Recibido</span><span>$${fmt(venta.monto_efectivo)}</span></div>
+        <div class="t-fila"><span>Cambio</span><span>$${fmt(venta.cambio)}</span></div>`;
+    }
+    if (venta.metodo_pago === 'Mixto') {
+        html += `
+        <div class="t-fila"><span>Efectivo</span><span>$${fmt(venta.monto_efectivo)}</span></div>
+        <div class="t-fila"><span>Terminal</span><span>$${fmt(venta.monto_terminal)}</span></div>`;
+    }
+    // [AUTOFIX] BUG-07: Comparar sin acento para cubrir 'Crédito' y 'Credito'
+    if (venta.metodo_pago === 'Crédito' || venta.metodo_pago === 'Credito') {
+        const notaCred = datosTicket.ticket_nota_credito || 'Al firmar acepto cubrir el monto total adeudado';
+        html += `
+        <div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>
+        <div class="t-linea"></div>
+        <div class="t-centro" style="font-size:10px;margin-bottom:8px;">${esc(notaCred)}</div>
+        <div style="margin-top:48px;font-size:11px;">Firma: _______________________________</div>`;
+    }
+
+    const _metodo = venta.metodo_pago || '';
+    let _pie;
+    if (_metodo === 'Crédito' || _metodo === 'Credito') _pie = datosTicket.ticket_pie_credito;
+    else if (_metodo === 'Terminal')                     _pie = datosTicket.ticket_pie_terminal;
+    else                                                 _pie = datosTicket.ticket_pie_efectivo;
+    const pieTexto = _pie || datosTicket.ticket_pie || '¡Gracias por su compra!';
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-centro">${esc(pieTexto)}</div>
+        <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
+
+    document.getElementById('ticketImprimir').innerHTML = html;
+}
+
+function abrirTicketVenta(ventaId) {
+    fetch(`cajero_historialVentas.php?detalle_venta=${ventaId}`)
+        .then(r => r.json())
+        .then(function(venta) {
+            if (!venta) { alert('No se pudo cargar el ticket.'); return; }
+            generarTicketHTML(venta);
+            document.getElementById('ticketContenidoVentaPend').innerHTML =
+                document.getElementById('ticketImprimir').innerHTML;
+            document.getElementById('modalTicketVentaPend').classList.add('visible');
+            document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'false');
+        })
+        .catch(e => alert('Error al cargar el ticket: ' + e.message));
+}
+
+function cerrarTicketVenta() {
+    document.getElementById('modalTicketVentaPend').classList.remove('visible');
+    document.getElementById('modalTicketVentaPend').setAttribute('aria-hidden', 'true');
+}
+
+function imprimirTicketPend() {
+    cerrarTicketVenta();
+    const _doImprimirP = () => {
+        let estilo = document.getElementById('__ticketPageStyle');
+        if (!estilo) {
+            estilo = document.createElement('style');
+            estilo.id = '__ticketPageStyle';
+            document.head.appendChild(estilo);
+        }
+        estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm auto; margin: 0; }`;
+        setTimeout(() => window.print(), 150);
+    };
+    const imgP = document.querySelector('#ticketImprimir img');
+    if (imgP && !imgP.complete) {
+        imgP.onload  = _doImprimirP;
+        imgP.onerror = _doImprimirP;
+    } else {
+        _doImprimirP();
+    }
+}
+
 </script>
 </body>
 </html>
-
-

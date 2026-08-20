@@ -75,7 +75,6 @@ function renderAdminSidebar(string $activeKey): void
                 <a class="menu-item<?= $isActive('cajero_historial_cortes') ?>" href="cajero_historialCortes.php" style="padding-left:28px;">Historial cortes</a>
                 <a class="menu-item<?= $isActive('cajero_clientes') ?>" href="cajero_clientes.php" style="padding-left:28px;">Clientes cajero</a>
                 <a class="menu-item<?= $isActive('cajero_creditos') ?>" href="cajero_creditos.php" style="padding-left:28px;">Creditos cajero</a>
-                <a class="menu-item<?= $isActive('cajero_abonos') ?>" href="cajero_abonos.php" style="padding-left:28px;">Abonos</a>
                 <a class="menu-item<?= $isActive('cajero_ventas_pendientes') ?>" href="cajero_ventasPendientes.php" style="padding-left:28px;">Ventas pendientes</a>
                 <a class="menu-item<?= $isActive('cajero_devoluciones') ?>" href="cajero_devoluciones.php" style="padding-left:28px;">Devoluciones</a>
             </div>
@@ -88,6 +87,18 @@ function renderAdminSidebar(string $activeKey): void
         if (!el) return;
         el.style.display = el.style.display === 'none' ? 'block' : 'none';
     }
+
+    // El sidebar se vuelve a pintar en cada navegacion (no es un SPA), asi que sin esto
+    // el scroll siempre vuelve a 0 y hay que bajar de nuevo para ver los modulos de abajo.
+    (function() {
+        var menu = document.querySelector('.sidebar-menu');
+        if (!menu) return;
+        var saved = sessionStorage.getItem('adminSidebarScroll');
+        if (saved !== null) menu.scrollTop = parseInt(saved, 10) || 0;
+        menu.addEventListener('scroll', function() {
+            sessionStorage.setItem('adminSidebarScroll', menu.scrollTop);
+        });
+    })();
     </script>
     <?php
 }

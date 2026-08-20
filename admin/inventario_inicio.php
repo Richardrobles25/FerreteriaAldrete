@@ -8,16 +8,24 @@ verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-// Productos con stock bajo
+// [FIX] sucursal=0 ("Todas las sucursales") es el valor por DEFECTO al iniciar sesion como
+// Administrador. Antes estas consultas exigian "sucursal_id = 0" (que ninguna fila real
+// cumple) y el dashboard se veia vacio/en ceros justo en el estado inicial mas comun.
+$condSuc = ($sucursalVista !== 0) ? ' AND ss.sucursal_id = ?' : '';
+$paramsSuc = ($sucursalVista !== 0) ? [$sucursalVista] : [];
+
+// Productos con stock bajo (en vista agregada, incluye la sucursal de cada fila para
+// distinguir "bajo en cual sucursal")
 $stmtBajo = $pdo->prepare("
-    SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, ss.stock_minimo
+    SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, ss.stock_minimo, s.nombre AS nombre_sucursal
     FROM productos p
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1 $condSuc
+    JOIN sucursales s ON ss.sucursal_id = s.sucursal_id
     WHERE p.activo = 1 AND ss.stock_actual <= ss.stock_minimo
     ORDER BY (ss.stock_actual / NULLIF(ss.stock_minimo,0)) ASC
     LIMIT 10
 ");
-$stmtBajo->execute([$sucursalVista]);
+$stmtBajo->execute($paramsSuc);
 $stockBajo = $stmtBajo->fetchAll(PDO::FETCH_ASSOC);
 
 // Estadísticas generales
@@ -28,64 +36,74 @@ $stmtStats = $pdo->prepare("
         SUM(CASE WHEN ss.stock_actual = 0 THEN 1 ELSE 0 END) AS sin_stock,
         COALESCE(SUM(ss.stock_actual * p.precio_compra), 0) AS valor_inventario
     FROM productos p
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1 $condSuc
     WHERE p.activo = 1
 ");
-$stmtStats->execute([$sucursalVista]);
+$stmtStats->execute($paramsSuc);
 $stats = $stmtStats->fetch(PDO::FETCH_ASSOC);
 
-// Últimos movimientos
+// Últimos movimientos — filtra por la sucursal del MOVIMIENTO directamente
+$condSucMov = ($sucursalVista !== 0) ? ' AND m.sucursal_id = ?' : '';
 $stmtMov = $pdo->prepare("
     SELECT m.tipo, m.cantidad, m.created_at, p.nombre_producto, m.motivo
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+    WHERE 1=1 $condSucMov
     ORDER BY m.created_at DESC
     LIMIT 8
 ");
-$stmtMov->execute([$sucursalVista]);
+$stmtMov->execute($paramsSuc);
 $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 
-// Notificaciones de transferencias
-$mySuc = $sucursalVista;
+// Notificaciones de transferencias — requieren una sucursal especifica (una transferencia
+// siempre tiene un origen Y un destino puntuales; "todas las sucursales" no filtra esto de
+// forma simple, así que esta sección se oculta y se pide elegir una sucursal).
+$solicitudesPendientes = [];
+$transfParaAprobar = $transfParaEnviar = $transfParaRecibir = 0;
+$totalTransfAlertas = 0;
 
-// Solicitudes pendientes donde YO soy el ORIGEN (tengo los productos, debo aprobar)
-$stmt = $pdo->prepare("
-    SELECT t.transferencias_id, t.cantidad,
-           COALESCE(p.nombre_producto,'?') AS nombre_producto,
-           COALESCE(mp.stock_actual,0) AS mi_stock,
-           sd.nombre AS sucursal_destino
-    FROM transferencias t
-    LEFT JOIN productos p ON t.producto_id = p.producto_id
-    LEFT JOIN stock_sucursal mp ON t.producto_id = mp.producto_id AND mp.sucursal_id = ?
-    JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
-    WHERE t.sucursal_origen_id = ? AND t.estado = 'Pendiente'
-    ORDER BY t.created_at ASC LIMIT 5
-");
-$stmt->execute([$mySuc, $mySuc]);
-$solicitudesPendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
-$transfParaAprobar = count($solicitudesPendientes);
+if ($sucursalVista !== 0) {
+    $mySuc = $sucursalVista;
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_origen_id = ? AND estado = 'Aprobada'");
-$stmt->execute([$mySuc]);
-$transfParaEnviar = intval($stmt->fetchColumn());
+    // Solicitudes pendientes donde YO soy el ORIGEN (tengo los productos, debo aprobar)
+    $stmt = $pdo->prepare("
+        SELECT t.transferencias_id, t.cantidad,
+               COALESCE(p.nombre_producto,'?') AS nombre_producto,
+               COALESCE(mp.stock_actual,0) AS mi_stock,
+               sd.nombre AS sucursal_destino
+        FROM transferencias t
+        LEFT JOIN productos p ON t.producto_id = p.producto_id
+        LEFT JOIN stock_sucursal mp ON t.producto_id = mp.producto_id AND mp.sucursal_id = ?
+        JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
+        WHERE t.sucursal_origen_id = ? AND t.estado = 'Pendiente'
+        ORDER BY t.created_at ASC LIMIT 5
+    ");
+    $stmt->execute([$mySuc, $mySuc]);
+    $solicitudesPendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $transfParaAprobar = count($solicitudesPendientes);
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'En tránsito'");
-$stmt->execute([$mySuc]);
-$transfParaRecibir = intval($stmt->fetchColumn());
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_origen_id = ? AND estado = 'Aprobada'");
+    $stmt->execute([$mySuc]);
+    $transfParaEnviar = intval($stmt->fetchColumn());
 
-$totalTransfAlertas = $transfParaAprobar + $transfParaEnviar + $transfParaRecibir;
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'En tránsito'");
+    $stmt->execute([$mySuc]);
+    $transfParaRecibir = intval($stmt->fetchColumn());
+
+    $totalTransfAlertas = $transfParaAprobar + $transfParaEnviar + $transfParaRecibir;
+}
 
 // Últimas compras a proveedor
+$condSucCompras = ($sucursalVista !== 0) ? ' AND cp.sucursal_id = ?' : '';
 $stmtCompras = $pdo->prepare("
     SELECT cp.compras_proveedor_id, cp.total, cp.created_at, p.nombre AS proveedor
     FROM compras_proveedor cp
     JOIN proveedores p ON cp.proveedor_id = p.proveedor_id
-    WHERE cp.sucursal_id = ?
+    WHERE 1=1 $condSucCompras
     ORDER BY cp.created_at DESC
     LIMIT 5
 ");
-$stmtCompras->execute([$sucursalVista]);
+$stmtCompras->execute($paramsSuc);
 $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -210,6 +228,9 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
                 <div>
                     <span class="alerta-nombre"><?= htmlspecialchars($p['nombre_producto']) ?></span>
                     <span style="font-size:11px;color:#aaa;margin-left:6px;"><?= htmlspecialchars($p['codigo']) ?></span>
+                    <?php if ($sucursalVista === 0): ?>
+                        <span style="font-size:11px;color:#1565c0;margin-left:6px;">(<?= htmlspecialchars($p['nombre_sucursal']) ?>)</span>
+                    <?php endif; ?>
                 </div>
                 <div>
                     <span class="alerta-stock-val"><?= number_format($p['stock_actual'],2) ?></span>
@@ -225,7 +246,11 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <?php endif; ?>
 
         <!-- Notificaciones de transferencias -->
-        <?php if ($transfParaAprobar > 0): ?>
+        <?php if ($sucursalVista === 0): ?>
+        <div class="notif-transf" style="background:#f5f5f5;border-color:#ddd;color:#888;">
+            <span>Elige una sucursal específica arriba para ver sus alertas de transferencias.</span>
+        </div>
+        <?php elseif ($transfParaAprobar > 0): ?>
         <div class="notif-transf">
             <div>
                 <div>&#128230; <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
@@ -311,7 +336,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             <div class="tabla">
                 <div class="tabla-header">
                     <span>Últimos movimientos</span>
-                    <a href="inventario_inventario_historial.php">Ver todos</a>
+                    <a href="inventario_historial.php">Ver todos</a>
                 </div>
                 <?php if (count($movimientos) > 0): ?>
                     <?php foreach ($movimientos as $m): ?>

@@ -120,3 +120,17 @@ También sigue pendiente revisar el mensaje de error de conexión (`die("Error d
 
 - **NM1** — Un cliente inactivo (`activo=0`) puede seguir con deuda activa (caso real: $80.04). Es el comportamiento documentado a propósito (no se bloquea ni se toca la deuda al desactivar), pero como los listados por defecto ocultan inactivos, esa deuda es fácil de perder de vista operativamente. Vale la pena revisar el listado de clientes inactivos de vez en cuando si tienen saldo pendiente.
 - **NM2** — Puede quedar una transferencia en estado "Pendiente" por semanas sin que nadie la apruebe ni la rechace (caso real: 77 días). No existe expiración ni recordatorio automático para solicitudes de transferencia olvidadas.
+
+---
+
+## 🖥️ Migración de submenús Inventario/Cajero dentro de `admin/` (2026-08-19)
+
+Se refrescaron los 19 archivos de los submenús "Inventario" y "Cajero" en `admin/` (ya existían pero con versiones viejas) usando la lógica ya auditada de `cajeroInventario/`, con un selector de sucursal para que el Administrador opere cualquier sucursal, no solo la suya. Detalle completo en `CONTEXTO_SISTEMA.md` §12.5.
+
+**No se tocaron** (decisión del dueño): `inventario_productos.php`, `inventario_formProducto.php`, `inventario_categorias.php`, `inventario_unidades.php`, `promociones.php`. Tampoco la lógica de `inventario_paquetes.php` (admin ya tiene su propio alta/edición, distinto al de cajeroInventario) — solo CSRF.
+
+### ⚠️ Aviso importante sobre las pruebas de esta migración
+
+Se corrieron 128 pruebas automatizadas contra un servidor local aislado durante la migración (CSRF, aislamiento entre sucursales específicas, condiciones de carrera), y todo pasó. **Pero esas pruebas no cubrían consistentemente el caso "Todas las sucursales"** (que es el valor *por defecto* al iniciar sesión como Administrador, no algo que hay que elegir a propósito) — solo se probó con sucursales específicas. Ese hueco dejó pasar un bug real: varios reportes (`inventario_masVendidos.php`, `cajero_historialVentas.php`, el detalle de compra en `inventario_compras.php`, `inventario_inicio.php`, `cajero_inicio.php`) mostraban "sin datos" o estadísticas en cero al ver "Todas las sucursales", aunque sí había información. **El dueño del proyecto lo encontró probando manualmente en su propio servidor con datos reales**, no las pruebas automatizadas.
+
+Ya corregido en los 5 archivos (condicionando el filtro de sucursal para que "todas" realmente agregue en vez de exigir una sucursal_id que no existe) y re-verificado con 12 pruebas nuevas más las 128 anteriores repetidas, todas sin regresión — pero el aviso queda documentado porque es la prueba de que las pruebas automatizadas de esta sesión, aunque útiles, no sustituyen abrir la pantalla real con datos reales. Si se encuentra otro caso similar en algún reporte que no esté en esta lista, es el mismo patrón: buscar un filtro `sucursal_id = ?` que no esté condicionado a "si la sucursal elegida no es 0".

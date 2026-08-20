@@ -7,11 +7,13 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 if (isset($_GET['toggle'])) {
+    requerirCSRF($_GET['_token'] ?? '', 'inventario_paquetes.php');
     $pdo->prepare("UPDATE paquetes SET activo = NOT activo WHERE paquete_id = ?")->execute([intval($_GET['toggle'])]);
     header('Location: inventario_paquetes.php'); exit();
 }
 
 if (isset($_GET['eliminar'])) {
+    requerirCSRF($_GET['_token'] ?? '', 'inventario_paquetes.php');
     $id = intval($_GET['eliminar']);
     $pdo->prepare("DELETE FROM paquete_productos WHERE paquete_id = ?")->execute([$id]);
     $pdo->prepare("DELETE FROM paquetes WHERE paquete_id = ?")->execute([$id]);
@@ -45,6 +47,7 @@ $siguienteId    = intval($stmtUltimo->fetchColumn());
 $codigoSugerido = 'PAQ'.str_pad($siguienteId, 4, '0', STR_PAD_LEFT);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_paquetes.php');
     $nombre         = trim($_POST['nombre'] ?? '');
     $codigo         = strtoupper(trim($_POST['codigo'] ?? ''));
     $descripcion    = trim($_POST['descripcion'] ?? '');
@@ -280,12 +283,12 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                     <div class="acciones">
                         <a class="btn-accion btn-editar" href="inventario_paquetes.php?editar=<?= $paq['paquete_id'] ?>">Editar</a>
                         <a class="btn-accion <?= $paq['activo']?'btn-desactivar':'btn-activar' ?>"
-                           href="inventario_paquetes.php?toggle=<?= $paq['paquete_id'] ?>"
+                           href="inventario_paquetes.php?toggle=<?= $paq['paquete_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                            onclick="return confirm('¿Confirmar cambio?')">
                             <?= $paq['activo']?'Desactivar':'Activar' ?>
                         </a>
                         <a class="btn-accion btn-eliminar"
-                           href="inventario_paquetes.php?eliminar=<?= $paq['paquete_id'] ?>"
+                           href="inventario_paquetes.php?eliminar=<?= $paq['paquete_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                            onclick="return confirm('¿Eliminar este paquete?')">Eliminar</a>
                     </div>
                 </div>
@@ -304,6 +307,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
 
                 <form method="POST" id="formPaquete">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="paquete_id" value="<?= $editando['paquete_id'] ?? 0 ?>">
                     <input type="hidden" name="items_paquete" id="inputItemsPaquete">
 

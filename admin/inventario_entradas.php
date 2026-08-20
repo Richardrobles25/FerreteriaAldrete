@@ -15,39 +15,54 @@ if (isset($_GET['producto_id'])) {
     $productoPreseleccionado = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
-// ── Migración: agregar proveedor_id a movimientos_inventario si no existe ────
-$colExiste = $pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME   = 'movimientos_inventario'
-      AND COLUMN_NAME  = 'proveedor_id'")->fetchColumn();
-if (!$colExiste) {
-    $pdo->exec("ALTER TABLE movimientos_inventario ADD COLUMN proveedor_id INT NULL DEFAULT NULL");
-}
-
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $producto_id  = intval($_POST['producto_id'] ?? 0);
-    $cantidad     = intval($_POST['cantidad'] ?? 0);
-    $motivo       = trim($_POST['motivo'] ?? 'Entrada manual');
+    // [FIX] Verificar CSRF antes de procesar la entrada
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_entradas.php');
+    $producto_id       = intval($_POST['producto_id'] ?? 0);
+    $cantidad_raw      = $_POST['cantidad'] ?? '';
+    $motivo            = trim($_POST['motivo'] ?? 'Entrada manual');
     $proveedor_entrada = intval($_POST['proveedor_id_entrada'] ?? 0) ?: null;
 
+    if ($sucursalVista === 0) $errores[] = 'Selecciona una sucursal específica para registrar una entrada.';
     if (!$producto_id) $errores[] = 'Selecciona un producto.';
-    if ($cantidad < 1) $errores[] = 'La cantidad debe ser al menos 1.';
 
     if (empty($errores)) {
-        $stmtP = $pdo->prepare("SELECT ss.stock_actual, p.nombre_producto FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
+        // [FIX] Los productos tipo "Suelto" (granel) aceptan decimales (2.5 kg) —
+        // antes se usaba intval() para todos, lo que truncaba 2.5 a 2.
+        $stmtP = $pdo->prepare("
+            SELECT p.nombre_producto, p.tipo_venta, ss.stock_actual
+            FROM productos p
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            WHERE p.producto_id = ?
+        ");
         $stmtP->execute([$sucursalVista, $producto_id]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
         if (!$prod) {
             $errores[] = 'Producto no encontrado.';
         } else {
-            $stockAnterior = floatval($prod['stock_actual']);
+            $esSuelto = ($prod['tipo_venta'] === 'Suelto');
+            $cantidad = $esSuelto ? round(floatval($cantidad_raw), 3) : intval($cantidad_raw);
+            $cantidadMin = $esSuelto ? 0.001 : 1;
+            if ($cantidad < $cantidadMin) {
+                $errores[] = $esSuelto ? 'La cantidad debe ser mayor a 0.' : 'La cantidad debe ser al menos 1.';
+            }
+        }
+
+        if (empty($errores) && $prod) {
+            // [FIX] Bloquear la fila de stock dentro de una transacción para evitar que
+            // dos entradas simultáneas del mismo producto se pisen (pérdida de actualización).
+            $pdo->beginTransaction();
+            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtLockStock->execute([$producto_id, $sucursalVista]);
+            $stockAnterior = floatval($stmtLockStock->fetchColumn());
             $stockNuevo    = $stockAnterior + $cantidad;
 
             $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $sucursalVista]);
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,?,'Entrada',?,?,?,?,?)")
                 ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo, $proveedor_entrada]);
+            $pdo->commit();
 
             header('Location: inventario_entradas.php?msg=exito&prod='.urlencode($prod['nombre_producto']));
             exit();
@@ -63,8 +78,7 @@ $stmtH = $pdo->prepare("
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     LEFT JOIN proveedores pr ON m.proveedor_id = pr.proveedor_id
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-    WHERE m.tipo = 'Entrada'
+    WHERE m.tipo = 'Entrada' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
     ORDER BY m.created_at DESC
     LIMIT 25
 ");
@@ -73,7 +87,7 @@ $historial = $stmtH->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos con su proveedor default
 $stmtProds = $pdo->prepare("
-    SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
+    SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
            MIN(pp.proveedor_id) AS proveedor_default_id,
            MIN(prov.nombre)     AS proveedor_default_nombre
     FROM productos p
@@ -81,7 +95,7 @@ $stmtProds = $pdo->prepare("
     LEFT JOIN producto_proveedor pp ON p.producto_id = pp.producto_id
     LEFT JOIN proveedores prov      ON pp.proveedor_id = prov.proveedor_id
     WHERE p.activo = 1
-    GROUP BY p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
+    GROUP BY p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
     ORDER BY p.nombre_producto ASC
 ");
 $stmtProds->execute([$sucursalVista]);
@@ -210,6 +224,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                 <?php endif; ?>
 
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Producto *</label>
                         <input type="hidden" name="producto_id" id="productoIdHidden"
@@ -357,6 +372,14 @@ function seleccionarProducto(id) {
     document.getElementById('productoChipNombre').textContent = p.nombre_producto;
     document.getElementById('productoChip').style.display    = 'flex';
     mostrarStockInfo(parseFloat(p.stock_actual), parseFloat(p.stock_minimo), parseFloat(p.stock_maximo));
+    // Productos "Suelto" (granel) aceptan decimales; el resto solo enteros —
+    // consistente con la validacion del servidor.
+    const inpCant = document.getElementById('inputCantidad');
+    if (p.tipo_venta === 'Suelto') {
+        inpCant.step = '0.001'; inpCant.min = '0.001';
+    } else {
+        inpCant.step = '1'; inpCant.min = '1';
+    }
     // Cargar proveedor default del producto
     document.getElementById('grupoProveedor').style.display = 'block';
     if (p.proveedor_default_id) {
@@ -376,6 +399,8 @@ function limpiarProducto() {
     document.getElementById('buscarProducto').value = '';
     document.getElementById('grupoProveedor').style.display = 'none';
     limpiarProveedor();
+    const inpCant = document.getElementById('inputCantidad');
+    inpCant.step = '1'; inpCant.min = '1';
 }
 
 function mostrarStockInfo(stock, minimo, maximo) {

@@ -6,11 +6,15 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-// Estado de caja actual
-$stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
-$stmt->execute([$_SESSION['usuario_id']]);
-$cajaActual = $stmt->fetch(PDO::FETCH_ASSOC);
+// Estado de caja actual EN LA SUCURSAL ELEGIDA
+$cajaActual = null;
+if ($sucursalVista !== 0) {
+    $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
+    $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
+    $cajaActual = $stmt->fetch(PDO::FETCH_ASSOC);
+}
 
 // Estadísticas del turno actual
 $ventasHoy = 0;
@@ -28,15 +32,17 @@ if ($cajaActual) {
     $pendientes = $stmtP->fetchColumn();
 }
 
+// [FIX] sucursal=0 ("Todas las sucursales") es el valor por defecto al iniciar sesion —
+// antes exigia "ca.sucursal_id = 0" y el contador siempre daba 0.
+$condSucCred = ($sucursalVista !== 0) ? ' AND ca.sucursal_id = ?' : '';
 $stmtC = $pdo->prepare("
-    SELECT COUNT(*) 
+    SELECT COUNT(*)
     FROM creditos c
     JOIN ventas v ON c.venta_id = v.venta_id
     JOIN cajas ca ON v.caja_id = ca.caja_id
-    WHERE ca.sucursal_id = ?
-    AND c.estado = 'Activo'
+    WHERE c.estado = 'Activo' $condSucCred
 ");
-$stmtC->execute([$_SESSION['sucursal_id']]);
+$stmtC->execute($sucursalVista !== 0 ? [$sucursalVista] : []);
 $creditosActivos = $stmtC->fetchColumn();
 
 // Últimas ventas
@@ -86,6 +92,10 @@ if ($cajaActual) {
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
     .content { flex: 1; padding: 28px; overflow-y: auto; }
     .content h1 { font-size: 20px; color: #222; margin: 0 0 20px; font-weight: 600; }
+    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
+    .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group select:focus { outline: none; border-color: #14ace7; }
     .caja-status { border-radius: 8px; padding: 18px 20px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
     .caja-abierta { background: #e8f5e9; border: 1px solid #c8e6c9; }
     .caja-cerrada { background: #fdecea; border: 1px solid #ffcdd2; }
@@ -165,8 +175,19 @@ if ($cajaActual) {
 
         <h1>Resumen del turno</h1>
 
+        <div class="filtros" style="background:white;border-radius:8px;border:0.5px solid #e8e8e8;padding:14px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+            <?php renderSucursalSwitcher(); ?>
+        </div>
+
         <!-- Estado de caja -->
-        <?php if ($cajaActual): ?>
+        <?php if ($sucursalVista === 0): ?>
+            <div class="caja-status" style="background:#eef8ff;border:1px solid #bbdefb;">
+                <div class="caja-info">
+                    <h3 style="color:#1565c0;">Selecciona una sucursal</h3>
+                    <p>Elige una sucursal arriba para ver o abrir su caja.</p>
+                </div>
+            </div>
+        <?php elseif ($cajaActual): ?>
             <div class="caja-status caja-abierta">
                 <div class="caja-info">
                     <h3>Turno #<?= $cajaActual['numero_turno'] ?> — Abierta</h3>
@@ -185,6 +206,9 @@ if ($cajaActual) {
         <?php endif; ?>
 
         <!-- Estadísticas -->
+        <?php if ($sucursalVista === 0): ?>
+            <p style="font-size:12px;color:#888;margin:-10px 0 12px;">Las ventas y pendientes son por turno — elige una sucursal para verlas. Los créditos activos sí se muestran de todas las sucursales.</p>
+        <?php endif; ?>
         <div class="stats">
             <div class="stat">
                 <p>Ventas del turno</p>
@@ -204,7 +228,7 @@ if ($cajaActual) {
             <div class="stat">
                 <p>Créditos activos</p>
                 <h3><?= $creditosActivos ?></h3>
-                <small>Por pagar</small>
+                <small><?= $sucursalVista === 0 ? 'Todas las sucursales' : 'Por pagar' ?></small>
             </div>
         </div>
 

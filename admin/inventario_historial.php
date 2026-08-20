@@ -12,8 +12,13 @@ $fecha    = $_GET['fecha'] ?? '';
 $tipo     = $_GET['tipo'] ?? '';
 $busqueda = trim($_GET['buscar'] ?? '');
 
-$where  = "WHERE ss.sucursal_id = ?";
-$params = [$sucursalVista];
+// [FIX] Filtrar por la sucursal del MOVIMIENTO directamente (antes se unia contra
+// stock_sucursal sin fijar su sucursal_id, lo que ademas de mostrar movimientos de
+// otras sucursales duplicaba cada fila una vez por cada sucursal donde existe el producto).
+// sucursalVista===0 ("todas las sucursales") no filtra por sucursal.
+$where  = "WHERE 1=1";
+$params = [];
+if ($sucursalVista !== 0) { $where .= " AND m.sucursal_id = ?"; $params[] = $sucursalVista; }
 
 if ($fecha) { $where .= " AND DATE(m.created_at) = ?"; $params[] = $fecha; }
 if ($tipo)  { $where .= " AND m.tipo = ?"; $params[] = $tipo; }
@@ -27,7 +32,6 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
-        JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
         JOIN usuarios u ON m.usuario_id = u.usuario_id
         $where
         ORDER BY m.created_at DESC
@@ -66,7 +70,6 @@ $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo, u.nombre_completo as usuario
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
     $where
     ORDER BY m.created_at DESC
@@ -84,7 +87,6 @@ $stmtRes = $pdo->prepare("
         COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     $where
 ");
 $stmtRes->execute($params);
@@ -216,7 +218,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
                 <?php renderSucursalSwitcher(); ?>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
                 <?php if ($fecha || $tipo || $busqueda): ?>
-                    <a class="btn-limpiar" href="inventario_inventario_historial.php">Limpiar</a>
+                    <a class="btn-limpiar" href="inventario_historial.php">Limpiar</a>
                 <?php endif; ?>
             </div>
         </form>

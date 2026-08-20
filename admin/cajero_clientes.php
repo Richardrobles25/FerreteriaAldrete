@@ -9,7 +9,17 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
 // Eliminar cliente
 if (isset($_GET['eliminar'])) {
+    requerirCSRF($_GET['_token'] ?? '', 'cajero_clientes.php');
     $id = intval($_GET['eliminar']);
+
+    // Verificar que el cliente no tenga ventas pendientes antes de eliminar
+    $stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
+    $stmtPend->execute([$id]);
+    if ($stmtPend->fetchColumn() > 0) {
+        header('Location: cajero_clientes.php?msg=error_tiene_pendientes');
+        exit();
+    }
+
     $pdo->prepare("UPDATE clientes SET activo = 0 WHERE cliente_id = ?")->execute([$id]);
     header('Location: cajero_clientes.php?msg=eliminado');
     exit();
@@ -17,6 +27,7 @@ if (isset($_GET['eliminar'])) {
 
 // Toggle activo
 if (isset($_GET['toggle'])) {
+    requerirCSRF($_GET['_token'] ?? '', 'cajero_clientes.php');
     $id = intval($_GET['toggle']);
     $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$id]);
     header('Location: cajero_clientes.php');
@@ -34,6 +45,7 @@ if ($esEdicion) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requerirCSRF($_POST['_token'] ?? '', 'cajero_clientes.php');
     $nombre_completo    = trim($_POST['nombre_completo'] ?? '');
     $telefono           = trim($_POST['telefono'] ?? '');
     $direccion          = trim($_POST['direccion'] ?? '');
@@ -60,12 +72,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
+$busqueda     = trim($_GET['buscar'] ?? '');
+$verInactivos = isset($_GET['ver_inactivos']) && $_GET['ver_inactivos'] === '1';
+$filtroActivo = $verInactivos ? '' : 'AND activo = 1';
+$deudaSelect  = "COALESCE((SELECT SUM(saldo_pendiente) FROM creditos WHERE cliente_id = c.cliente_id AND estado IN ('Activo','Vencido')), 0) AS deuda_total";
 if ($busqueda) {
-    $stmt = $pdo->prepare("SELECT * FROM clientes WHERE activo = 1 AND nombre_completo LIKE ? ORDER BY nombre_completo ASC");
+    $stmt = $pdo->prepare("SELECT c.*, $deudaSelect FROM clientes c WHERE nombre_completo LIKE ? $filtroActivo ORDER BY nombre_completo ASC");
     $stmt->execute(['%'.$busqueda.'%']);
 } else {
-    $stmt = $pdo->prepare("SELECT * FROM clientes WHERE activo = 1 ORDER BY nombre_completo ASC");
+    $stmt = $pdo->prepare("SELECT c.*, $deudaSelect FROM clientes c WHERE 1=1 $filtroActivo ORDER BY nombre_completo ASC");
     $stmt->execute();
 }
 $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -186,6 +201,11 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <input type="text" name="buscar" placeholder="Buscar por nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
                     <button class="btn-buscar" type="submit">Buscar</button>
                     <?php if ($busqueda): ?><a class="btn-limpiar" href="cajero_clientes.php">Limpiar</a><?php endif; ?>
+                    <?php if ($verInactivos): ?>
+                        <a class="btn-limpiar" href="cajero_clientes.php" style="color:#888;">Ver activos</a>
+                    <?php else: ?>
+                        <a class="btn-limpiar" href="cajero_clientes.php?ver_inactivos=1" style="color:#888;">Ver inactivos</a>
+                    <?php endif; ?>
                 </div>
             </form>
 
@@ -198,6 +218,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <th>Teléfono</th>
                             <th>Descuento</th>
                             <th>Crédito</th>
+                            <th>Deuda</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
@@ -220,10 +241,17 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <span style="color:#aaa;font-size:12px;">No</span>
                                 <?php endif; ?>
                             </td>
+                            <td style="<?= floatval($c['deuda_total']) > 0 ? 'color:#c0392b;font-weight:700;' : 'color:#aaa;' ?>">
+                                $<?= number_format($c['deuda_total'], 2) ?>
+                            </td>
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="cajero_clientes.php?editar=<?= $c['cliente_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="cajero_clientes.php?eliminar=<?= $c['cliente_id'] ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
+                                    <?php if ($c['activo']): ?>
+                                        <a class="btn-accion btn-eliminar" href="cajero_clientes.php?eliminar=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</a>
+                                    <?php else: ?>
+                                        <a class="btn-accion" style="background:#e8f5e9;color:#2e7d32;" href="cajero_clientes.php?toggle=<?= $c['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?><?= $verInactivos ? '&ver_inactivos=1' : '' ?>" onclick="return confirm('¿Reactivar este cliente?')">Reactivar</a>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                         </tr>
@@ -246,6 +274,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
 
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="cliente_id" value="<?= $editando['cliente_id'] ?? 0 ?>">
 
                     <div class="form-group">

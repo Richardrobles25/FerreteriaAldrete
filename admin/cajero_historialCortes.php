@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -6,27 +6,32 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $fecha = $_GET['fecha'] ?? '';
 
-$where  = "WHERE c.usuario_id = ?";
-$params = [$_SESSION['usuario_id']];
-
+// A diferencia de cajeroInventario (donde cada cajero solo ve sus propios turnos), aqui
+// el admin ve todos los cortes de la sucursal elegida — o de todas si sucursal=0.
+$where  = "WHERE 1=1";
+$params = [];
+if ($sucursalVista !== 0) { $where .= " AND c.sucursal_id = ?"; $params[] = $sucursalVista; }
 if ($fecha) { $where .= " AND DATE(c.abierta_en) = ?"; $params[] = $fecha; }
 
 // ── Exportar ─────────────────────────────────────────────────────────
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
 
+    // [FIX] La columna correcta es monto_cierre, no monto_contado (esa no existe) —
+    // la exportacion estaba rota.
     $stmtExp = $pdo->prepare("
         SELECT c.caja_id, s.nombre AS sucursal, c.estado,
                c.abierta_en, c.cerrada_en,
                COUNT(v.venta_id) AS total_ventas,
                COALESCE(SUM(v.total),0) AS total_cobrado,
-               c.monto_contado, c.diferencia, c.observaciones
+               c.monto_cierre, c.diferencia, c.observaciones
         FROM cajas c
         JOIN sucursales s ON c.sucursal_id = s.sucursal_id
-        LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado = 'Completada'
+        LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado IN ('Completada','Modificado','Devuelto')
         $where
         GROUP BY c.caja_id
         ORDER BY c.abierta_en DESC
@@ -35,7 +40,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
 
     $titulo = 'Historial de Cortes de Caja';
-    $subtitulo = $fecha ? "Fecha: $fecha" : 'Todos los turnos';
+    $subtitulo = 'Sucursal: ' . $nombreSucursalVista . ($fecha ? " | Fecha: $fecha" : ' | Todos los turnos');
     $columnas = ['Turno #','Sucursal','Estado','Apertura','Cierre','Ventas','Total Cobrado','Contado','Diferencia'];
     $filas = array_map(fn($r) => [
         '#' . $r['caja_id'],
@@ -45,7 +50,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         $r['cerrada_en'] ? date('d/m/Y H:i', strtotime($r['cerrada_en'])) : '—',
         $r['total_ventas'],
         '$' . number_format($r['total_cobrado'], 2),
-        $r['monto_contado'] !== null ? '$' . number_format($r['monto_contado'], 2) : '—',
+        $r['monto_cierre'] !== null ? '$' . number_format($r['monto_cierre'], 2) : '—',
         $r['diferencia'] !== null ? '$' . number_format($r['diferencia'], 2) : '—',
     ], $expData);
     $resumen = [
@@ -65,22 +70,24 @@ $stmt = $pdo->prepare("
         COALESCE(SUM(v.total),0) AS total_cobrado,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo' THEN v.total ELSE 0 END),0) AS ef,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal' THEN v.total ELSE 0 END),0) AS term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Credito' THEN v.total ELSE 0 END),0) AS cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef
+        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('Credito','Crédito') THEN v.total ELSE 0 END),0) AS cred,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_terminal ELSE 0 END),0) AS mixto_term,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) AS transf
     FROM cajas c
     JOIN sucursales s ON c.sucursal_id = s.sucursal_id
-    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado = 'Completada'
+    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado IN ('Completada','Modificado','Devuelto')
     $where
     GROUP BY c.caja_id
     ORDER BY c.abierta_en DESC
+    LIMIT 200
 ");
 $stmt->execute($params);
 $cortes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Totales del cajero
+// Totales
 $totalVentas  = array_sum(array_column($cortes, 'total_ventas'));
 $totalCobrado = array_sum(array_column($cortes, 'total_cobrado'));
-$totalCortes  = count(array_filter($cortes, fn($c) => $c['estado'] === 'Cerrada'));
 
 // Corte seleccionado para ver detalle
 $verCorte   = intval($_GET['ver'] ?? 0);
@@ -88,13 +95,19 @@ $detalleCorte = null;
 $detalleVentas = [];
 
 if ($verCorte) {
+    // Mismo filtro de sucursal que la lista, para no poder ver el detalle de un corte
+    // de otra sucursal cambiando el numero en "?ver=".
+    $whereDet = "WHERE c.caja_id = ?";
+    $paramsDet = [$verCorte];
+    if ($sucursalVista !== 0) { $whereDet .= " AND c.sucursal_id = ?"; $paramsDet[] = $sucursalVista; }
+
     $stmtC = $pdo->prepare("
         SELECT c.*, s.nombre AS nombre_sucursal
         FROM cajas c
         JOIN sucursales s ON c.sucursal_id = s.sucursal_id
-        WHERE c.caja_id = ? AND c.usuario_id = ?
+        $whereDet
     ");
-    $stmtC->execute([$verCorte, $_SESSION['usuario_id']]);
+    $stmtC->execute($paramsDet);
     $detalleCorte = $stmtC->fetch(PDO::FETCH_ASSOC);
 
     if ($detalleCorte) {
@@ -103,7 +116,7 @@ if ($verCorte) {
                    cl.nombre_completo AS cliente
             FROM ventas v
             LEFT JOIN clientes cl ON v.cliente_id = cl.cliente_id
-            WHERE v.caja_id = ? AND v.estado = 'Completada'
+            WHERE v.caja_id = ? AND v.estado IN ('Completada','Modificado','Devuelto')
             ORDER BY v.created_at ASC
         ");
         $stmtV->execute([$verCorte]);
@@ -147,7 +160,7 @@ if ($verCorte) {
     .stat { background: white; border-radius: 8px; padding: 14px; border: 0.5px solid #e8e8e8; border-top: 3px solid #14ace7; }
     .stat p { font-size: 11px; color: #999; margin: 0 0 4px; text-transform: uppercase; }
     .stat h3 { font-size: 20px; font-weight: 700; color: #222; margin: 0; }
-    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 13px; margin-bottom: 13px; display: flex; gap: 10px; align-items: flex-end; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 13px; margin-bottom: 13px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
     .filtro-group { display: flex; flex-direction: column; gap: 4px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
     .filtro-group input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
@@ -228,13 +241,6 @@ if ($verCorte) {
     <div class="content">
         <!-- Lista de cortes -->
         <div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                <h1 style="font-size:18px;color:#222;font-weight:600;">Historial de Cortes</h1>
-                <div style="display:flex;gap:8px;">
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
-                </div>
-            </div>
             <div class="stats">
                 <div class="stat"><p>Turnos totales</p><h3><?= count($cortes) ?></h3></div>
                 <div class="stat"><p>Total ventas</p><h3><?= $totalVentas ?></h3></div>
@@ -243,24 +249,30 @@ if ($verCorte) {
 
             <form method="GET">
                 <div class="filtros">
+                    <?php renderSucursalSwitcher(); ?>
                     <div class="filtro-group">
                         <label>Filtrar por fecha</label>
                         <input type="date" name="fecha" value="<?= htmlspecialchars($fecha) ?>">
                     </div>
                     <button class="btn-filtrar" type="submit">Filtrar</button>
                     <?php if ($fecha): ?><a class="btn-limpiar" href="cajero_historialCortes.php">Limpiar</a><?php endif; ?>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
                 </div>
             </form>
 
             <?php if (count($cortes) > 0): ?>
                 <?php foreach ($cortes as $c): ?>
                 <?php
+                    // diferencia=NULL significa que la caja se cerro automaticamente
+                    // (sin arqueo real), no que "no hubo diferencia".
+                    $difSinVerificar = $c['diferencia'] === null;
                     $dif = floatval($c['diferencia'] ?? 0);
-                    $difClass = $dif == 0 ? 'dif-ok' : ($dif < 0 ? 'dif-neg' : 'dif-pos');
-                    $difLabel = $dif == 0 ? 'Cuadrada' : ($dif < 0 ? '-$'.number_format(abs($dif),2) : '+$'.number_format($dif,2));
+                    $difClass = $difSinVerificar ? 'dif-neg' : ($dif == 0 ? 'dif-ok' : ($dif < 0 ? 'dif-neg' : 'dif-pos'));
+                    $difLabel = $difSinVerificar ? 'Sin verificar' : ($dif == 0 ? 'Cuadrada' : ($dif < 0 ? '-$'.number_format(abs($dif),2) : '+$'.number_format($dif,2)));
                     $esSeleccionado = $verCorte === intval($c['caja_id']);
                 ?>
-                <a href="cajero_historialCortes.php?ver=<?= $c['caja_id'] ?><?= $fecha?'&fecha='.$fecha:'' ?>"
+                <a href="cajero_historialCortes.php?ver=<?= $c['caja_id'] ?><?= $fecha?'&fecha='.$fecha:'' ?><?= $sucursalVista?'&sucursal='.$sucursalVista:'' ?>"
                    class="corte-item <?= $esSeleccionado?'seleccionado':'' ?>"
                    style="text-decoration:none;display:block;">
                     <div class="corte-header">
@@ -289,8 +301,11 @@ if ($verCorte) {
                     </div>
                     <div class="corte-desglose">
                         <span>Ef: $<?= number_format($c['ef']+$c['mixto_ef'],2) ?></span>
-                        <span>Term: $<?= number_format($c['term'],2) ?></span>
+                        <span>Term: $<?= number_format($c['term']+$c['mixto_term'],2) ?></span>
                         <span>Cred: $<?= number_format($c['cred'],2) ?></span>
+                        <?php if (floatval($c['transf']) > 0): ?>
+                        <span>Transf: $<?= number_format($c['transf'],2) ?></span>
+                        <?php endif; ?>
                     </div>
                 </a>
                 <?php endforeach; ?>
@@ -315,7 +330,12 @@ if ($verCorte) {
                         <div class="det-fila"><span>Monto apertura</span><span>$<?= number_format($detalleCorte['monto_apertura'],2) ?></span></div>
                     </div>
 
-                    <?php if ($detalleCorte['estado'] === 'Cerrada'): ?>
+                    <?php if ($detalleCorte['estado'] === 'Cerrada' && $detalleCorte['diferencia'] === null): ?>
+                    <div class="det-seccion">
+                        <h4>Resultado del corte</h4>
+                        <div class="dif-box faltante">⚠ Cierre automático — no se registró un conteo de efectivo para este turno.</div>
+                    </div>
+                    <?php elseif ($detalleCorte['estado'] === 'Cerrada'): ?>
                     <div class="det-seccion">
                         <h4>Resultado del corte</h4>
                         <div class="det-fila"><span>Efectivo esperado</span><span>$<?= number_format($detalleCorte['monto_esperado']??0,2) ?></span></div>
@@ -375,5 +395,3 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 <script src="../includes/auto_filter.js"></script>
 </body>
 </html>
-
-

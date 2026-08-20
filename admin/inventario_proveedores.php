@@ -7,10 +7,12 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 if (isset($_GET['eliminar'])) {
+    requerirCSRF($_GET['_token'] ?? '', 'inventario_proveedores.php');
     $pdo->prepare("UPDATE proveedores SET activo = 0 WHERE proveedor_id = ?")->execute([intval($_GET['eliminar'])]);
     header('Location: inventario_proveedores.php?msg=eliminado'); exit();
 }
 if (isset($_GET['toggle'])) {
+    requerirCSRF($_GET['_token'] ?? '', 'inventario_proveedores.php');
     $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval($_GET['toggle'])]);
     header('Location: inventario_proveedores.php'); exit();
 }
@@ -24,6 +26,7 @@ if (isset($_GET['editar'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_proveedores.php');
     $nombre    = trim($_POST['nombre'] ?? '');
     $telefono  = trim($_POST['telefono'] ?? '');
     $correo    = trim($_POST['correo'] ?? '');
@@ -32,6 +35,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id        = intval($_POST['proveedor_id'] ?? 0);
 
     if (!$nombre) $errores[] = 'El nombre es obligatorio.';
+
+    if ($nombre && empty($errores)) {
+        $stmtDup = $pdo->prepare("SELECT proveedor_id FROM proveedores WHERE LOWER(nombre) = LOWER(?) AND proveedor_id != ? AND activo = 1");
+        $stmtDup->execute([$nombre, $id]);
+        if ($stmtDup->fetch()) $errores[] = 'Ya existe un proveedor activo con ese nombre.';
+    }
 
     if (empty($errores)) {
         if ($id) {
@@ -275,10 +284,10 @@ if ($editando) {
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="inventario_proveedores.php?editar=<?= $p['proveedor_id'] ?>">Editar</a>
-                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="inventario_proveedores.php?toggle=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Confirmar cambio?')">
+                                    <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="inventario_proveedores.php?toggle=<?= $p['proveedor_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Confirmar cambio?')">
                                         <?= $p['activo']?'Desactivar':'Activar' ?>
                                     </a>
-                                    <a class="btn-accion btn-eliminar" href="inventario_proveedores.php?eliminar=<?= $p['proveedor_id'] ?>" onclick="return confirm('¿Eliminar proveedor?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="inventario_proveedores.php?eliminar=<?= $p['proveedor_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar proveedor?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -298,6 +307,7 @@ if ($editando) {
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="proveedor_id" value="<?= $editando['proveedor_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>

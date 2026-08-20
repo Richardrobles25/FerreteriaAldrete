@@ -691,6 +691,23 @@ Incluido en todos los módulos con opción de exportar. Contiene funciones reuti
 
 ---
 
+## 12.5 Migración de módulos a `admin/` (2026-08-19)
+
+Con el rol Inventario/Cajero cerrado, se migró el contenido de los submenús **Inventario** y **Cajero** dentro de `admin/` (que ya existían pero con versiones viejas/desactualizadas) usando la lógica ya auditada de `cajeroInventario/`, adaptada para que el Administrador opere sobre la sucursal que elige en un combo box, en vez de la suya propia. 21 archivos tocados (19 páginas + `_admin_sidebar.php` + `_admin_sucursal_filtro.php`).
+
+**No se tocaron** (decisión explícita del dueño, lógica de negocio distinta en admin): `inventario_productos.php`, `inventario_formProducto.php`, `inventario_categorias.php`, `inventario_unidades.php`, `promociones.php`. Tampoco se tocó la lógica de `inventario_paquetes.php` (admin ya tiene su propio alta/edición completo, distinto al de solo-lectura de cajeroInventario) — solo se le agregó CSRF.
+
+**Bugs reales encontrados y corregidos durante la migración** (más allá de CSRF/candados de concurrencia, que se aplicaron sistemáticamente):
+- `admin/inventario_compras.php` y `admin/cajero_ventasPendientes.php` (versión vieja) usaban `productos.stock_actual`, columna que no existe — ambos módulos probablemente ya fallaban en producción antes de la migración.
+- Con dos cajas abiertas en sucursales distintas al mismo tiempo (posible ahora para un Administrador), `ventasPendientes.php` podía registrar la venta contra la caja equivocada si no se filtraba también por sucursal en el re-chequeo dentro del POST.
+- Reportes con JOIN/WHERE `sucursal_id = ?` sin condicionar: al ver "Todas las sucursales" (valor **por defecto** al iniciar sesión como Administrador, no algo que hay que elegir a propósito) esos reportes mostraban "sin datos" o estadísticas en cero aunque sí había información. Encontrado por el dueño probando manualmente contra su propio servidor con datos reales — **las pruebas automatizadas de esta sesión no cubrieron consistentemente el caso "Todas las sucursales" en cada reporte**, solo sucursales específicas, y ese hueco dejó pasar el bug. Afectó a `inventario_masVendidos.php` (confirmado por el dueño), `cajero_historialVentas.php` (listado de ventas, movimientos de caja, devoluciones, y el detalle de venta por AJAX), el detalle de compra (`?ver=`) en `inventario_compras.php`, y las estadísticas/alertas de `inventario_inicio.php` y `cajero_inicio.php`. Corregido en los 5 archivos condicionando el filtro (`sucursal_id = ?` solo cuando la sucursal elegida no es "todas") y re-verificado con datos reales en dos sucursales — 12 pruebas nuevas, más las 128 anteriores repetidas sin regresiones.
+- 2 reportes de exportación (Excel/PDF) ignoraban el filtro de sucursal ya seleccionado en pantalla; uno usaba una columna (`monto_contado`) que tampoco existe.
+- 3 links internos rotos (nombre de archivo duplicado en la URL, ej. `inventario_inventario_historial.php`).
+
+**Metodología de verificación:** servidor local aislado por lote de trabajo (nunca el del dueño), harness `TestClient` (curl + cookies) con fixtures propios creados y borrados en cada corrida, cubriendo CSRF, aislamiento entre sucursales, y — tras el hallazgo anterior — el caso "todas las sucursales" explícitamente. 140 pruebas en total, repetidas juntas al final sin ninguna regresión. Esto no reemplaza probar la pantalla real en el navegador con datos de producción, que fue precisamente lo que reveló el bug de arriba.
+
+---
+
 ## 13. Archivos de Documentación
 
 | Archivo | Contenido |

@@ -14,15 +14,22 @@ $detalle    = null;
 $detalleProductos = [];
 
 if ($verDetalle) {
+    // [FIX-M2] Filtrar por sucursal (mismo filtro que la lista) para que no se pueda ver
+    // el detalle de una compra de otra sucursal adivinando/incrementando "?ver=". Con
+    // sucursal=0 ("Todas las sucursales") el admin ya esta viendo todas, asi que no aplica
+    // el candado por sucursal especifica.
+    $condSucDet = ($sucursalVista !== 0) ? ' AND cp.sucursal_id = ?' : '';
     $stmt = $pdo->prepare("
         SELECT cp.*, p.nombre AS nombre_proveedor, s.nombre AS nombre_sucursal, u.nombre_completo AS usuario
         FROM compras_proveedor cp
         JOIN proveedores p ON cp.proveedor_id = p.proveedor_id
         JOIN sucursales s ON cp.sucursal_id = s.sucursal_id
         JOIN usuarios u ON cp.usuario_id = u.usuario_id
-        WHERE cp.compras_proveedor_id = ?
+        WHERE cp.compras_proveedor_id = ? $condSucDet
     ");
-    $stmt->execute([$verDetalle]);
+    $paramsDet = [$verDetalle];
+    if ($sucursalVista !== 0) { $paramsDet[] = $sucursalVista; }
+    $stmt->execute($paramsDet);
     $detalle = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($detalle) {
@@ -37,49 +44,107 @@ if ($verDetalle) {
     }
 }
 
-// ── Migración: asegurar columna proveedor_id en movimientos_inventario ────────
-$colExiste = $pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME   = 'movimientos_inventario'
-      AND COLUMN_NAME  = 'proveedor_id'")->fetchColumn();
-if (!$colExiste) {
-    $pdo->exec("ALTER TABLE movimientos_inventario ADD COLUMN proveedor_id INT NULL DEFAULT NULL");
-}
-
 // Procesar nueva compra
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
+    // [FIX] Verificar CSRF antes de procesar la compra
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_compras.php');
     $proveedor_id = intval($_POST['proveedor_id'] ?? 0);
     $notas        = trim($_POST['notas'] ?? '');
     $items        = json_decode($_POST['items'] ?? '[]', true);
 
+    if ($sucursalVista === 0) $errores[] = 'Selecciona una sucursal específica para registrar una compra.';
     if (!$proveedor_id)    $errores[] = 'Selecciona un proveedor.';
-    if (empty($items))     $errores[] = 'Agrega al menos un producto.';
+    if (!is_array($items) || empty($items)) $errores[] = 'Agrega al menos un producto.';
+
+    // [FIX] Validar cada item ANTES de escribir nada en la base de datos.
+    if (empty($errores)) {
+        foreach ($items as $item) {
+            $prodIdChk = intval($item['producto_id'] ?? 0);
+            $cantChk   = floatval($item['cantidad'] ?? 0);
+            $precChk   = floatval($item['precio_unitario'] ?? -1);
+            if ($prodIdChk <= 0) {
+                $errores[] = 'Uno de los productos del carrito es inválido.';
+                break;
+            }
+            if ($cantChk <= 0) {
+                $errores[] = 'La cantidad de "' . ($item['nombre'] ?? 'un producto') . '" debe ser mayor a 0.';
+                break;
+            }
+            if ($precChk < 0) {
+                $errores[] = 'El precio unitario de "' . ($item['nombre'] ?? 'un producto') . '" no puede ser negativo.';
+                break;
+            }
+        }
+    }
 
     if (empty($errores)) {
-        $total = array_sum(array_map(fn($i) => $i['cantidad'] * $i['precio_unitario'], $items));
+        // [FIX] Envolver toda la compra en una transacción: o se guarda completa, o no se
+        // guarda nada. También se bloquea cada fila de stock con FOR UPDATE.
+        $pdo->beginTransaction();
+        try {
+            $total = array_sum(array_map(fn($i) => floatval($i['cantidad']) * floatval($i['precio_unitario']), $items));
 
-        $stmt = $pdo->prepare("INSERT INTO compras_proveedor (proveedor_id, usuario_id, sucursal_id, total, notas) VALUES (?,?,?,?,?)");
-        $stmt->execute([$proveedor_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $total, $notas]);
-        $compra_id = $pdo->lastInsertId();
+            $stmt = $pdo->prepare("INSERT INTO compras_proveedor (proveedor_id, usuario_id, sucursal_id, total, notas) VALUES (?,?,?,?,?)");
+            $stmt->execute([$proveedor_id, $_SESSION['usuario_id'], $sucursalVista, $total, $notas]);
+            $compra_id = $pdo->lastInsertId();
 
-        foreach ($items as $item) {
-            $subtotal = $item['cantidad'] * $item['precio_unitario'];
-            $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
-                ->execute([$compra_id, $item['producto_id'], $item['cantidad'], $item['precio_unitario'], $subtotal]);
+            foreach ($items as $item) {
+                $prodId   = intval($item['producto_id']);
+                $cantidad = floatval($item['cantidad']);
+                $precio   = floatval($item['precio_unitario']);
+                $subtotal = round($cantidad * $precio, 2);
 
-            $stmtS = $pdo->prepare("SELECT stock_actual FROM productos WHERE producto_id = ?");
-            $stmtS->execute([$item['producto_id']]);
-            $stockAnterior = $stmtS->fetchColumn();
-            $stockNuevo    = $stockAnterior + $item['cantidad'];
+                $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
+                    ->execute([$compra_id, $prodId, $cantidad, $precio, $subtotal]);
 
-            $pdo->prepare("UPDATE productos SET stock_actual = ? WHERE producto_id = ?")->execute([$stockNuevo, $item['producto_id']]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,?,'Entrada',?,?,?,?,?)")
-                ->execute([$item['producto_id'], $_SESSION['usuario_id'], $sucursalVista, $item['cantidad'], $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
+                $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtS->execute([$prodId, $sucursalVista]);
+                $stockActualRow = $stmtS->fetchColumn();
+                if ($stockActualRow === false) {
+                    throw new Exception('Uno de los productos no tiene inventario configurado en esta sucursal.');
+                }
+                $stockAnterior = floatval($stockActualRow);
+                $stockNuevo    = $stockAnterior + $cantidad;
+
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $prodId, $sucursalVista]);
+
+                if (!empty($item['actualizar_precio'])) {
+                    $nuevoPrecioCompra = $precio;
+                    $stmtPrecios = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
+                    $stmtPrecios->execute([$prodId]);
+                    $precios = $stmtPrecios->fetch(PDO::FETCH_ASSOC);
+
+                    $precioCompraViejo  = floatval($precios['precio_compra']);
+                    $precioVentaViejo   = floatval($precios['precio_venta']);
+                    $precioMayoreoViejo = floatval($precios['precio_mayoreo']);
+
+                    if ($precioCompraViejo > 0) {
+                        $margenVenta   = ($precioVentaViejo - $precioCompraViejo) / $precioCompraViejo;
+                        $margenMayoreo = $precioMayoreoViejo > 0 ? ($precioMayoreoViejo - $precioCompraViejo) / $precioCompraViejo : 0;
+                        $nuevoPrecioVenta   = round($nuevoPrecioCompra * (1 + $margenVenta), 2);
+                        $nuevoPrecioMayoreo = $precioMayoreoViejo > 0 ? round($nuevoPrecioCompra * (1 + $margenMayoreo), 2) : $precioMayoreoViejo;
+                    } else {
+                        $nuevoPrecioVenta   = $precioVentaViejo;
+                        $nuevoPrecioMayoreo = $precioMayoreoViejo;
+                    }
+
+                    $pdo->prepare("UPDATE productos SET precio_compra = ?, precio_venta = ?, precio_mayoreo = ? WHERE producto_id = ?")
+                        ->execute([$nuevoPrecioCompra, $nuevoPrecioVenta, $nuevoPrecioMayoreo, $prodId]);
+                }
+
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, proveedor_id) VALUES (?,?,?,'Entrada',?,?,?,?,?)")
+                    ->execute([$prodId, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, 'Compra a proveedor #'.$compra_id, $proveedor_id]);
+            }
+
+            $pdo->commit();
+            header('Location: inventario_compras.php?msg=creado');
+            exit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            error_log('[Ferreteria/admin/compras] Error al registrar compra: ' . $e->getMessage());
+            $errores[] = 'Error al registrar la compra. Verifica los productos e intenta de nuevo.';
         }
-
-        header('Location: inventario_compras.php?msg=creado');
-        exit();
     }
 }
 
@@ -87,8 +152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
 $busqueda = trim($_GET['buscar'] ?? '');
 $fecha    = $_GET['fecha'] ?? '';
 
-$where  = "WHERE cp.sucursal_id = ?";
-$params = [$sucursalVista];
+$where  = "WHERE 1=1";
+$params = [];
+if ($sucursalVista !== 0) { $where .= " AND cp.sucursal_id = ?"; $params[] = $sucursalVista; }
 if ($busqueda) { $where .= " AND p.nombre LIKE ?"; $params[] = '%'.$busqueda.'%'; }
 if ($fecha)    { $where .= " AND DATE(cp.created_at) = ?"; $params[] = $fecha; }
 
@@ -113,15 +179,20 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
 
-    $expData = $pdo->query("
+    // [FIX] Respetar el mismo filtro de sucursal/busqueda/fecha que la lista en pantalla
+    // (antes exportaba TODAS las compras de TODAS las sucursales sin importar el filtro).
+    $stmtExp = $pdo->prepare("
         SELECT cp.compras_proveedor_id, p.nombre AS proveedor, s.nombre AS sucursal,
                u.nombre_completo AS usuario, cp.total, cp.notas, cp.created_at
         FROM compras_proveedor cp
         JOIN proveedores p ON cp.proveedor_id = p.proveedor_id
         JOIN sucursales s ON cp.sucursal_id = s.sucursal_id
         JOIN usuarios u ON cp.usuario_id = u.usuario_id
+        $where
         ORDER BY cp.created_at DESC
-    ")->fetchAll(PDO::FETCH_ASSOC);
+    ");
+    $stmtExp->execute($params);
+    $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
 
     $titulo = 'Historial de Compras a Proveedores';
     $subtitulo = 'Sucursal: ' . $nombreSucursalVista . ' — Generado: ' . date('d/m/Y H:i');
@@ -365,6 +436,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 </div>
 
                 <form method="POST" id="formCompra">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="proveedor_id" id="inputProveedorId">
                     <input type="hidden" name="items" id="inputItemsCompra">
                     <div class="form-group" style="margin-top:12px;">
@@ -486,9 +558,31 @@ function agregarProdCompra() {
 
     if (!id || cant <= 0 || precio <= 0) { alert('Completa producto, cantidad y precio.'); return; }
 
+    const prod = productosData.find(x => x.producto_id == id);
+    // Alertar visiblemente cuando el producto ya está en la compra (antes se sumaba en silencio)
     const existe = itemsCompra.find(i => i.producto_id == id);
-    if (existe) { existe.cantidad += cant; }
-    else { itemsCompra.push({ producto_id: parseInt(id), nombre, cantidad: cant, precio_unitario: precio }); }
+    if (existe) {
+        const nuevaCant = existe.cantidad + cant;
+        if (!confirm(
+            '"' + nombre + '" ya está en la lista.\n' +
+            'Cantidad actual: ' + existe.cantidad + '\n' +
+            'Se agregará: ' + cant + '\n' +
+            'Nueva cantidad total: ' + nuevaCant + '\n\n' +
+            '¿Confirmar y sumar?'
+        )) return;
+        existe.cantidad = nuevaCant;
+        existe.precio_unitario = precio;
+        existe.prod_data = prod;
+    } else {
+        itemsCompra.push({
+            producto_id:    parseInt(id),
+            nombre,
+            cantidad:       cant,
+            precio_unitario: precio,
+            actualizar_precio: false,
+            prod_data:      prod
+        });
+    }
 
     document.getElementById('prodCompraId').value     = '';
     document.getElementById('prodCompraNombre').value = '';
@@ -496,6 +590,20 @@ function agregarProdCompra() {
     document.getElementById('cantCompra').value       = '';
     document.getElementById('precioCompra').value     = '';
     renderListaCompra();
+}
+
+function calcularNuevosPrecios(prod, nuevoPrecioCompra) {
+    const compraViejo   = parseFloat(prod.precio_compra || 0);
+    const ventaViejo    = parseFloat(prod.precio_venta || 0);
+    const mayoreoViejo  = parseFloat(prod.precio_mayoreo || 0);
+    if (compraViejo <= 0) return { venta: ventaViejo, mayoreo: mayoreoViejo };
+    const margenVenta   = (ventaViejo - compraViejo) / compraViejo;
+    const margenMayoreo = mayoreoViejo > 0 ? (mayoreoViejo - compraViejo) / compraViejo : 0;
+    return {
+        venta:   Math.round(nuevoPrecioCompra * (1 + margenVenta) * 100) / 100,
+        mayoreo: mayoreoViejo > 0 ? Math.round(nuevoPrecioCompra * (1 + margenMayoreo) * 100) / 100 : 0,
+        margenPct: Math.round(margenVenta * 10000) / 100
+    };
 }
 
 function renderListaCompra() {
@@ -508,21 +616,51 @@ function renderListaCompra() {
     }
     let total = 0;
     div.innerHTML = itemsCompra.map(function(i, idx) {
-        const sub = i.cantidad * i.precio_unitario;
+        const sub    = i.cantidad * i.precio_unitario;
         total += sub;
-        return '<div class="compra-item">'
-            + '<div><div style="font-size:13px;">' + i.nombre + '</div>'
-            + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2) + '</div></div>'
-            + '<div style="display:flex;align-items:center;gap:10px;">'
+        const prod   = i.prod_data || {};
+        const compraViejo = parseFloat(prod.precio_compra || 0);
+        const precioChanged = compraViejo > 0 && Math.abs(i.precio_unitario - compraViejo) > 0.001;
+        const nuevos = calcularNuevosPrecios(prod, i.precio_unitario);
+
+        let previewHTML = '';
+        if (i.actualizar_precio && precioChanged) {
+            previewHTML = '<div style="margin-top:6px;background:#fff8e1;border:1px solid #ffe082;border-radius:5px;padding:6px 10px;font-size:11px;color:#555;">'
+                + '<div style="font-weight:700;color:#e65100;margin-bottom:4px;">📋 Actualización de precios (margen ' + nuevos.margenPct + '%)</div>'
+                + '<div>Precio compra: <s style="color:#aaa;">$' + compraViejo.toFixed(2) + '</s> → <strong>$' + i.precio_unitario.toFixed(2) + '</strong></div>'
+                + '<div>Precio venta: <s style="color:#aaa;">$' + parseFloat(prod.precio_venta||0).toFixed(2) + '</s> → <strong style="color:#2e7d32;">$' + nuevos.venta.toFixed(2) + '</strong></div>'
+                + (parseFloat(prod.precio_mayoreo||0) > 0
+                    ? '<div>Precio mayoreo: <s style="color:#aaa;">$' + parseFloat(prod.precio_mayoreo||0).toFixed(2) + '</s> → <strong style="color:#2e7d32;">$' + nuevos.mayoreo.toFixed(2) + '</strong></div>'
+                    : '')
+                + '</div>';
+        } else if (i.actualizar_precio && !precioChanged) {
+            previewHTML = '<div style="margin-top:4px;font-size:11px;color:#aaa;">El precio no cambió, no se actualizará.</div>';
+        }
+
+        return '<div class="compra-item" style="flex-direction:column;align-items:stretch;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;">'
+            + '<div style="flex:1;">'
+            + '<div style="font-size:13px;font-weight:600;">' + i.nombre + '</div>'
+            + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2)
+            + (precioChanged ? ' <span style="color:#e65100;">(antes $' + compraViejo.toFixed(2) + ')</span>' : '') + '</div>'
+            + '<label style="font-size:11px;color:#e65100;display:flex;align-items:center;gap:4px;margin-top:4px;cursor:pointer;">'
+            + '<input type="checkbox" ' + (i.actualizar_precio ? 'checked' : '') + ' onchange="toggleActualizarPrecio(' + idx + ',this.checked)" style="width:auto;margin:0;">'
+            + 'Actualizar precios en inventario'
+            + '</label>'
+            + '</div>'
+            + '<div style="display:flex;align-items:center;gap:10px;margin-left:12px;">'
             + '<span style="font-weight:700;">$' + sub.toFixed(2) + '</span>'
             + '<button class="btn-quitar" onclick="quitarProdCompra(' + idx + ')">×</button>'
-            + '</div></div>';
+            + '</div></div>'
+            + previewHTML
+            + '</div>';
     }).join('');
     document.getElementById('totalCompraValor').textContent = '$' + total.toFixed(2);
     tot.style.display = 'flex';
 }
 
 function quitarProdCompra(i) { itemsCompra.splice(i, 1); renderListaCompra(); }
+function toggleActualizarPrecio(idx, val) { itemsCompra[idx].actualizar_precio = val; }
 
 function prepararCompra() {
     const prov = document.getElementById('proveedorIdCompra').value;

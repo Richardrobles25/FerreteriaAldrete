@@ -33,15 +33,12 @@ if ($_SESSION['rol'] === 'Administrador') {
 }
 
 // Definir $nombreSucursalVista
-$nombreSucursalVista = '';
+$nombreSucursalVista = ($sucursalVista === 0) ? 'Todas las sucursales' : '';
 foreach ($_todasSucursales as $_s) {
     if (intval($_s['sucursal_id']) === $sucursalVista) {
         $nombreSucursalVista = $_s['nombre'];
         break;
     }
-}
-if ($nombreSucursalVista === '') {
-    $nombreSucursalVista = $_SESSION['sucursal_id'] ?? '';
 }
 
 /**
@@ -54,15 +51,29 @@ function renderSucursalSwitcher(): void {
     if ($_SESSION['rol'] !== 'Administrador') return;
     if (empty($_todasSucursales)) return;
 
+    // [FIX] El <select> no estaba dentro de ningun <form>, asi que "this.form.submit()"
+    // fallaba en silencio (this.form era null) y el selector nunca cambiaba de sucursal
+    // al hacer clic. En vez de envolverlo en su propio <form> (que romperia paginas donde
+    // el switcher se llama DENTRO de otro <form> ya existente, creando un <form> anidado
+    // invalido), se navega por JS preservando todos los parametros GET actuales de la URL.
     ?>
 <div class="filtro-group">
     <label>Sucursal</label>
-    <select name="sucursal" onchange="this.form.submit()">
+    <select name="sucursal" onchange="_cambiarSucursalSwitcher(this.value)">
         <option value="0"<?= $sucursalVista === 0 ? ' selected' : '' ?>>Todas las sucursales</option>
         <?php foreach ($_todasSucursales as $_s): ?>
             <option value="<?= intval($_s['sucursal_id']) ?>"<?= intval($_s['sucursal_id']) === intval($sucursalVista) ? ' selected' : '' ?>><?= htmlspecialchars($_s['nombre']) ?></option>
         <?php endforeach; ?>
     </select>
 </div>
+<script>
+if (typeof _cambiarSucursalSwitcher !== 'function') {
+    function _cambiarSucursalSwitcher(val) {
+        var params = new URLSearchParams(window.location.search);
+        params.set('sucursal', val);
+        window.location.search = params.toString();
+    }
+}
+</script>
     <?php
 }

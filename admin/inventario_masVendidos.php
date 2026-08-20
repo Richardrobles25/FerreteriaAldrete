@@ -20,6 +20,12 @@ $fechaDesde = match($periodo) {
     default  => date('Y-m-d', strtotime('-30 days'))
 };
 
+// [FIX] sucursal=0 ("Todas las sucursales") es el valor por DEFECTO al iniciar sesion como
+// Administrador — antes el JOIN exigia "ca.sucursal_id = 0", que ninguna caja real cumple,
+// asi que la pantalla mostraba "sin datos" incluso habiendo ventas todo el año. Ahora, si es
+// 0, el JOIN no filtra por sucursal (agrega todas); si no, filtra como antes.
+$condSucCaja = ($sucursal !== 0) ? ' AND ca.sucursal_id = ?' : '';
+
 $stmt = $pdo->prepare("
     SELECT
         p.producto_id,
@@ -29,20 +35,24 @@ $stmt = $pdo->prepare("
         SUM(vp.cantidad) AS total_vendido,
         SUM(vp.subtotal) AS total_ingresos,
         COUNT(DISTINCT vp.venta_id) AS num_ventas,
-        ss.stock_actual,
+        (SELECT CASE WHEN ? = 0 THEN SUM(ss2.stock_actual) ELSE MAX(CASE WHEN ss2.sucursal_id = ? THEN ss2.stock_actual END) END
+         FROM stock_sucursal ss2 WHERE ss2.producto_id = p.producto_id) AS stock_actual,
         p.precio_venta
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
+    JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
     JOIN productos p ON vp.producto_id = p.producto_id
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
     WHERE v.estado = 'Completada'
       AND DATE(v.created_at) >= ?
-    GROUP BY p.producto_id, ss.stock_actual
+    GROUP BY p.producto_id
     ORDER BY total_vendido DESC
     LIMIT $limite
 ");
-$stmt->execute([$sucursal, $fechaDesde]);
+$paramsMV = [$sucursal, $sucursal];
+if ($sucursal !== 0) { $paramsMV[] = $sucursal; }
+$paramsMV[] = $fechaDesde;
+$stmt->execute($paramsMV);
 $masVendidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Total del periodo para calcular porcentaje
@@ -50,14 +60,15 @@ $stmtTotal = $pdo->prepare("
     SELECT COALESCE(SUM(vp.cantidad),0)
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
+    JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
     JOIN productos p ON vp.producto_id = p.producto_id
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
 ");
-$stmtTotal->execute([$sucursal, $fechaDesde]);
+$paramsTotal = [];
+if ($sucursal !== 0) { $paramsTotal[] = $sucursal; }
+$paramsTotal[] = $fechaDesde;
+$stmtTotal->execute($paramsTotal);
 $totalUnidades = $stmtTotal->fetchColumn() ?: 1;
-
-$sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
 
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
@@ -67,17 +78,21 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         SELECT p.codigo, p.nombre_producto, c.nombre AS categoria,
                SUM(vp.cantidad) AS total_vendido,
                SUM(vp.subtotal) AS total_ingresos,
-               ss.stock_actual
+               (SELECT CASE WHEN ? = 0 THEN SUM(ss2.stock_actual) ELSE MAX(CASE WHEN ss2.sucursal_id = ? THEN ss2.stock_actual END) END
+                FROM stock_sucursal ss2 WHERE ss2.producto_id = p.producto_id) AS stock_actual
         FROM venta_productos vp
         JOIN ventas v ON vp.venta_id = v.venta_id
+        JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
         JOIN productos p ON vp.producto_id = p.producto_id
-        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
         WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
-        GROUP BY p.producto_id, ss.stock_actual
+        GROUP BY p.producto_id
         ORDER BY total_vendido DESC
     ");
-    $stmtExp->execute([$sucursal, $fechaDesde]);
+    $paramsExp = [$sucursal, $sucursal];
+    if ($sucursal !== 0) { $paramsExp[] = $sucursal; }
+    $paramsExp[] = $fechaDesde;
+    $stmtExp->execute($paramsExp);
     $expData = $stmtExp->fetchAll(PDO::FETCH_ASSOC);
 
     $totalUnidadesExp = array_sum(array_column($expData,'total_vendido')) ?: 1;
@@ -212,14 +227,6 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                         <option value="semana" <?= $periodo==='semana'?'selected':'' ?>>Última semana</option>
                         <option value="mes" <?= $periodo==='mes'?'selected':'' ?>>Último mes</option>
                         <option value="año" <?= $periodo==='año'?'selected':'' ?>>Último año</option>
-                    </select>
-                </div>
-                <div class="filtro-group">
-                    <label>Sucursal</label>
-                    <select name="sucursal">
-                        <?php foreach ($sucursales as $s): ?>
-                            <option value="<?= $s['sucursal_id'] ?>" <?= $sucursal===$s['sucursal_id']?'selected':'' ?>><?= htmlspecialchars($s['nombre']) ?></option>
-                        <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="filtro-group">

@@ -6,33 +6,64 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-// Verificar si ya tiene caja abierta
-$stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
-$stmt->execute([$_SESSION['usuario_id']]);
-$cajaAbierta = $stmt->fetch(PDO::FETCH_ASSOC);
+$cajaAbierta     = null;
+$siguienteTurno  = null;
+$cajasAbiertas   = 0;
+$erroresApertura = [];
 
-// Calcular siguiente número de turno para esta sucursal
-$stmtTurno = $pdo->prepare("SELECT COUNT(*) + 1 FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta'");
-$stmtTurno->execute([$_SESSION['sucursal_id']]);
-$siguienteTurno = $stmtTurno->fetchColumn();
+if ($sucursalVista !== 0) {
+    // Verificar si ya tiene caja abierta en la sucursal elegida
+    $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
+    $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
+    $cajaAbierta = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Contar cajas abiertas actualmente en la sucursal
-$stmtAbiertas = $pdo->prepare("SELECT COUNT(*) FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta'");
-$stmtAbiertas->execute([$_SESSION['sucursal_id']]);
-$cajasAbiertas = $stmtAbiertas->fetchColumn();
+    // Turno = cuántas cajas de OTROS usuarios están abiertas en esta sucursal + 1
+    $stmtTurno = $pdo->prepare("
+        SELECT COUNT(*) + 1
+        FROM cajas
+        WHERE sucursal_id = ? AND estado = 'Abierta' AND usuario_id != ?
+    ");
+    $stmtTurno->execute([$sucursalVista, $_SESSION['usuario_id']]);
+    $siguienteTurno = $stmtTurno->fetchColumn();
+
+    // Contar cajas abiertas de otros usuarios en la sucursal (para mostrar aviso)
+    $stmtAbiertas = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM cajas
+        WHERE sucursal_id = ? AND estado = 'Abierta' AND usuario_id != ?
+    ");
+    $stmtAbiertas->execute([$sucursalVista, $_SESSION['usuario_id']]);
+    $cajasAbiertas = $stmtAbiertas->fetchColumn();
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
-    $monto_apertura = floatval($_POST['monto_apertura'] ?? 0);
-    $observaciones  = trim($_POST['observaciones'] ?? '');
+    requerirCSRF($_POST['_token'] ?? '', 'cajero_abrirCaja.php');
 
-    $stmt = $pdo->prepare("
-        INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
-        VALUES (?, ?, ?, ?, 'Abierta', ?)
-    ");
-    $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
-    header('Location: cajero_inicio.php?msg=cajaAbierta');
-    exit();
+    if ($sucursalVista === 0) {
+        $erroresApertura[] = 'Selecciona una sucursal específica para abrir una caja. "Todas las sucursales" es solo de consulta.';
+    } else {
+        $monto_apertura_raw = $_POST['monto_apertura'] ?? '';
+        $monto_apertura     = floatval($monto_apertura_raw);
+        $observaciones      = trim($_POST['observaciones'] ?? '');
+
+        if ($monto_apertura_raw === '' || $monto_apertura < 0) {
+            $erroresApertura[] = 'El monto de apertura es obligatorio y no puede ser negativo.';
+        } elseif ($monto_apertura == 0) {
+            $erroresApertura[] = 'El monto de apertura debe ser mayor a $0.00. Si no tienes fondo inicial, contacta al administrador.';
+        }
+
+        if (empty($erroresApertura)) {
+            $stmt = $pdo->prepare("
+                INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
+                VALUES (?, ?, ?, ?, 'Abierta', ?)
+            ");
+            $stmt->execute([$sucursalVista, $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
+            header('Location: cajero_inicio.php?msg=cajaAbierta');
+            exit();
+        }
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -66,7 +97,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
     .logout-btn:hover { background: rgba(255,255,255,0.3); }
-    .content { flex: 1; padding: 28px; overflow-y: auto; display: flex; justify-content: center; align-items: flex-start; }
+    .content { flex: 1; padding: 28px; overflow-y: auto; display: flex; flex-direction: column; align-items: center; }
+    .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; width: 100%; max-width: 480px; }
+    .filtro-group { display: flex; flex-direction: column; gap: 5px; }
+    .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
+    .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group select:focus { outline: none; border-color: #14ace7; }
     .form-card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 32px; width: 100%; max-width: 480px; }
     .form-card h1 { font-size: 18px; color: #222; margin: 0 0 8px; font-weight: 600; }
     .form-card p { font-size: 13px; color: #888; margin: 0 0 24px; }
@@ -93,8 +129,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
         .topbar-right > span { display: none; }
         .content { padding: 12px !important; display: block !important; }
         .content > div + div { margin-top: 12px; }
-        .card { overflow-x: auto; }
-        th, td { padding: 8px 10px; font-size: 12px; }
         .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
         .logout-btn { padding: 5px 10px; font-size: 11px; }
     }
@@ -106,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Abrir Caja</h2>
+            <h2>Abrir Caja<?= $sucursalVista !== 0 ? ' — ' . htmlspecialchars($nombreSucursalVista) : '' ?></h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
@@ -117,10 +151,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
     </div>
 
     <div class="content">
+        <div class="filtros">
+            <?php renderSucursalSwitcher(); ?>
+        </div>
+
         <div class="form-card">
-            <?php if ($cajaAbierta): ?>
+            <?php if (isset($_GET['msg']) && $_GET['msg'] === 'sinCaja'): ?>
+                <div class="alerta-box" style="background:#fff3e0;border-color:#ffb74d;color:#e65100;">
+                    ⚠ Necesitas abrir una caja en esta sucursal para acceder a ese módulo.
+                </div>
+            <?php endif; ?>
+
+            <?php if ($sucursalVista === 0): ?>
+                <h1>Selecciona una sucursal</h1>
+                <p>Elige una sucursal específica arriba para abrir o consultar su caja. "Todas las sucursales" es solo de consulta en otros módulos.</p>
+            <?php elseif ($cajaAbierta): ?>
                 <h1>Caja en curso</h1>
-                <p>Ya tienes un turno activo en este momento.</p>
+                <p>Ya tienes un turno activo en <?= htmlspecialchars($nombreSucursalVista) ?>.</p>
                 <div class="info-box">
                     <strong>Turno #<?= $cajaAbierta['numero_turno'] ?></strong>
                     Abierta el <?= date('d/m/Y \a \l\a\s H:i', strtotime($cajaAbierta['abierta_en'])) ?>
@@ -129,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                 <a class="btn-ir" href="cajero_nuevaVenta.php">Ir a nueva venta</a>
             <?php else: ?>
                 <h1>Abrir caja</h1>
-                <p>Registra el monto con el que inicias el turno.</p>
+                <p>Registra el monto con el que inicias el turno en <?= htmlspecialchars($nombreSucursalVista) ?>.</p>
 
                 <?php if ($cajasAbiertas > 0): ?>
                     <div class="info-box">
@@ -137,10 +184,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     </div>
                 <?php endif; ?>
 
+                <?php if (!empty($erroresApertura)): ?>
+                    <div style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:14px;">
+                        <?= htmlspecialchars($erroresApertura[0]) ?>
+                    </div>
+                <?php endif; ?>
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
-                        <label>Monto inicial en caja</label>
-                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0" value="0" autofocus>
+                        <label>Monto inicial en caja *</label>
+                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0.01" required autofocus
+                               value="<?= isset($_POST['monto_apertura']) ? htmlspecialchars($_POST['monto_apertura']) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>Observaciones (opcional)</label>
@@ -160,5 +214,3 @@ function toggleSidebar() {
 </script>
 </body>
 </html>
-
-

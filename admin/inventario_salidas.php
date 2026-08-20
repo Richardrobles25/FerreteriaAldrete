@@ -11,33 +11,56 @@ require_once __DIR__ . '/_admin_sucursal_filtro.php';
 $errores = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX] Verificar CSRF antes de procesar la salida
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_salidas.php');
     $producto_id = intval($_POST['producto_id'] ?? 0);
     $cantidad    = floatval($_POST['cantidad'] ?? 0);
     $motivo      = trim($_POST['motivo'] ?? '');
 
+    if ($sucursalVista === 0) $errores[] = 'Selecciona una sucursal específica para registrar una salida.';
     if (!$producto_id) $errores[] = 'Selecciona un producto.';
     if ($cantidad <= 0) $errores[] = 'La cantidad debe ser mayor a 0.';
     if (!$motivo)       $errores[] = 'El motivo es obligatorio.';
 
     if (empty($errores)) {
-        $stmtP = $pdo->prepare("SELECT ss.stock_actual, p.nombre_producto FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
+        $stmtP = $pdo->prepare("
+            SELECT p.nombre_producto, ss.stock_actual, ss.stock_minimo
+            FROM productos p
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            WHERE p.producto_id = ?
+        ");
         $stmtP->execute([$sucursalVista, $producto_id]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
         if (!$prod) {
             $errores[] = 'Producto no encontrado.';
         } elseif ($cantidad > $prod['stock_actual']) {
-            $errores[] = 'La cantidad no puede ser mayor al stock actual ('.$prod['stock_actual'].' disponibles).';
+            $errores[] = 'La cantidad no puede ser mayor al stock actual (' . floatval($prod['stock_actual']) . ' disponibles).';
         } else {
-            $stockAnterior = $prod['stock_actual'];
-            $stockNuevo    = $stockAnterior - $cantidad;
+            // [FIX] Bloquear la fila de stock dentro de una transacción y revalidar con el
+            // valor más reciente: dos salidas simultáneas del mismo producto podían pisarse
+            // o dejar stock negativo si ambas pasaban el chequeo de arriba con el mismo valor.
+            $pdo->beginTransaction();
+            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtLockStock->execute([$producto_id, $sucursalVista]);
+            $stockAnterior = floatval($stmtLockStock->fetchColumn());
 
-            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $sucursalVista]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
-                ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo]);
+            if ($cantidad > $stockAnterior) {
+                $pdo->rollBack();
+                $errores[] = 'La cantidad no puede ser mayor al stock actual (' . $stockAnterior . ' disponibles).';
+            } else {
+                $stockNuevo = $stockAnterior - $cantidad;
 
-            header('Location: inventario_salidas.php?msg=exito');
-            exit();
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $sucursalVista]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
+                    ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo]);
+                $pdo->commit();
+
+                $stockMinimo = floatval($prod['stock_minimo'] ?? 0);
+                $msgRedir = ($stockMinimo > 0 && $stockNuevo < $stockMinimo) ? 'exito_minimo' : 'exito';
+                header('Location: inventario_salidas.php?msg=' . $msgRedir);
+                exit();
+            }
         }
     }
 }
@@ -47,14 +70,13 @@ $stmt = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-    WHERE m.tipo = 'Salida'
+    WHERE m.tipo = 'Salida' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
     ORDER BY m.created_at DESC LIMIT 30
 ");
 $stmt->execute([$sucursalVista]);
 $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 AND ss.stock_actual > 0 ORDER BY p.nombre_producto ASC");
+$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 AND ss.stock_actual > 0 ORDER BY p.nombre_producto ASC");
 $stmt->execute([$sucursalVista]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -162,17 +184,23 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito'): ?>
                     <div class="msg msg-exito">Salida registrada correctamente.</div>
                 <?php endif; ?>
+                <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito_minimo'): ?>
+                    <div class="msg" style="background:#fff8e1;color:#e65100;border-left:3px solid #e65100;">
+                        ⚠️ Salida registrada, pero el stock quedó por debajo del mínimo establecido.
+                    </div>
+                <?php endif; ?>
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>
 
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Producto *</label>
                         <select name="producto_id" onchange="mostrarStock(this)">
                             <option value="">-- Selecciona un producto --</option>
                             <?php foreach ($productos as $p): ?>
-                                <option value="<?= $p['producto_id'] ?>" data-stock="<?= $p['stock_actual'] ?>">
+                                <option value="<?= $p['producto_id'] ?>" data-stock="<?= $p['stock_actual'] ?>" data-tipo="<?= htmlspecialchars($p['tipo_venta']) ?>">
                                     <?= htmlspecialchars($p['codigo'].' — '.$p['nombre_producto']) ?> (Stock: <?= number_format($p['stock_actual'],2) ?>)
                                 </option>
                             <?php endforeach; ?>
@@ -245,9 +273,16 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 function mostrarStock(sel) {
     const opt = sel.options[sel.selectedIndex];
     const info = document.getElementById('stockInfo');
+    const inpCant = document.getElementById('inputCantidad');
     if (sel.value) {
         document.getElementById('stockActual').textContent = parseFloat(opt.dataset.stock).toFixed(2);
-        document.getElementById('inputCantidad').max = opt.dataset.stock;
+        inpCant.max = opt.dataset.stock;
+        // Productos "Suelto" (granel) aceptan decimales; el resto solo enteros.
+        if (opt.dataset.tipo === 'Suelto') {
+            inpCant.step = '0.001'; inpCant.min = '0.001';
+        } else {
+            inpCant.step = '1'; inpCant.min = '1';
+        }
         info.style.display = 'block';
     } else { info.style.display = 'none'; }
 }

@@ -6,9 +6,15 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-$stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
-$stmt->execute([$_SESSION['usuario_id']]);
+if ($sucursalVista === 0) {
+    header('Location: cajero_inicio.php?msg=sinCaja');
+    exit();
+}
+
+$stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
+$stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
 $caja = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$caja) {
@@ -23,37 +29,76 @@ $stmtVentas = $pdo->prepare("
         COALESCE(SUM(total),0) AS total_cobrado,
         COALESCE(SUM(CASE WHEN metodo_pago='Efectivo' THEN total ELSE 0 END),0) AS ef,
         COALESCE(SUM(CASE WHEN metodo_pago='Terminal' THEN total ELSE 0 END),0) AS term,
-        COALESCE(SUM(CASE WHEN metodo_pago='Credito' THEN total ELSE 0 END),0) AS cred,
+        COALESCE(SUM(CASE WHEN metodo_pago='Credito'      OR metodo_pago='Crédito' THEN total ELSE 0 END),0) AS cred,
         COALESCE(SUM(CASE WHEN metodo_pago='Mixto' THEN monto_efectivo ELSE 0 END),0) AS mixto_ef,
         COALESCE(SUM(CASE WHEN metodo_pago='Mixto' THEN monto_terminal ELSE 0 END),0) AS mixto_term,
+        COALESCE(SUM(CASE WHEN metodo_pago='Transferencia' THEN total ELSE 0 END),0) AS transf,
         COALESCE(SUM(comision_terminal),0) AS comisiones
     FROM ventas
-    WHERE caja_id = ? AND estado = 'Completada'
+    WHERE caja_id = ? AND estado IN ('Completada', 'Modificado', 'Devuelto')
 ");
 $stmtVentas->execute([$caja['caja_id']]);
 $resumen = $stmtVentas->fetch(PDO::FETCH_ASSOC);
 
-// Ventas pendientes sin liquidar
-$stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE caja_id = ? AND estado = 'Pendiente'");
-$stmtPend->execute([$caja['caja_id']]);
+// Ventas pendientes sin liquidar — del USUARIO, no solo de la caja actual
+$stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE usuario_id = ? AND estado = 'Pendiente'");
+$stmtPend->execute([$_SESSION['usuario_id']]);
 $ventasPendientes = $stmtPend->fetchColumn();
 
-// Efectivo esperado = apertura + efectivo de ventas
-$efectivoEsperado = floatval($caja['monto_apertura']) +
-                    floatval($resumen['ef']) +
-                    floatval($resumen['mixto_ef']);
+// Movimientos de caja (retiros e ingresos) del turno actual
+$stmtMov = $pdo->prepare("
+    SELECT tipo, monto, nota, created_at
+    FROM movimientos_caja
+    WHERE caja_id = ?
+    ORDER BY created_at ASC
+");
+$stmtMov->execute([$caja['caja_id']]);
+$movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
+
+// Separar ingresos: efectivo vs terminal/transferencia (no cuentan como físico en caja)
+$ingresosCash   = array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso' && !preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota']));
+$ingresosNoCash = array_filter($movimientos, fn($m) => $m['tipo'] === 'Ingreso' &&  preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota']));
+$totalIngresosCash   = array_sum(array_column(array_values($ingresosCash),   'monto'));
+$totalIngresosNoCash = array_sum(array_column(array_values($ingresosNoCash), 'monto'));
+$totalIngresos       = $totalIngresosCash + $totalIngresosNoCash;
+// Retiros: los reembolsos por devolución SIEMPRE se entregan en efectivo, así que los
+// retiros de devolución cuentan como salida de caja física. Los retiros con sufijo
+// [Terminal]/[Transferencia] son solo registros antiguos y se mantienen excluidos.
+$retirosCash         = array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro' && !preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota'] ?? ''));
+$retirosNoCash       = array_filter($movimientos, fn($m) => $m['tipo'] === 'Retiro' &&  preg_match('/\[(Terminal|Transferencia)\]$/', $m['nota'] ?? ''));
+$totalRetiros        = array_sum(array_column(array_values($retirosCash),   'monto'));
+$totalRetirosNoCash  = array_sum(array_column(array_values($retirosNoCash), 'monto'));
+
+// Efectivo esperado = apertura + ventas en efectivo + ingresos en efectivo - retiros en efectivo
+$efectivoEsperado = floatval($caja['monto_apertura'])
+                  + floatval($resumen['ef'])
+                  + floatval($resumen['mixto_ef'])
+                  + $totalIngresosCash
+                  - $totalRetiros;
 
 // Procesar cierre
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $monto_cierre  = floatval($_POST['monto_cierre'] ?? 0);
-    $observaciones = trim($_POST['observaciones'] ?? '');
+    // Verificar CSRF antes de procesar el cierre de caja
+    requerirCSRF($_POST['_token'] ?? '', 'cajero_corteCaja.php');
+    // Verificar que el campo no esté vacío antes de convertir a float.
+    // floatval('') = 0.0, lo que permitía cerrar sin escribir nada.
+    $monto_cierre_raw = $_POST['monto_cierre'] ?? '';
+    $observaciones    = trim($_POST['observaciones'] ?? '');
 
-    if ($monto_cierre < 0) $errores[] = 'El monto contado no puede ser negativo.';
+    if ($monto_cierre_raw === '') {
+        $errores[] = 'El monto contado es obligatorio. Escribe la cantidad que encontraste en caja.';
+        $monto_cierre = 0.0;
+    } else {
+        $monto_cierre = floatval($monto_cierre_raw);
+        if ($monto_cierre < 0) $errores[] = 'El monto contado no puede ser negativo.';
+    }
 
     if (empty($errores)) {
         $diferencia = $monto_cierre - $efectivoEsperado;
 
+        // "AND estado = 'Abierta'": un doble envio del formulario (doble clic, reenvio)
+        // ya no sobrescribe el corte con otro monto.
         $pdo->prepare("
             UPDATE cajas SET
                 estado = 'Cerrada',
@@ -62,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 diferencia = ?,
                 observaciones = ?,
                 cerrada_en = NOW()
-            WHERE caja_id = ?
+            WHERE caja_id = ? AND estado = 'Abierta'
         ")->execute([$monto_cierre, $efectivoEsperado, $diferencia, $observaciones, $caja['caja_id']]);
 
         header('Location: cajero_inicio.php?msg=cajaCerrada');
@@ -153,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
-            <h2>Corte de Caja</h2>
+            <h2>Corte de Caja — <?= htmlspecialchars($nombreSucursalVista) ?></h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
@@ -184,7 +229,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <h3>Ventas del turno</h3>
                     <div class="fila"><span>Total de ventas completadas</span><span><?= $resumen['total_ventas'] ?></span></div>
                     <div class="fila"><span>Total cobrado</span><span style="font-weight:700;">$<?= number_format($resumen['total_cobrado'],2) ?></span></div>
-                    <div class="fila"><span>Comisiones de terminal</span><span>-$<?= number_format($resumen['comisiones'],2) ?></span></div>
+                    <?php if (floatval($resumen['comisiones']) > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;">
+                        <span>Incluye comisión de terminal</span>
+                        <span>$<?= number_format($resumen['comisiones'],2) ?></span>
+                    </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Desglose por método -->
@@ -194,8 +244,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>Terminal directa</span><span>$<?= number_format($resumen['term'],2) ?></span></div>
                     <div class="fila"><span>Mixto — parte efectivo</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
                     <div class="fila"><span>Mixto — parte terminal</span><span>$<?= number_format($resumen['mixto_term'],2) ?></span></div>
+                    <?php if (floatval($resumen['transf']) > 0): ?>
+                    <div class="fila"><span>Transferencia bancaria</span><span>$<?= number_format($resumen['transf'],2) ?></span></div>
+                    <?php endif; ?>
                     <div class="fila"><span>Crédito (no cobrado en caja)</span><span>$<?= number_format($resumen['cred'],2) ?></span></div>
                 </div>
+
+                <!-- Movimientos de caja del turno -->
+                <?php if (count($movimientos) > 0): ?>
+                <div class="seccion">
+                    <h3>Movimientos de caja</h3>
+                    <?php foreach ($movimientos as $m): ?>
+                    <div class="fila <?= $m['tipo'] === 'Ingreso' ? 'positivo' : 'negativo' ?>">
+                        <span>
+                            <?= $m['tipo'] === 'Ingreso' ? '&#8593;' : '&#8595;' ?>
+                            <?= htmlspecialchars($m['tipo']) ?>
+                            <span style="font-size:11px;color:#aaa;margin-left:6px;"><?= htmlspecialchars($m['nota']) ?></span>
+                        </span>
+                        <span><?= $m['tipo'] === 'Ingreso' ? '+' : '-' ?>$<?= number_format($m['monto'],2) ?></span>
+                    </div>
+                    <?php endforeach; ?>
+                    <?php if (count($movimientos) > 1): ?>
+                    <div class="fila subtotal" style="margin-top:4px;">
+                        <span>Neto de movimientos</span>
+                        <?php $netoMovimientos = $totalIngresos - ($totalRetiros + $totalRetirosNoCash); ?>
+                        <span style="color:<?= $netoMovimientos >= 0 ? '#2e7d32' : '#c0392b' ?>;">
+                            <?= $netoMovimientos >= 0 ? '+' : '' ?>$<?= number_format($netoMovimientos, 2) ?>
+                        </span>
+                    </div>
+                    <?php endif; ?>
+                </div>
+                <?php endif; ?>
 
                 <!-- Efectivo esperado -->
                 <div class="seccion">
@@ -203,6 +282,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>Monto de apertura</span><span>$<?= number_format($caja['monto_apertura'],2) ?></span></div>
                     <div class="fila"><span>+ Ventas en efectivo</span><span>$<?= number_format($resumen['ef'],2) ?></span></div>
                     <div class="fila"><span>+ Efectivo de pagos mixtos</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
+                    <?php if (floatval($resumen['transf']) > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;"><span>↗ Transferencias bancarias <em style="font-size:11px;">(no entran a caja física)</em></span><span>$<?= number_format($resumen['transf'],2) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($totalIngresosCash > 0): ?>
+                    <div class="fila positivo"><span>+ Ingresos en efectivo</span><span>+$<?= number_format($totalIngresosCash,2) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($totalIngresosNoCash > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;"><span>↗ Pagos crédito terminal/transferencia <em style="font-size:11px;">(no afectan caja física)</em></span><span>$<?= number_format($totalIngresosNoCash,2) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($totalRetiros > 0): ?>
+                    <div class="fila negativo"><span>- Retiros de caja (efectivo)</span><span>-$<?= number_format($totalRetiros,2) ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($totalRetirosNoCash > 0): ?>
+                    <div class="fila" style="font-size:12px;color:#888;"><span>↙ Devoluciones antiguas terminal/transferencia <em style="font-size:11px;">(registros previos al cambio; no restan del físico)</em></span><span>-$<?= number_format($totalRetirosNoCash,2) ?></span></div>
+                    <?php endif; ?>
                     <div class="fila total-ef">
                         <span>Total esperado en caja</span>
                         <span>$<?= number_format($efectivoEsperado,2) ?></span>
@@ -221,10 +315,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <form method="POST" onsubmit="return confirmarCierre()">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Monto contado en caja *</label>
                         <input type="number" name="monto_cierre" id="inputMontoCierre"
-                            placeholder="0.00" step="0.01" min="0"
+                            placeholder="0.00" step="0.01" min="0" required
                             oninput="calcularDiferencia(this.value)" autofocus>
                     </div>
 
@@ -272,9 +367,18 @@ function calcularDiferencia(val) {
 }
 
 function confirmarCierre() {
-    const contado    = parseFloat(document.getElementById('inputMontoCierre').value) || 0;
-    const diferencia = contado - efectivoEsperado;
+    const raw     = document.getElementById('inputMontoCierre').value.trim();
+    const contado = parseFloat(raw);
 
+    if (raw === '' || isNaN(contado)) {
+        alert('Escribe el monto que contaste en caja antes de cerrar.');
+        return false;
+    }
+    if (contado === 0 && !confirm('Estás cerrando la caja con $0.00 contados. ¿Es correcto?')) {
+        return false;
+    }
+
+    const diferencia = contado - efectivoEsperado;
     if (Math.abs(diferencia) > 0.01) {
         const tipo = diferencia < 0 ? 'faltante' : 'sobrante';
         return confirm(`Hay un ${tipo} de $${Math.abs(diferencia).toFixed(2)}. ¿Confirmas el cierre de caja?`);
@@ -284,5 +388,3 @@ function confirmarCierre() {
 </script>
 </body>
 </html>
-
-

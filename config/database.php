@@ -1,5 +1,5 @@
 <?php
-/*── SERVIDOR (DigitalOcean) ─────────────────────────────
+//── SERVIDOR (DigitalOcean) ─────────────────────────────
 $host     = '127.0.0.1';
 $port     = '3306';
 $db       = 'ferreteria_aldrete';
@@ -8,7 +8,7 @@ $password = 'Ferreteria2024$';
 
 //───────────────────────────────────────────────────────*/
 
-// ── LOCAL (XAMPP) ─────────────────────────────────────
+/* ── LOCAL (XAMPP) ─────────────────────────────────────
 $host     = '127.0.0.1';
 $port     = '3306';
 $db       = 'ferreteria_aldrete';

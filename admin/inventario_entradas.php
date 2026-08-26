@@ -82,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($sucursalVista === 0) {
     $stmtH = $pdo->prepare("
         SELECT m.cantidad, m.stock_anterior, m.stock_nuevo, m.motivo, m.created_at,
-               p.nombre_producto, p.codigo,
+               p.nombre_producto, p.codigo, p.tipo_venta,
                pr.nombre AS nombre_proveedor
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
@@ -95,7 +95,7 @@ if ($sucursalVista === 0) {
 } else {
     $stmtH = $pdo->prepare("
         SELECT m.cantidad, m.stock_anterior, m.stock_nuevo, m.motivo, m.created_at,
-               p.nombre_producto, p.codigo,
+               p.nombre_producto, p.codigo, p.tipo_venta,
                pr.nombre AS nombre_proveedor
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
@@ -347,7 +347,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                                 <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($h['codigo']) ?></div>
                             </td>
                             <td style="font-size:12px;"><?= htmlspecialchars($h['nombre_proveedor'] ?? '—') ?></td>
-                            <td style="color:#2e7d32;font-weight:700;">+<?= number_format($h['cantidad'],0) ?></td>
+                            <td style="color:#2e7d32;font-weight:700;">+<?= number_format($h['cantidad'], $h['tipo_venta'] === 'Suelto' ? 2 : 0) ?></td>
                             <td style="color:#888;"><?= number_format($h['stock_anterior'],2) ?></td>
                             <td style="font-weight:600;"><?= number_format($h['stock_nuevo'],2) ?></td>
                             <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'—') ?></td>

@@ -162,17 +162,16 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                         <th>Fecha ingreso</th>
                         <th>Antigüedad</th>
                         <th>Sueldo semanal</th>
-                        <th>Vacaciones <?= date('Y') ?></th>
+                        <th>Vacaciones (saldo)</th>
                         <th>Estado</th>
                         <th>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($empleados as $emp):
-                    $diasDisp  = calcVacacionesDisponibles($emp['fecha_ingreso']);
-                    $diasTom   = intval($emp['dias_tomados_anio']);
-                    $diasRest  = max(0, $diasDisp - $diasTom);
-                    $pct       = $diasDisp > 0 ? round(($diasTom / $diasDisp) * 100) : 0;
+                    $tieneDerecho = tieneDerechoVacaciones($emp['fecha_ingreso']);
+                    $diasRest  = $tieneDerecho ? calcSaldoVacaciones($pdo, $emp['empleado_id'], $emp['fecha_ingreso']) : 0;
+                    $pct       = round(($diasRest / 12) * 100);
                 ?>
                 <tr class="<?= $emp['activo'] ? '' : 'inactivo' ?>">
                     <td style="font-weight:600;"><?= htmlspecialchars($emp['nombre']) ?></td>
@@ -180,10 +179,10 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                     <td style="font-size:12px;"><?= calcAntiguedad($emp['fecha_ingreso']) ?></td>
                     <td style="font-weight:700;">$<?= number_format($emp['sueldo_semanal'], 2) ?></td>
                     <td>
-                        <?php if ($diasDisp > 0): ?>
+                        <?php if ($tieneDerecho): ?>
                         <div class="vacaciones-bar">
-                            <div class="vac-bg"><div class="vac-fill" style="width:<?= $pct ?>%"></div></div>
-                            <span style="font-size:11px;color:#555;white-space:nowrap;"><?= $diasTom ?>/<?= $diasDisp ?> dias</span>
+                            <div class="vac-bg"><div class="vac-fill" style="width:<?= min(100,$pct) ?>%"></div></div>
+                            <span style="font-size:11px;color:#555;white-space:nowrap;"><?= $diasRest ?>/12 dias</span>
                         </div>
                         <?php else: ?>
                             <span style="font-size:11px;color:#bbb;">Sin derecho aun</span>

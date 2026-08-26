@@ -278,10 +278,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $importados = 0;
             $omitidos   = 0;
+            $bloqueados = 0;
             $categoriasCache  = []; // evita SELECT repetido para misma categoría
             $categoriasCreadas = [];
             $unidadesCache    = []; // evita INSERT repetido para misma unidad
             $unidadesCreadas  = [];
+
+            // Igual que en cajeroInventario/productos.php: solo el Administrador puede dar
+            // de alta productos/categorías nuevas en el catálogo global. Inventario e
+            // Inventario/Cajero solo pueden actualizar (stock, precios) lo que ya existe.
+            $puedeCrearCatalogo = ($_SESSION['rol'] ?? '') === 'Administrador';
 
             $filasConError = [];
 
@@ -325,7 +331,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     }
 
                     // Auto-crear unidad de medida si no existe en la sucursal (con caché para no repetir INSERT)
-                    if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida])) {
+                    if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida]) && $puedeCrearCatalogo) {
                         $checkUnd = $pdo->prepare("SELECT unidad_id FROM unidades_medida WHERE nombre = ? AND sucursal_id = ? LIMIT 1");
                         $checkUnd->execute([$unidad_medida, $sucursalImport]);
                         if (!$checkUnd->fetchColumn()) {
@@ -348,7 +354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                             $cat = $stmtCat->fetchColumn();
                             if ($cat) {
                                 $categoria_id = (int)$cat;
-                            } else {
+                            } elseif ($puedeCrearCatalogo) {
                                 // Crear categoría nueva automáticamente
                                 $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)")->execute([$nombreCat]);
                                 $categoria_id = (int)$pdo->lastInsertId();
@@ -362,6 +368,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ?");
                     $check->execute([$codigo]);
                     $productoExistente = $check->fetch(PDO::FETCH_ASSOC);
+
+                    if (!$productoExistente && !$puedeCrearCatalogo) {
+                        // Solo el administrador puede agregar productos nuevos al catálogo global
+                        $bloqueados++;
+                        continue;
+                    }
 
                     if ($productoExistente) {
                         $prodId = $productoExistente['producto_id'];
@@ -400,6 +412,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $pdo->commit();
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s).";
+            if ($bloqueados > 0) $exitoImport .= " $bloqueados fila(s) omitida(s): solo el administrador puede dar de alta productos nuevos en el catálogo.";
             if ($sucursalVista === 0) $exitoImport .= ' Solo se actualizó el catálogo global (nombre, precios, categoría) — el stock del Excel se omitió porque no hay una sucursal específica elegida.';
             if ($categoriasCreadas) $exitoImport .= ' Categorías nuevas: ' . implode(', ', array_unique($categoriasCreadas)) . '.';
             if ($unidadesCreadas)   $exitoImport .= ' Unidades nuevas: ' . implode(', ', array_unique($unidadesCreadas)) . '.';

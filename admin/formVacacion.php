@@ -54,24 +54,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $diasTomados = contarDiasVacacion($fecha_inicio, $fecha_fin);
         if ($diasTomados === 0) $errores[] = 'El periodo seleccionado solo abarca domingo (dia no laboral).';
 
-        // Validate disponibles
+        // Validate disponibles: saldo acumulado real (tope 12, no se resetea por año calendario)
         $stmtEmp = $pdo->prepare("SELECT fecha_ingreso FROM empleados WHERE empleado_id=?");
         $stmtEmp->execute([$empleado_id]);
         $empRow = $stmtEmp->fetch(PDO::FETCH_ASSOC);
         if ($empRow) {
-            $diasDisp = calcVacacionesDisponibles($empRow['fecha_ingreso']);
-            if ($diasDisp === 0) {
+            if (!tieneDerechoVacaciones($empRow['fecha_ingreso'])) {
                 $errores[] = 'Este empleado aun no tiene derecho a vacaciones.';
             } else {
-                // Days already taken this year (excluding current record in edit)
-                $stmtTom = $pdo->prepare("
-                    SELECT COALESCE(SUM(dias_tomados),0) AS total
-                    FROM vacaciones
-                    WHERE empleado_id=? AND anio=? AND estado != 'Rechazado' AND vacacion_id != ?");
-                $stmtTom->execute([$empleado_id, $anio, $vacacion_id]);
-                $yaUsados = intval($stmtTom->fetchColumn());
-                if ($yaUsados + $diasTomados > $diasDisp) {
-                    $errores[] = "Este empleado solo tiene $diasDisp dias disponibles en $anio y ya uso $yaUsados. No puede tomar $diasTomados mas.";
+                // Saldo justo antes de que arranque este periodo (no cuenta este mismo registro)
+                $diaAnterior = (new DateTime($fecha_inicio))->modify('-1 day')->format('Y-m-d');
+                $saldoDisp = calcSaldoVacaciones($pdo, $empleado_id, $empRow['fecha_ingreso'], $diaAnterior, $vacacion_id ?: null);
+                if ($diasTomados > $saldoDisp) {
+                    $errores[] = "Este empleado solo tiene $saldoDisp dias acumulados disponibles y no puede tomar $diasTomados.";
                 }
             }
         }
@@ -292,7 +287,9 @@ var empleadosData = <?php
     echo json_encode($empData);
 ?>;
 
-function calcVacacionesDisponibles(fechaIngreso) {
+// Estimado por antiguedad solamente (no conoce el historial de vacaciones ya usadas).
+// El saldo real, acumulado con tope de 12, se valida en el servidor al guardar.
+function estimarTopePorAntiguedad(fechaIngreso) {
     var ingreso = new Date(fechaIngreso);
     var hoy = new Date();
     var anios = hoy.getFullYear() - ingreso.getFullYear();
@@ -335,8 +332,8 @@ function actualizarInfo() {
 
     actualizarAnios(empleadosData[eid]);
 
-    var diasDisp = calcVacacionesDisponibles(empleadosData[eid]);
-    infoBox.innerHTML = 'Dias disponibles este año: <span>' + diasDisp + '</span>';
+    var diasDisp = estimarTopePorAntiguedad(empleadosData[eid]);
+    infoBox.innerHTML = 'Tope acumulable segun antiguedad: <span>' + diasDisp + '</span> <span style="font-weight:400;color:#999;">(el saldo real disponible se valida al guardar)</span>';
     infoBox.style.background = '#eef8ff';
     infoBox.style.borderColor = '#cce5f7';
     infoBox.style.color = '#1a7db5';
@@ -360,9 +357,9 @@ function calcDias() {
         if (dt.getDay() !== 0) dias++;
         dt.setDate(dt.getDate() + 1);
     }
-    var diasDisp = calcVacacionesDisponibles(empleadosData[eid] || '');
+    var diasDisp = estimarTopePorAntiguedad(empleadosData[eid] || '');
     if (diasDisp > 0 && infoBox.style.display !== 'none') {
-        infoBox.innerHTML = 'Dias disponibles: <span>' + diasDisp + '</span> | Solicitud: <span>' + dias + ' dias</span> <span style="font-weight:400;color:#999;">(sin contar domingos)</span>';
+        infoBox.innerHTML = 'Tope acumulable: <span>' + diasDisp + '</span> | Solicitud: <span>' + dias + ' dias</span> <span style="font-weight:400;color:#999;">(sin contar domingos; saldo real se valida al guardar)</span>';
     }
 }
 

@@ -212,20 +212,20 @@ rsort($aniosList);
         <!-- Resumen por empleado -->
         <div class="resumen-grid">
             <?php foreach ($empleados as $emp):
-                $diasDisp = calcVacacionesDisponibles($emp['fecha_ingreso']);
+                $tieneDerecho = tieneDerechoVacaciones($emp['fecha_ingreso']);
+                $diasRest = $tieneDerecho ? calcSaldoVacaciones($pdo, $emp['empleado_id'], $emp['fecha_ingreso']) : 0;
                 $diasTom  = intval($diasTomadosMap[$emp['empleado_id']] ?? 0);
-                $diasRest = max(0, $diasDisp - $diasTom);
-                $pct      = $diasDisp > 0 ? round(($diasTom / $diasDisp) * 100) : 0;
+                $pct      = round(($diasRest / 12) * 100);
             ?>
             <div class="emp-card">
                 <h4><?= htmlspecialchars($emp['nombre']) ?></h4>
-                <?php if ($diasDisp > 0): ?>
+                <?php if ($tieneDerecho): ?>
                     <div class="vac-bar-bg">
                         <div class="vac-bar-fill" style="width:<?= min(100,$pct) ?>%"></div>
                     </div>
                     <div class="vac-nums">
-                        <span class="vac-disp">Tomados: <?= $diasTom ?>/<?= $diasDisp ?></span>
-                        <span class="vac-rest">Restantes: <?= $diasRest ?></span>
+                        <span class="vac-disp">Saldo: <?= $diasRest ?>/12</span>
+                        <span class="vac-rest">Tomados <?= date('Y') ?>: <?= $diasTom ?></span>
                     </div>
                 <?php else: ?>
                     <span class="vac-sin">Sin derecho a vacaciones aun</span>

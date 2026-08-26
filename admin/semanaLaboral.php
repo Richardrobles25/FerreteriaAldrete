@@ -520,13 +520,21 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                             $pagoReg      = $pagosMap[$f['empleado_id']] ?? null;
                             $adelantoFila = $adelantosMap[$f['empleado_id']] ?? 0;
                             $aPagar       = max(0, $f['pago_final'] - $adelantoFila);
+                            // [FIX] El aviso de confirmacion decia siempre "y quedara liquidado" con
+                            // el monto TOTAL del adelanto pendiente, sin importar si el pago de esta
+                            // semana en realidad alcanzaba para cubrirlo completo. El backend (mas
+                            // abajo) ya calcula esto bien (deja el remanente 'Pendiente' si no
+                            // alcanza), pero el mensaje enganaba al administrador haciendole creer
+                            // que el empleado ya no debia nada cuando seguia debiendo una parte.
+                            $adelantoRecuperadoFila = min($adelantoFila, max(0, $f['pago_final']));
+                            $adelantoRestanteFila   = round($adelantoFila - $adelantoRecuperadoFila, 2);
                         ?>
                         <?php if ($pagoReg): ?>
                             <div class="pagado-chip">&#10003; Pagado $<?= number_format($pagoReg['monto_pagado'], 2) ?></div>
                             <div class="pagado-fecha"><?= date('d/m/Y H:i', strtotime($pagoReg['pagado_en'])) ?></div>
                         <?php else: ?>
                             <form method="POST" style="display:inline;"
-                                  onsubmit="return confirm('¿Registrar pago de $<?= number_format($aPagar, 2) ?> a <?= htmlspecialchars(addslashes($f['empleado']), ENT_QUOTES) ?> por la semana <?= $etiquetaSemana ?>?<?= $adelantoFila > 0 ? ' Se descuenta $' . number_format($adelantoFila, 2) . ' de adelanto y quedara liquidado.' : '' ?><?= !$semanaCompleta ? ' OJO: la semana aun esta en curso, el calculo es parcial.' : '' ?>')">
+                                  onsubmit="return confirm('¿Registrar pago de $<?= number_format($aPagar, 2) ?> a <?= htmlspecialchars(addslashes($f['empleado']), ENT_QUOTES) ?> por la semana <?= $etiquetaSemana ?>?<?= $adelantoRecuperadoFila > 0.001 ? ' Se descuenta $' . number_format($adelantoRecuperadoFila, 2) . ' de adelanto' . ($adelantoRestanteFila > 0.001 ? ' (quedan $' . number_format($adelantoRestanteFila, 2) . ' pendientes para la siguiente semana).' : ' y quedara liquidado.') : '' ?><?= !$semanaCompleta ? ' OJO: la semana aun esta en curso, el calculo es parcial.' : '' ?>')">
                                 <input type="hidden" name="pagar_empleado" value="1">
                                 <input type="hidden" name="empleado_id" value="<?= $f['empleado_id'] ?>">
                                 <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">

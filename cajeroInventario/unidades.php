@@ -12,8 +12,10 @@ $sucursalId = intval($_SESSION['sucursal_id']);
 
 // Eliminar unidad
 if (isset($_GET['eliminar'])) {
-    // [FIX-C5] Solo Administrador puede eliminar unidades de medida
-    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+    // [FIX-CONSISTENCIA] Igual que en admin/inventario_unidades.php: Administrador e
+    // Inventario SI pueden administrar el catalogo de unidades; solo Inventario/Cajero no
+    // puede. Antes esto bloqueaba tambien a Inventario.
+    if (!in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario'], true)) {
         header('Location: unidades.php?msg=no_autorizado');
         exit();
     }
@@ -38,8 +40,10 @@ if (isset($_GET['eliminar'])) {
 
 // Guardar unidad (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // [FIX-C5] Solo Administrador puede crear/editar unidades de medida
-    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+    // [FIX-CONSISTENCIA] Igual que en admin/inventario_unidades.php: Administrador e
+    // Inventario SI pueden administrar el catalogo de unidades; solo Inventario/Cajero no
+    // puede. Antes esto bloqueaba tambien a Inventario.
+    if (!in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario'], true)) {
         header('Location: unidades.php?msg=no_autorizado');
         exit();
     }
@@ -239,7 +243,7 @@ if (isset($_GET['editar'])) {
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
                     <div class="msg msg-error">No puedes eliminar esta unidad porque tiene productos asociados.</div>
                 <?php elseif ($_GET['msg'] === 'no_autorizado'): ?>
-                    <div class="msg msg-error">No tienes permisos para esta acción. Solo el Administrador puede crear, editar o eliminar unidades de medida.</div>
+                    <div class="msg msg-error">No tienes permisos para esta acción. Tu rol no puede crear, editar ni eliminar unidades de medida.</div>
                 <?php endif; ?>
             <?php endif; ?>
 

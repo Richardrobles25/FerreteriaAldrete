@@ -10,8 +10,10 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
-    // [FIX-C5] Solo Administrador puede eliminar categorías (catálogo global compartido)
-    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+    // [FIX-CONSISTENCIA] Igual que en admin/inventario_categorias.php: Administrador e
+    // Inventario SI pueden administrar el catalogo global de categorias; solo
+    // Inventario/Cajero no puede. Antes esto bloqueaba tambien a Inventario.
+    if (!in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario'], true)) {
         header('Location: categorias.php?msg=no_autorizado');
         exit();
     }
@@ -33,8 +35,10 @@ if (isset($_GET['eliminar'])) {
 
 // Guardar categoría (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // [FIX-C5] Solo Administrador puede crear/editar categorías (catálogo global compartido)
-    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+    // [FIX-CONSISTENCIA] Igual que en admin/inventario_categorias.php: Administrador e
+    // Inventario SI pueden administrar el catalogo global de categorias; solo
+    // Inventario/Cajero no puede. Antes esto bloqueaba tambien a Inventario.
+    if (!in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario'], true)) {
         header('Location: categorias.php?msg=no_autorizado');
         exit();
     }
@@ -227,7 +231,7 @@ if (isset($_GET['editar'])) {
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
                     <div class="msg msg-error">No puedes eliminar esta categoría porque tiene productos asociados.</div>
                 <?php elseif ($_GET['msg'] === 'no_autorizado'): ?>
-                    <div class="msg msg-error">No tienes permisos para esta acción. Solo el Administrador puede crear, editar o eliminar categorías.</div>
+                    <div class="msg msg-error">No tienes permisos para esta acción. Tu rol no puede crear, editar ni eliminar categorías del catálogo global.</div>
                 <?php endif; ?>
             <?php endif; ?>
 

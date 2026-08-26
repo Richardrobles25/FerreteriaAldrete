@@ -65,17 +65,76 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
         header('Location: transferencias.php?msg=rechazar_modificacion'); exit();
 
     } elseif ($accion === 'aprobar') {
+        // [FIX-CONSISTENCIA] Igual que admin/inventario_transferencias.php (FIX-MEDIO-C-07):
+        // verificar que el UPDATE realmente afecto una fila — si alguien mas ya
+        // aprobo/rechazo la misma solicitud (o no era el origen), no mostrar exito falso.
         $notaAprobacion = 'Aceptada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Preparar envio a sucursal destino.';
-        $pdo->prepare("
+        $stmtAprob = $pdo->prepare("
             UPDATE transferencias
             SET estado='Aprobada',
                 usuario_aprueba_id=?,
                 notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?))
             WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?
-        ")->execute([$_SESSION['usuario_id'], $notaAprobacion, $id, $miSucursal]);
+        ");
+        $stmtAprob->execute([$_SESSION['usuario_id'], $notaAprobacion, $id, $miSucursal]);
+        if ($stmtAprob->rowCount() === 0) {
+            header('Location: transferencias.php?msg=error_ya_no_pendiente'); exit();
+        }
     } elseif ($accion === 'rechazar') {
-        $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
-            ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
+        $stmtRech = $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?");
+        $stmtRech->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
+        if ($stmtRech->rowCount() === 0) {
+            header('Location: transferencias.php?msg=error_ya_no_pendiente'); exit();
+        }
+    } elseif ($accion === 'cancelar') {
+        // [FIX-CONSISTENCIA] Igual que admin/inventario_transferencias.php (FIX-MEDIO-C-11):
+        // faltaba por completo una ruta de cancelacion para una transferencia "En tránsito" —
+        // si nunca se confirmaba la recepcion, el stock quedaba descontado del origen para
+        // siempre sin llegar a ningun lado ni poder revertirse. Solo el ORIGEN puede cancelar
+        // (es quien fisicamente puede recuperar la mercancia enviada), y solo mientras siga
+        // "En tránsito" (aun no fue recibida).
+        $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? AND estado = 'En tránsito' AND sucursal_origen_id = ?");
+        $stmt->execute([$id, $miSucursal]);
+        $transfCancel = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($transfCancel) {
+            $pdo->beginTransaction();
+            try {
+                $stmtLockCancel = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+                $stmtLockCancel->execute([$id]);
+                $transfCancel = $stmtLockCancel->fetch(PDO::FETCH_ASSOC);
+                if (!$transfCancel || $transfCancel['estado'] !== 'En tránsito' || $transfCancel['sucursal_origen_id'] != $miSucursal) {
+                    $pdo->rollBack();
+                    header('Location: transferencias.php?msg=error_ya_no_transito'); exit();
+                }
+
+                $stmtOrCancel = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtOrCancel->execute([$transfCancel['producto_id'], $miSucursal]);
+                $stockOrCancel = $stmtOrCancel->fetchColumn();
+                $stockAntCancel = ($stockOrCancel !== false) ? floatval($stockOrCancel) : 0.0;
+                $stockNuevoCancel = $stockAntCancel + floatval($transfCancel['cantidad']);
+                if ($stockOrCancel !== false) {
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                        ->execute([$stockNuevoCancel, $transfCancel['producto_id'], $miSucursal]);
+                } else {
+                    $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
+                        ->execute([$transfCancel['producto_id'], $miSucursal, $stockNuevoCancel]);
+                }
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,?)")
+                    ->execute([$transfCancel['producto_id'], $_SESSION['usuario_id'], $miSucursal, $transfCancel['cantidad'], $stockAntCancel, $stockNuevoCancel, 'Transferencia #' . $id . ' cancelada en tránsito — stock regresado al origen']);
+
+                $pdo->prepare("UPDATE transferencias SET estado='Cancelada' WHERE transferencias_id=? AND estado='En tránsito' AND sucursal_origen_id=?")
+                    ->execute([$id, $miSucursal]);
+
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                error_log('[Ferreteria/transferencias] Error al cancelar #' . $id . ': ' . $e->getMessage());
+                header('Location: transferencias.php?msg=error_cancelar'); exit();
+            }
+        } else {
+            header('Location: transferencias.php?msg=error_ya_no_transito'); exit();
+        }
     } elseif ($accion === 'enviar') {
         // El stock del origen se descuenta AL ENVIAR (antes se descontaba hasta que el
         // destino confirmaba recepcion, lo que permitia al origen seguir vendiendo
@@ -533,6 +592,10 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                     'error_envio'           => 'Error al registrar el envio. Intenta de nuevo.',
                     'error_stock_recibir'   => 'No se puede confirmar: la sucursal origen ya no tiene stock suficiente registrado. Contacta a la sucursal origen.',
                     'error_recibir'         => 'Error al confirmar la recepcion. Intenta de nuevo.',
+                    'cancelar'              => 'Transferencia cancelada. El stock regreso a tu sucursal.',
+                    'error_cancelar'        => 'Error al cancelar la transferencia. Intenta de nuevo.',
+                    'error_ya_no_transito'  => 'No se pudo completar: la transferencia ya no esta "En transito" (alguien mas ya la modifico).',
+                    'error_ya_no_pendiente' => 'No se pudo completar: la solicitud ya no esta pendiente (alguien mas ya la aprobo, rechazo, o no eres la sucursal origen).',
                 ]; ?>
                 <?php $esMsgError = str_starts_with($_GET['msg'], 'error'); ?>
                 <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
@@ -581,6 +644,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                 'En tránsito' => 'badge-transito',
                                 'Entregada'   => 'badge-entregada',
                                 'Rechazada'   => 'badge-rechazada',
+                                'Cancelada'   => 'badge-rechazada',
                             ];
                             $bc = $badgeMap[$t['estado']] ?? 'badge-pendiente';
                         ?>
@@ -633,6 +697,11 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     <?php elseif ($t['estado'] === 'En tránsito' && !$esMiOrigen): ?>
                                         <!-- [FIX-A1] Token CSRF en enlace destructivo -->
                                         <a class="btn-accion btn-recibir" href="transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</a>
+                                    <?php elseif ($t['estado'] === 'En tránsito' && $esMiOrigen): ?>
+                                        <!-- [FIX-CONSISTENCIA] Igual que admin/inventario_transferencias.php (FIX-MEDIO-C-11):
+                                             sin esto no habia ninguna accion disponible aqui — una transferencia "En tránsito"
+                                             nunca recibida quedaba con el stock descontado del origen para siempre. -->
+                                        <a class="btn-accion" style="background:#fdecea;color:#c0392b;" href="transferencias.php?accion=cancelar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Cancelar esta transferencia? El stock regresara a tu sucursal. Solo hazlo si de verdad recuperaste la mercancia enviada.')">Cancelar</a>
                                     <?php else: ?>
                                         <span style="color:#aaa;font-size:11px;">—</span>
                                     <?php endif; ?>

@@ -32,7 +32,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmtP->execute([$_SESSION['sucursal_id'], $producto_id]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
-        if (!$prod) {
+        // [FIX-CONSISTENCIA] Igual que en admin/inventario_salidas.php (FIX-ALTO-C-03):
+        // un producto que NO se maneja por Suelto/granel no debe aceptar una salida con
+        // cantidad decimal (ej. 2.5 piezas no tiene sentido para el conteo fisico). Faltaba
+        // aqui esta validacion.
+        if ($prod && $prod['tipo_venta'] !== 'Suelto' && floor($cantidad) != $cantidad) {
+            $errores[] = 'Este producto se maneja por unidad; la cantidad debe ser un número entero.';
+        }
+
+        if (!empty($errores)) {
+            // ya se agrego el error de cantidad no entera; no continuar con el registro.
+        } elseif (!$prod) {
             $errores[] = 'Producto no encontrado.';
         } elseif ($cantidad > $prod['stock_actual']) {
             $errores[] = 'La cantidad no puede ser mayor al stock actual (' . floatval($prod['stock_actual']) . ' disponibles).';

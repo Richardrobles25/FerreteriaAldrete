@@ -1409,7 +1409,12 @@ function generarTicketHTML(venta) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${fmt(venta.comision_terminal)}</span></div>`;
     }
     if (parseFloat(venta.descuento_display) > 0) {
-        html += `<div class="t-fila" style="font-size:11px;"><span>Ahorraste</span><span>-$${fmt(venta.descuento_display)}</span></div>`;
+        // Descuento de cliente: aplica igual sin importar el método de pago. venta.descuento
+        // aquí es solo el descuento de cliente (promos/ajustes ya van en el precio del producto).
+        const pctDescClienteTicket = (parseFloat(venta.subtotal) || 0) > 0
+            ? (parseFloat(venta.descuento_display) / parseFloat(venta.subtotal) * 100) : 0;
+        const etiquetaDescTicket = pctDescClienteTicket > 0 ? `Descuento cliente (${pctDescClienteTicket.toFixed(1)}%)` : 'Ahorraste';
+        html += `<div class="t-fila" style="font-size:11px;"><span>${etiquetaDescTicket}</span><span>-$${fmt(venta.descuento_display)}</span></div>`;
     }
 
     html += `

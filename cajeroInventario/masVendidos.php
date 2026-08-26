@@ -9,8 +9,14 @@ verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 $periodo    = $_GET['periodo'] ?? 'mes';
-$sucursal   = intval($_GET['sucursal'] ?? $_SESSION['sucursal_id']);
+// [FIX-CONSISTENCIA] Igual que admin/inventario_masVendidos.php (FIX-ALTO-C-02): un usuario
+// Inventario/Inventario-Cajero (limitado a su propia sucursal) podia editar ?sucursal= (o el
+// <select> de abajo, que lista TODAS las sucursales sin filtrar por rol) para ver las ventas
+// e ingresos de OTRA sucursal. Solo Administrador puede elegir sucursal libremente.
+$esAdmin  = ($_SESSION['rol'] ?? '') === 'Administrador';
+$sucursal = $esAdmin ? intval($_GET['sucursal'] ?? $_SESSION['sucursal_id']) : intval($_SESSION['sucursal_id']);
 $limite     = intval($_GET['limite'] ?? 20);
+if (!in_array($limite, [10, 20, 50], true)) $limite = 20;
 
 $fechaDesde = match($periodo) {
     'hoy'    => date('Y-m-d'),
@@ -20,15 +26,33 @@ $fechaDesde = match($periodo) {
     default  => date('Y-m-d', strtotime('-30 days'))
 };
 
+// [FIX-CONSISTENCIA] Igual que admin/inventario_masVendidos.php:
+// 1) incluir 'Modificado'/'Devuelto' (FIX-ALTO-F-01/02/03) — antes solo 'Completada'
+//    subestimaba ventas con devolucion parcial (dinero real que si se cobro).
+// 2) restar del devolucion_id via movimientos_inventario la cantidad realmente devuelta —
+//    venta_productos nunca se toca en una devolucion, asi que sin esto la mercancia
+//    devuelta se seguia contando integra como "vendida".
+$devJoinMV = "
+    LEFT JOIN (
+        SELECT d.venta_id, mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS cant_devuelta
+        FROM movimientos_inventario mi
+        JOIN devoluciones d ON mi.devolucion_id = d.devolucion_id
+        WHERE mi.tipo = 'Entrada' AND mi.devolucion_id IS NOT NULL
+        GROUP BY d.venta_id, mi.producto_id, mi.paquete_id
+    ) devmv ON devmv.venta_id = vp.venta_id AND devmv.producto_id = vp.producto_id AND devmv.paquete_id <=> vp.paquete_id
+";
+$cantEfectivaMV = "GREATEST(0, vp.cantidad - COALESCE(devmv.cant_devuelta,0))";
+$subEfectivaMV  = "(vp.subtotal * $cantEfectivaMV / NULLIF(vp.cantidad,0))";
+
 $stmt = $pdo->prepare("
     SELECT
         p.producto_id,
         p.codigo,
         p.nombre_producto,
         c.nombre AS categoria,
-        SUM(vp.cantidad) AS total_vendido,
-        SUM(vp.subtotal) AS total_ingresos,
-        COUNT(DISTINCT vp.venta_id) AS num_ventas,
+        SUM($cantEfectivaMV) AS total_vendido,
+        SUM($subEfectivaMV) AS total_ingresos,
+        COUNT(DISTINCT CASE WHEN $cantEfectivaMV > 0 THEN vp.venta_id END) AS num_ventas,
         ss.stock_actual,
         p.precio_venta
     FROM venta_productos vp
@@ -39,9 +63,10 @@ $stmt = $pdo->prepare("
     JOIN productos p ON vp.producto_id = p.producto_id
     LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-    WHERE v.estado = 'Completada'
+    $devJoinMV
+    WHERE v.estado IN ('Completada','Modificado','Devuelto')
       AND DATE(v.created_at) >= ?
-    GROUP BY p.producto_id, ss.stock_actual
+    GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre, ss.stock_actual, p.precio_venta
     ORDER BY total_vendido DESC
     LIMIT $limite
 ");
@@ -50,13 +75,14 @@ $masVendidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Total del periodo para calcular porcentaje
 $stmtTotal = $pdo->prepare("
-    SELECT COALESCE(SUM(vp.cantidad),0)
+    SELECT COALESCE(SUM($cantEfectivaMV),0)
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
     -- [FIX] Mismo filtro por sucursal de la venta que en la consulta principal
     JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
     JOIN productos p ON vp.producto_id = p.producto_id
-    WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
+    $devJoinMV
+    WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) >= ?
 ");
 $stmtTotal->execute([$sucursal, $fechaDesde]);
 $totalUnidades = $stmtTotal->fetchColumn() ?: 1;
@@ -211,6 +237,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         <option value="año" <?= $periodo==='año'?'selected':'' ?>>Último año</option>
                     </select>
                 </div>
+                <?php if ($esAdmin): ?>
                 <div class="filtro-group">
                     <label>Sucursal</label>
                     <select name="sucursal">
@@ -219,6 +246,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         <?php endforeach; ?>
                     </select>
                 </div>
+                <?php endif; ?>
                 <div class="filtro-group">
                     <label>Mostrar top</label>
                     <select name="limite">

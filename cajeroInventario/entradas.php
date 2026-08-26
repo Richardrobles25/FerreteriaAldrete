@@ -324,9 +324,13 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
 
                     <div class="form-group">
                         <label>Cantidad a ingresar *</label>
+                        <!-- [FIX-MEDIO-C-09] (portado de admin/inventario_entradas.php): faltaba
+                             htmlspecialchars: un valor de cantidad manipulado por POST directo se
+                             reflejaba crudo en el atributo value, permitiendo cerrar el atributo e
+                             inyectar HTML/JS. -->
                         <input type="number" name="cantidad" id="inputCantidad"
                             placeholder="0" step="1" min="1"
-                            value="<?= $_POST['cantidad'] ?? '' ?>">
+                            value="<?= htmlspecialchars($_POST['cantidad'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
                     </div>
 
                     <div class="form-group">

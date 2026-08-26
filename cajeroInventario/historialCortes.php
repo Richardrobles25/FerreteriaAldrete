@@ -270,7 +270,10 @@ if ($verCorte) {
                     $difLabel = $difSinVerificar ? 'Sin verificar' : ($dif == 0 ? 'Cuadrada' : ($dif < 0 ? '-$'.number_format(abs($dif),2) : '+$'.number_format($dif,2)));
                     $esSeleccionado = $verCorte === intval($c['caja_id']);
                 ?>
-                <a href="historialCortes.php?ver=<?= $c['caja_id'] ?><?= $fecha?'&fecha='.$fecha:'' ?>"
+                <?php /* [FIX-CRIT-D3-01] (portado de admin/cajero_historialCortes.php): $fecha
+                (de $_GET) se interpolaba cruda dentro de un href — XSS reflejado. urlencode()
+                la vuelve inerte en un atributo de URL. */ ?>
+                <a href="historialCortes.php?ver=<?= $c['caja_id'] ?><?= $fecha?'&fecha='.urlencode($fecha):'' ?>"
                    class="corte-item <?= $esSeleccionado?'seleccionado':'' ?>"
                    style="text-decoration:none;display:block;">
                     <div class="corte-header">

@@ -216,7 +216,7 @@ if ($fechaDesde !== '' && $fechaHasta !== '') {
     $paramsM[] = $fechaHasta;
 }
 $stmtMov = $pdo->prepare("
-    SELECT m.movimiento_id, m.tipo, m.monto, m.nota, m.created_at,
+    SELECT m.movimiento_id, m.tipo, m.monto, m.nota, m.created_at, m.devolucion_id,
            u.nombre_completo AS cajero
     FROM movimientos_caja m
     LEFT JOIN usuarios u ON m.usuario_id = u.usuario_id
@@ -231,8 +231,15 @@ $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 // Los movimientos de devolución (Retiro/Ingreso por devolución) se muestran en la sección
 // "Devoluciones — movimientos de caja" que consulta directamente la tabla devoluciones.
 // Excluirlos aquí evita que aparezcan doble en "Retiros e ingresos manuales".
-$esAbono = fn($m) => str_starts_with($m['nota'] ?? '', 'Pago crédito') || str_starts_with($m['nota'] ?? '', 'Abono de crédito');
-$esDev   = fn($m) => str_starts_with($m['nota'] ?? '', 'Devolución folio') || str_starts_with($m['nota'] ?? '', 'Cancelación devolución');
+// [FIX-MEDIO-H2-02] (portado de admin/cajero_historialVentas.php): detectar un movimiento
+// de devolución por el texto de la nota ('Devolución folio'/'Cancelación devolución') se
+// rompía con la nota 'Reembolso devolución crédito folio #...' (excedente de crédito ya
+// abonado, ver devoluciones.php) — no calzaba con ninguno de esos dos prefijos, así que
+// se contaba una vez en "Retiros e ingresos manuales" Y otra vez en el bloque de
+// Devoluciones de abajo (que suma por devolucion_id). La columna devolucion_id es la
+// fuente de verdad real de si un movimiento pertenece a una devolución.
+$esAbono = fn($m) => empty($m['devolucion_id']) && (str_starts_with($m['nota'] ?? '', 'Pago crédito') || str_starts_with($m['nota'] ?? '', 'Abono de crédito'));
+$esDev   = fn($m) => !empty($m['devolucion_id']);
 $movAbonos    = array_values(array_filter($movimientos,  $esAbono));
 $movRegulares = array_values(array_filter($movimientos, fn($m) => !$esAbono($m) && !$esDev($m)));
 
@@ -285,10 +292,29 @@ $stmtDevMov = $pdo->prepare("
 $stmtDevMov->execute($paramsDevFecha);
 $devolucionesMov = $stmtDevMov->fetchAll(PDO::FETCH_ASSOC);
 
+// [FIX-MEDIO-H2-03] (portado de admin/cajero_historialVentas.php): los totales de abajo
+// se calculaban sumando solo las filas de $devolucionesMov (LIMIT 50) — en un rango de
+// fechas amplio o mucho volumen el total en pantalla quedaba truncado silenciosamente a
+// solo las 50 más recientes. Se repite la consulta sin LIMIT solo para los totales; la
+// lista visible ($devolucionesMov, con LIMIT 50) no cambia.
+$stmtDevMovTot = $pdo->prepare("
+    SELECT d.procesada_en, d.cancelada_en,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Retiro')  AS monto_retiro_real,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Ingreso') AS monto_ingreso_real
+    FROM devoluciones d
+    JOIN ventas v  ON d.venta_id      = v.venta_id
+    JOIN cajas  ca ON v.caja_id       = ca.caja_id AND ca.sucursal_id = ?
+    LEFT JOIN usuarios u  ON d.usuario_id   = u.usuario_id
+    LEFT JOIN usuarios uc ON d.cancelada_por = uc.usuario_id
+    $whereDevFecha
+");
+$stmtDevMovTot->execute($paramsDevFecha);
+$devolucionesMovTot = $stmtDevMovTot->fetchAll(PDO::FETCH_ASSOC);
+
 // Calcular totales de devoluciones para el período
 $totalSalidaDev  = 0.0; // dinero que salió de caja (retiros activos)
 $totalEntradaDev = 0.0; // dinero que regresó a caja (ingresos por cancelación)
-foreach ($devolucionesMov as $dm) {
+foreach ($devolucionesMovTot as $dm) {
     $enRangoRetiro  = ($fechaDesde === '' && $fechaHasta === '')
         || ($fechaDesde !== '' && $fechaHasta !== '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00' && $dm['procesada_en'] <= $fechaHasta . ' 23:59:59')
         || ($fechaDesde !== '' && $fechaHasta === '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00')

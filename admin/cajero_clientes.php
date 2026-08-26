@@ -69,6 +69,12 @@ if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM clientes WHERE cliente_id = ?");
     $stmt->execute([intval($_GET['editar'])]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
+    // [FIX-CONSISTENCIA] (portado de cajeroInventario/clientes.php): si el ID no existe,
+    // redirigir con error en lugar de mostrar el formulario vacío como si fuera "crear".
+    if ($editando === false) {
+        header('Location: cajero_clientes.php?msg=no_encontrado');
+        exit();
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -90,6 +96,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // nuevaVenta.php, un descuento mayor al total de la venta (total negativo y "cambio"
     // entregado sin haberse cobrado).
     if ($descuento_fijo < 0 || $descuento_fijo > 100) $errores[] = 'El descuento fijo debe estar entre 0 y 100.';
+    // [FIX-CONSISTENCIA] (portado de cajeroInventario/clientes.php): mismas validaciones
+    // de telefono, correo y limite_credito que ya tenia esa pantalla — aqui faltaban.
+    if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
+    if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
+    if ($limite_credito < 0) $errores[] = 'El límite de crédito no puede ser negativo.';
 
     if (empty($errores)) {
         if ($cliente_id) {
@@ -231,6 +242,8 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar: el cliente tiene ventas pendientes.</div>
             <?php elseif (($_GET['msg'] ?? '') === 'error_credito_pendiente'): ?>
                 <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar este cliente porque tiene un crédito pendiente de pago.</div>
+            <?php elseif (($_GET['msg'] ?? '') === 'no_encontrado'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">Cliente no encontrado.</div>
             <?php endif; ?>
 
             <form method="GET" action="cajero_clientes.php">

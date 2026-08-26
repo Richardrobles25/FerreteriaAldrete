@@ -114,6 +114,11 @@ if (isset($_GET['get_productos_all'])) {
 }
 
 if (isset($_GET['get_paquetes'])) {
+    // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-ALTO-B-06): antes no se
+    // filtraba pr.activo/ss.activo — un paquete cuyo componente fue desactivado o retirado de
+    // esta sucursal seguia ofreciendose (paquete fantasma) con menos productos de los que en
+    // realidad requiere. Se excluye el paquete COMPLETO con un NOT EXISTS si cualquiera de sus
+    // componentes esta inactivo o sin stock configurado en esta sucursal.
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_requerida,
@@ -123,8 +128,15 @@ if (isset($_GET['get_paquetes'])) {
         JOIN productos pr ON pp.producto_id = pr.producto_id
         JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
         WHERE pk.activo = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM paquete_productos pp2
+            JOIN productos pr2 ON pp2.producto_id = pr2.producto_id
+            LEFT JOIN stock_sucursal ss2 ON ss2.producto_id = pr2.producto_id AND ss2.sucursal_id = ?
+            WHERE pp2.paquete_id = pk.paquete_id
+              AND (pr2.activo = 0 OR ss2.stock_actual IS NULL OR ss2.activo = 0)
+          )
     ");
-    $stmtPaq->execute([$_SESSION['sucursal_id']]);
+    $stmtPaq->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
     $filas = $stmtPaq->fetchAll(PDO::FETCH_ASSOC);
     $agrupados = [];
     foreach ($filas as $f) {
@@ -153,6 +165,9 @@ if (isset($_GET['get_paquetes'])) {
 // ── AJAX: buscar paquete ─────────────────────────────────────────────────────
 if (isset($_GET['buscar_paquete'])) {
     $termino = trim($_GET['buscar_paquete']);
+    // [FIX-CONSISTENCIA] Ver nota en get_paquetes (FIX-ALTO-B-06): se excluye el paquete
+    // completo (no solo la fila) si algun componente esta inactivo o sin stock configurado
+    // en la sucursal.
     $stmt = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_req,
@@ -163,8 +178,15 @@ if (isset($_GET['buscar_paquete'])) {
         JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
         WHERE pk.activo = 1
           AND (pk.codigo LIKE ? OR pk.nombre LIKE ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM paquete_productos pp2
+            JOIN productos pr2 ON pp2.producto_id = pr2.producto_id
+            LEFT JOIN stock_sucursal ss2 ON ss2.producto_id = pr2.producto_id AND ss2.sucursal_id = ?
+            WHERE pp2.paquete_id = pk.paquete_id
+              AND (pr2.activo = 0 OR ss2.stock_actual IS NULL OR ss2.activo = 0)
+          )
     ");
-    $stmt->execute([$_SESSION['sucursal_id'], '%'.$termino.'%', '%'.$termino.'%']);
+    $stmt->execute([$_SESSION['sucursal_id'], '%'.$termino.'%', '%'.$termino.'%', $_SESSION['sucursal_id']]);
     $filas = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $resultado = [];
     foreach ($filas as $f) {
@@ -215,6 +237,9 @@ if (isset($_GET['buscar_combo'])) {
     $productos = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
     // Paquetes
+    // [FIX-CONSISTENCIA] Ver nota en get_paquetes (FIX-ALTO-B-06): se excluye el paquete
+    // completo (no solo la fila) si algun componente esta inactivo o sin stock configurado
+    // en la sucursal.
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_req,
@@ -225,8 +250,15 @@ if (isset($_GET['buscar_combo'])) {
         JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
         WHERE pk.activo = 1
           AND (pk.codigo LIKE ? OR pk.nombre LIKE ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM paquete_productos pp2
+            JOIN productos pr2 ON pp2.producto_id = pr2.producto_id
+            LEFT JOIN stock_sucursal ss2 ON ss2.producto_id = pr2.producto_id AND ss2.sucursal_id = ?
+            WHERE pp2.paquete_id = pk.paquete_id
+              AND (pr2.activo = 0 OR ss2.stock_actual IS NULL OR ss2.activo = 0)
+          )
     ");
-    $stmtPaq->execute([$sucursal_id, $like, $like]);
+    $stmtPaq->execute([$sucursal_id, $like, $like, $sucursal_id]);
     $filasPaq = $stmtPaq->fetchAll(PDO::FETCH_ASSOC);
 
     $paquetes = [];
@@ -306,8 +338,19 @@ if (isset($_GET['inventario_sucursal'])) {
     if ($buscar) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
     $stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_venta, p.precio_compra, p.precio_mayoreo, p.tipo_venta, p.unidad_medida FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id $where ORDER BY p.nombre_producto ASC LIMIT 50");
     $stmt->execute($params);
+    $filasInv = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-MEDIO-D1-09): consultar
+    // stock de OTRA sucursal es una funcion real (ej. "mandar al cliente a la otra tienda"),
+    // pero el JSON incluia precio_compra (costo) de esa otra sucursal aunque el frontend solo
+    // lo usa al agregar el producto al carrito — y eso solo es posible para la sucursal
+    // PROPIA. Se oculta precio_compra cuando la sucursal consultada no es la propia del
+    // usuario (para Administrador, que ya ve todo, no aplica esta restriccion).
+    if ($_SESSION['rol'] !== 'Administrador' && $sucursal_id !== intval($_SESSION['sucursal_id'])) {
+        foreach ($filasInv as &$filaInv) { $filaInv['precio_compra'] = null; }
+        unset($filaInv);
+    }
     header('Content-Type: application/json');
-    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    echo json_encode($filasInv);
     exit();
 }
 
@@ -472,11 +515,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
             // 2) Validar paquetes: que existan, estén completos y su importe cuadre con su precio
             $gruposPaq = [];
-            foreach ($items as $it) {
+            foreach ($items as $idxIt => $it) {
                 $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
                 if ($pqIdVal) {
                     $gruposPaq[$pqIdVal]['monto']   = ($gruposPaq[$pqIdVal]['monto'] ?? 0) + floatval($it['cantidad']) * floatval($it['precio']);
-                    $gruposPaq[$pqIdVal]['items'][] = $it;
+                    $gruposPaq[$pqIdVal]['items'][] = $it + ['_idx' => $idxIt];
                 }
             }
             foreach ($gruposPaq as $pqIdVal => $grupo) {
@@ -510,6 +553,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 }
                 if (abs($grupo['monto'] - floatval($precioPaqVal) * $combosPaq) > 0.05) {
                     throw new Exception('El importe del paquete no cuadra con su precio.');
+                }
+
+                // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-ALTO-B-13): la
+                // comprobación de arriba solo valida la SUMA del grupo; el reparto por producto
+                // seguía viniendo del cliente, así que un item podía quedar en $0 (o negativo)
+                // mientras otro compensaba de más manteniendo el total correcto — un producto
+                // "gratis" quedaba registrado en venta_productos, explotable luego en
+                // devoluciones individuales o reportes de costo/comisión. Se recalcula el precio
+                // de cada item en el servidor con el mismo reparto proporcional que usa el POS
+                // (último item absorbe el redondeo), ignorando el precio que mandó el cliente.
+                $totalCantPaq = 0;
+                foreach ($reqsPaq as $reqCant) { $totalCantPaq += $reqCant * $combosPaq; }
+                $distribuidoPaq = 0.0;
+                $lastIdxPaq     = count($grupo['items']) - 1;
+                foreach ($grupo['items'] as $iPos => $itPaq) {
+                    $cantTotalPaq = floatval($itPaq['cantidad']);
+                    if ($iPos === $lastIdxPaq) {
+                        $precioUnitPaq = $cantTotalPaq > 0
+                            ? round((floatval($precioPaqVal) * $combosPaq - $distribuidoPaq) / $cantTotalPaq, 2)
+                            : 0;
+                    } else {
+                        $precioUnitPaq = $totalCantPaq > 0
+                            ? round(floatval($precioPaqVal) / $totalCantPaq, 2)
+                            : 0;
+                        $distribuidoPaq += $precioUnitPaq * $cantTotalPaq;
+                    }
+                    $items[$itPaq['_idx']]['precio'] = $precioUnitPaq;
                 }
             }
 
@@ -599,7 +669,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 if (floatval($clienteCredito['limite_credito']) <= 0) {
                     throw new Exception('El límite de crédito del cliente no está configurado.');
                 }
-                $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
+                // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-ALTO-E-07):
+                // antes solo se contaba deuda 'Activo' — un credito que ya paso su
+                // fecha_limite y se marco 'Vencido' dejaba de contar contra el limite, y el
+                // cliente recuperaba cupo completo estando moroso.
+                $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
                 $stmtDeuda->execute([$cliente_id]);
                 $deudaActual = floatval($stmtDeuda->fetchColumn());
                 $disponible  = floatval($clienteCredito['limite_credito']) - $deudaActual;
@@ -619,6 +693,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $numFolio = intval($stmtFolio->fetchColumn());
             $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
 
+            // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-ALTO-D1-03): antes
+            // se guardaban $subtotal/$descuento tal cual llegaron del navegador — solo el
+            // TOTAL se validaba contra lo real, pero ese par tenia un grado de libertad libre
+            // entre si mientras la ecuacion siguiera cuadrando. Ese subtotal/descuento
+            // corruptos alimentan directamente el calculo de reembolso proporcional de
+            // Devoluciones. Se guardan $sumaItems/$descuentoCliente, ya recalculados y
+            // validados en el servidor.
             $stmt = $pdo->prepare("
                 INSERT INTO ventas
                 (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
@@ -626,7 +707,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?,?)
             ");
             $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
-                            $subtotal,$descuento,$comision_terminal,$total,
+                            $sumaItems,$descuentoCliente,$comision_terminal,$total,
                             $metodo_pago,$monto_efectivo,$monto_terminal,$cambio,$notas_venta,
                             $referencia_transferencia]);
             $venta_id = $pdo->lastInsertId();
@@ -649,16 +730,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 // una brecha donde alguien con las herramientas de desarrollador podia
                 // colar un precio "dañado" por debajo de ese piso mas estricto. Se alinea
                 // el servidor con la regla de la pantalla SOLO para items con ajuste.
+                // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-CRIT-D1-02):
+                // antes, cuando precio_compra = $0 (17 de 46 productos reales del catálogo al
+                // momento de la auditoría), el "if ($precioCompraDB > 0)" saltaba TODA la
+                // validación y el precio se aceptaba tal cual — incluyendo $0.00. Ahora, si no
+                // hay precio_compra capturado, se usa como referencia el precio de catálogo (el
+                // menor entre precio_venta y precio_mayoreo, si este último está configurado).
+                // Una promoción vigente con el mismo precio exacto del carrito sigue exenta.
                 if (empty($paqId)) {
-                    $stmtPrecioComp = $pdo->prepare("SELECT precio_compra FROM productos WHERE producto_id = ?");
+                    $stmtPromoChk = $pdo->prepare("
+                        SELECT precio_promocional FROM promociones
+                        WHERE producto_id = ? AND activo = 1
+                          AND (sucursal_id = ? OR sucursal_id IS NULL)
+                          AND CURDATE() BETWEEN fecha_inicio AND fecha_fin
+                        ORDER BY precio_promocional ASC LIMIT 1
+                    ");
+                    $stmtPromoChk->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
+                    $precioPromoChk = $stmtPromoChk->fetchColumn();
+                    $esPrecioPromoValido = ($precioPromoChk !== false && abs(floatval($precioPromoChk) - $precioFinal) < 0.005);
+
+                    $stmtPrecioComp = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
                     $stmtPrecioComp->execute([$item['producto_id']]);
-                    $precioCompraDB = floatval($stmtPrecioComp->fetchColumn());
-                    if ($precioCompraDB > 0) {
-                        $pisoMinimo = ($notaAjuste !== '') ? $precioCompraDB : ($precioCompraDB * 0.5);
-                        if ($precioFinal < $pisoMinimo - 0.005) {
+                    $filaPrecios = $stmtPrecioComp->fetch(PDO::FETCH_ASSOC);
+                    $precioCompraDB = floatval($filaPrecios['precio_compra'] ?? 0);
+
+                    $referenciaFloor = $precioCompraDB;
+                    if ($referenciaFloor <= 0) {
+                        $precioVentaDB   = floatval($filaPrecios['precio_venta'] ?? 0);
+                        $precioMayoreoDB = floatval($filaPrecios['precio_mayoreo'] ?? 0);
+                        if ($precioVentaDB > 0 && $precioMayoreoDB > 0) {
+                            $referenciaFloor = min($precioVentaDB, $precioMayoreoDB);
+                        } else {
+                            $referenciaFloor = max($precioVentaDB, $precioMayoreoDB);
+                        }
+                    }
+
+                    // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-MEDIO-D1-11):
+                    // el piso SIEMPRE es el 100% del costo (antes bajaba a 50% sin nota_ajuste,
+                    // y como el cliente decide si manda la nota, cualquiera podia esquivar el
+                    // piso estricto con solo dejarla vacia). La unica excepcion valida es un
+                    // precio que coincide exactamente con una promocion activa real.
+                    if (!$esPrecioPromoValido) {
+                        if ($referenciaFloor > 0) {
+                            $pisoMinimo = $referenciaFloor;
+                            if ($precioFinal < $pisoMinimo - 0.005) {
+                                throw new Exception("Precio inválido para el producto. Verifica el carrito.");
+                            }
+                        } elseif ($precioFinal <= 0) {
                             throw new Exception("Precio inválido para el producto. Verifica el carrito.");
                         }
                     }
+                }
+
+                // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-MEDIO-D1-07):
+                // antes no se revalidaba que el producto siguiera activo al confirmar la venta
+                // — un carrito armado (y persistido en localStorage) antes de que alguien
+                // desactivara el producto pasaba sin que nada en el servidor lo detectara.
+                $stmtActivoChk = $pdo->prepare("
+                    SELECT p.activo AS producto_activo, ss.activo AS stock_activo
+                    FROM productos p
+                    LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+                    WHERE p.producto_id = ?
+                ");
+                $stmtActivoChk->execute([$_SESSION['sucursal_id'], $item['producto_id']]);
+                $filaActivoChk = $stmtActivoChk->fetch(PDO::FETCH_ASSOC);
+                if (!$filaActivoChk || !$filaActivoChk['producto_activo'] || !$filaActivoChk['stock_activo']) {
+                    throw new Exception("Uno de los productos del carrito ya no está disponible en esta sucursal. Recarga la página e intenta de nuevo.");
                 }
 
                 $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,precio_final,descuento,subtotal,paquete_id,nota_ajuste) VALUES (?,?,?,?,?,0,?,?,?)")

@@ -39,15 +39,32 @@ $fechaDesde = match($periodo) {
 // 0, el JOIN no filtra por sucursal (agrega todas); si no, filtra como antes.
 $condSucCaja = ($sucursal !== 0) ? ' AND ca.sucursal_id = ?' : '';
 
+// [FIX-PRECISION] Igual que en reporteProductos.php: venta_productos nunca se toca cuando
+// hay una devolucion (queda como el registro historico de lo que se vendio originalmente) —
+// solo movimientos_inventario (via devolucion_id) sabe cuanto de cada producto realmente
+// volvio a stock. Sin este JOIN, un producto devuelto (parcial o totalmente) seguia contando
+// integro como "vendido" aqui, inflando el ranking de mas vendidos.
+$devJoinMV = "
+    LEFT JOIN (
+        SELECT d.venta_id, mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS cant_devuelta
+        FROM movimientos_inventario mi
+        JOIN devoluciones d ON mi.devolucion_id = d.devolucion_id
+        WHERE mi.tipo = 'Entrada' AND mi.devolucion_id IS NOT NULL
+        GROUP BY d.venta_id, mi.producto_id, mi.paquete_id
+    ) devmv ON devmv.venta_id = vp.venta_id AND devmv.producto_id = vp.producto_id AND devmv.paquete_id <=> vp.paquete_id
+";
+$cantEfectivaMV = "GREATEST(0, vp.cantidad - COALESCE(devmv.cant_devuelta,0))";
+$subEfectivaMV  = "(vp.subtotal * $cantEfectivaMV / NULLIF(vp.cantidad,0))";
+
 $stmt = $pdo->prepare("
     SELECT
         p.producto_id,
         p.codigo,
         p.nombre_producto,
         c.nombre AS categoria,
-        SUM(vp.cantidad) AS total_vendido,
-        SUM(vp.subtotal) AS total_ingresos,
-        COUNT(DISTINCT vp.venta_id) AS num_ventas,
+        SUM($cantEfectivaMV) AS total_vendido,
+        SUM($subEfectivaMV) AS total_ingresos,
+        COUNT(DISTINCT CASE WHEN $cantEfectivaMV > 0 THEN vp.venta_id END) AS num_ventas,
         (SELECT CASE WHEN ? = 0 THEN SUM(ss2.stock_actual) ELSE MAX(CASE WHEN ss2.sucursal_id = ? THEN ss2.stock_actual END) END
          FROM stock_sucursal ss2 WHERE ss2.producto_id = p.producto_id) AS stock_actual,
         p.precio_venta
@@ -56,6 +73,7 @@ $stmt = $pdo->prepare("
     JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
     JOIN productos p ON vp.producto_id = p.producto_id
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+    $devJoinMV
     WHERE v.estado IN ('Completada','Modificado','Devuelto')
       AND DATE(v.created_at) >= ?
     GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre, p.precio_venta
@@ -70,11 +88,12 @@ $masVendidos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Total del periodo para calcular porcentaje
 $stmtTotal = $pdo->prepare("
-    SELECT COALESCE(SUM(vp.cantidad),0)
+    SELECT COALESCE(SUM($cantEfectivaMV),0)
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
     JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
     JOIN productos p ON vp.producto_id = p.producto_id
+    $devJoinMV
     WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) >= ?
 ");
 $paramsTotal = [];
@@ -89,8 +108,8 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     // Usar el mismo query que ya tiene el archivo pero sin LIMIT
     $stmtExp = $pdo->prepare("
         SELECT p.codigo, p.nombre_producto, c.nombre AS categoria,
-               SUM(vp.cantidad) AS total_vendido,
-               SUM(vp.subtotal) AS total_ingresos,
+               SUM($cantEfectivaMV) AS total_vendido,
+               SUM($subEfectivaMV) AS total_ingresos,
                (SELECT CASE WHEN ? = 0 THEN SUM(ss2.stock_actual) ELSE MAX(CASE WHEN ss2.sucursal_id = ? THEN ss2.stock_actual END) END
                 FROM stock_sucursal ss2 WHERE ss2.producto_id = p.producto_id) AS stock_actual
         FROM venta_productos vp
@@ -98,6 +117,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
         JOIN productos p ON vp.producto_id = p.producto_id
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        $devJoinMV
         WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) >= ?
         GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre
         ORDER BY total_vendido DESC

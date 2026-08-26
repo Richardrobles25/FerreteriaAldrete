@@ -52,17 +52,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nombre = trim($_POST['nombre'] ?? '');
     $id     = intval($_POST['unidad_id'] ?? 0);
 
-    if ($nombre) {
-        if ($id) {
-            $pdo->prepare("UPDATE unidades_medida SET nombre = ? WHERE unidad_id = ? AND sucursal_id = ?")
-                ->execute([$nombre, $id, $sucursalId]);
-            header('Location: unidades.php?msg=editado');
-        } else {
-            $pdo->prepare("INSERT INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                ->execute([$nombre, $sucursalId]);
-            header('Location: unidades.php?msg=creado');
-        }
+    // [FIX-CONSISTENCIA] Igual que admin/inventario_unidades.php (FIX-MEDIO-B-19):
+    // unidades_medida.nombre es VARCHAR(50), pero productos.unidad_medida (donde se copia el
+    // nombre elegido) es VARCHAR(30) — un nombre mas largo se truncaba en silencio al
+    // guardarlo en el producto, desalineandolo del catalogo de unidades.
+    if ($nombre && mb_strlen($nombre) > 30) {
+        header('Location: unidades.php?msg=muy_largo');
         exit();
+    }
+
+    if ($nombre) {
+        // [AUTOFIX] ERROR-UNIT-01 (portado de admin/inventario_unidades.php): capturar
+        // PDOException de clave duplicada en lugar de exponer el error crudo del servidor.
+        try {
+            if ($id) {
+                // [FIX-CONSISTENCIA] Igual que admin/inventario_unidades.php (FIX-MEDIO-B-20 +
+                // FIX-MEDIO-H-07): renombrar una unidad no tocaba los productos que ya la
+                // usaban (productos.unidad_medida es una copia de texto, no una FK) — quedaban
+                // con un nombre de unidad que ya no existe en el catalogo. Se propaga el
+                // renombre a los productos que tenian el nombre viejo exacto, envuelto en una
+                // transaccion para que ambos UPDATE tengan exito o ninguno.
+                $stmtNombreViejo = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?");
+                $stmtNombreViejo->execute([$id, $sucursalId]);
+                $nombreViejo = $stmtNombreViejo->fetchColumn();
+
+                $pdo->beginTransaction();
+                $pdo->prepare("UPDATE unidades_medida SET nombre = ? WHERE unidad_id = ? AND sucursal_id = ?")
+                    ->execute([$nombre, $id, $sucursalId]);
+                if ($nombreViejo !== false && $nombreViejo !== $nombre) {
+                    $pdo->prepare("UPDATE productos SET unidad_medida = ? WHERE unidad_medida = ?")
+                        ->execute([$nombre, $nombreViejo]);
+                }
+                $pdo->commit();
+                header('Location: unidades.php?msg=editado');
+            } else {
+                $pdo->prepare("INSERT INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
+                    ->execute([$nombre, $sucursalId]);
+                header('Location: unidades.php?msg=creado');
+            }
+            exit();
+        } catch (\PDOException $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            if ($e->getCode() === '23000') {
+                header('Location: unidades.php?msg=duplicado');
+                exit();
+            }
+            throw $e;
+        }
     }
 }
 
@@ -244,6 +280,12 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">No puedes eliminar esta unidad porque tiene productos asociados.</div>
                 <?php elseif ($_GET['msg'] === 'no_autorizado'): ?>
                     <div class="msg msg-error">No tienes permisos para esta acción. Tu rol no puede crear, editar ni eliminar unidades de medida.</div>
+                <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
+                    <div class="msg msg-error">El nombre de la unidad no puede tener más de 30 caracteres.</div>
+                <?php elseif ($_GET['msg'] === 'duplicado'): ?>
+                    <div class="msg msg-error">Ya existe una unidad con ese nombre en esta sucursal. Elige un nombre diferente.</div>
+                <?php elseif ($_GET['msg'] === 'error_guardar'): ?>
+                    <div class="msg msg-error">No se pudo guardar la unidad. Intenta de nuevo.</div>
                 <?php endif; ?>
             <?php endif; ?>
 

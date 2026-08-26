@@ -276,6 +276,19 @@ if ($cajaActual) {
     </div>
 
     <div class="content">
+        <?php // [FIX-CONSISTENCIA] (portado de admin/cajero_inicio.php): mostrar los mensajes
+              // de cajaAbierta/cajaCerrada/error_ya_cerrada que corteCaja.php y abrirCaja.php ya
+              // enviaban por redirect — esta pagina no mostraba ninguno, dejando cierres
+              // duplicados (segunda peticion, 0 filas afectadas) sin ninguna explicacion visible. ?>
+        <?php if (isset($_GET['msg'])): ?>
+            <?php if ($_GET['msg'] === 'cajaAbierta'): ?>
+                <div class="msg" style="background:#e8f5e9;color:#2e7d32;border-left:3px solid #2e7d32;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;">Caja abierta correctamente. ¡Buen turno!</div>
+            <?php elseif ($_GET['msg'] === 'cajaCerrada'): ?>
+                <div class="msg" style="background:#e8f5e9;color:#2e7d32;border-left:3px solid #2e7d32;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;">Caja cerrada correctamente.</div>
+            <?php elseif ($_GET['msg'] === 'error_ya_cerrada'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;">Esta caja ya había sido cerrada (probablemente desde otra pestaña o dispositivo). El corte ya está registrado.</div>
+            <?php endif; ?>
+        <?php endif; ?>
         <!-- Estado de caja -->
         <?php if ($cajaActual): ?>
             <div class="caja-status caja-abierta">

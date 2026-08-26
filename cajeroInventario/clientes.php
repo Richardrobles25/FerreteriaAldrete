@@ -25,6 +25,16 @@ if (isset($_GET['eliminar'])) {
         exit();
     }
 
+    // [FIX-ALTO-E-08] (portado de admin/cajero_clientes.php): bloquear tambien si el
+    // cliente tiene un credito Activo/Vencido; sin esto se podia desactivar a un deudor
+    // y perderle el rastro en reportes que filtran por cliente activo.
+    $stmtCredPend = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+    $stmtCredPend->execute([$id]);
+    if ($stmtCredPend->fetchColumn() > 0) {
+        header('Location: clientes.php?msg=error_credito_pendiente');
+        exit();
+    }
+
     $pdo->prepare("UPDATE clientes SET activo = 0 WHERE cliente_id = ?")->execute([$id]);
     header('Location: clientes.php?msg=eliminado');
     exit();
@@ -35,6 +45,21 @@ if (isset($_GET['toggle'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
     $id = intval($_GET['toggle']);
+
+    // [FIX-ALTO-E-08] (portado de admin/cajero_clientes.php): mismo candado que en
+    // eliminar — el toggle no pasaba por ninguna validacion y podia desactivar a un
+    // cliente con deuda viva en un solo clic.
+    $actualToggle = $pdo->prepare("SELECT activo FROM clientes WHERE cliente_id = ?");
+    $actualToggle->execute([$id]);
+    if ($actualToggle->fetchColumn()) {
+        $stmtCredPend2 = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+        $stmtCredPend2->execute([$id]);
+        if ($stmtCredPend2->fetchColumn() > 0) {
+            header('Location: clientes.php?msg=error_credito_pendiente');
+            exit();
+        }
+    }
+
     $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$id]);
     header('Location: clientes.php');
     exit();
@@ -262,7 +287,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php
                 // [AUTOFIX] BUG-03/BUG-05: Agregar mensajes de error para bloqueos y cliente no encontrado
                 $msgsExito = ['creado' => 'Cliente registrado.', 'editado' => 'Cliente actualizado.', 'eliminado' => 'Cliente eliminado.', 'no_encontrado' => 'Cliente no encontrado.'];
-                $msgsError = ['error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.'];
+                $msgsError = ['error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.', 'error_credito_pendiente' => 'No se puede desactivar este cliente porque tiene un crédito pendiente de pago.'];
                 $msgKey = $_GET['msg'];
                 if (isset($msgsExito[$msgKey])):
                 ?>

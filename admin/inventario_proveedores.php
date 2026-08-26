@@ -88,7 +88,7 @@ $mostrarInactivos = isset($_GET['inactivos']);
 
 $where  = $mostrarInactivos ? "WHERE 1=1" : "WHERE p.activo = 1";
 $params = [];
-if ($busqueda)  { $where .= " AND p.nombre LIKE ?"; $params[] = '%'.$busqueda.'%'; }
+if ($busqueda)  { $where .= " AND (p.nombre LIKE ? OR p.telefono LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
 if ($filtrocat) { $where .= " AND pc.categoria_id = ?"; $params[] = $filtrocat; }
 
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {

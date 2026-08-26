@@ -77,7 +77,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $cantidad_inicial = floatval(normalizarNumeroFormulario($cantidad_inicial_raw));
     $proveedores_sel  = $_POST['proveedores'] ?? [];
     $codigos_prov     = $_POST['codigos_prov'] ?? [];
-    $producto_id      = intval($_POST['producto_id'] ?? 0);
+    // [FIX-CRIT] Este archivo es EDIT-ONLY (ver bloque de arriba: sin ?id= redirige de
+    // inmediato) — solo el Administrador puede dar de alta productos nuevos, y esa
+    // restriccion se hacia cumplir unicamente en el GET. El POST seguia confiando en
+    // producto_id tal cual llegaba del formulario: un POST forjado con producto_id=0 (o
+    // apuntando a OTRO producto distinto al validado arriba con stock en la sucursal del
+    // usuario) tomaba la rama de "crear producto nuevo" o editaba un producto arbitrario del
+    // catalogo global, sin pasar por ningun candado de rol. Ahora el ID real siempre viene
+    // de $editando (ya validado contra ?id= + stock_sucursal de ESTE usuario), nunca del
+    // valor que mando el navegador.
+    $producto_id      = intval($editando['producto_id'] ?? 0);
+    if (!$producto_id) {
+        header('Location: productos.php?msg=solo_catalogo');
+        exit();
+    }
 
     if (!$codigo)           $errores[] = 'El código es obligatorio.';
     if (!$nombre_producto)  $errores[] = 'El nombre del producto es obligatorio.';
@@ -97,14 +110,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores)) {
-        // Auto-insertar unidad en la tabla si no existe aún
-        if ($unidad_medida !== '') {
-            $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                ->execute([$unidad_medida, intval($_SESSION['sucursal_id'])]);
-        }
+        // [FIX-CONSISTENCIA] Igual que admin/inventario_formProducto.php (FIX-MEDIO-H-07):
+        // guardar un producto es una secuencia de varias escrituras (catalogo, stock_sucursal,
+        // borrar+re-insertar sus proveedores) que antes corria sin transaccion — una falla a
+        // mitad de la secuencia podia dejar, por ejemplo, el catalogo actualizado pero sus
+        // proveedores borrados sin el re-insertado que los reemplaza.
+        $pdo->beginTransaction();
+        try {
+            // Auto-insertar unidad en la tabla si no existe aún
+            if ($unidad_medida !== '') {
+                $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
+                    ->execute([$unidad_medida, intval($_SESSION['sucursal_id'])]);
+            }
 
-        if ($producto_id) {
-            // Actualizar catálogo (datos compartidos)
+            // Actualizar catálogo (datos compartidos) — este archivo es EDIT-ONLY, nunca crea
+            // productos nuevos (ver candado de $producto_id arriba).
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
                 precio_compra=?,precio_venta=?,precio_mayoreo=?,tipo_venta=?,unidad_medida=?
@@ -117,46 +137,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 UPDATE stock_sucursal SET stock_minimo=?,stock_maximo=?
                 WHERE producto_id=? AND sucursal_id=?
             ")->execute([$stock_minimo,$stock_maximo,$producto_id,$_SESSION['sucursal_id']]);
-        } else {
-            // Insertar en catálogo (sin stock ni sucursal)
-            $pdo->prepare("
-                INSERT INTO productos
-                (categoria_id,codigo,nombre_producto,descripcion,
-                 precio_compra,precio_venta,precio_mayoreo,tipo_venta,unidad_medida,activo)
-                VALUES (?,?,?,?,?,?,?,?,?,1)
-            ")->execute([$categoria_id,$codigo,$nombre_producto,$descripcion,
-                         $precio_compra,$precio_venta,$precio_mayoreo,
-                         $tipo_venta,$unidad_medida ?: null]);
-            $producto_id = $pdo->lastInsertId();
 
-            // Insertar stock para esta sucursal
-            $pdo->prepare("
-                INSERT INTO stock_sucursal (producto_id,sucursal_id,stock_actual,stock_minimo,stock_maximo,activo)
-                VALUES (?,?,?,?,?,1)
-            ")->execute([$producto_id,$_SESSION['sucursal_id'],$cantidad_inicial,$stock_minimo,$stock_maximo]);
-
-            if ($cantidad_inicial > 0) {
-                // [FIX] Se agrega sucursal_id: antes quedaba NULL y el movimiento
-                // no aparecía en el historial de ninguna sucursal
-                $pdo->prepare("
-                    INSERT INTO movimientos_inventario
-                    (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
-                    VALUES (?,?,?,'Entrada',?,0,?,'Inventario inicial')
-                ")->execute([$producto_id,$_SESSION['usuario_id'],$_SESSION['sucursal_id'],$cantidad_inicial,$cantidad_inicial]);
+            // Actualizar proveedores
+            $pdo->prepare("DELETE FROM producto_proveedor WHERE producto_id = ?")->execute([$producto_id]);
+            foreach ($proveedores_sel as $idx => $prov_id) {
+                if (!$prov_id) continue;
+                $cod = $codigos_prov[$idx] ?? '';
+                $pdo->prepare("INSERT INTO producto_proveedor (producto_id,proveedor_id,codigo_proveedor) VALUES (?,?,?)")
+                    ->execute([$producto_id, intval($prov_id), $cod]);
             }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $errores[] = 'No se pudo guardar el producto. Intenta de nuevo.';
         }
 
-        // Actualizar proveedores
-        $pdo->prepare("DELETE FROM producto_proveedor WHERE producto_id = ?")->execute([$producto_id]);
-        foreach ($proveedores_sel as $idx => $prov_id) {
-            if (!$prov_id) continue;
-            $cod = $codigos_prov[$idx] ?? '';
-            $pdo->prepare("INSERT INTO producto_proveedor (producto_id,proveedor_id,codigo_proveedor) VALUES (?,?,?)")
-                ->execute([$producto_id, intval($prov_id), $cod]);
+        if (empty($errores)) {
+            header('Location: productos.php?msg=editado');
+            exit();
         }
-
-        header('Location: productos.php?msg='.($esEdicion?'editado':'creado'));
-        exit();
     }
 }
 

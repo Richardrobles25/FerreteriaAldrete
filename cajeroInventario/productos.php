@@ -131,6 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $importados = 0;
             $omitidos   = 0;
             $bloqueados = 0;
+            $negativos  = 0;
             // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php/inventario_categorias.php:
             // el diseño real es que Administrador e Inventario SI pueden dar de alta catalogo
             // global nuevo; solo Inventario/Cajero no puede (solo agrega del catalogo existente
@@ -152,6 +153,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $tipo_venta     = trim($row[9] ?? 'Unidad');
                 $descripcion    = trim($row[10] ?? '');
                 $unidad_medida  = trim($row[11] ?? '');
+
+                // [FIX-CONSISTENCIA] Igual que admin/inventario_productos.php (FIX-ALTO-B-11):
+                // antes no se validaba el signo de precios/stock — un Excel con una celda
+                // negativa (typo o manipulado) se importaba tal cual, dejando precios
+                // negativos o stock negativo en el catálogo/sucursal.
+                if ($precio_compra < 0 || $precio_venta < 0 || $precio_mayoreo < 0
+                    || $stock_actual < 0 || $stock_minimo < 0 || $stock_maximo < 0) {
+                    $negativos++;
+                    continue;
+                }
 
                 // Auto-crear unidad de medida si no existe en la sucursal
                 if ($unidad_medida !== '') {
@@ -219,7 +230,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             }
 
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
-                . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes." : '');
+                . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes." : '')
+                . ($negativos > 0 ? " $negativos fila(s) omitida(s): precios o cantidades de stock negativos." : '');
         } catch (Exception $e) {
             $erroresImport[] = 'Error al leer el archivo: ' . $e->getMessage();
         }
@@ -275,21 +287,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
         if ($productoEliminar) {
-            $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $_SESSION['sucursal_id']]);
-            // [FIX] Se agrega sucursal_id: antes quedaba NULL y el movimiento
-            // no aparecía en el historial de ninguna sucursal
-            $pdo->prepare("
-                INSERT INTO movimientos_inventario
-                (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-                VALUES (?, ?, ?, 'Ajuste', ?, ?, 0, ?)
-            ")->execute([
-                $id,
-                $_SESSION['usuario_id'],
-                $_SESSION['sucursal_id'],
-                $productoEliminar['stock_actual'],
-                $productoEliminar['stock_actual'],
-                'Producto eliminado: ' . $motivo
-            ]);
+            // [FIX-CONSISTENCIA] Igual que admin/inventario_productos.php (FIX-MEDIO-H-07): la
+            // baja de stock y el registro del movimiento (su unica explicacion en el
+            // historial) eran dos escrituras sueltas — si la segunda fallaba despues de que la
+            // primera ya tuviera exito, el producto desaparecia de la sucursal sin dejar
+            // ningun rastro de motivo ni de quien/cuando lo dio de baja.
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $_SESSION['sucursal_id']]);
+                // [FIX] Se agrega sucursal_id: antes quedaba NULL y el movimiento
+                // no aparecía en el historial de ninguna sucursal
+                $pdo->prepare("
+                    INSERT INTO movimientos_inventario
+                    (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+                    VALUES (?, ?, ?, 'Ajuste', ?, ?, 0, ?)
+                ")->execute([
+                    $id,
+                    $_SESSION['usuario_id'],
+                    $_SESSION['sucursal_id'],
+                    $productoEliminar['stock_actual'],
+                    $productoEliminar['stock_actual'],
+                    'Producto eliminado: ' . $motivo
+                ]);
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                header('Location: productos.php?msg=error_eliminar');
+                exit();
+            }
             header('Location: productos.php?msg=eliminado');
             exit();
         }
@@ -331,23 +356,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) 
     $stocks_maximo  = $_POST['stock_maximo'] ?? [];
 
     if (is_array($productos_ids)) {
-        $stmtUpsert = $pdo->prepare("
-            INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
-            VALUES (?, ?, ?, ?, ?, 1)
-            ON DUPLICATE KEY UPDATE activo = 1, stock_actual = VALUES(stock_actual), stock_minimo = VALUES(stock_minimo), stock_maximo = VALUES(stock_maximo)
-        ");
-        $stmtMov = $pdo->prepare("
-            INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-            VALUES (?, ?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
-        ");
-        foreach ($productos_ids as $i => $pid) {
-            $pid    = intval($pid);
-            $actual = floatval($stocks_actual[$i] ?? 0);
-            $minimo = floatval($stocks_minimo[$i] ?? 0);
-            $maximo = floatval($stocks_maximo[$i] ?? 0);
-            if (!$pid) continue;
-            $stmtUpsert->execute([$pid, $_SESSION['sucursal_id'], $actual, $minimo, $maximo]);
-            if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $actual, $actual]);
+        // [FIX-CONSISTENCIA] Igual que admin/inventario_productos.php (FIX-MEDIO-H-07): el
+        // lote entero de productos se agregaba fuera de una transaccion — una falla a mitad
+        // del foreach (o entre el upsert de stock y su movimiento de "Entrada") dejaba un
+        // lote parcial, sin ninguna forma de saber cuales quedaron a medias.
+        $pdo->beginTransaction();
+        try {
+            $stmtUpsert = $pdo->prepare("
+                INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                VALUES (?, ?, ?, ?, ?, 1)
+                ON DUPLICATE KEY UPDATE activo = 1, stock_actual = VALUES(stock_actual), stock_minimo = VALUES(stock_minimo), stock_maximo = VALUES(stock_maximo)
+            ");
+            $stmtMov = $pdo->prepare("
+                INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+                VALUES (?, ?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
+            ");
+            foreach ($productos_ids as $i => $pid) {
+                $pid    = intval($pid);
+                $actual = floatval($stocks_actual[$i] ?? 0);
+                $minimo = floatval($stocks_minimo[$i] ?? 0);
+                $maximo = floatval($stocks_maximo[$i] ?? 0);
+                if (!$pid) continue;
+                $stmtUpsert->execute([$pid, $_SESSION['sucursal_id'], $actual, $minimo, $maximo]);
+                if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $actual, $actual]);
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            header('Location: productos.php?msg=error_agregar_catalogo');
+            exit();
         }
     }
     header('Location: productos.php?msg=agregado_catalogo');
@@ -645,7 +682,10 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 <div class="msg msg-error"><?= htmlspecialchars($erroresImport[0]) ?></div>
             <?php endif; ?>
             <?php if ($exitoImport): ?>
-                <div class="msg msg-exito"><?= $exitoImport ?></div>
+                <!-- [FIX-CONSISTENCIA] Igual que admin/inventario_productos.php (FIX-CRIT-B-05):
+                     este mensaje solo interpola conteos numericos hoy, pero se escapa por si
+                     algun dia se le agrega texto libre (categoria/unidad) tomado del Excel. -->
+                <div class="msg msg-exito"><?= htmlspecialchars($exitoImport, ENT_QUOTES, 'UTF-8') ?></div>
             <?php endif; ?>
             <form method="POST" enctype="multipart/form-data">
                 <div class="import-form">
@@ -673,6 +713,9 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'agregado_catalogo'): ?>
             <div class="msg msg-exito">Producto agregado a tu sucursal correctamente.</div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_agregar_catalogo'): ?>
+            <div class="msg msg-error">No se pudieron agregar los productos. Intenta de nuevo.</div>
         <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'solo_catalogo'): ?>
             <div class="msg msg-error" style="background:#fff8e1;color:#795548;border-left-color:#f9a825;">

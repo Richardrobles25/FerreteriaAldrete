@@ -20,8 +20,11 @@ if (isset($_GET['eliminar'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'categorias.php');
     $id = intval($_GET['eliminar']);
-    // Verificar que no tenga productos asociados
-    $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE categoria_id = ? AND activo = 1");
+    // [FIX-ALTO-B-08] (portado de admin/inventario_categorias.php): antes solo se contaban
+    // productos activos; una categoria con productos desactivados (pero aun ligados por la
+    // FK) tronaba el DELETE con un error SQL crudo (violacion de llave foranea) en vez de
+    // un mensaje claro.
+    $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE categoria_id = ?");
     $check->execute([$id]);
     if ($check->fetchColumn() > 0) {
         header('Location: categorias.php?msg=error_productos');
@@ -48,16 +51,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id     = intval($_POST['categoria_id'] ?? 0);
 
     if ($nombre) {
-        if ($id) {
-            $stmt = $pdo->prepare("UPDATE categorias SET nombre = ? WHERE categoria_id = ?");
-            $stmt->execute([$nombre, $id]);
-            header('Location: categorias.php?msg=editado');
-        } else {
-            $stmt = $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)");
-            $stmt->execute([$nombre]);
-            header('Location: categorias.php?msg=creado');
+        // [AUTOFIX] ERROR-CAT-01 (portado de admin/inventario_categorias.php): capturar
+        // PDOException de clave duplicada en lugar de exponer el error PHP crudo.
+        try {
+            if ($id) {
+                $stmt = $pdo->prepare("UPDATE categorias SET nombre = ? WHERE categoria_id = ?");
+                $stmt->execute([$nombre, $id]);
+                header('Location: categorias.php?msg=editado');
+            } else {
+                $stmt = $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)");
+                $stmt->execute([$nombre]);
+                header('Location: categorias.php?msg=creado');
+            }
+            exit();
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '23000') {
+                header('Location: categorias.php?msg=duplicado');
+                exit();
+            }
+            throw $e;
         }
-        exit();
     }
 }
 
@@ -232,6 +245,8 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">No puedes eliminar esta categoría porque tiene productos asociados.</div>
                 <?php elseif ($_GET['msg'] === 'no_autorizado'): ?>
                     <div class="msg msg-error">No tienes permisos para esta acción. Tu rol no puede crear, editar ni eliminar categorías del catálogo global.</div>
+                <?php elseif ($_GET['msg'] === 'duplicado'): ?>
+                    <div class="msg msg-error">Ya existe una categoría con ese nombre.</div>
                 <?php endif; ?>
             <?php endif; ?>
 

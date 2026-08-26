@@ -13,14 +13,18 @@ $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Ab
 $stmt->execute([$_SESSION['usuario_id']]);
 $cajaAbierta = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Turno = cuántas cajas de OTROS usuarios están abiertas en esta sucursal + 1
-// Se excluye la caja del propio usuario para que nunca se cuente a sí mismo
+// [FIX-MEDIO-D3-10] (portado de admin/cajero_abrirCaja.php): "numero_turno" se calculaba
+// como "cuantas cajas de OTROS usuarios estan ABIERTAS ahora mismo + 1" — un numero de
+// turnos CONCURRENTES, no un consecutivo real. En la operacion tipica (un solo cajero a
+// la vez por sucursal) ese conteo casi siempre da 0, asi que absolutamente todos los
+// turnos del dia se abrian como "Turno #1". Ahora es un consecutivo real: cuantas cajas
+// (abiertas o ya cerradas, de cualquier usuario) se han abierto HOY en esta sucursal + 1.
 $stmtTurno = $pdo->prepare("
     SELECT COUNT(*) + 1
     FROM cajas
-    WHERE sucursal_id = ? AND estado = 'Abierta' AND usuario_id != ?
+    WHERE sucursal_id = ? AND DATE(abierta_en) = CURDATE()
 ");
-$stmtTurno->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id']]);
+$stmtTurno->execute([$_SESSION['sucursal_id']]);
 $siguienteTurno = $stmtTurno->fetchColumn();
 
 // Contar cajas abiertas de otros usuarios en la sucursal (para mostrar aviso)
@@ -53,13 +57,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
     }
 
     if (empty($erroresApertura)) {
-        $stmt = $pdo->prepare("
-            INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
-            VALUES (?, ?, ?, ?, 'Abierta', ?)
-        ");
-        $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
-        header('Location: inicioCajeroInventario.php?msg=cajaAbierta');
-        exit();
+        // [FIX-CRIT-D3-02] (portado de admin/cajero_abrirCaja.php): antes solo un
+        // SELECT-luego-INSERT sin transaccion ni candado, asi que dos sesiones del mismo
+        // usuario (dos dispositivos, o un doble envio) podian abrir dos cajas "Abierta" a
+        // la vez — una caja fantasma con su propio monto de apertura que nunca existio
+        // fisicamente. Ahora se relee y bloquea la ausencia de caja abierta dentro de una
+        // transaccion justo antes de insertar, con el indice UNIQUE de la BD como respaldo.
+        $pdo->beginTransaction();
+        try {
+            $stmtRelock = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' FOR UPDATE");
+            $stmtRelock->execute([$_SESSION['usuario_id'], $_SESSION['sucursal_id']]);
+            if ($stmtRelock->fetch()) {
+                $pdo->rollBack();
+                header('Location: inicioCajeroInventario.php?msg=cajaAbierta');
+                exit();
+            }
+
+            $stmt = $pdo->prepare("
+                INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
+                VALUES (?, ?, ?, ?, 'Abierta', ?)
+            ");
+            $stmt->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
+            $pdo->commit();
+            header('Location: inicioCajeroInventario.php?msg=cajaAbierta');
+            exit();
+        } catch (\PDOException $e) {
+            $pdo->rollBack();
+            if ($e->getCode() === '23000') {
+                header('Location: inicioCajeroInventario.php?msg=cajaAbierta');
+                exit();
+            }
+            throw $e;
+        }
     }
 }
 ?>
@@ -199,6 +228,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                 <div class="alerta-box" style="background:#fff3e0;border-color:#ffb74d;color:#e65100;">
                     ⚠ Necesitas abrir una caja para acceder a ese módulo.<br>
                     <span style="font-size:12px;opacity:.85;">Sesión actual: <strong><?= htmlspecialchars($_SESSION['nombre_completo']) ?> (<?= htmlspecialchars($_SESSION['rol'] ?? '') ?>)</strong>. La caja es por usuario — si la abriste con otra cuenta, inicia sesión con esa cuenta.</span>
+                </div>
+            <?php endif; ?>
+            <?php // [FIX-MEDIO-D3-08] (portado de admin/cajero_abrirCaja.php): requerirCSRF()
+                  // redirige con "?msg=error_token" si el token es invalido/expirado, pero esta
+                  // pagina no mostraba ningun aviso para ese caso. ?>
+            <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_token'): ?>
+                <div class="alerta-box">
+                    ⚠ Tu sesión expiró o la página estuvo abierta demasiado tiempo. Recarga la página e intenta abrir la caja de nuevo.
                 </div>
             <?php endif; ?>
             <?php if ($cajaAbierta): ?>

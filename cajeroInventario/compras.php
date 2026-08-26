@@ -83,6 +83,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
                 $errores[] = 'El precio unitario de "' . ($item['nombre_producto'] ?? 'un producto') . '" no puede ser negativo.';
                 break;
             }
+            // [FIX-ALTO-C-04] (portado de admin/inventario_compras.php): antes se aceptaba
+            // cualquier decimal para cualquier producto, igual que en Salidas: un producto
+            // por Unidad podía "entrar" 3.7 piezas.
+            $stmtTipoChk = $pdo->prepare("SELECT tipo_venta FROM productos WHERE producto_id = ?");
+            $stmtTipoChk->execute([$prodIdChk]);
+            $tipoVentaChk = $stmtTipoChk->fetchColumn();
+            if ($tipoVentaChk !== false && $tipoVentaChk !== 'Suelto' && floor($cantChk) != $cantChk) {
+                $errores[] = '"' . ($item['nombre_producto'] ?? 'Un producto') . '" se maneja por unidad; la cantidad debe ser un número entero.';
+                break;
+            }
+            // [FIX-ALTO-C-05] (portado de admin/inventario_compras.php): antes, si
+            // "actualizar_precio" venía marcado con un precio de compra de $0 (captura vacía
+            // o error de dedo), el margen se aplicaba sobre $0 y el precio de venta quedaba
+            // en $0 sin ningún aviso — el producto se regalaba en el POS hasta que alguien
+            // lo notara.
+            if (!empty($item['actualizar_precio']) && $precChk <= 0) {
+                $errores[] = 'No puedes actualizar el precio de venta de "' . ($item['nombre_producto'] ?? 'un producto') . '" con un precio de compra de $0.';
+                break;
+            }
         }
     }
 

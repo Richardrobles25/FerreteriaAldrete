@@ -282,7 +282,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$sucursal_origen_id)                              $errores[] = 'Selecciona la sucursal de origen.';
     if ($sucursal_origen_id == $_SESSION['sucursal_id'])   $errores[] = 'La sucursal origen no puede ser la misma que la tuya.';
-    if (empty($items))                                     $errores[] = 'Agrega al menos un producto.';
+
+    // [FIX-MEDIO-C-14] (portado de admin/inventario_transferencias.php): antes no se
+    // validaba que $items fuera realmente un array de objetos con las llaves esperadas: un
+    // items_transf malformado (JSON invalido, un array de escalares, objetos sin
+    // "id"/"cantidad") pasaba el "empty($items)" sin problema y podia tronar mas adelante
+    // al tratar de indexar un valor que no es array.
+    if (!is_array($items)) {
+        $errores[] = 'El carrito de productos tiene un formato inválido.';
+        $items = [];
+    } else {
+        foreach ($items as $item) {
+            if (!is_array($item) || !isset($item['id'], $item['cantidad']) || !is_numeric($item['id']) || !is_numeric($item['cantidad'])) {
+                $errores[] = 'El carrito de productos tiene un formato inválido.';
+                $items = [];
+                break;
+            }
+        }
+    }
+    if (empty($items) && empty($errores))                  $errores[] = 'Agrega al menos un producto.';
 
     if (empty($errores)) {
         foreach ($items as $item) {
@@ -306,6 +324,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores)) {
+        // [FIX-MEDIO-C-13] (portado de admin/inventario_transferencias.php): antes se
+        // redirigia SIEMPRE a "Solicitud enviada" sin comprobar si de verdad se inserto
+        // alguna fila — si todos los items terminaban con cantidad <= 0 tras redondear
+        // (p. ej. un producto no-granel pedido en 0.5), el "continue" los saltaba a todos
+        // y la solicitud quedaba vacia, pero igual se mostraba exito.
+        $insertados = 0;
         foreach ($items as $item) {
             $prodId   = intval($item['id']);
             $cantidad = floatval($item['cantidad']);
@@ -316,8 +340,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($cantidad <= 0) continue;
             $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado) VALUES (?,?,?,?,?,?,'Pendiente')")
                 ->execute([$prodId, $sucursal_origen_id, $_SESSION['sucursal_id'], $_SESSION['usuario_id'], $cantidad, $notas]);
+            $insertados++;
         }
-        header('Location: transferencias.php?msg=solicitado'); exit();
+        if ($insertados > 0) {
+            header('Location: transferencias.php?msg=solicitado'); exit();
+        }
+        $errores[] = 'Ningún producto tenía una cantidad válida después de ajustar por tipo de venta. Revisa las cantidades e intenta de nuevo.';
     }
 }
 
@@ -672,36 +700,31 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     $stockOrigenJs = floatval($t['stock_origen'] ?? 0);
                                 ?>
                                 <?php if ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
-                                        <!-- [FIX-A1] Token CSRF en enlaces destructivos -->
-                                        <a class="btn-accion btn-aprobar" href="transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</a>
-                                        <a class="btn-accion btn-rechazar" href="transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Rechazar esta solicitud de transferencia?')">Rechazar</a>
+                                        <!-- [FIX-MEDIO-C-15] (portado de admin/inventario_transferencias.php): las acciones
+                                             destructivas iban por link GET con el token CSRF en la URL (queda en el historial
+                                             del navegador, en logs del servidor, y viaja en el header Referer). Ahora van por
+                                             POST via el formulario oculto formAccionTransf. -->
+                                        <button class="btn-accion btn-aprobar" type="button" onclick="return ejecutarAccionTransf('aprobar', <?= $t['transferencias_id'] ?>, '¿Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</button>
+                                        <button class="btn-accion btn-rechazar" type="button" onclick="return ejecutarAccionTransf('rechazar', <?= $t['transferencias_id'] ?>, '¿Rechazar esta solicitud de transferencia?')">Rechazar</button>
                                         <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
                                         <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
-                                        <!-- [FIX-A1] Token CSRF en enlace destructivo -->
-                                        <a class="btn-accion btn-enviar" href="transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Confirmar que ya enviaste los productos?')">Marcar enviado</a>
+                                        <button class="btn-accion btn-enviar" type="button" onclick="return ejecutarAccionTransf('enviar', <?= $t['transferencias_id'] ?>, '¿Confirmar que ya enviaste los productos?')">Marcar enviado</button>
                                     <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
-                                        <!-- [FIX-A1] Token CSRF en enlaces destructivos -->
-                                        <a class="btn-accion btn-aceptar-mod"
-                                           href="transferencias.php?accion=aceptar_modificacion&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
-                                           onclick="return confirm('Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
+                                        <button class="btn-accion btn-aceptar-mod" type="button"
+                                           onclick="return ejecutarAccionTransf('aceptar_modificacion', <?= $t['transferencias_id'] ?>, '¿Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
                                             ✓ Aceptar cantidad
-                                        </a>
-                                        <a class="btn-accion btn-rechazar-mod"
-                                           href="transferencias.php?accion=rechazar_modificacion&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
-                                           onclick="return confirm('Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
+                                        </button>
+                                        <button class="btn-accion btn-rechazar-mod" type="button"
+                                           onclick="return ejecutarAccionTransf('rechazar_modificacion', <?= $t['transferencias_id'] ?>, '¿Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
                                             ✕ Rechazar cambio
-                                        </a>
+                                        </button>
                                     <?php elseif ($t['estado'] === 'Modificada' && $esMiOrigen): ?>
                                         <span style="color:#283593;font-size:11px;font-style:italic;">Esperando confirmacion del destino</span>
                                     <?php elseif ($t['estado'] === 'En tránsito' && !$esMiOrigen): ?>
-                                        <!-- [FIX-A1] Token CSRF en enlace destructivo -->
-                                        <a class="btn-accion btn-recibir" href="transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</a>
+                                        <button class="btn-accion btn-recibir" type="button" onclick="return ejecutarAccionTransf('recibir', <?= $t['transferencias_id'] ?>, '¿Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</button>
                                     <?php elseif ($t['estado'] === 'En tránsito' && $esMiOrigen): ?>
-                                        <!-- [FIX-CONSISTENCIA] Igual que admin/inventario_transferencias.php (FIX-MEDIO-C-11):
-                                             sin esto no habia ninguna accion disponible aqui — una transferencia "En tránsito"
-                                             nunca recibida quedaba con el stock descontado del origen para siempre. -->
-                                        <a class="btn-accion" style="background:#fdecea;color:#c0392b;" href="transferencias.php?accion=cancelar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Cancelar esta transferencia? El stock regresara a tu sucursal. Solo hazlo si de verdad recuperaste la mercancia enviada.')">Cancelar</a>
+                                        <button class="btn-accion" type="button" style="background:#fdecea;color:#c0392b;border:none;cursor:pointer;" onclick="return ejecutarAccionTransf('cancelar', <?= $t['transferencias_id'] ?>, '¿Cancelar esta transferencia? El stock regresara a tu sucursal. Solo hazlo si de verdad recuperaste la mercancia enviada.')">Cancelar</button>
                                     <?php else: ?>
                                         <span style="color:#aaa;font-size:11px;">—</span>
                                     <?php endif; ?>
@@ -1038,6 +1061,24 @@ document.addEventListener('keydown', function(e) {
     <input type="hidden" id="inputEditarTransfId" name="id">
     <input type="hidden" id="inputEditarNuevaCantidad" name="nueva_cantidad">
 </form>
+
+<!-- [FIX-MEDIO-C-15] (portado de admin/inventario_transferencias.php): formulario reutilizable
+     para aprobar/rechazar/enviar/recibir/cancelar/aceptar_modificacion/rechazar_modificacion —
+     antes cada accion era un link GET con el token CSRF en la URL. -->
+<form id="formAccionTransf" method="POST" action="transferencias.php" style="display:none;">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+    <input type="hidden" id="inputAccionTransfAccion" name="accion">
+    <input type="hidden" id="inputAccionTransfId" name="id">
+</form>
+<script>
+function ejecutarAccionTransf(accion, id, mensajeConfirm) {
+    if (!confirm(mensajeConfirm)) return false;
+    document.getElementById('inputAccionTransfAccion').value = accion;
+    document.getElementById('inputAccionTransfId').value = id;
+    document.getElementById('formAccionTransf').submit();
+    return false;
+}
+</script>
 
 <!-- Modal editar cantidad — event listener aquí porque el script principal corre antes del HTML -->
 <script>

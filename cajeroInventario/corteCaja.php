@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // [FIX-M1] Se agrega "AND estado = 'Abierta'": un doble envio del formulario
         // (doble clic, reenvio) ya no sobrescribe el corte con otro monto — el UPDATE
         // simplemente no afecta ninguna fila si la caja ya quedo cerrada por el primer envio.
-        $pdo->prepare("
+        $stmtCierre = $pdo->prepare("
             UPDATE cajas SET
                 estado = 'Cerrada',
                 monto_cierre = ?,
@@ -119,7 +119,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 observaciones_cierre = ?,
                 cerrada_en = NOW()
             WHERE caja_id = ? AND estado = 'Abierta'
-        ")->execute([$monto_cierre, $efectivoEsperado, $diferencia, $observaciones, $caja['caja_id']]);
+        ");
+        $stmtCierre->execute([$monto_cierre, $efectivoEsperado, $diferencia, $observaciones, $caja['caja_id']]);
+
+        // [FIX-MEDIO-D3-07] (portado de admin/cajero_corteCaja.php): antes se redirigia a
+        // "cajaCerrada" sin verificar si el UPDATE realmente afecto una fila. Si dos
+        // peticiones de cierre llegaban casi juntas, la segunda afectaba 0 filas (por el
+        // guard "AND estado='Abierta'") y aun asi mostraba el mismo mensaje de exito,
+        // ocultando que su monto contado nunca se guardo.
+        if ($stmtCierre->rowCount() === 0) {
+            header('Location: inicioCajeroInventario.php?msg=error_ya_cerrada');
+            exit();
+        }
 
         header('Location: inicioCajeroInventario.php?msg=cajaCerrada');
         exit();
@@ -369,6 +380,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div>
             <div class="card">
                 <h3>Registrar cierre</h3>
+
+                <?php
+                // [FIX-MEDIO-D3-08] (portado de admin/cajero_corteCaja.php): requerirCSRF()
+                // redirige con "?msg=error_token" cuando el token es invalido/expirado, pero
+                // esta pagina no mostraba ningun aviso para ese caso — el cierre simplemente
+                // no se guardaba y el cajero se quedaba sin saber por que.
+                $msgsCorte = [
+                    'error_token' => 'Tu sesión expiró o la página estuvo abierta demasiado tiempo. Recarga la página e intenta cerrar la caja de nuevo.',
+                ];
+                $msgCorte = $_GET['msg'] ?? '';
+                ?>
+                <?php if (isset($msgsCorte[$msgCorte])): ?>
+                    <div class="errores"><?= htmlspecialchars($msgsCorte[$msgCorte]) ?></div>
+                <?php endif; ?>
 
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><?= htmlspecialchars($errores[0]) ?></div>

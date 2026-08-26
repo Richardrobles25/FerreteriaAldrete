@@ -84,6 +84,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $cliente_id         = intval($_POST['cliente_id'] ?? 0);
 
     if (!$nombre_completo) $errores[] = 'El nombre es obligatorio.';
+    // [FIX-CONSISTENCIA] admin/clientes.php ya validaba esto; aqui faltaba — el input solo
+    // tenia min/max en HTML (trivial de saltar con un POST directo), y esta pantalla la
+    // puede usar el rol Cajero. Un descuento_fijo fuera de 0-100 permitiria despues, en
+    // nuevaVenta.php, un descuento mayor al total de la venta (total negativo y "cambio"
+    // entregado sin haberse cobrado).
+    if ($descuento_fijo < 0 || $descuento_fijo > 100) $errores[] = 'El descuento fijo debe estar entre 0 y 100.';
 
     if (empty($errores)) {
         if ($cliente_id) {

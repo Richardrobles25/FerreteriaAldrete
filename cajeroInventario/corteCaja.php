@@ -93,11 +93,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $monto_cierre = floatval($monto_cierre_raw);
         if ($monto_cierre < 0) $errores[] = 'El monto contado no puede ser negativo.';
+        // [FIX-CONSISTENCIA] Igual que en cajero_abrirCaja.php (monto_apertura > 50000):
+        // cajas.monto_cierre es DECIMAL(10,2), y sin este tope un error de captura (un
+        // digito de mas) lanzaba una PDOException sin capturar al chocar con el limite de
+        // la columna — HTTP 500 crudo en vez de un mensaje claro.
+        elseif ($monto_cierre > 500000) $errores[] = 'El monto contado no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
     }
 
     if (empty($errores)) {
         $diferencia = $monto_cierre - $efectivoEsperado;
 
+        // [FIX-CONSISTENCIA] admin/cajero_corteCaja.php ya guarda esto en la columna
+        // observaciones_cierre (propia, ver ALTER TABLE en baseDeDatos.sql) para no borrar
+        // las notas de apertura que ya vivian en "observaciones". Aqui seguia escribiendo
+        // en "observaciones", pisando esas notas sin dejar rastro.
         // [FIX-M1] Se agrega "AND estado = 'Abierta'": un doble envio del formulario
         // (doble clic, reenvio) ya no sobrescribe el corte con otro monto — el UPDATE
         // simplemente no afecta ninguna fila si la caja ya quedo cerrada por el primer envio.
@@ -107,7 +116,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 monto_cierre = ?,
                 monto_esperado = ?,
                 diferencia = ?,
-                observaciones = ?,
+                observaciones_cierre = ?,
                 cerrada_en = NOW()
             WHERE caja_id = ? AND estado = 'Abierta'
         ")->execute([$monto_cierre, $efectivoEsperado, $diferencia, $observaciones, $caja['caja_id']]);

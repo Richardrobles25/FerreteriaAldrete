@@ -348,10 +348,19 @@ if ($verCorte) {
                     </div>
                     <?php endif; ?>
 
+                    <?php // [FIX-CONSISTENCIA] "observaciones" (apertura) y "observaciones_cierre" (cierre)
+                          // son columnas separadas — se muestran por separado en vez de solo la de apertura. ?>
                     <?php if ($detalleCorte['observaciones']): ?>
                     <div class="det-seccion">
-                        <h4>Observaciones</h4>
+                        <h4>Observaciones de apertura</h4>
                         <p style="font-size:13px;color:#555;"><?= htmlspecialchars($detalleCorte['observaciones']) ?></p>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if (!empty($detalleCorte['observaciones_cierre'])): ?>
+                    <div class="det-seccion">
+                        <h4>Observaciones de cierre</h4>
+                        <p style="font-size:13px;color:#555;"><?= htmlspecialchars($detalleCorte['observaciones_cierre']) ?></p>
                     </div>
                     <?php endif; ?>
 

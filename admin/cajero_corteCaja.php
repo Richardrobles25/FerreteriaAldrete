@@ -97,6 +97,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $monto_cierre = floatval($monto_cierre_raw);
         if ($monto_cierre < 0) $errores[] = 'El monto contado no puede ser negativo.';
+        // [FIX-CONSISTENCIA] Mismo problema que ya se corrigio en cajero_abrirCaja.php
+        // (monto_apertura > 50000): cajas.monto_cierre es DECIMAL(10,2), y sin este tope un
+        // error de captura (un digito de mas) lanzaba una PDOException sin capturar al
+        // chocar con el limite de la columna — HTTP 500 crudo en vez de un mensaje claro.
+        elseif ($monto_cierre > 500000) $errores[] = 'El monto contado no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
     }
 
     if (empty($errores)) {

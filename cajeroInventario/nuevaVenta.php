@@ -2469,8 +2469,14 @@ function prepararVenta() {
             const totalCant   = item.productos_paquete.reduce((s,p) => s+p.cantidad_requerida, 0);
             const paqTotal    = item.precio * item.cantidad;
             let   distribuido = 0;
-            const lastIdx     = item.productos_paquete.length - 1;
-            item.productos_paquete.forEach((prod, idx) => {
+            // [FIX] El item que absorbe el redondeo debe ser el de MENOR cantidad requerida
+            // (idealmente 1): al dividir el residuo entre pocas unidades, el error de
+            // redondeo por unidad queda acotado a unos centavos en vez de multiplicarse por
+            // una cantidad grande (ej. 10 clavos), que antes hacia perder hasta $0.04 por
+            // venta sin que el total cobrado coincidiera con la suma mostrada en el ticket.
+            const productosOrdenados = [...item.productos_paquete].sort((a, b) => b.cantidad_requerida - a.cantidad_requerida);
+            const lastIdx     = productosOrdenados.length - 1;
+            productosOrdenados.forEach((prod, idx) => {
                 const cantTotal = prod.cantidad_requerida * item.cantidad;
                 let precioUnit;
                 if (idx === lastIdx) {

@@ -9,6 +9,11 @@ verificarSesion();
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
+// [FIX-CONSISTENCIA] Igual que reporteVentas.php/reporteProductos.php/cortes.php
+// (FIX-ALTO-F-01/F-02/F-03): "estado = 'Completada'" excluye ventas con devolucion parcial
+// ('Modificado', que sigue siendo dinero real cobrado) o total ('Devuelto', total ya en 0,
+// incluirla es inocuo) — el dashboard subestimaba cobrado/efectivo/terminal de hoy frente a
+// lo que ya muestran los reportes con el mismo dato.
 // Ventas de hoy - todas las sucursales
 $stmtHoy = $pdo->query("
     SELECT
@@ -17,7 +22,7 @@ $stmtHoy = $pdo->query("
         COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo' THEN v.total ELSE 0 END),0) AS ef_hoy,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal' THEN v.total ELSE 0 END),0) AS term_hoy
     FROM ventas v
-    WHERE v.estado = 'Completada' AND DATE(v.created_at) = CURDATE()
+    WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) = CURDATE()
 ");
 $hoy = $stmtHoy->fetch(PDO::FETCH_ASSOC);
 
@@ -27,7 +32,7 @@ $stmtSucHoy = $pdo->query("
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
     JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
-    WHERE v.estado = 'Completada' AND DATE(v.created_at) = CURDATE()
+    WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) = CURDATE()
     GROUP BY ca.sucursal_id
     ORDER BY total DESC
 ");
@@ -41,7 +46,7 @@ $stmtCajas = $pdo->query("
     FROM cajas c
     JOIN usuarios u ON c.usuario_id = u.usuario_id
     JOIN sucursales s ON c.sucursal_id = s.sucursal_id
-    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado = 'Completada'
+    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado IN ('Completada','Modificado','Devuelto')
     WHERE c.estado = 'Abierta'
     GROUP BY c.caja_id
     ORDER BY c.abierta_en ASC
@@ -88,7 +93,7 @@ $stmtUltVentas = $pdo->query("
     JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
     JOIN usuarios u ON v.usuario_id = u.usuario_id
     LEFT JOIN clientes cl ON v.cliente_id = cl.cliente_id
-    WHERE v.estado = 'Completada'
+    WHERE v.estado IN ('Completada','Modificado','Devuelto')
     ORDER BY v.created_at DESC
     LIMIT 8
 ");
@@ -232,7 +237,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <?php if (count($stockBajo) > 0): ?>
             <div class="alerta alerta-roja">
                 <span>⚠ <strong><?= count($stockBajo) ?></strong> producto(s) con stock bajo</span>
-                <a href="../inventario/productos.php?stock_bajo=1">Ver</a>
+                <a href="inventario_productos.php?stock_bajo=1">Ver</a>
             </div>
             <?php endif; ?>
             <?php if ($creditosVencidos['vencidos'] > 0): ?>
@@ -244,7 +249,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <?php if ($transfPend > 0): ?>
             <div class="alerta alerta-azul">
                 <span>📦 <strong><?= $transfPend ?></strong> transferencia(s) pendiente(s) de aprobar</span>
-                <a href="../inventario/transferencias.php">Ver</a>
+                <a href="inventario_transferencias.php">Ver</a>
             </div>
             <?php endif; ?>
         </div>
@@ -330,7 +335,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
             <div class="tabla">
                 <div class="tabla-header">
                     <span>Stock bajo - todas las sucursales</span>
-                    <a href="../inventario/productos.php?stock_bajo=1">Ver todo</a>
+                    <a href="inventario_productos.php?stock_bajo=1">Ver todo</a>
                 </div>
                 <?php if (count($stockBajo) > 0): ?>
                     <?php foreach ($stockBajo as $p): ?>

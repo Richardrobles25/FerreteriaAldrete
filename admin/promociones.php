@@ -62,8 +62,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // cual en columnas DATE, y se truncaba a '0000-00-00' en silencio (local) o
         // tiraba error 500 (producción, sql_mode estricto). Mismo patrón que ya se aplicó
         // en formEmpleado.php (G-07): exigir formato YYYY-MM-DD real.
-        $fechaInicioValida = preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaInicio, $mFI) && checkdate((int)$mFI[2], (int)$mFI[3], (int)$mFI[1]);
-        $fechaFinValida    = preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaFin, $mFF)    && checkdate((int)$mFF[2], (int)$mFF[3], (int)$mFF[1]);
+        $fechaInicioValida = preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fechaInicio, $mFI) && checkdate((int)$mFI[2], (int)$mFI[3], (int)$mFI[1]);
+        $fechaFinValida    = preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fechaFin, $mFF)    && checkdate((int)$mFF[2], (int)$mFF[3], (int)$mFF[1]);
 
         if (!$productoId)         $error = 'Selecciona un producto.';
         elseif (!$sucursalId)     $error = 'Selecciona la sucursal donde aplicará la promoción.';

@@ -1140,7 +1140,7 @@ function buscarVenta() {
                             <span style="font-size:13px;">${p.nombre_producto}</span>
                             ${precioHtml}
                         </span>
-                        <span style="color:#aaa;font-size:11px;padding-top:2px;white-space:nowrap;">Restante: ${restante.toFixed(esDecimal?2:0).replace(/\.?0+$/, '')}</span>
+                        <span style="color:#aaa;font-size:11px;padding-top:2px;white-space:nowrap;">Restante: ${esDecimal ? restante.toFixed(2).replace(/\.?0+$/, '') : restante.toFixed(0)}</span>
                         <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_final}" data-precio-orig="${p.precio_unitario}" data-restante="${restante}"
                             placeholder="0" step="${esDecimal ? 'any' : '1'}" min="0" max="${restante}" value=""
                             oninput="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();"

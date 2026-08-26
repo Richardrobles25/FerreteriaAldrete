@@ -261,11 +261,18 @@ if ($fechaDesde !== '' && $fechaHasta !== '') {
 }
 // Sin filtro de fecha: últimas 50 devoluciones
 
+// [FIX] Antes se asumia que TODA devolucion sacaba/regresaba efectivo por el total_devuelto
+// completo. En la realidad una devolucion de una venta a Credito sin excedente de abonos NO
+// saca dinero de caja (solo reduce el saldo del credito). Se trae el monto REAL de
+// movimientos_caja (por devolucion_id), que es la unica fuente de verdad de si hubo dinero
+// fisico de por medio y de cuanto (mismo fix ya aplicado en admin/cajero_historialVentas.php).
 $stmtDevMov = $pdo->prepare("
     SELECT d.devolucion_id, d.procesada_en, d.cancelada_en,
            d.total_devuelto, d.venta_id, v.folio, v.metodo_pago,
            u.nombre_completo  AS cajero,
-           uc.nombre_completo AS cajero_cancel
+           uc.nombre_completo AS cajero_cancel,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Retiro')  AS monto_retiro_real,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Ingreso') AS monto_ingreso_real
     FROM devoluciones d
     JOIN ventas v  ON d.venta_id      = v.venta_id
     JOIN cajas  ca ON v.caja_id       = ca.caja_id AND ca.sucursal_id = ?
@@ -286,13 +293,13 @@ foreach ($devolucionesMov as $dm) {
         || ($fechaDesde !== '' && $fechaHasta !== '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00' && $dm['procesada_en'] <= $fechaHasta . ' 23:59:59')
         || ($fechaDesde !== '' && $fechaHasta === '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00')
         || ($fechaDesde === '' && $fechaHasta !== '' && $dm['procesada_en'] <= $fechaHasta . ' 23:59:59');
-    if ($enRangoRetiro) $totalSalidaDev += floatval($dm['total_devuelto']);
+    if ($enRangoRetiro) $totalSalidaDev += floatval($dm['monto_retiro_real']);
     if (!empty($dm['cancelada_en'])) {
         $enRangoIngreso = ($fechaDesde === '' && $fechaHasta === '')
             || ($fechaDesde !== '' && $fechaHasta !== '' && $dm['cancelada_en'] >= $fechaDesde . ' 00:00:00' && $dm['cancelada_en'] <= $fechaHasta . ' 23:59:59')
             || ($fechaDesde !== '' && $fechaHasta === '' && $dm['cancelada_en'] >= $fechaDesde . ' 00:00:00')
             || ($fechaDesde === '' && $fechaHasta !== '' && $dm['cancelada_en'] <= $fechaHasta . ' 23:59:59');
-        if ($enRangoIngreso) $totalEntradaDev += floatval($dm['total_devuelto']);
+        if ($enRangoIngreso) $totalEntradaDev += floatval($dm['monto_ingreso_real']);
     }
 }
 
@@ -864,7 +871,14 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                                 || ($fechaDesde === '' && $fechaHasta !== '' && substr($fechaCanc,0,10) <= $fechaHasta)
                             );
                         ?>
-                        <?php if ($enRangoRet): ?>
+                        <?php
+                            // [FIX] Solo se muestra como Retiro/Ingreso si de verdad hubo movimiento
+                            // de efectivo (monto_real > 0); una devolucion de credito sin excedente,
+                            // por ejemplo, no mueve dinero de la caja.
+                            $montoRetiroReal  = floatval($dm['monto_retiro_real']);
+                            $montoIngresoReal = floatval($dm['monto_ingreso_real']);
+                        ?>
+                        <?php if ($enRangoRet && $montoRetiroReal > 0.001): ?>
                         <tr>
                             <td>
                                 <span class="badge badge-retiro">&#8595; Retiro</span>
@@ -872,7 +886,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                                 <div style="font-size:10px;color:#aaa;margin-top:2px;">Devolución cancelada</div>
                                 <?php endif; ?>
                             </td>
-                            <td style="font-weight:700;color:#c0392b;">-$<?= number_format($dm['total_devuelto'],2) ?></td>
+                            <td style="font-weight:700;color:#c0392b;">-$<?= number_format($montoRetiroReal,2) ?></td>
                             <td>
                                 <div class="mov-nota">Efectivo dado al cliente · <?= htmlspecialchars($folioRef) ?> (<?= htmlspecialchars($dm['metodo_pago']) ?>)</div>
                             </td>
@@ -880,10 +894,10 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                             <td style="color:#aaa;font-size:12px;white-space:nowrap;"><?= date('d/m/Y H:i', strtotime($fechaProc)) ?></td>
                         </tr>
                         <?php endif; ?>
-                        <?php if ($enRangoIng): ?>
+                        <?php if ($enRangoIng && $montoIngresoReal > 0.001): ?>
                         <tr>
                             <td><span class="badge badge-ingreso">&#8593; Ingreso</span></td>
-                            <td style="font-weight:700;color:#2e7d32;">+$<?= number_format($dm['total_devuelto'],2) ?></td>
+                            <td style="font-weight:700;color:#2e7d32;">+$<?= number_format($montoIngresoReal,2) ?></td>
                             <td>
                                 <div class="mov-nota">Devolución cancelada · cliente regresó efectivo · <?= htmlspecialchars($folioRef) ?></div>
                             </td>

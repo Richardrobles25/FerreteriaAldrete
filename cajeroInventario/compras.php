@@ -40,6 +40,11 @@ if ($verDetalle) {
     }
 }
 
+// [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php: Inventario/Cajero no puede
+// editar el catalogo global de precios. "Actualizar precios" al registrar una compra
+// modifica productos.precio_compra/venta/mayoreo (global), asi que se le bloquea igual.
+$puedeEditarPrecios = in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario']);
+
 // Procesar nueva compra
 $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
@@ -48,6 +53,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
     $proveedor_id = intval($_POST['proveedor_id'] ?? 0);
     $notas        = trim($_POST['notas'] ?? '');
     $items        = json_decode($_POST['items'] ?? '[]', true);
+
+    if (!$puedeEditarPrecios && is_array($items)) {
+        foreach ($items as &$itemSinPrecio) { $itemSinPrecio['actualizar_precio'] = false; }
+        unset($itemSinPrecio);
+    }
 
     if (!$proveedor_id)    $errores[] = 'Selecciona un proveedor.';
     if (!is_array($items) || empty($items)) $errores[] = 'Agrega al menos un producto.';
@@ -502,6 +512,7 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <script>
 const productosData   = <?= json_encode(array_values($productos)) ?>;
 const proveedoresData = <?= json_encode(array_values($proveedores)) ?>;
+const puedeEditarPrecios = <?= $puedeEditarPrecios ? 'true' : 'false' ?>;
 let itemsCompra = [];
 
 function normalizar(str) {
@@ -642,6 +653,13 @@ function renderListaCompra() {
         const precioChanged = compraViejo > 0 && Math.abs(i.precio_unitario - compraViejo) > 0.001;
         const nuevos = calcularNuevosPrecios(prod, i.precio_unitario);
 
+        const checkboxPrecioHTML = puedeEditarPrecios
+            ? '<label style="font-size:11px;color:#e65100;display:flex;align-items:center;gap:4px;margin-top:4px;cursor:pointer;">'
+                + '<input type="checkbox" ' + (i.actualizar_precio ? 'checked' : '') + ' onchange="toggleActualizarPrecio(' + idx + ',this.checked)" style="width:auto;margin:0;">'
+                + 'Actualizar precios en inventario'
+                + '</label>'
+            : '';
+
         let previewHTML = '';
         if (i.actualizar_precio && precioChanged) {
             previewHTML = '<div style="margin-top:6px;background:#fff8e1;border:1px solid #ffe082;border-radius:5px;padding:6px 10px;font-size:11px;color:#555;">'
@@ -662,10 +680,7 @@ function renderListaCompra() {
             + '<div style="font-size:13px;font-weight:600;">' + i.nombre + '</div>'
             + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2)
             + (precioChanged ? ' <span style="color:#e65100;">(antes $' + compraViejo.toFixed(2) + ')</span>' : '') + '</div>'
-            + '<label style="font-size:11px;color:#e65100;display:flex;align-items:center;gap:4px;margin-top:4px;cursor:pointer;">'
-            + '<input type="checkbox" ' + (i.actualizar_precio ? 'checked' : '') + ' onchange="toggleActualizarPrecio(' + idx + ',this.checked)" style="width:auto;margin:0;">'
-            + 'Actualizar precios en inventario'
-            + '</label>'
+            + checkboxPrecioHTML
             + '</div>'
             + '<div style="display:flex;align-items:center;gap:10px;margin-left:12px;">'
             + '<span style="font-weight:700;">$' + sub.toFixed(2) + '</span>'

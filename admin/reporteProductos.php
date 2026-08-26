@@ -50,16 +50,36 @@ if ($busqueda !== '') {
     $params[] = '%' . $busqueda . '%';
 }
 
+// [FIX-PRECISION] venta_productos nunca se toca cuando hay una devolucion (queda como el
+// registro historico de lo que se vendio originalmente) — solo movimientos_inventario (via
+// devolucion_id) sabe cuanto de cada producto realmente volvio a stock. Sin este JOIN, un
+// producto devuelto (parcial o totalmente) seguia contando integro como "vendido" aqui,
+// inflando el ranking de mas vendidos y el ingreso generado con mercancia que ya no esta en
+// manos del cliente. Se resta la cantidad devuelta (por venta+producto+paquete, NULL-safe)
+// antes de sumar piezas e ingreso.
+$devJoin = "
+    LEFT JOIN (
+        SELECT d.venta_id, mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS cant_devuelta
+        FROM movimientos_inventario mi
+        JOIN devoluciones d ON mi.devolucion_id = d.devolucion_id
+        WHERE mi.tipo = 'Entrada' AND mi.devolucion_id IS NOT NULL
+        GROUP BY d.venta_id, mi.producto_id, mi.paquete_id
+    ) dev ON dev.venta_id = vp.venta_id AND dev.producto_id = vp.producto_id AND dev.paquete_id <=> vp.paquete_id
+";
+$cantEfectiva = "GREATEST(0, vp.cantidad - COALESCE(dev.cant_devuelta,0))";
+$subEfectivo  = "(vp.subtotal * $cantEfectiva / NULLIF(vp.cantidad,0))";
+
 $stmtResumen = $pdo->prepare("
     SELECT
-        COUNT(DISTINCT vp.producto_id) AS productos_vendidos,
-        COUNT(DISTINCT vp.venta_id) AS ventas_con_productos,
-        COALESCE(SUM(vp.cantidad), 0) AS piezas_vendidas,
-        COALESCE(SUM(vp.subtotal), 0) AS ingreso_generado
+        COUNT(DISTINCT CASE WHEN $cantEfectiva > 0 THEN vp.producto_id END) AS productos_vendidos,
+        COUNT(DISTINCT CASE WHEN $cantEfectiva > 0 THEN vp.venta_id END) AS ventas_con_productos,
+        COALESCE(SUM($cantEfectiva), 0) AS piezas_vendidas,
+        COALESCE(SUM($subEfectivo), 0) AS ingreso_generado
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
     JOIN productos p ON vp.producto_id = p.producto_id
     JOIN cajas ca ON v.caja_id = ca.caja_id
+    $devJoin
     $where
 ");
 $stmtResumen->execute($params);
@@ -71,15 +91,16 @@ $stmtTop = $pdo->prepare("
         p.codigo,
         p.nombre_producto,
         c.nombre AS categoria,
-        COALESCE(SUM(vp.cantidad), 0) AS cantidad_vendida,
-        COALESCE(SUM(vp.subtotal), 0) AS total_generado,
-        COUNT(DISTINCT vp.venta_id) AS apariciones,
+        COALESCE(SUM($cantEfectiva), 0) AS cantidad_vendida,
+        COALESCE(SUM($subEfectivo), 0) AS total_generado,
+        COUNT(DISTINCT CASE WHEN $cantEfectiva > 0 THEN vp.venta_id END) AS apariciones,
         MAX(v.created_at) AS ultima_venta
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
     JOIN productos p ON vp.producto_id = p.producto_id
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
     JOIN cajas ca ON v.caja_id = ca.caja_id
+    $devJoin
     $where
     GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre
     ORDER BY cantidad_vendida DESC, total_generado DESC, p.nombre_producto ASC
@@ -91,14 +112,15 @@ $productos = $stmtTop->fetchAll(PDO::FETCH_ASSOC);
 $stmtSuc = $pdo->prepare("
     SELECT
         s.nombre AS sucursal,
-        COALESCE(SUM(vp.cantidad), 0) AS cantidad_vendida,
-        COALESCE(SUM(vp.subtotal), 0) AS total_generado,
-        COUNT(DISTINCT vp.producto_id) AS productos_distintos
+        COALESCE(SUM($cantEfectiva), 0) AS cantidad_vendida,
+        COALESCE(SUM($subEfectivo), 0) AS total_generado,
+        COUNT(DISTINCT CASE WHEN $cantEfectiva > 0 THEN vp.producto_id END) AS productos_distintos
     FROM venta_productos vp
     JOIN ventas v ON vp.venta_id = v.venta_id
     JOIN productos p ON vp.producto_id = p.producto_id
     JOIN cajas ca ON v.caja_id = ca.caja_id
     JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+    $devJoin
     $where
     GROUP BY s.sucursal_id, s.nombre
     ORDER BY total_generado DESC, cantidad_vendida DESC
@@ -119,15 +141,16 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 
     $stmtExp = $pdo->prepare("
         SELECT p.codigo, p.nombre_producto, c.nombre AS categoria,
-               COALESCE(SUM(vp.cantidad),0) AS cantidad_vendida,
-               COALESCE(SUM(vp.subtotal),0) AS total_generado,
-               COUNT(DISTINCT vp.venta_id) AS apariciones,
+               COALESCE(SUM($cantEfectiva),0) AS cantidad_vendida,
+               COALESCE(SUM($subEfectivo),0) AS total_generado,
+               COUNT(DISTINCT CASE WHEN $cantEfectiva > 0 THEN vp.venta_id END) AS apariciones,
                MAX(v.created_at) AS ultima_venta
         FROM venta_productos vp
         JOIN ventas v ON vp.venta_id = v.venta_id
         JOIN productos p ON vp.producto_id = p.producto_id
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
         JOIN cajas ca ON v.caja_id = ca.caja_id
+        $devJoin
         $where
         GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre
         ORDER BY cantidad_vendida DESC, total_generado DESC

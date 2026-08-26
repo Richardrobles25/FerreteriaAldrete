@@ -284,10 +284,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $unidadesCache    = []; // evita INSERT repetido para misma unidad
             $unidadesCreadas  = [];
 
-            // Igual que en cajeroInventario/productos.php: solo el Administrador puede dar
-            // de alta productos/categorías nuevas en el catálogo global. Inventario e
-            // Inventario/Cajero solo pueden actualizar (stock, precios) lo que ya existe.
-            $puedeCrearCatalogo = ($_SESSION['rol'] ?? '') === 'Administrador';
+            // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php/inventario_categorias.php:
+            // Administrador e Inventario SI pueden dar de alta catalogo global nuevo; solo
+            // Inventario/Cajero no puede (solo agrega del catalogo existente a su sucursal).
+            $puedeCrearCatalogo = in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario']);
 
             $filasConError = [];
 
@@ -377,13 +377,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
                     if ($productoExistente) {
                         $prodId = $productoExistente['producto_id'];
-                        // Actualizar catálogo global (sin stock ni sucursal_id)
-                        if ($categoria_id !== null) {
-                            $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
-                                ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
-                        } else {
-                            $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
-                                ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
+                        // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php: Inventario/Cajero
+                        // no puede editar el catalogo global (nombre, precios, categoria) de un
+                        // producto que ya existe — solo puede actualizar el stock de su sucursal.
+                        if ($puedeCrearCatalogo) {
+                            // Actualizar catálogo global (sin stock ni sucursal_id)
+                            if ($categoria_id !== null) {
+                                $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                                    ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
+                            } else {
+                                $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                                    ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
+                            }
                         }
                         // Upsert stock de la sucursal (solo si hay una sucursal especifica elegida)
                         if ($sucursalImport !== null) {
@@ -412,7 +417,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $pdo->commit();
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s).";
-            if ($bloqueados > 0) $exitoImport .= " $bloqueados fila(s) omitida(s): solo el administrador puede dar de alta productos nuevos en el catálogo.";
+            if ($bloqueados > 0) $exitoImport .= " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes.";
             if ($sucursalVista === 0) $exitoImport .= ' Solo se actualizó el catálogo global (nombre, precios, categoría) — el stock del Excel se omitió porque no hay una sucursal específica elegida.';
             if ($categoriasCreadas) $exitoImport .= ' Categorías nuevas: ' . implode(', ', array_unique($categoriasCreadas)) . '.';
             if ($unidadesCreadas)   $exitoImport .= ' Unidades nuevas: ' . implode(', ', array_unique($unidadesCreadas)) . '.';

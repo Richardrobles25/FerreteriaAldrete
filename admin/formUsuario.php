@@ -51,6 +51,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$nombre_completo) $errores[] = 'El nombre completo es obligatorio.';
     if (!$nombre_usuario)  $errores[] = 'El nombre de usuario es obligatorio.';
     if (!$rol)             $errores[] = 'El rol es obligatorio.';
+    elseif (!in_array($rol, ['Administrador', 'Inventario', 'Cajero', 'Inventario/Cajero'], true))
+                           $errores[] = 'El rol seleccionado no es válido.';
     if (!$sucursal_id)     $errores[] = 'La sucursal es obligatoria.';
     // [FIX-ALTO-A-09] Antes solo se comprobaba que $sucursal_id no fuera 0 — nunca que
     // perteneciera a una sucursal activa real. Se podia asignar (o editar) un usuario

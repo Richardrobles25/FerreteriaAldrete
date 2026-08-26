@@ -131,10 +131,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $importados = 0;
             $omitidos   = 0;
             $bloqueados = 0;
-            // Igual que en formProducto.php: solo el Administrador puede dar de alta
-            // productos/categorías nuevas en el catálogo global. Inventario/Cajero e
-            // Inventario solo pueden actualizar (stock, precios) lo que ya existe.
-            $puedeCrearCatalogo = ($_SESSION['rol'] ?? '') === 'Administrador';
+            // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php/inventario_categorias.php:
+            // el diseño real es que Administrador e Inventario SI pueden dar de alta catalogo
+            // global nuevo; solo Inventario/Cajero no puede (solo agrega del catalogo existente
+            // a su sucursal). Antes este importador solo dejaba al Administrador, bloqueando de
+            // mas al rol Inventario que en el resto del sistema si tiene ese permiso.
+            $puedeCrearCatalogo = in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario']);
 
             foreach ($rows as $row) {
                 if (empty($row[0]) || empty($row[1])) continue;
@@ -183,9 +185,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
                 if ($existente) {
                     $producto_id = $existente['producto_id'];
-                    // Actualizar catálogo compartido
-                    $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
-                        ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $producto_id]);
+                    // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php: Inventario/Cajero
+                    // no puede editar el catalogo global (nombre, precios, categoria) ni de
+                    // productos nuevos ni de los que ya existen — solo puede agregar/actualizar el
+                    // stock de su propia sucursal. Antes esta rama actualizaba el catalogo global
+                    // completo sin importar el rol.
+                    if ($puedeCrearCatalogo) {
+                        $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                            ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $producto_id]);
+                    }
                     // Crear o actualizar stock de esta sucursal
                     // Si ya existe el registro → solo actualiza mínimo/máximo (preserva stock_actual)
                     // Si no existe → lo crea con el stock_actual del Excel
@@ -211,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             }
 
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
-                . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): solo el administrador puede dar de alta productos nuevos en el catálogo." : '');
+                . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes." : '');
         } catch (Exception $e) {
             $erroresImport[] = 'Error al leer el archivo: ' . $e->getMessage();
         }

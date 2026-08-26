@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $editando  = null;
 $errores   = [];
@@ -19,6 +21,10 @@ if ($esEdicion) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-MEDIO] CSRF ausente en este formulario (a diferencia de los demás formularios
+    // admin, que ya lo tienen) — un POST desde cualquier página con la sesión del
+    // Administrador abierta podía crear/editar sucursales, incluyendo sus datos bancarios.
+    requerirCSRF($_POST['_token'] ?? '', $esEdicion ? 'formSucursal.php?id=' . intval($_GET['id']) : 'formSucursal.php');
     $nombre                = trim($_POST['nombre']                ?? '');
     $rfc                   = strtoupper(trim($_POST['rfc']        ?? ''));
     $direccion             = trim($_POST['direccion']             ?? '');
@@ -41,12 +47,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $porcentaje_mora       = floatval($_POST['porcentaje_mora']   ?? 0);
 
     if (!$nombre) $errores[] = 'El nombre de la sucursal es obligatorio.';
+    // [FIX-MEDIO-A-17] Antes no habia ningun chequeo de nombre duplicado ni UNIQUE en BD:
+    // se podian crear dos sucursales con el mismo nombre, confundiendo reportes y selectores
+    // que las listan solo por nombre.
+    elseif ($nombre) {
+        $stmtDupNombre = $pdo->prepare("SELECT COUNT(*) FROM sucursales WHERE nombre = ? AND sucursal_id != ?");
+        $stmtDupNombre->execute([$nombre, $sucursal_id]);
+        if ($stmtDupNombre->fetchColumn() > 0) $errores[] = 'Ya existe una sucursal con ese nombre.';
+    }
     if ($telefono !== '' && !preg_match('/^\d{10}$/', $telefono))
         $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     if ($numero_cuenta !== '' && !preg_match('/^\d{1,10}$/', $numero_cuenta))
         $errores[] = 'El número de cuenta debe contener solo dígitos (máximo 10).';
     if ($clabe_interbancaria && strlen($clabe_interbancaria) !== 18)
         $errores[] = 'La CLABE interbancaria debe tener exactamente 18 dígitos.';
+    // [FIX-MEDIO-A-13] El rango 0-100 solo se validaba con min/max de HTML5 (se salta con
+    // DevTools o un POST directo); la columna es DECIMAL(5,2), asi que sin tope real
+    // aceptaba hasta 999.99% de comision o de mora.
+    if ($comision_terminal_pct < 0 || $comision_terminal_pct > 100)
+        $errores[] = 'El porcentaje de comisión de terminal debe estar entre 0 y 100.';
+    if ($porcentaje_mora < 0 || $porcentaje_mora > 100)
+        $errores[] = 'El porcentaje de mora debe estar entre 0 y 100.';
 
     if (empty($errores)) {
         $ticket_logo     = $editando['ticket_logo'] ?? null;
@@ -106,35 +127,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'porcentaje_mora'      => $porcentaje_mora,
             ];
 
-            if ($sucursal_id) {
-                $sets = implode(', ', array_map(fn($k) => "$k = ?", array_keys($campos)));
-                $pdo->prepare("UPDATE sucursales SET $sets WHERE sucursal_id = ?")
-                    ->execute([...array_values($campos), $sucursal_id]);
-                header('Location: sucursales.php?msg=editado');
-            } else {
-                $cols = implode(', ', array_keys($campos));
-                $vals = implode(', ', array_fill(0, count($campos), '?'));
-                $pdo->prepare("INSERT INTO sucursales ($cols, activo) VALUES ($vals, 1)")
-                    ->execute(array_values($campos));
-                $newId = intval($pdo->lastInsertId());
+            // [FIX-MEDIO-A-11] Antes una PDOException aquí (dato que no cabe en su columna,
+            // FK inválida, etc.) se dejaba sin capturar: HTTP 500 con la ruta del servidor
+            // expuesta en vez de un error normal.
+            try {
+                if ($sucursal_id) {
+                    $sets = implode(', ', array_map(fn($k) => "$k = ?", array_keys($campos)));
+                    $stmtUpd = $pdo->prepare("UPDATE sucursales SET $sets WHERE sucursal_id = ?");
+                    $stmtUpd->execute([...array_values($campos), $sucursal_id]);
+                    // [FIX-MEDIO-A-15] Antes no se comprobaba rowCount(): editar una sucursal
+                    // que ya no existe (borrada por otra sesión, o un ID manipulado en el
+                    // <input hidden>) igual reportaba "editado correctamente" sin haber
+                    // cambiado ninguna fila real.
+                    $stmtChkExiste = $pdo->prepare("SELECT COUNT(*) FROM sucursales WHERE sucursal_id = ?");
+                    $stmtChkExiste->execute([$sucursal_id]);
+                    if ($stmtChkExiste->fetchColumn() == 0) {
+                        header('Location: sucursales.php?msg=error_no_existe');
+                    } else {
+                        header('Location: sucursales.php?msg=editado');
+                    }
+                } else {
+                    $cols = implode(', ', array_keys($campos));
+                    $vals = implode(', ', array_fill(0, count($campos), '?'));
+                    $pdo->prepare("INSERT INTO sucursales ($cols, activo) VALUES ($vals, 1)")
+                        ->execute(array_values($campos));
+                    $newId = intval($pdo->lastInsertId());
 
-                // Ahora procesar el logo con el ID real de la sucursal recién creada
-                if ($pendingLogoFile) {
-                    $ext = strtolower(pathinfo($pendingLogoFile['name'], PATHINFO_EXTENSION));
-                    if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
-                        $dir = __DIR__ . '/../uploads/logos/';
-                        if (!is_dir($dir)) mkdir($dir, 0755, true);
-                        $fname = 'logo_suc' . $newId . '_' . uniqid('', true) . '.' . $ext;
-                        if (move_uploaded_file($pendingLogoFile['tmp_name'], $dir . $fname)) {
-                            $pdo->prepare("UPDATE sucursales SET ticket_logo = ? WHERE sucursal_id = ?")
-                                ->execute(['uploads/logos/' . $fname, $newId]);
+                    // Ahora procesar el logo con el ID real de la sucursal recién creada
+                    if ($pendingLogoFile) {
+                        $ext = strtolower(pathinfo($pendingLogoFile['name'], PATHINFO_EXTENSION));
+                        if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
+                            $dir = __DIR__ . '/../uploads/logos/';
+                            if (!is_dir($dir)) mkdir($dir, 0755, true);
+                            $fname = 'logo_suc' . $newId . '_' . uniqid('', true) . '.' . $ext;
+                            if (move_uploaded_file($pendingLogoFile['tmp_name'], $dir . $fname)) {
+                                $pdo->prepare("UPDATE sucursales SET ticket_logo = ? WHERE sucursal_id = ?")
+                                    ->execute(['uploads/logos/' . $fname, $newId]);
+                            }
                         }
                     }
-                }
 
-                header('Location: sucursales.php?msg=creado');
+                    header('Location: sucursales.php?msg=creado');
+                }
+                exit();
+            } catch (PDOException $e) {
+                $errores[] = 'No se pudo guardar la sucursal. Verifica los datos e intenta de nuevo.';
             }
-            exit();
         }
     }
 }
@@ -223,9 +261,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="errores">
                     <ul><?php foreach($errores as $e): ?><li><?= htmlspecialchars($e) ?></li><?php endforeach; ?></ul>
                 </div>
+            <?php elseif (($_GET['msg'] ?? '') === 'error_token'): ?>
+                <div class="errores"><ul><li>La sesión expiró o el formulario no es válido. Intenta de nuevo.</li></ul></div>
             <?php endif; ?>
 
             <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <input type="hidden" name="sucursal_id" value="<?= $editando['sucursal_id'] ?? 0 ?>">
 
                 <div class="form-group">

@@ -28,6 +28,16 @@ if ($_SESSION['rol'] === 'Administrador') {
     $sucursalVista = isset($_SESSION['admin_sucursal_filtro'])
         ? intval($_SESSION['admin_sucursal_filtro'])
         : 0;
+    // [FIX-MEDIO-A-10] Si la sucursal guardada en sesión ya no está activa (alguien la
+    // desactivó mientras el admin la tenía seleccionada), antes se seguía usando ese ID
+    // para TODAS las consultas de la página, mientras que el <select> — que solo lista
+    // sucursales activas — no tenía ningún <option> que coincidiera, así que el navegador
+    // mostraba "Todas las sucursales" por default aunque $sucursalVista siguiera apuntando
+    // a la sucursal fantasma. Se revalida en cada carga y se regresa a 0 si ya no es válida.
+    if ($sucursalVista !== 0 && !in_array($sucursalVista, array_map('intval', array_column($_todasSucursales, 'sucursal_id')), true)) {
+        $sucursalVista = 0;
+        $_SESSION['admin_sucursal_filtro'] = 0;
+    }
 } else {
     $sucursalVista = intval($_SESSION['sucursal_id']);
 }

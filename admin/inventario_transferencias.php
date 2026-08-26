@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Acciones sobre transferencia existente
@@ -66,17 +68,76 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
         header('Location: inventario_transferencias.php?msg=rechazar_modificacion'); exit();
 
     } elseif ($accion === 'aprobar') {
+        // [FIX-MEDIO-C-07] Antes se caia siempre al mensaje generico de exito al final
+        // (linea ~202) sin comprobar si el UPDATE realmente afecto una fila — si alguien
+        // mas ya habia aprobado/rechazado la misma solicitud (o no era el origen), el
+        // admin veia "Transferencia aprobada" aunque nada hubiera cambiado.
         $notaAprobacion = 'Aceptada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Preparar envio a sucursal destino.';
-        $pdo->prepare("
+        $stmtAprob = $pdo->prepare("
             UPDATE transferencias
             SET estado='Aprobada',
                 usuario_aprueba_id=?,
                 notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?))
             WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?
-        ")->execute([$_SESSION['usuario_id'], $notaAprobacion, $id, $miSucursal]);
+        ");
+        $stmtAprob->execute([$_SESSION['usuario_id'], $notaAprobacion, $id, $miSucursal]);
+        if ($stmtAprob->rowCount() === 0) {
+            header('Location: inventario_transferencias.php?msg=error_ya_no_pendiente'); exit();
+        }
     } elseif ($accion === 'rechazar') {
-        $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
-            ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
+        $stmtRech = $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?");
+        $stmtRech->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
+        if ($stmtRech->rowCount() === 0) {
+            header('Location: inventario_transferencias.php?msg=error_ya_no_pendiente'); exit();
+        }
+    } elseif ($accion === 'cancelar') {
+        // [FIX-MEDIO-C-11] Antes una transferencia "En tránsito" no tenia ninguna ruta de
+        // cancelacion: si nunca se confirmaba la recepcion, el stock quedaba descontado del
+        // origen para siempre sin llegar a ningun lado ni poder revertirse. Solo el ORIGEN
+        // puede cancelar (es quien fisicamente puede recuperar la mercancia enviada), y solo
+        // mientras siga "En tránsito" (aun no fue recibida).
+        $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? AND estado = 'En tránsito' AND sucursal_origen_id = ?");
+        $stmt->execute([$id, $miSucursal]);
+        $transfCancel = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($transfCancel) {
+            $pdo->beginTransaction();
+            try {
+                $stmtLockCancel = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+                $stmtLockCancel->execute([$id]);
+                $transfCancel = $stmtLockCancel->fetch(PDO::FETCH_ASSOC);
+                if (!$transfCancel || $transfCancel['estado'] !== 'En tránsito' || $transfCancel['sucursal_origen_id'] != $miSucursal) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_ya_no_transito'); exit();
+                }
+
+                $stmtOrCancel = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtOrCancel->execute([$transfCancel['producto_id'], $miSucursal]);
+                $stockOrCancel = $stmtOrCancel->fetchColumn();
+                $stockAntCancel = ($stockOrCancel !== false) ? floatval($stockOrCancel) : 0.0;
+                $stockNuevoCancel = $stockAntCancel + floatval($transfCancel['cantidad']);
+                if ($stockOrCancel !== false) {
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                        ->execute([$stockNuevoCancel, $transfCancel['producto_id'], $miSucursal]);
+                } else {
+                    $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
+                        ->execute([$transfCancel['producto_id'], $miSucursal, $stockNuevoCancel]);
+                }
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,?)")
+                    ->execute([$transfCancel['producto_id'], $_SESSION['usuario_id'], $miSucursal, $transfCancel['cantidad'], $stockAntCancel, $stockNuevoCancel, 'Transferencia #' . $id . ' cancelada en tránsito — stock regresado al origen']);
+
+                $pdo->prepare("UPDATE transferencias SET estado='Cancelada' WHERE transferencias_id=? AND estado='En tránsito' AND sucursal_origen_id=?")
+                    ->execute([$id, $miSucursal]);
+
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                error_log('[Ferreteria/admin/transferencias] Error al cancelar #' . $id . ': ' . $e->getMessage());
+                header('Location: inventario_transferencias.php?msg=error_cancelar'); exit();
+            }
+        } else {
+            header('Location: inventario_transferencias.php?msg=error_ya_no_transito'); exit();
+        }
     } elseif ($accion === 'enviar') {
         // El stock del origen se descuenta AL ENVIAR (no hasta que el destino confirma
         // recepcion), para que el origen no pueda seguir vendiendo mercancia ya en camino.
@@ -211,7 +272,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($sucursalVista === 0)                              $errores[] = 'Selecciona una sucursal específica para solicitar una transferencia.';
     if (!$sucursal_origen_id)                              $errores[] = 'Selecciona la sucursal de origen.';
     if ($sucursal_origen_id == $sucursalVista)             $errores[] = 'La sucursal origen no puede ser la misma que la tuya.';
-    if (empty($items))                                     $errores[] = 'Agrega al menos un producto.';
+
+    // [FIX-MEDIO-C-14] Antes no se validaba que $items fuera realmente un array de
+    // objetos con las llaves esperadas: un items_transf malformado (JSON invalido, un
+    // array de escalares, objetos sin "id"/"cantidad") pasaba el "empty($items)" de abajo
+    // sin problema y tronaba mas adelante con un TypeError al tratar de indexar un valor
+    // que no es array. Se valida la forma completa antes de usar nada.
+    if (!is_array($items)) {
+        $errores[] = 'El carrito de productos tiene un formato inválido.';
+        $items = [];
+    } else {
+        foreach ($items as $item) {
+            if (!is_array($item) || !isset($item['id'], $item['cantidad']) || !is_numeric($item['id']) || !is_numeric($item['cantidad'])) {
+                $errores[] = 'El carrito de productos tiene un formato inválido.';
+                $items = [];
+                break;
+            }
+        }
+    }
+    if (empty($items) && empty($errores))                 $errores[] = 'Agrega al menos un producto.';
 
     if (empty($errores)) {
         foreach ($items as $item) {
@@ -233,6 +312,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores)) {
+        // [FIX-MEDIO-C-13] Antes se redirigia SIEMPRE a "Solicitud enviada" sin comprobar
+        // si de verdad se inserto alguna fila — si todos los items terminaban con cantidad
+        // <= 0 tras redondear (p. ej. un producto no-granel pedido en 0.5), el "continue"
+        // los saltaba a todos y la solicitud quedaba vacia, pero igual se mostraba exito.
+        $insertados = 0;
         foreach ($items as $item) {
             $prodId   = intval($item['id']);
             $cantidad = floatval($item['cantidad']);
@@ -243,8 +327,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($cantidad <= 0) continue;
             $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado) VALUES (?,?,?,?,?,?,'Pendiente')")
                 ->execute([$prodId, $sucursal_origen_id, $sucursalVista, $_SESSION['usuario_id'], $cantidad, $notas]);
+            $insertados++;
         }
-        header('Location: inventario_transferencias.php?msg=solicitado'); exit();
+        if ($insertados > 0) {
+            header('Location: inventario_transferencias.php?msg=solicitado'); exit();
+        }
+        $errores[] = 'Ningún producto tenía una cantidad válida después de ajustar por tipo de venta. Revisa las cantidades e intenta de nuevo.';
     }
 }
 
@@ -534,6 +622,10 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                     'error_stock_recibir'   => 'No se puede confirmar: la sucursal origen ya no tiene stock suficiente registrado. Contacta a la sucursal origen.',
                     'error_recibir'         => 'Error al confirmar la recepcion. Intenta de nuevo.',
                     'error_sucursal'        => 'Selecciona una sucursal específica para poder operar transferencias.',
+                    'cancelar'              => 'Transferencia cancelada. El stock regresó a tu sucursal.',
+                    'error_cancelar'        => 'Error al cancelar la transferencia. Intenta de nuevo.',
+                    'error_ya_no_transito'  => 'No se pudo completar: la transferencia ya no está "En tránsito" (alguien más ya la modificó).',
+                    'error_ya_no_pendiente' => 'No se pudo completar: la solicitud ya no está pendiente (alguien más ya la aprobó, rechazó, o no eres la sucursal origen).',
                 ]; ?>
                 <?php $esMsgError = str_starts_with($_GET['msg'], 'error'); ?>
                 <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
@@ -583,6 +675,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                                 'En tránsito' => 'badge-transito',
                                 'Entregada'   => 'badge-entregada',
                                 'Rechazada'   => 'badge-rechazada',
+                                'Cancelada'   => 'badge-rechazada',
                             ];
                             $bc = $badgeMap[$t['estado']] ?? 'badge-pendiente';
                         ?>
@@ -610,27 +703,30 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                                 <?php if ($sucursalVista === 0): ?>
                                         <span style="color:#aaa;font-size:11px;">Elige una sucursal para operar</span>
                                 <?php elseif ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
-                                        <a class="btn-accion btn-aprobar" href="inventario_transferencias.php?accion=aprobar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</a>
-                                        <a class="btn-accion btn-rechazar" href="inventario_transferencias.php?accion=rechazar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Rechazar esta solicitud de transferencia?')">Rechazar</a>
+                                        <button class="btn-accion btn-aprobar" type="button" onclick="return ejecutarAccionTransf('aprobar', <?= $t['transferencias_id'] ?>, '¿Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</button>
+                                        <button class="btn-accion btn-rechazar" type="button" onclick="return ejecutarAccionTransf('rechazar', <?= $t['transferencias_id'] ?>, '¿Rechazar esta solicitud de transferencia?')">Rechazar</button>
                                         <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
                                         <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
-                                        <a class="btn-accion btn-enviar" href="inventario_transferencias.php?accion=enviar&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Confirmar que ya enviaste los productos?')">Marcar enviado</a>
+                                        <button class="btn-accion btn-enviar" type="button" onclick="return ejecutarAccionTransf('enviar', <?= $t['transferencias_id'] ?>, '¿Confirmar que ya enviaste los productos?')">Marcar enviado</button>
                                     <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
-                                        <a class="btn-accion btn-aceptar-mod"
-                                           href="inventario_transferencias.php?accion=aceptar_modificacion&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
-                                           onclick="return confirm('Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
+                                        <button class="btn-accion btn-aceptar-mod" type="button"
+                                           onclick="return ejecutarAccionTransf('aceptar_modificacion', <?= $t['transferencias_id'] ?>, '¿Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
                                             ✓ Aceptar cantidad
-                                        </a>
-                                        <a class="btn-accion btn-rechazar-mod"
-                                           href="inventario_transferencias.php?accion=rechazar_modificacion&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
-                                           onclick="return confirm('Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
+                                        </button>
+                                        <button class="btn-accion btn-rechazar-mod" type="button"
+                                           onclick="return ejecutarAccionTransf('rechazar_modificacion', <?= $t['transferencias_id'] ?>, '¿Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
                                             ✕ Rechazar cambio
-                                        </a>
+                                        </button>
                                     <?php elseif ($t['estado'] === 'Modificada' && $esMiOrigen): ?>
                                         <span style="color:#283593;font-size:11px;font-style:italic;">Esperando confirmacion del destino</span>
                                     <?php elseif ($t['estado'] === 'En tránsito' && !$esMiOrigen): ?>
-                                        <a class="btn-accion btn-recibir" href="inventario_transferencias.php?accion=recibir&id=<?= $t['transferencias_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</a>
+                                        <button class="btn-accion btn-recibir" type="button" onclick="return ejecutarAccionTransf('recibir', <?= $t['transferencias_id'] ?>, '¿Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</button>
+                                    <?php elseif ($t['estado'] === 'En tránsito' && $esMiOrigen): ?>
+                                        <!-- [FIX-MEDIO-C-11] Antes no habia ninguna accion disponible aqui: una transferencia
+                                             "En tránsito" nunca recibida quedaba con el stock descontado del origen para
+                                             siempre, sin forma de recuperarlo. -->
+                                        <button class="btn-accion" type="button" style="background:#fdecea;color:#c0392b;border:none;cursor:pointer;" onclick="return ejecutarAccionTransf('cancelar', <?= $t['transferencias_id'] ?>, '¿Cancelar esta transferencia? El stock regresara a tu sucursal. Solo hazlo si de verdad recuperaste la mercancia enviada.')">Cancelar</button>
                                     <?php else: ?>
                                         <span style="color:#aaa;font-size:11px;">—</span>
                                     <?php endif; ?>
@@ -967,6 +1063,26 @@ document.addEventListener('keydown', function(e) {
     <input type="hidden" id="inputEditarTransfId" name="id">
     <input type="hidden" id="inputEditarNuevaCantidad" name="nueva_cantidad">
 </form>
+
+<!-- [FIX-MEDIO-C-15] Form reutilizable para aprobar/rechazar/enviar/recibir/cancelar/
+     aceptar_modificacion/rechazar_modificacion — antes cada accion era un link GET con el
+     token CSRF a la vista en la URL (queda en el historial del navegador, en logs del
+     servidor, y viaja en el header Referer si el destino enlaza a otro sitio). Ahora todas
+     esas acciones van por POST, igual que "editar_cantidad" ya lo hacia. -->
+<form id="formAccionTransf" method="POST" action="inventario_transferencias.php" style="display:none;">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+    <input type="hidden" id="inputAccionTransfAccion" name="accion">
+    <input type="hidden" id="inputAccionTransfId" name="id">
+</form>
+<script>
+function ejecutarAccionTransf(accion, id, mensajeConfirm) {
+    if (!confirm(mensajeConfirm)) return false;
+    document.getElementById('inputAccionTransfAccion').value = accion;
+    document.getElementById('inputAccionTransfId').value = id;
+    document.getElementById('formAccionTransf').submit();
+    return false;
+}
+</script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {

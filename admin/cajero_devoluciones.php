@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if ($sucursalVista === 0) {
@@ -14,8 +16,20 @@ if ($sucursalVista === 0) {
 }
 
 // Verificar que hay caja abierta en la sucursal elegida; si no, redirigir a abrirCaja
-$_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
-$_stmtCajaGuard->execute([$_SESSION['usuario_id'], $sucursalVista]);
+// [FIX-ALTO-D2-05] Antes exigia que la caja abierta fuera la del propio usuario
+// (usuario_id = $_SESSION['usuario_id']) — una guarda heredada del flujo de Cajero, que
+// SI abre su propia caja para vender. Un Administrador normalmente no abre caja propia
+// en cada sucursal, asi que quedaba bloqueado para usar Devoluciones aunque hubiera una
+// caja abierta (la del cajero en turno) de donde sacar el reembolso. Para Administrador
+// se acepta CUALQUIER caja abierta de la sucursal que se esta viendo; para Cajero e
+// Inventario/Cajero se mantiene exactamente la misma restriccion de antes (solo la suya).
+if ($_SESSION['rol'] === 'Administrador') {
+    $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
+    $_stmtCajaGuard->execute([$sucursalVista]);
+} else {
+    $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
+    $_stmtCajaGuard->execute([$_SESSION['usuario_id'], $sucursalVista]);
+}
 $_cajaGuardId = $_stmtCajaGuard->fetchColumn();
 if (!$_cajaGuardId) {
     header('Location: cajero_abrirCaja.php?msg=sinCaja');
@@ -190,9 +204,17 @@ if (isset($_GET['cancelar_dev'])) {
         foreach ($movimientos as $m) {
             $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
             $stmtS->execute([$m['producto_id'], $sucursalVista]);
-            $stockAnt  = floatval($stmtS->fetchColumn());
-            $stockNuevo = max(0, $stockAnt - floatval($m['cantidad']));
-            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $m['producto_id'], $sucursalVista]);
+            $stockAntRaw = $stmtS->fetchColumn();
+            $stockAnt    = ($stockAntRaw !== false) ? floatval($stockAntRaw) : 0.0;
+            $stockNuevo  = max(0, $stockAnt - floatval($m['cantidad']));
+            // [FIX-ALTO-D2-04] Ver nota arriba: mismo INSERT ... ON DUPLICATE KEY UPDATE por
+            // si la fila no existiera (no deberia pasar tras el fix de arriba, pero evita el
+            // mismo "UPDATE silencioso de 0 filas" si de todos modos faltara).
+            $pdo->prepare("
+                INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                VALUES (?, ?, ?, 0, 0, 1)
+                ON DUPLICATE KEY UPDATE stock_actual = VALUES(stock_actual)
+            ")->execute([$m['producto_id'], $sucursalVista, $stockNuevo]);
             $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo)
                            VALUES (?,?,?,'Salida',?,?,?,?)")
                 ->execute([$m['producto_id'], $_SESSION['usuario_id'], $sucursalVista, $m['cantidad'], $stockAnt, $stockNuevo,
@@ -309,17 +331,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errores)) {
         // [AUTOFIX] D-02: Verificar que la venta pertenezca a la sucursal del cajero antes de procesar
         // [AUTOFIX] Se agregan subtotal y descuento para calcular el factor neto proporcional al devolver
+        // [FIX-CRIT-D2-02] Solo se pueden devolver ventas Completada/Modificado (igual que el buscador
+        // AJAX de arriba, linea 109) — antes esta consulta no filtraba por estado y permitia "devolver"
+        // ventas Canceladas o Pendientes que nunca se cobraron o cuyo dinero ya se habia regresado.
         $stmtV = $pdo->prepare("
             SELECT v.metodo_pago, v.cliente_id, v.folio, v.caja_id, v.created_at,
                    v.subtotal AS venta_subtotal, v.descuento AS venta_descuento
             FROM ventas v
             JOIN cajas ca ON v.caja_id = ca.caja_id AND ca.sucursal_id = ?
-            WHERE v.venta_id = ?
+            WHERE v.venta_id = ? AND v.estado IN ('Completada', 'Modificado')
         ");
         $stmtV->execute([$sucursalVista, $venta_id]);
         $ventaInfo = $stmtV->fetch(PDO::FETCH_ASSOC);
         if (!$ventaInfo) {
-            $errores[] = 'La venta no pertenece a esta sucursal o no existe.';
+            $errores[] = 'La venta no pertenece a esta sucursal, no existe, o no está en un estado que admita devolución.';
         }
 
         // Limite de tiempo: solo se aceptan devoluciones de ventas con menos de 7 dias
@@ -375,12 +400,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                           ? intval($prod['paquete_id']) : null;
             $cantidad   = floatval($prod['cantidad'] ?? 0);
             $mapKey     = $productoId . ':' . ($paqueteId ?? '');
-            // [AUTOFIX] V-06: Usar precio de la BD keyed por composite, no el que manda el cliente
-            $precioUnitario = $preciosRealDB[$mapKey] ?? floatval($prod['precio_unitario'] ?? 0);
 
             if ($productoId <= 0 || $cantidad <= 0) {
                 continue;
             }
+
+            // [FIX-CRIT-D2-01] El precio SIEMPRE debe venir de una fila real de venta_productos
+            // para esta venta. Antes, si el producto_id+paquete_id enviado por el cliente no
+            // coincidía con ninguna fila real (ej. un paquete_id inventado), el código caía a
+            // floatval($prod['precio_unitario']) — el precio que mandó el navegador, sin ningún
+            // tope. Eso permitía inflar el monto del reembolso a lo que sea. Ahora, si la
+            // combinación no corresponde a una línea real de la venta, se rechaza la devolución
+            // completa en vez de aceptar un precio no verificado.
+            if (!isset($preciosRealDB[$mapKey])) {
+                $errores[] = 'Uno de los productos seleccionados no coincide con las líneas reales de esta venta.';
+                continue;
+            }
+            $precioUnitario = $preciosRealDB[$mapKey];
 
             if (!isset($productosAgrupados[$mapKey])) {
                 $productosAgrupados[$mapKey] = [
@@ -505,7 +541,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
                          ? intval($prod['paquete_id']) : null;
                 $mk   = $pid . ':' . ($paqId ?? '');
-                $precioUnit = $precioUnitarioMap[$mk] ?? floatval($prod['precio_unitario']);
+                // [FIX-CRIT-D2-01] Nunca caer al precio del cliente — si no está en la BD, es 0
+                // (no debería ocurrir tras la validación de arriba, pero es defensa en profundidad).
+                $precioUnit = $precioUnitarioMap[$mk] ?? 0.0;
                 $subtotalBrutoDevuelto += floatval($prod['cantidad']) * $precioUnit;
             }
             $subtotalBrutoDevuelto = round($subtotalBrutoDevuelto, 2);
@@ -539,7 +577,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
                          ? intval($prod['paquete_id']) : null;
                 $mk    = $pid . ':' . ($paqId ?? '');
-                $subtotalFinalDevuelto += floatval($prod['cantidad']) * ($preciosRealDB[$mk] ?? floatval($prod['precio_unitario']));
+                // [FIX-CRIT-D2-01] Nunca caer al precio del cliente — mismo razonamiento que arriba.
+                $subtotalFinalDevuelto += floatval($prod['cantidad']) * ($preciosRealDB[$mk] ?? 0.0);
             }
             $subtotalFinalDevuelto = round($subtotalFinalDevuelto, 2);
 
@@ -559,18 +598,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // suma_restante_final = precio_final × cantidad_aún_no_devuelta.
                 // ratio = subtotalFinalDevuelto / suma_restante_final → siempre en [0,1].
                 // Para devolución total: ratio = 1 → se devuelve toda la comisión restante. ✓
+                // [FIX-ALTO-D2-03] El subquery "dev" agrupaba lo ya devuelto solo por
+                // producto_id, y el JOIN final tambien solo por producto_id. Si la venta
+                // tenia el mismo producto en DOS filas de venta_productos (una suelta y otra
+                // dentro de un paquete, o el mismo producto en dos paquetes distintos), el
+                // fan-out del JOIN aplicaba la MISMA cantidad ya devuelta a ambas filas — la
+                // resta esencialmente se contaba doble, "suma_restante_final" salia mas chico
+                // de lo real, el ratio de comision se inflaba, y se reembolsaba mas comision
+                // de la que el cliente en realidad habia pagado. Se agrega paquete_id (que
+                // movimientos_inventario y venta_productos ya guardan) tanto al agrupado como
+                // al JOIN, usando <=> porque paquete_id puede ser NULL en items sueltos.
                 $stmtVComision = $pdo->prepare("
                     SELECT v.comision_terminal,
                            COALESCE(SUM(vp.precio_final * GREATEST(0, vp.cantidad - COALESCE(dev.devuelta, 0))), 0) AS suma_restante_final
                     FROM ventas v
                     LEFT JOIN venta_productos vp ON vp.venta_id = v.venta_id
                     LEFT JOIN (
-                        SELECT mi.producto_id, SUM(mi.cantidad) AS devuelta
+                        SELECT mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS devuelta
                         FROM movimientos_inventario mi
                         JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
                         WHERE mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
-                        GROUP BY mi.producto_id
-                    ) dev ON dev.producto_id = vp.producto_id
+                        GROUP BY mi.producto_id, mi.paquete_id
+                    ) dev ON dev.producto_id = vp.producto_id AND dev.paquete_id <=> vp.paquete_id
                     WHERE v.venta_id = ?
                     GROUP BY v.venta_id
                 ");
@@ -604,10 +653,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
                     $stmtS->execute([$producto_id, $sucursalVista]);
-                    $stockAnterior = floatval($stmtS->fetchColumn());
+                    $stockAnteriorRaw = $stmtS->fetchColumn();
+                    $stockAnterior = ($stockAnteriorRaw !== false) ? floatval($stockAnteriorRaw) : 0.0;
                     $stockNuevo    = $stockAnterior + $cantidad;
 
-                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $sucursalVista]);
+                    // [FIX-ALTO-D2-04] Antes, si no existia fila de stock_sucursal para este
+                    // producto+sucursal (producto nunca stockeado ahi, o la fila se borro), el
+                    // UPDATE de abajo no afectaba ninguna fila — sin error, sin aviso. El
+                    // reembolso se pagaba igual y el movimiento quedaba registrado, pero el
+                    // stock devuelto nunca llegaba a existir en el inventario real. Ahora se usa
+                    // INSERT ... ON DUPLICATE KEY UPDATE: si la fila no existe, se crea con el
+                    // stock devuelto; si existe, se actualiza igual que antes.
+                    $pdo->prepare("
+                        INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                        VALUES (?, ?, ?, 0, 0, 1)
+                        ON DUPLICATE KEY UPDATE stock_actual = VALUES(stock_actual)
+                    ")->execute([$producto_id, $sucursalVista, $stockNuevo]);
                     $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id,paquete_id) VALUES (?,?,?,'Entrada',?,?,?,?,?,?)")
                         ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id, $paqId]);
                 }

@@ -1,11 +1,14 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
+require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $editando  = null;
 $errores   = [];
@@ -52,6 +55,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$empleado_id)                          $errores[] = 'Selecciona un empleado.';
     if (!$fecha || !strtotime($fecha))          $errores[] = 'La fecha no es valida.';
+    // [FIX-MEDIO-G-16] No habia ningun tope contra fechas futuras: se podia registrar una
+    // falta o un dia de asistencia de "mañana" (o de dentro de un año), corrompiendo el
+    // calculo de nomina de una semana que ni siquiera ha ocurrido todavia.
+    elseif ($fecha > date('Y-m-d'))             $errores[] = 'La fecha no puede ser en el futuro.';
 
     // Un solo registro por empleado por fecha (al editar se excluye el registro actual)
     if ($empleado_id && $fecha) {
@@ -72,20 +79,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Validate time intervals
+    // [FIX-CRIT-G-03] Antes cada intervalo solo se validaba contra si mismo: no se
+    // comprobaba que cayera dentro de la jornada (hora_entrada/hora_salida) ni que no
+    // se solapara con otro intervalo ya capturado. Un doble clic en "Agregar
+    // intervalo" (o un error de captura) podia duplicar el mismo horario de comida, o
+    // capturar un intervalo absurdamente largo, y como todos se suman a ciegas para
+    // deducir minutos trabajados, eso multiplicaba la deduccion de sueldo del
+    // empleado — en un caso extremo, hasta dejar horas trabajadas negativas.
     $intervalosLimpios = [];
     foreach ($tfSalidas as $i => $tfs) {
         $tfr = $tfRegresos[$i] ?? '';
         if ($tfs && $tfr) {
-            if (timeToMinutes($tfr) <= timeToMinutes($tfs))
+            $tfsMin = timeToMinutes($tfs);
+            $tfrMin = timeToMinutes($tfr);
+            if ($tfrMin <= $tfsMin) {
                 $errores[] = 'En tiempo fuera fila ' . ($i + 1) . ': hora de regreso debe ser mayor a la de salida.';
+            } elseif ($hora_entrada && $hora_salida
+                      && ($tfsMin < timeToMinutes($hora_entrada) || $tfrMin > timeToMinutes($hora_salida))) {
+                $errores[] = 'En tiempo fuera fila ' . ($i + 1) . ': debe estar dentro del horario de entrada y salida.';
+            } else {
+                foreach ($intervalosLimpios as $prev) {
+                    $prevIni = timeToMinutes($prev['salida']);
+                    $prevFin = timeToMinutes($prev['regreso']);
+                    if ($tfsMin < $prevFin && $tfrMin > $prevIni) {
+                        $errores[] = 'En tiempo fuera fila ' . ($i + 1) . ': se traslapa con otro intervalo ya capturado.';
+                        break;
+                    }
+                }
+            }
             $intervalosLimpios[] = ['salida' => $tfs, 'regreso' => $tfr];
+        }
+    }
+
+    // [FIX-ALTO-G-10] Antes se podia crear o editar un registro de asistencia sin importar
+    // si la semana (lunes a sabado) de esa fecha ya tiene un pago de nomina registrado para
+    // ese empleado en semanaLaboral.php — el pago ya calculado y entregado quedaba
+    // divergente, y sin ningun aviso, de lo que la bitacora de asistencia muestra despues.
+    if ($empleado_id && $fecha && strtotime($fecha) && empty($errores)) {
+        $dtChk = new DateTime($fecha);
+        $dtChk->modify('-' . ((int)$dtChk->format('N') - 1) . ' days');
+        $stmtPagadoChk = $pdo->prepare("SELECT COUNT(*) FROM pagos_nomina WHERE empleado_id = ? AND semana_inicio = ?");
+        $stmtPagadoChk->execute([$empleado_id, $dtChk->format('Y-m-d')]);
+        if ($stmtPagadoChk->fetchColumn() > 0) {
+            $errores[] = 'No se puede guardar: la semana de esta fecha ya tiene un pago de nómina registrado para este empleado.';
         }
     }
 
     if (empty($errores)) {
         // Calculate hours
-        $diaSemana      = intval(date('N', strtotime($fecha))); // 1=Mon, 6=Sat
-        $horasEsperadas = ($diaSemana === 6) ? 6.0 : 9.0;
+        // [FIX-ALTO-G-05] Antes domingo (N=7) caia en el "else" y se trataba como jornada
+        // normal de 9h: una Falta en domingo descontaba 9 horas de sueldo por un dia que no
+        // era obligatorio, y horas trabajadas en domingo se comparaban contra una jornada
+        // esperada de 9h en vez de contar completas como extra. Coincide con que
+        // semanaLaboral.php ya modela la semana de paga como lunes-sabado (51 hrs), sin
+        // domingo: domingo pasa a 0 horas esperadas, asi que una Falta ahi no descuenta
+        // nada y cualquier hora trabajada cuenta entera como horas extra.
+        $horasEsperadas = horasEsperadasDia($fecha);
 
         if ($tipo === 'Falta') {
             $horasNoTrabajadas = $horasEsperadas;
@@ -105,6 +154,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $minFuera += timeToMinutes($intv['regreso']) - timeToMinutes($intv['salida']);
             }
             $minTrabajados -= $minFuera;
+            // [FIX-CRIT-G-03] Defensa adicional: minutos trabajados nunca negativos.
+            $minTrabajados = max(0, $minTrabajados);
 
             $horasTrabajadas   = $minTrabajados / 60.0;
             $horasNoTrabajadas = round(max(0.0, $horasEsperadas - $horasTrabajadas), 2);
@@ -114,42 +165,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $horaEntradaDB = ($tipo !== 'Falta' && $hora_entrada) ? $hora_entrada : null;
         $horaSalidaDB  = ($tipo !== 'Falta' && $hora_salida)  ? $hora_salida  : null;
 
-        if ($asistencia_id) {
-            $pdo->prepare("
-                UPDATE asistencia
-                SET empleado_id=?, fecha=?, tipo=?, hora_entrada=?, hora_salida=?,
-                    horas_no_trabajadas=?, horas_extra=?, razon=?, resolucion=?, notas=?
-                WHERE asistencia_id=?
-            ")->execute([
-                $empleado_id, $fecha, $tipo, $horaEntradaDB, $horaSalidaDB,
-                $horasNoTrabajadas, $horasExtra,
-                $razon ?: null, $resolucion, $notas ?: null,
-                $asistencia_id
-            ]);
-            $pdo->prepare("DELETE FROM asistencia_tiempos_fuera WHERE asistencia_id=?")->execute([$asistencia_id]);
-        } else {
-            $pdo->prepare("
-                INSERT INTO asistencia (empleado_id, fecha, tipo, hora_entrada, hora_salida,
-                    horas_no_trabajadas, horas_extra, razon, resolucion, notas)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-            ")->execute([
-                $empleado_id, $fecha, $tipo, $horaEntradaDB, $horaSalidaDB,
-                $horasNoTrabajadas, $horasExtra,
-                $razon ?: null, $resolucion, $notas ?: null
-            ]);
-            $asistencia_id = $pdo->lastInsertId();
-        }
+        // [FIX-ALTO-G-12] Antes una PDOException (p. ej. empleado_id de un <select>
+        // desactualizado que ya no existe, violando la FK) se dejaba sin capturar: HTTP 500
+        // con la ruta del servidor y el esquema de la BD expuestos.
+        // [FIX-MEDIO-G-24] Editar un registro es un UPDATE + un DELETE + N INSERTs (los
+        // intervalos de tiempo fuera) sin ninguna transaccion: si el proceso fallaba (o el
+        // servidor se caia) justo despues del DELETE pero antes de los INSERTs, el registro
+        // se quedaba con la fecha/horas nuevas pero SIN sus intervalos de tiempo fuera —
+        // inconsistente y sin ningun aviso. Se envuelve todo en una transaccion.
+        $pdo->beginTransaction();
+        try {
+            if ($asistencia_id) {
+                $pdo->prepare("
+                    UPDATE asistencia
+                    SET empleado_id=?, fecha=?, tipo=?, hora_entrada=?, hora_salida=?,
+                        horas_no_trabajadas=?, horas_extra=?, razon=?, resolucion=?, notas=?
+                    WHERE asistencia_id=?
+                ")->execute([
+                    $empleado_id, $fecha, $tipo, $horaEntradaDB, $horaSalidaDB,
+                    $horasNoTrabajadas, $horasExtra,
+                    $razon ?: null, $resolucion, $notas ?: null,
+                    $asistencia_id
+                ]);
+                $pdo->prepare("DELETE FROM asistencia_tiempos_fuera WHERE asistencia_id=?")->execute([$asistencia_id]);
+            } else {
+                $pdo->prepare("
+                    INSERT INTO asistencia (empleado_id, fecha, tipo, hora_entrada, hora_salida,
+                        horas_no_trabajadas, horas_extra, razon, resolucion, notas)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                ")->execute([
+                    $empleado_id, $fecha, $tipo, $horaEntradaDB, $horaSalidaDB,
+                    $horasNoTrabajadas, $horasExtra,
+                    $razon ?: null, $resolucion, $notas ?: null
+                ]);
+                $asistencia_id = $pdo->lastInsertId();
+            }
 
-        // Insert time intervals
-        if ($intervalosLimpios) {
-            $stmtTF = $pdo->prepare("INSERT INTO asistencia_tiempos_fuera (asistencia_id, hora_salida, hora_regreso) VALUES (?,?,?)");
-            foreach ($intervalosLimpios as $intv) {
-                $stmtTF->execute([$asistencia_id, $intv['salida'], $intv['regreso']]);
+            // Insert time intervals
+            if ($intervalosLimpios) {
+                $stmtTF = $pdo->prepare("INSERT INTO asistencia_tiempos_fuera (asistencia_id, hora_salida, hora_regreso) VALUES (?,?,?)");
+                foreach ($intervalosLimpios as $intv) {
+                    $stmtTF->execute([$asistencia_id, $intv['salida'], $intv['regreso']]);
+                }
+            }
+
+            $pdo->commit();
+            header('Location: asistencia.php?msg=registrado');
+            exit();
+        } catch (PDOException $e) {
+            $pdo->rollBack();
+            // [FIX-MEDIO-G-27] La comprobacion de duplicado de arriba (linea ~60) es a nivel
+            // de aplicacion; sin un indice UNIQUE real en la BD, dos envios casi simultaneos
+            // (doble clic, dos pestañas) podian pasar esa comprobacion ambos y crear dos
+            // registros de asistencia para el mismo empleado+fecha. Ahora hay un indice
+            // UNIQUE(empleado_id, fecha) que la BD hace cumplir de verdad — un mensaje mas
+            // claro cuando es justo ese el motivo del error.
+            if ($e->getCode() === '23000' && stripos($e->getMessage(), 'uk_asistencia_empleado_fecha') !== false) {
+                $errores[] = 'Este empleado ya tiene un registro en esa fecha (se guardó desde otra pestaña o dispositivo). Recarga la página e edita el registro existente.';
+            } else {
+                $errores[] = 'No se pudo guardar el registro. Verifica que el empleado siga existiendo e intenta de nuevo.';
             }
         }
-
-        header('Location: asistencia.php?msg=registrado');
-        exit();
     }
 }
 
@@ -311,7 +387,7 @@ foreach ($pdo->query("SELECT empleado_id, fecha, asistencia_id FROM asistencia")
                     </div>
                     <div class="form-group">
                         <label>Fecha</label>
-                        <input type="date" name="fecha" value="<?= htmlspecialchars($v['fecha']) ?>" id="inputFecha" required>
+                        <input type="date" name="fecha" value="<?= htmlspecialchars($v['fecha']) ?>" id="inputFecha" max="<?= date('Y-m-d') ?>" required>
                     </div>
                 </div>
 
@@ -389,6 +465,20 @@ foreach ($pdo->query("SELECT empleado_id, fecha, asistencia_id FROM asistencia")
                 <div class="form-group" id="grupoRazon">
                     <label id="lblRazon">Razon</label>
                     <input type="text" name="razon" id="inputRazon" value="<?= htmlspecialchars($v['razon']) ?>" placeholder="" maxlength="500">
+                </div>
+
+                <!-- [FIX-ALTO-G-11] Este campo faltaba por completo en el HTML: el backend
+                     validaba y guardaba "resolucion" desde $_POST, pero como ningun input
+                     lo mandaba, siempre caia al default 'Pendiente' — todo el flujo de
+                     justificar una falta (Deducido/Compensado/Justificado/Pagado integro)
+                     era inalcanzable desde la pantalla. -->
+                <div class="form-group">
+                    <label>Resoluci&oacute;n</label>
+                    <select name="resolucion">
+                        <?php foreach ($resoluciones as $r): ?>
+                            <option value="<?= htmlspecialchars($r) ?>" <?= $v['resolucion'] === $r ? 'selected' : '' ?>><?= htmlspecialchars($r) ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -505,6 +595,11 @@ function timeToMin(t) {
     return parseInt(parts[0]) * 60 + parseInt(parts[1]);
 }
 
+// [FIX-MEDIO-G-25] Antes esta regla (9h/6h/0h) estaba hardcodeada aqui por separado del PHP
+// del servidor -- ahora se lee de jornadaConfig() (includes/rh_helpers.php), la misma fuente
+// de verdad que usan formAsistencia.php (PHP) y semanaLaboral.php.
+var JORNADA = <?= json_encode(jornadaConfig()) ?>;
+
 function calcular() {
     var tipo    = document.getElementById('selectTipo').value;
     var fecha   = document.getElementById('inputFecha').value;
@@ -512,11 +607,12 @@ function calcular() {
     var salida  = document.getElementById('horaSalida').value;
 
     // Determine expected hours from day of week
-    var esperadas = 9;
+    var esperadas = JORNADA.normal;
     if (fecha) {
         var d = new Date(fecha + 'T12:00:00');
         var dow = d.getDay(); // 0=Sun, 6=Sat
-        if (dow === 6) esperadas = 6;
+        if (dow === 6) esperadas = JORNADA.sabado;
+        else if (dow === 0) esperadas = JORNADA.domingo;
     }
 
     document.getElementById('calcEsperadas').textContent = esperadas + ' h';

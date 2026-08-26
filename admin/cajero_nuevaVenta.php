@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if ($sucursalVista === 0) {
@@ -83,10 +85,11 @@ $stmtPromos = $pdo->prepare("
     JOIN productos p ON pr.producto_id = p.producto_id
     JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     WHERE pr.activo = 1
+      AND (pr.sucursal_id = ? OR pr.sucursal_id IS NULL)
       AND CURDATE() BETWEEN pr.fecha_inicio AND pr.fecha_fin
     ORDER BY pr.precio_promocional ASC
 ");
-$stmtPromos->execute([$sucursalVista]);
+$stmtPromos->execute([$sucursalVista, $sucursalVista]);
 $promosList = $stmtPromos->fetchAll(PDO::FETCH_ASSOC);
 $promosByProdId = [];
 foreach ($promosList as $promo) {
@@ -116,6 +119,12 @@ if (isset($_GET['get_productos_all'])) {
 }
 
 if (isset($_GET['get_paquetes'])) {
+    // [FIX-ALTO-B-06] Antes no se filtraba pr.activo/ss.activo: un paquete cuyo
+    // componente fue desactivado o retirado de esta sucursal seguia ofreciendose
+    // (paquete fantasma). Filtrar solo la fila del JOIN no bastaba: el paquete seguia
+    // apareciendo con menos productos de los que en realidad requiere. Se excluye el
+    // paquete COMPLETO con un NOT EXISTS si cualquiera de sus componentes esta inactivo
+    // o sin stock configurado en esta sucursal.
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_requerida,
@@ -125,8 +134,15 @@ if (isset($_GET['get_paquetes'])) {
         JOIN productos pr ON pp.producto_id = pr.producto_id
         JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
         WHERE pk.activo = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM paquete_productos pp2
+            JOIN productos pr2 ON pp2.producto_id = pr2.producto_id
+            LEFT JOIN stock_sucursal ss2 ON ss2.producto_id = pr2.producto_id AND ss2.sucursal_id = ?
+            WHERE pp2.paquete_id = pk.paquete_id
+              AND (pr2.activo = 0 OR ss2.stock_actual IS NULL OR ss2.activo = 0)
+          )
     ");
-    $stmtPaq->execute([$sucursalVista]);
+    $stmtPaq->execute([$sucursalVista, $sucursalVista]);
     $filas = $stmtPaq->fetchAll(PDO::FETCH_ASSOC);
     $agrupados = [];
     foreach ($filas as $f) {
@@ -155,6 +171,8 @@ if (isset($_GET['get_paquetes'])) {
 // ── AJAX: buscar paquete ─────────────────────────────────────────────────────
 if (isset($_GET['buscar_paquete'])) {
     $termino = trim($_GET['buscar_paquete']);
+    // [FIX-ALTO-B-06] Ver nota en get_paquetes: se excluye el paquete completo (no solo
+    // la fila) si algun componente esta inactivo o sin stock configurado en la sucursal.
     $stmt = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_req,
@@ -165,8 +183,15 @@ if (isset($_GET['buscar_paquete'])) {
         JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
         WHERE pk.activo = 1
           AND (pk.codigo LIKE ? OR pk.nombre LIKE ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM paquete_productos pp2
+            JOIN productos pr2 ON pp2.producto_id = pr2.producto_id
+            LEFT JOIN stock_sucursal ss2 ON ss2.producto_id = pr2.producto_id AND ss2.sucursal_id = ?
+            WHERE pp2.paquete_id = pk.paquete_id
+              AND (pr2.activo = 0 OR ss2.stock_actual IS NULL OR ss2.activo = 0)
+          )
     ");
-    $stmt->execute([$sucursalVista, '%'.$termino.'%', '%'.$termino.'%']);
+    $stmt->execute([$sucursalVista, '%'.$termino.'%', '%'.$termino.'%', $sucursalVista]);
     $filas = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $resultado = [];
     foreach ($filas as $f) {
@@ -217,6 +242,8 @@ if (isset($_GET['buscar_combo'])) {
     $productos = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
     // Paquetes
+    // [FIX-ALTO-B-06] Ver nota en get_paquetes: se excluye el paquete completo (no solo
+    // la fila) si algun componente esta inactivo o sin stock configurado en la sucursal.
     $stmtPaq = $pdo->prepare("
         SELECT pk.paquete_id, pk.codigo, pk.nombre, pk.precio_paquete,
                pp.producto_id, pp.cantidad AS cantidad_req,
@@ -227,8 +254,15 @@ if (isset($_GET['buscar_combo'])) {
         JOIN stock_sucursal ss ON ss.producto_id = pr.producto_id AND ss.sucursal_id = ?
         WHERE pk.activo = 1
           AND (pk.codigo LIKE ? OR pk.nombre LIKE ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM paquete_productos pp2
+            JOIN productos pr2 ON pp2.producto_id = pr2.producto_id
+            LEFT JOIN stock_sucursal ss2 ON ss2.producto_id = pr2.producto_id AND ss2.sucursal_id = ?
+            WHERE pp2.paquete_id = pk.paquete_id
+              AND (pr2.activo = 0 OR ss2.stock_actual IS NULL OR ss2.activo = 0)
+          )
     ");
-    $stmtPaq->execute([$sucursal_id, $like, $like]);
+    $stmtPaq->execute([$sucursal_id, $like, $like, $sucursal_id]);
     $filasPaq = $stmtPaq->fetchAll(PDO::FETCH_ASSOC);
 
     $paquetes = [];
@@ -308,8 +342,22 @@ if (isset($_GET['inventario_sucursal'])) {
     if ($buscar) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
     $stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_venta, p.precio_compra, p.precio_mayoreo, p.tipo_venta, p.unidad_medida FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id $where ORDER BY p.nombre_producto ASC LIMIT 50");
     $stmt->execute($params);
+    $filasInv = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // [FIX-MEDIO-D1-09] El selector de sucursal de este modal es intencional (consultar
+    // stock de OTRA sucursal es una funcion real, ej. "mandar al cliente a la otra
+    // tienda"), pero el JSON incluia precio_compra (costo) de esa otra sucursal aunque el
+    // frontend solo lo usa cuando se agrega el producto al carrito — y eso solo es posible
+    // para la sucursal PROPIA (el boton "Agregar" esta deshabilitado para "otra sucursal").
+    // Se oculta precio_compra cuando la sucursal consultada no es la propia del usuario
+    // (para Administrador, que ya ve todo, no aplica esta restriccion).
+    if ($_SESSION['rol'] !== 'Administrador' && $sucursal_id !== intval($_SESSION['sucursal_id'])) {
+        foreach ($filasInv as &$filaInv) { $filaInv['precio_compra'] = null; }
+        unset($filaInv);
+    }
+
     header('Content-Type: application/json');
-    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    echo json_encode($filasInv);
     exit();
 }
 
@@ -474,11 +522,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
             // 2) Validar paquetes: que existan, estén completos y su importe cuadre con su precio
             $gruposPaq = [];
-            foreach ($items as $it) {
+            foreach ($items as $idxIt => $it) {
                 $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
                 if ($pqIdVal) {
                     $gruposPaq[$pqIdVal]['monto']   = ($gruposPaq[$pqIdVal]['monto'] ?? 0) + floatval($it['cantidad']) * floatval($it['precio']);
-                    $gruposPaq[$pqIdVal]['items'][] = $it;
+                    $gruposPaq[$pqIdVal]['items'][] = $it + ['_idx' => $idxIt];
                 }
             }
             foreach ($gruposPaq as $pqIdVal => $grupo) {
@@ -512,6 +560,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 }
                 if (abs($grupo['monto'] - floatval($precioPaqVal) * $combosPaq) > 0.05) {
                     throw new Exception('El importe del paquete no cuadra con su precio.');
+                }
+
+                // [FIX-ALTO-B-13] La comprobación de arriba solo valida la SUMA del grupo;
+                // el reparto por producto seguía viniendo del cliente, así que un item podía
+                // quedar en $0 (o negativo) mientras otro compensaba de más mantenendo el
+                // total correcto — un producto "gratis" quedaba registrado en
+                // venta_productos, explotable luego en devoluciones individuales o reportes
+                // de costo/comisión. Se recalcula el precio de cada item en el servidor con
+                // el mismo reparto proporcional que usa el POS (último item absorbe el
+                // redondeo), ignorando el precio que mandó el cliente para estas filas.
+                $totalCantPaq = 0;
+                foreach ($reqsPaq as $reqCant) { $totalCantPaq += $reqCant * $combosPaq; }
+                $distribuidoPaq = 0.0;
+                $lastIdxPaq     = count($grupo['items']) - 1;
+                foreach ($grupo['items'] as $iPos => $itPaq) {
+                    $cantTotalPaq = floatval($itPaq['cantidad']);
+                    if ($iPos === $lastIdxPaq) {
+                        $precioUnitPaq = $cantTotalPaq > 0
+                            ? round((floatval($precioPaqVal) * $combosPaq - $distribuidoPaq) / $cantTotalPaq, 2)
+                            : 0;
+                    } else {
+                        $precioUnitPaq = $totalCantPaq > 0
+                            ? round(floatval($precioPaqVal) / $totalCantPaq, 2)
+                            : 0;
+                        $distribuidoPaq += $precioUnitPaq * $cantTotalPaq;
+                    }
+                    $items[$itPaq['_idx']]['precio'] = $precioUnitPaq;
                 }
             }
 
@@ -601,7 +676,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 if (floatval($clienteCredito['limite_credito']) <= 0) {
                     throw new Exception('El límite de crédito del cliente no está configurado.');
                 }
-                $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
+                // [FIX-ALTO-E-07] Antes solo se contaba deuda 'Activo': un credito que ya
+                // paso su fecha_limite y se marco 'Vencido' dejaba de contar contra el
+                // limite, y el cliente recuperaba cupo completo estando moroso.
+                $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
                 $stmtDeuda->execute([$cliente_id]);
                 $deudaActual = floatval($stmtDeuda->fetchColumn());
                 $disponible  = floatval($clienteCredito['limite_credito']) - $deudaActual;
@@ -621,6 +699,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $numFolio = intval($stmtFolio->fetchColumn());
             $folio = str_pad($numFolio, 4, '0', STR_PAD_LEFT);
 
+            // [FIX-ALTO-D1-03] Antes se guardaban $subtotal/$descuento tal cual llegaron del
+            // navegador: solo el TOTAL se validaba contra lo real ($totalEsperado), pero
+            // subtotal/descuento podian quedar con cualquier valor que siguiera cuadrando la
+            // ecuacion (un grado de libertad libre entre esos dos campos). Ese subtotal y
+            // descuento corruptos alimentan directamente el calculo de reembolso proporcional
+            // de Devoluciones (ventaInfo['venta_subtotal']/['venta_descuento']). Ahora se
+            // guardan los valores ya recalculados y validados en el servidor: $sumaItems (la
+            // suma real de los items) y $descuentoCliente (el descuento ya acotado al % del
+            // cliente).
             $stmt = $pdo->prepare("
                 INSERT INTO ventas
                 (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
@@ -628,7 +715,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?,?)
             ");
             $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
-                            $subtotal,$descuento,$comision_terminal,$total,
+                            $sumaItems,$descuentoCliente,$comision_terminal,$total,
                             $metodo_pago,$monto_efectivo,$monto_terminal,$cambio,$notas_venta,
                             $referencia_transferencia]);
             $venta_id = $pdo->lastInsertId();
@@ -640,24 +727,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 $notaAjuste   = trim($item['nota_ajuste'] ?? '');
                 $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
 
-                // [AUTOFIX] SEC-02: Validar precio contra precio_compra de la BD
-                // El precio final no puede ser menor al 50% del precio de compra (umbral de seguridad)
-                // general contra manipulacion vía DevTools — aplica a ventas normales,
-                // promociones y precio mayoreo, que si pueden legitimamente ir por debajo
-                // del precio_compra segun como se configuren.
-                // [FIX] Para items CON ajuste por daño (nota_ajuste no vacia), la propia
-                // pantalla ya exige un piso mas estricto: precio >= precio_compra completo
-                // (ver aplicarAjuste() en el JS). El servidor solo exigia el 50%, dejando
-                // una brecha donde alguien con las herramientas de desarrollador podia
-                // colar un precio "dañado" por debajo de ese piso mas estricto. Se alinea
-                // el servidor con la regla de la pantalla SOLO para items con ajuste.
+                // [FIX-MEDIO-D1-07] Antes no se revalidaba que el producto siguiera activo al
+                // momento de confirmar la venta: si el carrito se armo (y quedo persistido en
+                // localStorage del navegador) ANTES de que alguien desactivara el producto,
+                // nada en el servidor lo detectaba — el endpoint de busqueda si filtra
+                // activo=1, pero confirmar_venta nunca revisaba el carrito ya armado contra el
+                // estado actual del catalogo.
+                $stmtActivoChk = $pdo->prepare("
+                    SELECT p.activo AS producto_activo, ss.activo AS stock_activo
+                    FROM productos p
+                    LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+                    WHERE p.producto_id = ?
+                ");
+                $stmtActivoChk->execute([$sucursalVista, $item['producto_id']]);
+                $filaActivoChk = $stmtActivoChk->fetch(PDO::FETCH_ASSOC);
+                if (!$filaActivoChk || !$filaActivoChk['producto_activo'] || !$filaActivoChk['stock_activo']) {
+                    throw new Exception("Uno de los productos del carrito ya no está disponible en esta sucursal. Recarga la página e intenta de nuevo.");
+                }
+
+                // [FIX-MEDIO-D1-11] Antes el piso solo era estricto (100% del costo) cuando el
+                // item traia nota_ajuste; sin nota, el piso bajaba a 50% — y como el cliente
+                // decide si manda la nota o no, cualquiera podia esquivar el piso estricto
+                // con solo dejar la nota vacia, sin importar si el descuento era real. Ahora
+                // el piso SIEMPRE es el 100% del costo. La unica excepcion valida es un precio
+                // que coincide con una promocion activa real de esta sucursal (ya se valido
+                // por separado contra precio_venta y el minimo de $0.01 al crearse — ver
+                // promociones.php) — una promocion SI puede ir por debajo del costo a
+                // proposito, pero solo si es exactamente el precio que el admin autorizo.
                 if (empty($paqId)) {
-                    $stmtPrecioComp = $pdo->prepare("SELECT precio_compra FROM productos WHERE producto_id = ?");
+                    $stmtPromoChk = $pdo->prepare("
+                        SELECT precio_promocional FROM promociones
+                        WHERE producto_id = ? AND activo = 1
+                          AND (sucursal_id = ? OR sucursal_id IS NULL)
+                          AND CURDATE() BETWEEN fecha_inicio AND fecha_fin
+                        ORDER BY precio_promocional ASC LIMIT 1
+                    ");
+                    $stmtPromoChk->execute([$item['producto_id'], $sucursalVista]);
+                    $precioPromoChk = $stmtPromoChk->fetchColumn();
+                    $esPrecioPromoValido = ($precioPromoChk !== false && abs(floatval($precioPromoChk) - $precioFinal) < 0.005);
+                    // [FIX-CRIT-D1-02] Antes, cuando precio_compra = $0 (17 de 46 productos reales
+                    // del catálogo al momento de la auditoría), el "if ($precioCompraDB > 0)" saltaba
+                    // TODA la validación y el precio del cliente se aceptaba tal cual — incluyendo
+                    // $0.00. Ahora, si no hay precio_compra capturado, se usa como referencia el
+                    // precio de catálogo (el menor entre precio_venta y precio_mayoreo, si este
+                    // último está configurado), aplicando exactamente la misma regla del 50%/100%
+                    // que ya existía — no se endurece nada para productos que sí tienen costo.
+                    $stmtPrecioComp = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
                     $stmtPrecioComp->execute([$item['producto_id']]);
-                    $precioCompraDB = floatval($stmtPrecioComp->fetchColumn());
-                    if ($precioCompraDB > 0) {
-                        $pisoMinimo = ($notaAjuste !== '') ? $precioCompraDB : ($precioCompraDB * 0.5);
-                        if ($precioFinal < $pisoMinimo - 0.005) {
+                    $filaPrecios = $stmtPrecioComp->fetch(PDO::FETCH_ASSOC);
+                    $precioCompraDB = floatval($filaPrecios['precio_compra'] ?? 0);
+
+                    $referenciaFloor = $precioCompraDB;
+                    if ($referenciaFloor <= 0) {
+                        $precioVentaDB   = floatval($filaPrecios['precio_venta'] ?? 0);
+                        $precioMayoreoDB = floatval($filaPrecios['precio_mayoreo'] ?? 0);
+                        if ($precioVentaDB > 0 && $precioMayoreoDB > 0) {
+                            $referenciaFloor = min($precioVentaDB, $precioMayoreoDB);
+                        } else {
+                            $referenciaFloor = max($precioVentaDB, $precioMayoreoDB);
+                        }
+                    }
+
+                    if (!$esPrecioPromoValido) {
+                        if ($referenciaFloor > 0) {
+                            $pisoMinimo = $referenciaFloor;
+                            if ($precioFinal < $pisoMinimo - 0.005) {
+                                throw new Exception("Precio inválido para el producto. Verifica el carrito.");
+                            }
+                        } elseif ($precioFinal <= 0) {
+                            // Producto sin ningún precio de referencia capturado (compra/venta/mayoreo
+                            // en $0) — no hay forma de validar proporción, pero un precio de $0 o
+                            // negativo nunca es válido para una venta.
                             throw new Exception("Precio inválido para el producto. Verifica el carrito.");
                         }
                     }

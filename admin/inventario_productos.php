@@ -1,13 +1,15 @@
 <?php
 ob_start();
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 require_once '../vendor/autoload.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -234,6 +236,10 @@ function detectarCampo(string $header): ?string {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
+    // [FIX-CRIT-B-03] CSRF ausente antes — es el vector de mayor impacto de este archivo:
+    // permitía reescribir precio_compra/precio_venta/precio_mayoreo de productos existentes
+    // (la importación actualiza por código) desde un POST sin ningún token.
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
     set_time_limit(300); // 5 minutos para importaciones grandes
     $archivo = $_FILES['archivo_excel'];
     if ($archivo['error'] === 0) {
@@ -299,11 +305,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $descripcion    = trim($row[$colMap['descripcion']        ?? -1] ?? '');
                 $unidad_medida  = trim($row[$colMap['unidad_medida']      ?? -1] ?? '');
 
-                // Importar siempre a la sucursal que el admin tiene seleccionada
-                // (si está en vista global, se usa la sucursal propia del usuario)
-                $sucursalImport = ($sucursalVista > 0) ? $sucursalVista : intval($_SESSION['sucursal_id']);
+                // [FIX-MEDIO-B-17] Antes, en "vista global" (sucursalVista === 0), se caía a
+                // $_SESSION['sucursal_id'] del admin — un valor real y arbitrario (la
+                // sucursal a la que quedó asignada su cuenta al crearla, no necesariamente
+                // ninguna con sentido de negocio), y el stock del Excel se metía ahí en
+                // silencio, contradiciendo el aviso en pantalla ("la importación se
+                // realizará al catálogo global"). Ahora, en vista global, solo se actualiza
+                // el catálogo (nombre/precio/categoría — ya de por sí global) y se OMITE
+                // por completo el stock del Excel, en vez de adivinar una sucursal.
+                $sucursalImport = ($sucursalVista > 0) ? $sucursalVista : null;
 
                 try {
+                    // [FIX-ALTO-B-11] Antes no se validaba el signo de precios/stock: un
+                    // Excel con una celda negativa (typo o manipulado) se importaba tal cual,
+                    // dejando precios negativos o stock negativo en el catálogo/sucursal.
+                    if ($precio_compra < 0 || $precio_venta < 0 || $precio_mayoreo < 0
+                        || $stock_actual < 0 || $stock_minimo < 0 || $stock_maximo < 0) {
+                        throw new Exception('Precios y cantidades de stock no pueden ser negativos.');
+                    }
+
                     // Auto-crear unidad de medida si no existe en la sucursal (con caché para no repetir INSERT)
                     if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida])) {
                         $checkUnd = $pdo->prepare("SELECT unidad_id FROM unidades_medida WHERE nombre = ? AND sucursal_id = ? LIMIT 1");
@@ -353,20 +373,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                             $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
                                 ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
                         }
-                        // Upsert stock de la sucursal
-                        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
-                            VALUES (?,?,?,?,?,1)
-                            ON DUPLICATE KEY UPDATE stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)")
-                            ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
+                        // Upsert stock de la sucursal (solo si hay una sucursal especifica elegida)
+                        if ($sucursalImport !== null) {
+                            $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                                VALUES (?,?,?,?,?,1)
+                                ON DUPLICATE KEY UPDATE stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)")
+                                ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
+                        }
                         $omitidos++;
                     } else {
                         // Insertar en catálogo global (sin sucursal_id, sin stock)
                         $pdo->prepare("INSERT INTO productos (categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, tipo_venta, unidad_medida, activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
                             ->execute([$categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $unidad_medida ?: null]);
                         $prodId = (int)$pdo->lastInsertId();
-                        // Insertar stock para la sucursal
-                        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
-                            ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
+                        // Insertar stock para la sucursal (solo si hay una sucursal especifica elegida)
+                        if ($sucursalImport !== null) {
+                            $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
+                                ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
+                        }
                         $importados++;
                     }
                 } catch (Exception $eRow) {
@@ -376,6 +400,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $pdo->commit();
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s).";
+            if ($sucursalVista === 0) $exitoImport .= ' Solo se actualizó el catálogo global (nombre, precios, categoría) — el stock del Excel se omitió porque no hay una sucursal específica elegida.';
             if ($categoriasCreadas) $exitoImport .= ' Categorías nuevas: ' . implode(', ', array_unique($categoriasCreadas)) . '.';
             if ($unidadesCreadas)   $exitoImport .= ' Unidades nuevas: ' . implode(', ', array_unique($unidadesCreadas)) . '.';
             if (!isset($colMap['categoria'])) $exitoImport .= ' (El archivo no tiene columna de Categoría)';
@@ -431,8 +456,19 @@ if (isset($_GET['plantilla'])) {
 
 // Eliminar producto con motivo
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto'])) {
+    // [FIX-CRIT-B-03] CSRF ausente antes.
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
     $id     = intval($_POST['producto_id'] ?? 0);
     $motivo = trim($_POST['motivo_eliminacion'] ?? '');
+
+    // [FIX-MEDIO-B-14] En "Todas las sucursales" (sucursalVista === 0) el INNER JOIN de
+    // abajo exige ss.sucursal_id = 0, que ninguna fila real cumple nunca — la accion
+    // fallaba SIEMPRE en vista global y caia al mensaje generico "captura un motivo",
+    // aunque el motivo si se hubiera escrito. Ahora se explica la causa real.
+    if ($sucursalVista === 0) {
+        header('Location: inventario_productos.php?msg=error_sin_sucursal');
+        exit();
+    }
 
     if ($id && $motivo !== '') {
         $stmtProd = $pdo->prepare("SELECT p.producto_id, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
@@ -440,20 +476,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
         if ($productoEliminar) {
-            $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
-            $pdo->prepare("
-                INSERT INTO movimientos_inventario
-                (producto_id, usuario_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-                VALUES (?, ?, 'Ajuste', 0, ?, ?, ?)
-            ")->execute([
-                $id,
-                $_SESSION['usuario_id'],
-                $productoEliminar['stock_actual'],
-                $productoEliminar['stock_actual'],
-                'Producto eliminado: ' . $motivo
-            ]);
-            header('Location: inventario_productos.php?msg=eliminado');
-            exit();
+            // [FIX-MEDIO-H-07] La baja de stock y el registro del movimiento (su unica
+            // explicacion en el historial) eran dos escrituras sueltas: si la segunda fallaba
+            // despues de que la primera ya tuviera exito, el producto desaparecia de la
+            // sucursal sin dejar ningun rastro de motivo ni de quien/cuando lo dio de baja.
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
+                // [FIX-MEDIO-B-16] Antes se guardaba sin sucursal_id: la baja quedaba invisible
+                // en cualquier historial de movimientos filtrado por sucursal.
+                $pdo->prepare("
+                    INSERT INTO movimientos_inventario
+                    (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+                    VALUES (?, ?, ?, 'Ajuste', 0, ?, ?, ?)
+                ")->execute([
+                    $id,
+                    $_SESSION['usuario_id'],
+                    $sucursalVista,
+                    $productoEliminar['stock_actual'],
+                    $productoEliminar['stock_actual'],
+                    'Producto eliminado: ' . $motivo
+                ]);
+                $pdo->commit();
+                header('Location: inventario_productos.php?msg=eliminado');
+                exit();
+            } catch (\PDOException $e) {
+                $pdo->rollBack();
+                header('Location: inventario_productos.php?msg=error_eliminar');
+                exit();
+            }
         }
     }
 
@@ -487,6 +538,8 @@ if (isset($_GET['catalogo_disponible'])) {
 
 // POST: agregar producto del catálogo a una sucursal específica
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admin'])) {
+    // [FIX-CRIT-B-03] CSRF ausente antes.
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
     $sucursalDestino = intval($_POST['sucursal_destino'] ?? 0);
     $productos_ids   = $_POST['producto_id']   ?? [];
     $stocks_actual   = $_POST['stock_actual']  ?? [];
@@ -494,23 +547,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admi
     $stocks_maximo   = $_POST['stock_maximo']  ?? [];
 
     if ($sucursalDestino && is_array($productos_ids)) {
-        $stmtUpsert = $pdo->prepare("
-            INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
-            VALUES (?, ?, ?, ?, ?, 1)
-            ON DUPLICATE KEY UPDATE activo=1, stock_actual=VALUES(stock_actual), stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)
-        ");
-        $stmtMov = $pdo->prepare("
-            INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-            VALUES (?, ?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
-        ");
-        foreach ($productos_ids as $i => $pid) {
-            $pid    = intval($pid);
-            $actual = floatval($stocks_actual[$i] ?? 0);
-            $minimo = floatval($stocks_minimo[$i] ?? 0);
-            $maximo = floatval($stocks_maximo[$i] ?? 0);
-            if (!$pid) continue;
-            $stmtUpsert->execute([$pid, $sucursalDestino, $actual, $minimo, $maximo]);
-            if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $sucursalDestino, $actual, $actual]);
+        // [FIX-MEDIO-H-07] El lote entero de productos se agregaba fuera de una transaccion:
+        // una falla a mitad del foreach (o entre el upsert de stock y su movimiento de
+        // "Entrada") dejaba un lote parcial -- algunos productos ya en la sucursal con su
+        // entrada registrada, otros con stock pero sin movimiento, y el resto sin agregar --
+        // sin ninguna forma de saber cuales quedaron a medias.
+        $pdo->beginTransaction();
+        try {
+            $stmtUpsert = $pdo->prepare("
+                INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                VALUES (?, ?, ?, ?, ?, 1)
+                ON DUPLICATE KEY UPDATE activo=1, stock_actual=VALUES(stock_actual), stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)
+            ");
+            $stmtMov = $pdo->prepare("
+                INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
+                VALUES (?, ?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
+            ");
+            foreach ($productos_ids as $i => $pid) {
+                $pid    = intval($pid);
+                $actual = floatval($stocks_actual[$i] ?? 0);
+                $minimo = floatval($stocks_minimo[$i] ?? 0);
+                $maximo = floatval($stocks_maximo[$i] ?? 0);
+                if (!$pid) continue;
+                $stmtUpsert->execute([$pid, $sucursalDestino, $actual, $minimo, $maximo]);
+                if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $sucursalDestino, $actual, $actual]);
+            }
+            $pdo->commit();
+        } catch (\PDOException $e) {
+            $pdo->rollBack();
+            header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=error_agregar_catalogo');
+            exit();
         }
     }
     header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=agregado_catalogo');
@@ -740,9 +806,14 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 </div>
             <?php endif; ?>
             <?php if ($exitoImport): ?>
-                <div class="msg msg-exito"><?= $exitoImport ?></div>
+                <?php /* [FIX-CRIT-B-05] Faltaba htmlspecialchars aquí (los mensajes de error
+                contiguos sí lo tienen) — el texto incluye nombres de categoría/unidad tomados
+                literalmente del archivo Excel importado, así que un nombre con <script> se
+                ejecutaba en la sesión de quien ve la pantalla después de importar. */ ?>
+                <div class="msg msg-exito"><?= htmlspecialchars($exitoImport, ENT_QUOTES, 'UTF-8') ?></div>
             <?php endif; ?>
             <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <div class="import-form">
                     <input type="file" name="archivo_excel" accept=".xlsx,.xls" required>
                     <button class="btn-subir" type="submit">Importar</button>
@@ -766,7 +837,10 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             'editado'          => '✅ Producto actualizado correctamente.',
             'eliminado'        => '✅ Producto eliminado correctamente.',
             'agregado_catalogo'=> '✅ Producto(s) agregado(s) a la sucursal correctamente.',
+            'error_agregar_catalogo' => '❌ No se pudo completar el alta de productos. No se guardó ningún cambio, intenta de nuevo.',
             'error_eliminar'   => '❌ No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
+            'error_sin_sucursal' => '❌ Selecciona una sucursal específica (no "Todas las sucursales") para eliminar un producto de su stock.',
+            'error_token'      => '❌ La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
         ];
         $msgActual = $_GET['msg'] ?? '';
         if (isset($msgTextos[$msgActual])):
@@ -856,7 +930,15 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                                 <?php if (!$vistaGlobal): ?>
                                 <a class="btn-accion btn-entrada" href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
                                 <?php endif; ?>
-                                <button class="btn-accion btn-eliminar" type="button" onclick="confirmarEliminacion(<?= $p['producto_id'] ?>, <?= json_encode($p['nombre_producto']) ?>)">Eliminar</button>
+                                <?php /* [FIX-CRIT-B-01] json_encode() no es un escape de HTML: al interpolarse
+                                dentro de un atributo onclick="...", sus comillas dobles cerraban el atributo
+                                de inmediato y el resto del nombre se parseaba como atributos HTML nuevos —
+                                XSS almacenado ejecutable, y de paso el onclick quedaba roto para TODO
+                                producto (SyntaxError de JS), dejando "Eliminar" sin funcionar nunca. Ahora
+                                el id/nombre van en data-* correctamente escapados con htmlspecialchars, y
+                                un listener delegado (ver el <script> de abajo) llama a la misma función
+                                confirmarEliminacion() de siempre. */ ?>
+                                <button class="btn-accion btn-eliminar" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>">Eliminar</button>
                             </div>
                         </td>
                     </tr>
@@ -911,12 +993,14 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     </div>
 </div>
 <form method="POST" id="formAgregarCatalogoAdmin" style="display:none;">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
     <input type="hidden" name="agregar_catalogo_admin" value="1">
     <input type="hidden" name="sucursal_destino" value="<?= $sucursalVista ?>">
 </form>
 <?php endif; ?>
 
 <form method="POST" id="formEliminarProducto" style="display:none;">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
     <input type="hidden" name="eliminar_producto" value="1">
     <input type="hidden" name="producto_id" id="inputEliminarProductoId">
     <input type="hidden" name="motivo_eliminacion" id="inputEliminarProductoMotivo">
@@ -924,7 +1008,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
 <div class="modal-overlay" id="modalEliminarProducto" aria-hidden="true">
     <div class="modal-card">
         <h3>Eliminar producto</h3>
-        <p id="textoEliminarProducto">Se desactivará el producto seleccionado y el motivo se guardará en el historial de movimientos.</p>
+        <p id="textoEliminarProducto">Se desactivará el stock de este producto <strong>solo en la sucursal que estás viendo</strong> (no se borra del catálogo global ni se desactiva en otras sucursales) y el motivo se guardará en el historial de movimientos.</p>
         <textarea id="textareaEliminarProducto" placeholder="Escribe el motivo de la eliminación"></textarea>
         <div class="modal-error" id="errorEliminarProducto">Necesitas capturar un motivo para continuar.</div>
         <div class="modal-acciones">
@@ -945,7 +1029,7 @@ function filtrarTabla(q) {
     });
 }
 function confirmarEliminacion(id, nombre) {
-    const seguro = confirm('Se va a desactivar "' + nombre + '". Este movimiento se guardara en historial. ¿Deseas continuar?');
+    const seguro = confirm('Se va a desactivar el stock de "' + nombre + '" solo en esta sucursal (no en el catalogo global ni en otras sucursales). Este movimiento se guardara en historial. ¿Deseas continuar?');
     if (!seguro) return;
     const motivo = prompt('Escribe el motivo de la eliminacion del producto:');
     if (motivo === null) return;
@@ -992,6 +1076,13 @@ function enviarEliminacionProducto() {
 }
 document.getElementById('modalEliminarProducto').addEventListener('click', function(e) {
     if (e.target === this) cerrarModalEliminacion();
+});
+// [FIX-CRIT-B-01] Listener delegado: ya no se interpola el nombre del producto dentro de un
+// atributo onclick (ver comentario junto al botón "Eliminar" más arriba).
+document.querySelectorAll('.btn-eliminar[data-producto-id]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        confirmarEliminacion(this.dataset.productoId, this.dataset.productoNombre);
+    });
 });
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {

@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Estado de caja actual EN LA SUCURSAL ELEGIDA
@@ -23,7 +25,12 @@ $pendientes = 0;
 $creditosActivos = 0;
 
 if ($cajaActual) {
-    $stmtV = $pdo->prepare("SELECT COUNT(*), COALESCE(SUM(total),0) FROM ventas WHERE caja_id = ? AND estado = 'Completada'");
+    // [FIX-MEDIO-D3-05] Antes solo contaba estado='Completada', pero corteCaja.php (la fuente
+    // de verdad del turno) cuenta 'Completada','Modificado','Devuelto' como ventas reales del
+    // turno (una venta con devolucion parcial sigue siendo una venta que paso por caja). El
+    // dashboard y el corte mostraban dos cifras distintas de "ventas del turno" para el mismo
+    // turno. Se usa el mismo criterio en ambos lados.
+    $stmtV = $pdo->prepare("SELECT COUNT(*), COALESCE(SUM(total),0) FROM ventas WHERE caja_id = ? AND estado IN ('Completada','Modificado','Devuelto')");
     $stmtV->execute([$cajaActual['caja_id']]);
     [$ventasHoy, $totalHoy] = $stmtV->fetch(PDO::FETCH_NUM);
 
@@ -34,22 +41,29 @@ if ($cajaActual) {
 
 // [FIX] sucursal=0 ("Todas las sucursales") es el valor por defecto al iniciar sesion —
 // antes exigia "ca.sucursal_id = 0" y el contador siempre daba 0.
+// [FIX-MEDIO-D3-11] "Activo" solamente excluia los creditos 'Vencido' — un credito vencido
+// sigue siendo dinero pendiente por cobrar, tan "activo" como uno al corriente (mismo
+// criterio ya usado en cajero_devoluciones.php y creditos.php). Se incluyen ambos estados.
 $condSucCred = ($sucursalVista !== 0) ? ' AND ca.sucursal_id = ?' : '';
 $stmtC = $pdo->prepare("
     SELECT COUNT(*)
     FROM creditos c
     JOIN ventas v ON c.venta_id = v.venta_id
     JOIN cajas ca ON v.caja_id = ca.caja_id
-    WHERE c.estado = 'Activo' $condSucCred
+    WHERE c.estado IN ('Activo','Vencido') $condSucCred
 ");
 $stmtC->execute($sucursalVista !== 0 ? [$sucursalVista] : []);
 $creditosActivos = $stmtC->fetchColumn();
 
 // Últimas ventas
+// [FIX-MEDIO-D3-06] Antes no se filtraba ni se mostraba el estado: una venta Cancelada o
+// Pendiente aparecia mezclada con las Completadas, con el mismo aspecto — dando la impresion
+// de que ese dinero ya estaba cobrado en el turno. Se trae "estado" para mostrar un badge que
+// distinga cada caso (el fix D3-05 de arriba ya corrigio el CONTEO; aqui es la LISTA visible).
 $ultimasVentas = [];
 if ($cajaActual) {
     $stmtUV = $pdo->prepare("
-        SELECT v.venta_id, v.total, v.metodo_pago, v.created_at, c.nombre_completo as cliente
+        SELECT v.venta_id, v.total, v.metodo_pago, v.estado, v.created_at, c.nombre_completo as cliente
         FROM ventas v
         LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
         WHERE v.caja_id = ?
@@ -123,6 +137,10 @@ if ($cajaActual) {
     .badge-terminal { background: #e3f2fd; color: #1565c0; }
     .badge-mixto { background: #f3e5f5; color: #6a1b9a; }
     .badge-credito { background: #e3f2fd; color: #1565c0; }
+    .badge-estado-cancelada  { background: #fdecea; color: #c0392b; }
+    .badge-estado-pendiente  { background: #e3f2fd; color: #1565c0; }
+    .badge-estado-devuelto   { background: #f3e5f5; color: #6a1b9a; }
+    .tabla-row.venta-cancelada { opacity: .65; }
     .msg { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     @media (max-width: 768px) {
@@ -170,6 +188,8 @@ if ($cajaActual) {
                 <div class="msg msg-exito">Caja abierta correctamente. ¡Buen turno!</div>
             <?php elseif ($_GET['msg'] === 'cajaCerrada'): ?>
                 <div class="msg msg-exito">Caja cerrada correctamente.</div>
+            <?php elseif ($_GET['msg'] === 'error_ya_cerrada'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">Esta caja ya había sido cerrada (probablemente desde otra pestaña o dispositivo). El corte ya está registrado.</div>
             <?php endif; ?>
         <?php endif; ?>
 
@@ -240,10 +260,13 @@ if ($cajaActual) {
             </div>
             <?php if (count($ultimasVentas) > 0): ?>
                 <?php foreach ($ultimasVentas as $v): ?>
-                <div class="tabla-row">
+                <div class="tabla-row<?= $v['estado'] === 'Cancelada' ? ' venta-cancelada' : '' ?>">
                     <span style="color:#aaa;font-size:12px;">#<?= $v['venta_id'] ?></span>
                     <span><?= htmlspecialchars($v['cliente'] ?? 'Público general') ?></span>
                     <span class="badge badge-<?= strtolower($v['metodo_pago']) ?>"><?= $v['metodo_pago'] ?></span>
+                    <?php if (in_array($v['estado'], ['Cancelada', 'Pendiente', 'Devuelto'], true)): ?>
+                    <span class="badge badge-estado-<?= strtolower($v['estado']) ?>"><?= $v['estado'] ?></span>
+                    <?php endif; ?>
                     <span style="font-weight:600;">$<?= number_format($v['total'], 2) ?></span>
                     <span style="color:#aaa;font-size:12px;"><?= date('H:i', strtotime($v['created_at'])) ?></span>
                 </div>

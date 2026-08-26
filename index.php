@@ -1,22 +1,39 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once 'config/database.php';
 
 $error = '';
+if (($_GET['msg'] ?? '') === 'sesion_invalida') {
+    $error = 'Tu sesión ya no es válida (la cuenta fue desactivada o modificada). Inicia sesión de nuevo.';
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nombre_usuario = trim($_POST['nombre_usuario'] ?? '');
     $contrasena     = trim($_POST['contrasena'] ?? '');
 
     if ($nombre_usuario && $contrasena) {
+        // [FIX-ALTO-A-07] password_verify() SIEMPRE corre, contra el hash real o contra un
+        // hash señuelo si el usuario no existe, para que el tiempo de respuesta no delate
+        // qué nombres de usuario son reales (antes solo se ejecutaba cuando el usuario
+        // existía, y esa diferencia de tiempo — bcrypt real vs. respuesta inmediata —
+        // permitía enumerar cuentas reales aunque el mensaje de error fuera idéntico).
+        // El bloqueo tras varios intentos fallidos y su bitácora se quitaron a petición del
+        // dueño: el sistema solo lo usan empleados y el dueño, no hace falta.
         $stmt = $pdo->prepare("
-            SELECT * FROM usuarios 
+            SELECT * FROM usuarios
             WHERE nombre_usuario = ? AND activo = 1
         ");
         $stmt->execute([$nombre_usuario]);
         $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($usuario && password_verify($contrasena, $usuario['contrasena'])) {
+        // Hash señuelo fijo (bcrypt de una cadena aleatoria) para que la rama
+        // "usuario no existe" tarde lo mismo que verificar una contraseña real.
+        $hashParaVerificar = $usuario['contrasena'] ?? '$2y$12$8A8S7oAL5avvYabRHK..wuNt7Bx/JD6oNu.DIMXUR2y2l.iURfqjm';
+        $passwordValida    = password_verify($contrasena, $hashParaVerificar);
+
+        if ($usuario && $passwordValida) {
             // [AUTOFIX] SEC-03: Regenerar ID de sesion al login para prevenir session fixation
             session_regenerate_id(true);
             $_SESSION['usuario_id']      = $usuario['usuario_id'];

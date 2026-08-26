@@ -1,11 +1,14 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
-verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+// [FIX-CRIT-B-04] Inventario/Cajero no debe crear/editar paquetes del catálogo global.
+verificarRol(['Administrador', 'Inventario']);
+require_once '../includes/topbar_info.php';
 if (isset($_GET['toggle'])) {
     requerirCSRF($_GET['_token'] ?? '', 'inventario_paquetes.php');
     $pdo->prepare("UPDATE paquetes SET activo = NOT activo WHERE paquete_id = ?")->execute([intval($_GET['toggle'])]);
@@ -60,6 +63,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($precio_paquete <= 0) $errores[] = 'El precio debe ser mayor a 0.';
     if (empty($items))        $errores[] = 'Agrega al menos un producto.';
 
+    // [FIX-ALTO-B-12] Antes se guardaban tal cual: un item con cantidad <= 0 o un
+    // producto_id que no existe/esta inactivo generaba un paquete inconsistente
+    // (componentes fantasma o descuentos de stock negativos al vender).
+    if (!empty($items)) {
+        $idsValidos = array_column($pdo->query("SELECT producto_id FROM productos WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC), 'producto_id');
+        $idsValidos = array_map('intval', $idsValidos);
+        foreach ($items as $item) {
+            $cantidadItem = floatval($item['cantidad'] ?? 0);
+            $productoItem = intval($item['producto_id'] ?? 0);
+            if ($cantidadItem <= 0) {
+                $errores[] = 'Cada producto del paquete debe tener cantidad mayor a 0.';
+                break;
+            }
+            if (!in_array($productoItem, $idsValidos, true)) {
+                $errores[] = 'El paquete contiene un producto inválido o inactivo.';
+                break;
+            }
+        }
+    }
+
     if ($codigo) {
         $stmtCheck = $pdo->prepare("SELECT paquete_id FROM paquetes WHERE codigo = ? AND paquete_id != ?");
         $stmtCheck->execute([$codigo, $paquete_id]);
@@ -67,18 +90,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores)) {
-        if ($paquete_id) {
-            $pdo->prepare("UPDATE paquetes SET codigo=?, nombre=?, descripcion=?, precio_paquete=? WHERE paquete_id=?")
-                ->execute([$codigo, $nombre, $descripcion, $precio_paquete, $paquete_id]);
-            $pdo->prepare("DELETE FROM paquete_productos WHERE paquete_id = ?")->execute([$paquete_id]);
-        } else {
-            $pdo->prepare("INSERT INTO paquetes (codigo, nombre, descripcion, precio_paquete, activo) VALUES (?,?,?,?,1)")
-                ->execute([$codigo, $nombre, $descripcion, $precio_paquete]);
-            $paquete_id = $pdo->lastInsertId();
-        }
-        foreach ($items as $item) {
-            $pdo->prepare("INSERT INTO paquete_productos (paquete_id, producto_id, cantidad) VALUES (?,?,?)")
-                ->execute([$paquete_id, intval($item['producto_id']), floatval($item['cantidad'])]);
+        // [FIX-ALTO-B-07] Antes el UPDATE/DELETE/INSERT de paquetes + paquete_productos
+        // no estaba en una transaccion: un error a mitad de camino (o una peticion
+        // interrumpida) podia dejar un paquete sin productos o con productos duplicados.
+        $pdo->beginTransaction();
+        try {
+            if ($paquete_id) {
+                $pdo->prepare("UPDATE paquetes SET codigo=?, nombre=?, descripcion=?, precio_paquete=? WHERE paquete_id=?")
+                    ->execute([$codigo, $nombre, $descripcion, $precio_paquete, $paquete_id]);
+                $pdo->prepare("DELETE FROM paquete_productos WHERE paquete_id = ?")->execute([$paquete_id]);
+            } else {
+                $pdo->prepare("INSERT INTO paquetes (codigo, nombre, descripcion, precio_paquete, activo) VALUES (?,?,?,?,1)")
+                    ->execute([$codigo, $nombre, $descripcion, $precio_paquete]);
+                $paquete_id = $pdo->lastInsertId();
+            }
+            foreach ($items as $item) {
+                $pdo->prepare("INSERT INTO paquete_productos (paquete_id, producto_id, cantidad) VALUES (?,?,?)")
+                    ->execute([$paquete_id, intval($item['producto_id']), floatval($item['cantidad'])]);
+            }
+            $pdo->commit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            throw $e;
         }
         header('Location: inventario_paquetes.php?msg='.($paquete_id&&$_POST['paquete_id']?'editado':'creado'));
         exit();

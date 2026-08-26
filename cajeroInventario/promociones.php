@@ -1,4 +1,6 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -9,13 +11,15 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 $hoy = date('Y-m-d');
 
 // Promociones de esta sucursal (activas, próximas y vencidas recientes)
+// [FIX-ALTO-B-09] Filtrar tambien por pr.sucursal_id (o legacy NULL = todas), ya que
+// ahora las promociones pueden ser especificas de una sola sucursal.
 $stmt = $pdo->prepare("
     SELECT pr.*,
            p.nombre_producto, p.codigo, p.precio_venta, p.tipo_venta
     FROM promociones pr
     JOIN productos p ON pr.producto_id = p.producto_id
     JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-    WHERE 1=1
+    WHERE (pr.sucursal_id = ? OR pr.sucursal_id IS NULL)
     ORDER BY
         CASE
             WHEN pr.activo = 1 AND ? BETWEEN pr.fecha_inicio AND pr.fecha_fin THEN 0
@@ -25,7 +29,7 @@ $stmt = $pdo->prepare("
         pr.fecha_inicio DESC
     LIMIT 100
 ");
-$stmt->execute([$_SESSION['sucursal_id'], $hoy, $hoy]);
+$stmt->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id'], $hoy, $hoy]);
 $promociones = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>

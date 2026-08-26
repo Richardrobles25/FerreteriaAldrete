@@ -1,20 +1,27 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $fecha = $_GET['fecha'] ?? '';
 
-// A diferencia de cajeroInventario (donde cada cajero solo ve sus propios turnos), aqui
-// el admin ve todos los cortes de la sucursal elegida — o de todas si sucursal=0.
+// [FIX-ALTO-D3-04] El comentario original decia que aqui el Administrador ve TODOS los
+// cortes de la sucursal a propósito — eso sigue siendo correcto para Administrador, pero
+// esta pantalla tambien la usan Cajero e Inventario/Cajero (linea de verificarRol arriba),
+// y para esos dos roles el filtro por usuario que sí tiene cajeroInventario/corteCaja.php
+// se perdio en la migracion: un Cajero podia ver los faltantes/sobrantes de TODOS sus
+// compañeros de turno, no solo los suyos.
 $where  = "WHERE 1=1";
 $params = [];
 if ($sucursalVista !== 0) { $where .= " AND c.sucursal_id = ?"; $params[] = $sucursalVista; }
+if ($_SESSION['rol'] !== 'Administrador') { $where .= " AND c.usuario_id = ?"; $params[] = $_SESSION['usuario_id']; }
 if ($fecha) { $where .= " AND DATE(c.abierta_en) = ?"; $params[] = $fecha; }
 
 // ── Exportar ─────────────────────────────────────────────────────────
@@ -95,11 +102,13 @@ $detalleCorte = null;
 $detalleVentas = [];
 
 if ($verCorte) {
-    // Mismo filtro de sucursal que la lista, para no poder ver el detalle de un corte
-    // de otra sucursal cambiando el numero en "?ver=".
+    // Mismo filtro de sucursal (y, para Cajero/Inventario-Cajero, de usuario — ver
+    // FIX-ALTO-D3-04 arriba) que la lista, para no poder ver el detalle de un corte de
+    // otra sucursal u otro compañero cambiando el numero en "?ver=".
     $whereDet = "WHERE c.caja_id = ?";
     $paramsDet = [$verCorte];
     if ($sucursalVista !== 0) { $whereDet .= " AND c.sucursal_id = ?"; $paramsDet[] = $sucursalVista; }
+    if ($_SESSION['rol'] !== 'Administrador') { $whereDet .= " AND c.usuario_id = ?"; $paramsDet[] = $_SESSION['usuario_id']; }
 
     $stmtC = $pdo->prepare("
         SELECT c.*, s.nombre AS nombre_sucursal
@@ -272,7 +281,9 @@ if ($verCorte) {
                     $difLabel = $difSinVerificar ? 'Sin verificar' : ($dif == 0 ? 'Cuadrada' : ($dif < 0 ? '-$'.number_format(abs($dif),2) : '+$'.number_format($dif,2)));
                     $esSeleccionado = $verCorte === intval($c['caja_id']);
                 ?>
-                <a href="cajero_historialCortes.php?ver=<?= $c['caja_id'] ?><?= $fecha?'&fecha='.$fecha:'' ?><?= $sucursalVista?'&sucursal='.$sucursalVista:'' ?>"
+                <?php /* [FIX-CRIT-D3-01] $fecha (de $_GET) se interpolaba cruda dentro de un href
+                — XSS reflejado. urlencode() la vuelve inerte en un atributo de URL. */ ?>
+                <a href="cajero_historialCortes.php?ver=<?= $c['caja_id'] ?><?= $fecha?'&fecha='.urlencode($fecha):'' ?><?= $sucursalVista?'&sucursal='.$sucursalVista:'' ?>"
                    class="corte-item <?= $esSeleccionado?'seleccionado':'' ?>"
                    style="text-decoration:none;display:block;">
                     <div class="corte-header">
@@ -349,10 +360,20 @@ if ($verCorte) {
                     </div>
                     <?php endif; ?>
 
+                    <?php // [FIX-MEDIO-D3-09] "observaciones" (apertura) y "observaciones_cierre" (cierre)
+                          // ahora son columnas separadas — se muestran por separado en vez de una sola
+                          // que el cierre terminaba sobrescribiendo. ?>
                     <?php if ($detalleCorte['observaciones']): ?>
                     <div class="det-seccion">
-                        <h4>Observaciones</h4>
+                        <h4>Observaciones de apertura</h4>
                         <p style="font-size:13px;color:#555;"><?= htmlspecialchars($detalleCorte['observaciones']) ?></p>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if (!empty($detalleCorte['observaciones_cierre'])): ?>
+                    <div class="det-seccion">
+                        <h4>Observaciones de cierre</h4>
+                        <p style="font-size:13px;color:#555;"><?= htmlspecialchars($detalleCorte['observaciones_cierre']) ?></p>
                     </div>
                     <?php endif; ?>
 

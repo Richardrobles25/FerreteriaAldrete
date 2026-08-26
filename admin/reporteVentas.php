@@ -1,12 +1,14 @@
 ﻿<?php
 ob_start();
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $periodo   = $_GET['periodo'] ?? 'hoy';
 $sucursal  = intval($_GET['sucursal'] ?? 0);
@@ -31,6 +33,12 @@ $sucursalWhere = $sucursal ? "AND ca.sucursal_id = $sucursal" : "";
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
 
+    // [FIX-ALTO-F-02] "v.estado='Completada'" excluía ventas con devolución parcial
+    // (estado 'Modificado') o total (estado 'Devuelto') — desaparecían del reporte de
+    // ingresos aunque siguieran siendo ventas reales con historial. Mismo criterio unificado
+    // que ya se aplicó en cajero_historialCortes.php (F-01): incluir los tres estados. Una
+    // venta 'Devuelto' aporta $0 a las sumas de dinero (su total ya quedó en 0), así que
+    // solo afecta el conteo de "no. de ventas", no las cifras de ingresos.
     // Ventas por día (sin LIMIT para exportar todo)
     $stmtExp = $pdo->prepare("
         SELECT DATE(v.created_at) AS fecha,
@@ -40,7 +48,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         FROM ventas v
         JOIN cajas ca ON v.caja_id = ca.caja_id
         JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
-        WHERE v.estado='Completada' AND DATE(v.created_at) BETWEEN ? AND ?
+        WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) BETWEEN ? AND ?
         $sucursalWhere
         GROUP BY DATE(v.created_at), ca.sucursal_id
         ORDER BY fecha DESC
@@ -54,7 +62,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                COALESCE(SUM(v.total),0) AS total_cobrado,
                COALESCE(SUM(v.descuento),0) AS total_descuentos
         FROM ventas v JOIN cajas ca ON v.caja_id=ca.caja_id
-        WHERE v.estado='Completada' AND DATE(v.created_at) BETWEEN ? AND ? $sucursalWhere
+        WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) BETWEEN ? AND ? $sucursalWhere
     ");
     $stmtR->execute([$fechaDesde, $fechaHasta]);
     $resExp = $stmtR->fetch(PDO::FETCH_ASSOC);
@@ -90,12 +98,17 @@ $stmt = $pdo->prepare("
         COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal' THEN v.total ELSE 0 END),0) AS terminal,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Credito' THEN v.total ELSE 0 END),0) AS credito,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.total ELSE 0 END),0) AS mixto,
+        -- [FIX-MEDIO-F-06] Transferencia es un metodo de pago real (ver cajero_nuevaVenta.php)
+        -- pero esta tarjeta Por metodo de pago nunca la sumaba ni la mostraba: el dinero
+        -- cobrado por transferencia desaparecia del desglose (aunque si contaba en el total
+        -- general de arriba, que suma v.total sin filtrar por metodo).
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) AS transferencia,
         COALESCE(SUM(v.descuento),0) AS total_descuentos,
         COALESCE(SUM(v.comision_terminal),0) AS total_comisiones,
         COUNT(DISTINCT DATE(v.created_at)) AS dias_con_ventas
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
-    WHERE v.estado = 'Completada'
+    WHERE v.estado IN ('Completada','Modificado','Devuelto')
       AND DATE(v.created_at) BETWEEN ? AND ?
       $sucursalWhere
 ");
@@ -111,7 +124,7 @@ $stmt = $pdo->prepare("
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
     JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
-    WHERE v.estado='Completada' AND DATE(v.created_at) BETWEEN ? AND ?
+    WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) BETWEEN ? AND ?
     $sucursalWhere
     GROUP BY DATE(v.created_at), ca.sucursal_id
     ORDER BY fecha DESC
@@ -120,6 +133,9 @@ $stmt = $pdo->prepare("
 $stmt->execute([$fechaDesde, $fechaHasta]);
 $ventasPorDia = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// [FIX-ALTO-F-05] Esta consulta nunca aplicaba $sucursalWhere: con una sucursal
+// filtrada en pantalla, la tarjeta "Por sucursal" seguia sumando TODAS las sucursales
+// y mostraba cifras de otra sucursal distinta a la que el admin estaba viendo.
 // Por sucursal
 $stmt = $pdo->prepare("
     SELECT s.nombre AS sucursal,
@@ -128,7 +144,8 @@ $stmt = $pdo->prepare("
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
     JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
-    WHERE v.estado='Completada' AND DATE(v.created_at) BETWEEN ? AND ?
+    WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) BETWEEN ? AND ?
+    $sucursalWhere
     GROUP BY ca.sucursal_id
     ORDER BY total DESC
 ");
@@ -252,11 +269,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <div class="campo-personalizado <?= $periodo==='personalizado'?'visible':'' ?>" id="campoPers">
                     <div class="filtro-group">
                         <label>Desde</label>
-                        <input type="date" name="desde" value="<?= $_GET['desde'] ?? date('Y-m-d') ?>">
+                        <?php /* [FIX-CRIT-F-04] Unico punto del archivo sin htmlspecialchars — XSS
+                        reflejado confirmado en vivo. */ ?>
+                        <input type="date" name="desde" value="<?= htmlspecialchars($_GET['desde'] ?? date('Y-m-d'), ENT_QUOTES, 'UTF-8') ?>">
                     </div>
                     <div class="filtro-group">
                         <label>Hasta</label>
-                        <input type="date" name="hasta" value="<?= $_GET['hasta'] ?? date('Y-m-d') ?>">
+                        <input type="date" name="hasta" value="<?= htmlspecialchars($_GET['hasta'] ?? date('Y-m-d'), ENT_QUOTES, 'UTF-8') ?>">
                     </div>
                 </div>
                 <div class="filtro-group">
@@ -292,6 +311,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <div class="metodo-row"><span>Terminal</span><strong>$<?= number_format($resumen['terminal'],2) ?></strong></div>
                 <div class="metodo-row"><span>Crédito</span><strong>$<?= number_format($resumen['credito'],2) ?></strong></div>
                 <div class="metodo-row"><span>Mixto</span><strong>$<?= number_format($resumen['mixto'],2) ?></strong></div>
+                <div class="metodo-row"><span>Transferencia</span><strong>$<?= number_format($resumen['transferencia'],2) ?></strong></div>
             </div>
 
             <!-- Por sucursal -->

@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $errores = [];
@@ -24,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         $stmtP = $pdo->prepare("
-            SELECT p.nombre_producto, ss.stock_actual, ss.stock_minimo
+            SELECT p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo
             FROM productos p
             INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
             WHERE p.producto_id = ?
@@ -32,7 +34,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmtP->execute([$sucursalVista, $producto_id]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
-        if (!$prod) {
+        // [FIX-ALTO-C-03] Antes se aceptaba cualquier decimal para cualquier producto: un
+        // producto vendido por Unidad (no Suelto/granel) podía registrar una salida de,
+        // por ejemplo, 2.5 piezas, un valor sin sentido para el conteo físico. El error se
+        // agrega a $errores pero, como esta rama no vuelve a revisar empty($errores), hay
+        // que cortar aquí explícitamente para no seguir procesando la salida de todos modos.
+        if ($prod && $prod['tipo_venta'] !== 'Suelto' && floor($cantidad) != $cantidad) {
+            $errores[] = 'Este producto se maneja por unidad; la cantidad debe ser un número entero.';
+        }
+
+        if (!empty($errores)) {
+            // ya se agregó el error de cantidad no entera; no continuar con el registro.
+        } elseif (!$prod) {
             $errores[] = 'Producto no encontrado.';
         } elseif ($cantidad > $prod['stock_actual']) {
             $errores[] = 'La cantidad no puede ser mayor al stock actual (' . floatval($prod['stock_actual']) . ' disponibles).';
@@ -65,20 +78,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Historial de salidas
-$stmt = $pdo->prepare("
-    SELECT m.*, p.nombre_producto, p.codigo
-    FROM movimientos_inventario m
-    JOIN productos p ON m.producto_id = p.producto_id
-    WHERE m.tipo = 'Salida' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
-    ORDER BY m.created_at DESC LIMIT 30
-");
-$stmt->execute([$sucursalVista]);
+// [FIX-MEDIO-C-06] Mismo patron que inventario_entradas.php: en "Todas las sucursales"
+// (sucursalVista === 0) el filtro "m.sucursal_id = 0 OR IS NULL" y el INNER JOIN
+// "ss.sucursal_id = 0" dejaban el historial y la lista de productos vacios. El formulario
+// ya bloquea el submit en vista global, asi que los productos solo tienen sentido con una
+// sucursal especifica elegida; el historial en cambio muestra todo.
+if ($sucursalVista === 0) {
+    $stmt = $pdo->prepare("
+        SELECT m.*, p.nombre_producto, p.codigo
+        FROM movimientos_inventario m
+        JOIN productos p ON m.producto_id = p.producto_id
+        WHERE m.tipo = 'Salida'
+        ORDER BY m.created_at DESC LIMIT 30
+    ");
+    $stmt->execute();
+    $productos = [];
+} else {
+    $stmt = $pdo->prepare("
+        SELECT m.*, p.nombre_producto, p.codigo
+        FROM movimientos_inventario m
+        JOIN productos p ON m.producto_id = p.producto_id
+        WHERE m.tipo = 'Salida' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
+        ORDER BY m.created_at DESC LIMIT 30
+    ");
+    $stmt->execute([$sucursalVista]);
+    $stmtProdsSal = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 AND ss.stock_actual > 0 ORDER BY p.nombre_producto ASC");
+    $stmtProdsSal->execute([$sucursalVista]);
+    $productos = $stmtProdsSal->fetchAll(PDO::FETCH_ASSOC);
+}
 $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 AND ss.stock_actual > 0 ORDER BY p.nombre_producto ASC");
-$stmt->execute([$sucursalVista]);
-$productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -191,6 +219,9 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
+                <?php endif; ?>
+                <?php if ($sucursalVista === 0): ?>
+                    <div class="msg" style="background:#fff8e1;color:#e65100;">Selecciona una sucursal específica arriba para registrar una salida.</div>
                 <?php endif; ?>
 
                 <form method="POST">

@@ -1,4 +1,6 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -43,6 +45,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
         $erroresApertura[] = 'El monto de apertura es obligatorio y no puede ser negativo.';
     } elseif ($monto_apertura == 0) {
         $erroresApertura[] = 'El monto de apertura debe ser mayor a $0.00. Si no tienes fondo inicial, contacta al administrador.';
+    } elseif ($monto_apertura > 50000) {
+        // [FIX-ALTO-D3-03] Sin tope superior, un error de dedo (un cero de mas) se
+        // truncaba en silencio a $99,999,999.99 (local) o tiraba error 500 (produccion,
+        // sql_mode estricto) al chocar con monto_apertura DECIMAL(10,2).
+        $erroresApertura[] = 'El monto de apertura no puede ser mayor a $50,000.00. Verifica la cantidad capturada.';
     }
 
     if (empty($erroresApertura)) {
@@ -224,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     <div class="form-group">
                         <label>Monto inicial en caja *</label>
                         <!-- [AUTOFIX] VALIDACION-1A-1: min="0.01" y required para bloquear $0 y vacío -->
-                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0.01" required autofocus
+                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0.01" max="50000" required autofocus
                                value="<?= isset($_POST['monto_apertura']) ? htmlspecialchars($_POST['monto_apertura']) : '' ?>">
                     </div>
                     <div class="form-group">

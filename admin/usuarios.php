@@ -1,15 +1,42 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 // Toggle activo
 if (isset($_GET['toggle'])) {
-    $pdo->prepare("UPDATE usuarios SET activo = NOT activo WHERE usuario_id = ?")->execute([intval($_GET['toggle'])]);
+    // [FIX-CRIT-A-02] Antes: GET sin token CSRF, sin verificar quién es el objetivo.
+    // Con un solo enlace (?toggle=<su_propio_id>) el único Administrador podía
+    // autodesactivarse y bloquear el sistema por completo, sin forma de recuperarlo
+    // salvo entrar directo a MySQL. Ahora se exige CSRF y se bloquea explícitamente:
+    // (a) que alguien se desactive a sí mismo, y (b) que se desactive al último
+    // Administrador activo del sistema.
+    requerirCSRF($_GET['_token'] ?? '', 'usuarios.php');
+    $targetId = intval($_GET['toggle']);
+
+    if ($targetId === intval($_SESSION['usuario_id'])) {
+        header('Location: usuarios.php?msg=error_auto'); exit();
+    }
+
+    $stmtTarget = $pdo->prepare("SELECT rol, activo FROM usuarios WHERE usuario_id = ?");
+    $stmtTarget->execute([$targetId]);
+    $target = $stmtTarget->fetch(PDO::FETCH_ASSOC);
+
+    if ($target) {
+        if ($target['rol'] === 'Administrador' && intval($target['activo']) === 1) {
+            $stmtAdmins = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE rol = 'Administrador' AND activo = 1");
+            if (intval($stmtAdmins->fetchColumn()) <= 1) {
+                header('Location: usuarios.php?msg=error_ultimo_admin'); exit();
+            }
+        }
+        $pdo->prepare("UPDATE usuarios SET activo = NOT activo WHERE usuario_id = ?")->execute([$targetId]);
+    }
     header('Location: usuarios.php'); exit();
 }
 
@@ -181,6 +208,19 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
+        <?php
+            $usrMsgs = [
+                'error_token'        => 'La sesión expiró o el enlace no es válido. Recarga la página e intenta de nuevo.',
+                'error_auto'         => 'No puedes activar o desactivar tu propia cuenta.',
+                'error_ultimo_admin' => 'No puedes desactivar al único Administrador activo del sistema.',
+            ];
+        ?>
+        <?php if (isset($_GET['msg']) && isset($usrMsgs[$_GET['msg']])): ?>
+            <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #c0392b;">
+                <?= htmlspecialchars($usrMsgs[$_GET['msg']]) ?>
+            </div>
+        <?php endif; ?>
+
         <div class="content-header">
             <h1>Gestión de usuarios</h1>
             <div style="display:flex;gap:8px;">
@@ -266,7 +306,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                                 <a class="btn-accion btn-editar" href="formUsuario.php?id=<?= $u['usuario_id'] ?>">Editar</a>
                                 <?php if ($u['rol'] !== 'Administrador'): ?>
                                 <a class="btn-accion <?= $u['activo']?'btn-desactivar':'btn-activar' ?>"
-                                   href="usuarios.php?toggle=<?= $u['usuario_id'] ?>"
+                                   href="usuarios.php?toggle=<?= $u['usuario_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                                    onclick="return confirm('¿Cambiar estado del usuario?')">
                                     <?= $u['activo']?'Desactivar':'Activar' ?>
                                 </a>

@@ -40,6 +40,7 @@ function renderAdminSidebar(string $activeKey): void
             </div>
             <div class="divider"></div>
             <a class="menu-item<?= $isActive('gastos') ?>" href="gastos.php">Bitacora de gastos</a>
+            <a class="menu-item<?= $isActive('gastos_categorias') ?>" href="gastos_categorias.php">Categorias de gasto</a>
             <div class="divider"></div>
 
             <button type="button" class="menu-item" onclick="toggleAdminSection('inventarioSubmenu')" style="width:100%;text-align:left;background:none;border:none;">

@@ -1,24 +1,34 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
-verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+// [FIX-CRIT-B-04] Inventario/Cajero no debe crear/editar el catálogo global de unidades.
+verificarRol(['Administrador', 'Inventario']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $esAdmin = $_SESSION['rol'] === 'Administrador';
 
 // Eliminar unidad
 if (isset($_GET['eliminar'])) {
+    // [FIX-CRIT-B-03] CSRF ausente antes.
+    requerirCSRF($_GET['_token'] ?? '', 'inventario_unidades.php');
     $id = intval($_GET['eliminar']);
     $u = $pdo->prepare("SELECT nombre, sucursal_id FROM unidades_medida WHERE unidad_id = ?");
     $u->execute([$id]);
     $unidadRow = $u->fetch(PDO::FETCH_ASSOC);
     if ($unidadRow) {
-        $check = $pdo->prepare("SELECT COUNT(*) FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.unidad_medida = ? AND p.activo = 1 AND ss.activo = 1");
-        $check->execute([$unidadRow['sucursal_id'], $unidadRow['nombre']]);
+        // [FIX-MEDIO-B-20] Antes solo contaba productos con stock ACTIVO en la MISMA
+        // sucursal de la unidad — un producto que usara ese nombre de unidad pero sin
+        // stock ahi (u otra sucursal, ya que productos.unidad_medida es global) pasaba la
+        // guarda sin problema y quedaba con una unidad que ya no existe en ningun catalogo.
+        // Se cuenta cualquier producto activo que use ese nombre, sin importar su stock.
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND activo = 1");
+        $check->execute([$unidadRow['nombre']]);
         if ($check->fetchColumn() > 0) {
             header('Location: inventario_unidades.php?msg=error_productos');
             exit();
@@ -31,6 +41,8 @@ if (isset($_GET['eliminar'])) {
 
 // Guardar unidad (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-CRIT-B-03] CSRF ausente antes.
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_unidades.php');
     $nombre     = trim($_POST['nombre'] ?? '');
     $id         = intval($_POST['unidad_id'] ?? 0);
     $sucursalId = $esAdmin ? intval($_POST['sucursal_id'] ?? $sucursalVista) : intval($_SESSION['sucursal_id']);
@@ -41,12 +53,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: inventario_unidades.php?msg=vacio');
         exit();
     }
+    // [FIX-MEDIO-B-19] unidades_medida.nombre es VARCHAR(50), pero productos.unidad_medida
+    // (donde se copia el nombre elegido) es VARCHAR(30) — un nombre mas largo se truncaba
+    // en silencio al guardarlo en el producto, desalineandolo del catalogo de unidades. Se
+    // exige aqui el mismo limite de 30 para que nunca se guarde algo que no cabe despues.
+    if (mb_strlen($nombre) > 30) {
+        header('Location: inventario_unidades.php?msg=muy_largo');
+        exit();
+    }
 
     // [AUTOFIX] ERROR-UNIT-01: Capturar PDOException de clave duplicada en lugar de exponer el error PHP
     try {
         if ($id) {
+            // [FIX-MEDIO-B-20] Antes renombrar una unidad no tocaba los productos que ya la
+            // usaban (productos.unidad_medida es una copia de texto, no una FK): quedaban
+            // con un nombre de unidad que ya no existe en el catalogo. Se propaga el
+            // renombre a los productos que tenian el nombre viejo exacto.
+            $stmtNombreViejo = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ?");
+            $stmtNombreViejo->execute([$id]);
+            $nombreViejo = $stmtNombreViejo->fetchColumn();
+
+            // [FIX-MEDIO-H-07] El renombre de la unidad y su propagacion en cascada a
+            // productos.unidad_medida eran dos UPDATE sueltos: si el segundo fallaba, el
+            // catalogo de unidades ya mostraba el nombre nuevo pero todos los productos que la
+            // usaban se quedaban con el nombre viejo, ahora huerfano (ya no existe en ningun
+            // catalogo) -- justo el desajuste que el fix B-20 de arriba intentaba evitar.
+            $pdo->beginTransaction();
             $pdo->prepare("UPDATE unidades_medida SET nombre = ?, sucursal_id = ? WHERE unidad_id = ?")
                 ->execute([$nombre, $sucursalId, $id]);
+
+            if ($nombreViejo !== false && $nombreViejo !== $nombre) {
+                $pdo->prepare("UPDATE productos SET unidad_medida = ? WHERE unidad_medida = ?")
+                    ->execute([$nombre, $nombreViejo]);
+            }
+            $pdo->commit();
             header('Location: inventario_unidades.php?msg=editado');
         } else {
             $pdo->prepare("INSERT INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
@@ -55,6 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         exit();
     } catch (\PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         if ($e->getCode() === '23000') {
             // Clave duplicada — nombre ya existe para esta sucursal
             header('Location: inventario_unidades.php?msg=duplicado');
@@ -259,6 +300,10 @@ $todasSucursales = $esAdmin
                     <div class="msg msg-error">Ya existe una unidad con ese nombre en esta sucursal. Elige un nombre diferente.</div>
                 <?php elseif ($_GET['msg'] === 'vacio'): ?>
                     <div class="msg msg-error">El nombre de la unidad de medida es obligatorio.</div>
+                <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
+                    <div class="msg msg-error">El nombre de la unidad no puede tener más de 30 caracteres.</div>
+                <?php elseif ($_GET['msg'] === 'error_token'): ?>
+                    <div class="msg msg-error">La sesión expiró o el enlace no es válido. Intenta de nuevo.</div>
                 <?php endif; ?>
             <?php endif; ?>
 
@@ -294,7 +339,7 @@ $todasSucursales = $esAdmin
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="inventario_unidades.php?editar=<?= $u['unidad_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="inventario_unidades.php?eliminar=<?= $u['unidad_id'] ?>" onclick="return confirm('¿Eliminar esta unidad?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="inventario_unidades.php?eliminar=<?= $u['unidad_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar esta unidad?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -312,11 +357,12 @@ $todasSucursales = $esAdmin
             <div class="card">
                 <h3><?= $editando ? 'Editar unidad' : 'Nueva unidad' ?></h3>
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="unidad_id" value="<?= $editando['unidad_id'] ?? 0 ?>">
 
                     <div class="form-group">
                         <label>Nombre *</label>
-                        <input type="text" name="nombre"
+                        <input type="text" name="nombre" maxlength="30"
                             value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>"
                             placeholder="Ej. pieza, kg, metro, litro" autofocus>
                         <div class="hint">Este nombre aparecerá en el punto de venta junto a la cantidad.</div>

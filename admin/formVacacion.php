@@ -1,12 +1,14 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $editando  = null;
 $errores   = [];
@@ -25,7 +27,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $empleado_id  = intval($_POST['empleado_id']  ?? 0);
     $fecha_inicio = trim($_POST['fecha_inicio']   ?? '');
     $fecha_fin    = trim($_POST['fecha_fin']       ?? '');
-    $anio         = intval($_POST['anio']          ?? date('Y'));
     $estado       = trim($_POST['estado']          ?? 'Solicitado');
     $notas        = trim($_POST['notas']           ?? '');
     $vacacion_id  = intval($_POST['vacacion_id']   ?? 0);
@@ -37,6 +38,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($fecha_inicio && $fecha_fin && $fecha_fin < $fecha_inicio)
                                                           $errores[] = 'La fecha de fin debe ser igual o posterior a la de inicio.';
     if (!in_array($estado, $estadosVal))                  $errores[] = 'Estado no valido.';
+
+    // [FIX-CRIT-G-04] Antes "anio" llegaba crudo del POST y se usaba tal cual para
+    // validar el saldo (WHERE empleado_id=? AND anio=?). Como el <select> del año se
+    // arma en JavaScript, bastaba con mandar cualquier valor (otro año, o incluso 0)
+    // para que la validacion de saldo mirara un cajon vacio y aceptara dias de mas —
+    // se confirmo que asi se lograban 36 dias aprobados sobre las mismas fechas para
+    // un empleado con derecho a 12, y un registro con anio=0 quedaba aprobado e
+    // invisible/imborrable desde la interfaz. Ahora el año siempre se deriva en el
+    // servidor a partir de fecha_inicio, nunca del valor que mande el cliente.
+    $anio = ($fecha_inicio && strtotime($fecha_inicio)) ? (int)date('Y', strtotime($fecha_inicio)) : intval(date('Y'));
 
     $diasTomados = 0;
     if ($fecha_inicio && $fecha_fin && !$errores) {
@@ -64,23 +75,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+
+        // [FIX-MEDIO-G-28] No habia ninguna validacion contra periodos de vacaciones
+        // traslapados del mismo empleado: se podian aprobar dos solicitudes con fechas que se
+        // encimaran, lo que ademas inflaba "dias de vacaciones esta semana" en
+        // semanaLaboral.php mas alla de los dias reales de la semana (G-23) al sumar ambos
+        // periodos. Se rechaza cualquier periodo (Solicitado o Aprobado, un Rechazado no
+        // cuenta) que se traslape con otro ya existente del mismo empleado.
+        if (empty($errores)) {
+            $stmtSolape = $pdo->prepare("
+                SELECT vacacion_id FROM vacaciones
+                WHERE empleado_id = ? AND estado != 'Rechazado' AND vacacion_id != ?
+                  AND fecha_inicio <= ? AND fecha_fin >= ?
+                LIMIT 1
+            ");
+            $stmtSolape->execute([$empleado_id, $vacacion_id, $fecha_fin, $fecha_inicio]);
+            if ($stmtSolape->fetchColumn()) {
+                $errores[] = 'Este empleado ya tiene otro periodo de vacaciones registrado que se traslapa con estas fechas.';
+            }
+        }
     }
 
+    // [FIX-ALTO-G-12] Ver nota en formGasto.php: capturar PDOException para no filtrar
+    // ruta/esquema del servidor en un HTTP 500 crudo.
     if (empty($errores)) {
-        if ($vacacion_id) {
-            $pdo->prepare("
-                UPDATE vacaciones SET empleado_id=?, fecha_inicio=?, fecha_fin=?, dias_tomados=?, anio=?, estado=?, notas=?
-                WHERE vacacion_id=?
-            ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null, $vacacion_id]);
-            header('Location: vacaciones.php?msg=actualizado');
-        } else {
-            $pdo->prepare("
-                INSERT INTO vacaciones (empleado_id, fecha_inicio, fecha_fin, dias_tomados, anio, estado, notas)
-                VALUES (?,?,?,?,?,?,?)
-            ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null]);
-            header('Location: vacaciones.php?msg=registrado');
+        try {
+            if ($vacacion_id) {
+                $pdo->prepare("
+                    UPDATE vacaciones SET empleado_id=?, fecha_inicio=?, fecha_fin=?, dias_tomados=?, anio=?, estado=?, notas=?
+                    WHERE vacacion_id=?
+                ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null, $vacacion_id]);
+                header('Location: vacaciones.php?msg=actualizado');
+            } else {
+                $pdo->prepare("
+                    INSERT INTO vacaciones (empleado_id, fecha_inicio, fecha_fin, dias_tomados, anio, estado, notas)
+                    VALUES (?,?,?,?,?,?,?)
+                ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null]);
+                header('Location: vacaciones.php?msg=registrado');
+            }
+            exit();
+        } catch (PDOException $e) {
+            $errores[] = 'No se pudo guardar la vacación. Verifica que el empleado siga existiendo e intenta de nuevo.';
         }
-        exit();
     }
 }
 

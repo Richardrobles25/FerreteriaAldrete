@@ -1,5 +1,7 @@
 ﻿<?php
 ob_start();
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -128,6 +130,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $importados = 0;
             $omitidos   = 0;
+            $bloqueados = 0;
+            // Igual que en formProducto.php: solo el Administrador puede dar de alta
+            // productos/categorías nuevas en el catálogo global. Inventario/Cajero e
+            // Inventario solo pueden actualizar (stock, precios) lo que ya existe.
+            $puedeCrearCatalogo = ($_SESSION['rol'] ?? '') === 'Administrador';
 
             foreach ($rows as $row) {
                 if (empty($row[0]) || empty($row[1])) continue;
@@ -157,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     $stmtCat = $pdo->prepare("SELECT categoria_id FROM categorias WHERE nombre = ? LIMIT 1");
                     $stmtCat->execute([$nombreCat]);
                     $categoria_id = $stmtCat->fetchColumn() ?: null;
-                    if (!$categoria_id) {
+                    if (!$categoria_id && $puedeCrearCatalogo) {
                         $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)")->execute([$nombreCat]);
                         $categoria_id = $pdo->lastInsertId();
                     }
@@ -167,6 +174,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ?");
                 $check->execute([$codigo]);
                 $existente = $check->fetch();
+
+                if (!$existente && !$puedeCrearCatalogo) {
+                    // Solo el administrador puede agregar productos nuevos al catálogo global
+                    $bloqueados++;
+                    continue;
+                }
 
                 if ($existente) {
                     $producto_id = $existente['producto_id'];
@@ -197,7 +210,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 }
             }
 
-            $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s).";
+            $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
+                . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): solo el administrador puede dar de alta productos nuevos en el catálogo." : '');
         } catch (Exception $e) {
             $erroresImport[] = 'Error al leer el archivo: ' . $e->getMessage();
         }

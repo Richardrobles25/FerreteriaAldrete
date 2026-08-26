@@ -441,7 +441,7 @@ adelanto_descontado, monto_pagado, pagado_en
 | `cajero_historialVentas.php` | Historial de ventas de todas las sucursales |
 | `cajero_ventasPendientes.php` | Ventas pendientes de todas las sucursales |
 | `cajero_devoluciones.php` | Devoluciones |
-| `cajero_clientes.php`, `cajero_creditos.php`, `cajero_abonos.php` | Gestión de clientes y créditos |
+| `cajero_clientes.php`, `cajero_creditos.php` | Gestión de clientes y créditos |
 | `cajero_abrirCaja.php`, `cajero_corteCaja.php`, `cajero_historialCortes.php` | Gestión de cajas |
 | `reporteVentas.php` | Reporte de ventas con filtros, desglose por método de pago |
 | `reporteProductos.php` | Reporte de productos con filtros |

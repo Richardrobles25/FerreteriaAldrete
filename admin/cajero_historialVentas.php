@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // ── AJAX: detalle de venta + productos ──────────────────────────────────────
@@ -226,7 +228,7 @@ if ($fechaDesde !== '' && $fechaHasta !== '') {
     $paramsM[] = $fechaHasta;
 }
 $stmtMov = $pdo->prepare("
-    SELECT m.movimiento_id, m.tipo, m.monto, m.nota, m.created_at,
+    SELECT m.movimiento_id, m.tipo, m.monto, m.nota, m.created_at, m.devolucion_id,
            u.nombre_completo AS cajero
     FROM movimientos_caja m
     LEFT JOIN usuarios u ON m.usuario_id = u.usuario_id
@@ -241,8 +243,16 @@ $movimientos = $stmtMov->fetchAll(PDO::FETCH_ASSOC);
 // Los movimientos de devolución (Retiro/Ingreso por devolución) se muestran en la sección
 // "Devoluciones — movimientos de caja" que consulta directamente la tabla devoluciones.
 // Excluirlos aquí evita que aparezcan doble en "Retiros e ingresos manuales".
-$esAbono = fn($m) => str_starts_with($m['nota'] ?? '', 'Pago crédito') || str_starts_with($m['nota'] ?? '', 'Abono de crédito');
-$esDev   = fn($m) => str_starts_with($m['nota'] ?? '', 'Devolución folio') || str_starts_with($m['nota'] ?? '', 'Cancelación devolución');
+// [FIX-MEDIO-H2-02] Antes se detectaba un movimiento de devolución por el texto de la nota
+// ('Devolución folio'/'Cancelación devolución'), pero el retiro de "excedente de crédito ya
+// abonado" (cajero_devoluciones.php) usa la nota 'Reembolso devolución crédito folio #...',
+// que no calza con ninguno de esos dos prefijos. Ese movimiento se colaba en "Retiros e
+// ingresos manuales" (sumándose ahí) Y también en el bloque de Devoluciones de abajo (que
+// suma monto_retiro_real por devolucion_id) — quedaba contado dos veces en pantalla. La
+// columna devolucion_id es la fuente de verdad real de si un movimiento pertenece a una
+// devolución, sin depender del texto de la nota.
+$esAbono = fn($m) => empty($m['devolucion_id']) && (str_starts_with($m['nota'] ?? '', 'Pago crédito') || str_starts_with($m['nota'] ?? '', 'Abono de crédito'));
+$esDev   = fn($m) => !empty($m['devolucion_id']);
 $movAbonos    = array_values(array_filter($movimientos,  $esAbono));
 $movRegulares = array_values(array_filter($movimientos, fn($m) => !$esAbono($m) && !$esDev($m)));
 
@@ -275,11 +285,21 @@ if ($fechaDesde !== '' && $fechaHasta !== '') {
 }
 // Sin filtro de fecha: últimas 50 devoluciones
 
+// [FIX-ALTO-H2-01] Antes se asumia que TODA devolucion sacaba/regresaba efectivo por el
+// total_devuelto completo. En la realidad (ver cajero_devoluciones.php) una devolucion de
+// una venta a Credito sin excedente de abonos NO saca dinero de caja (solo reduce el
+// saldo del credito), y una devolucion en Efectivo de la MISMA caja tampoco genera un
+// Retiro aparte (ya la resta ventas.total). Este reporte los contaba como si el dinero
+// siempre hubiera salido/entrado, inventando movimientos que nunca ocurrieron. Ahora se
+// trae el monto REAL de movimientos_caja (por devolucion_id), que es la unica fuente de
+// verdad de si hubo dinero fisico de por medio y de cuanto.
 $stmtDevMov = $pdo->prepare("
     SELECT d.devolucion_id, d.procesada_en, d.cancelada_en,
            d.total_devuelto, d.venta_id, v.folio, v.metodo_pago,
            u.nombre_completo  AS cajero,
-           uc.nombre_completo AS cajero_cancel
+           uc.nombre_completo AS cajero_cancel,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Retiro')  AS monto_retiro_real,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Ingreso') AS monto_ingreso_real
     FROM devoluciones d
     JOIN ventas v  ON d.venta_id      = v.venta_id
     JOIN cajas  ca ON v.caja_id       = ca.caja_id $condSucDev
@@ -292,21 +312,42 @@ $stmtDevMov = $pdo->prepare("
 $stmtDevMov->execute($paramsDevFecha);
 $devolucionesMov = $stmtDevMov->fetchAll(PDO::FETCH_ASSOC);
 
+// [FIX-MEDIO-H2-03] Los totales de abajo (totalSalidaDev/totalEntradaDev) antes se calculaban
+// sumando solo las filas de $devolucionesMov, que trae "LIMIT 50". Con una sola sucursal 50
+// devoluciones alcanzan para cualquier periodo razonable, pero en "Todas las sucursales" (que
+// junta el volumen de TODAS las tiendas) es facil superar 50 devoluciones en un rango de
+// fechas amplio, y el total en pantalla quedaba truncado silenciosamente a solo las 50 mas
+// recientes. Se repite la misma consulta sin LIMIT exclusivamente para los totales; la lista
+// visible ($devolucionesMov, con LIMIT 50) no cambia.
+$stmtDevMovTot = $pdo->prepare("
+    SELECT d.procesada_en, d.cancelada_en,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Retiro')  AS monto_retiro_real,
+           (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc WHERE mc.devolucion_id = d.devolucion_id AND mc.tipo = 'Ingreso') AS monto_ingreso_real
+    FROM devoluciones d
+    JOIN ventas v  ON d.venta_id      = v.venta_id
+    JOIN cajas  ca ON v.caja_id       = ca.caja_id $condSucDev
+    LEFT JOIN usuarios u  ON d.usuario_id   = u.usuario_id
+    LEFT JOIN usuarios uc ON d.cancelada_por = uc.usuario_id
+    $whereDevFecha
+");
+$stmtDevMovTot->execute($paramsDevFecha);
+$devolucionesMovTot = $stmtDevMovTot->fetchAll(PDO::FETCH_ASSOC);
+
 // Calcular totales de devoluciones para el período
 $totalSalidaDev  = 0.0; // dinero que salió de caja (retiros activos)
 $totalEntradaDev = 0.0; // dinero que regresó a caja (ingresos por cancelación)
-foreach ($devolucionesMov as $dm) {
+foreach ($devolucionesMovTot as $dm) {
     $enRangoRetiro  = ($fechaDesde === '' && $fechaHasta === '')
         || ($fechaDesde !== '' && $fechaHasta !== '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00' && $dm['procesada_en'] <= $fechaHasta . ' 23:59:59')
         || ($fechaDesde !== '' && $fechaHasta === '' && $dm['procesada_en'] >= $fechaDesde . ' 00:00:00')
         || ($fechaDesde === '' && $fechaHasta !== '' && $dm['procesada_en'] <= $fechaHasta . ' 23:59:59');
-    if ($enRangoRetiro) $totalSalidaDev += floatval($dm['total_devuelto']);
+    if ($enRangoRetiro) $totalSalidaDev += floatval($dm['monto_retiro_real']);
     if (!empty($dm['cancelada_en'])) {
         $enRangoIngreso = ($fechaDesde === '' && $fechaHasta === '')
             || ($fechaDesde !== '' && $fechaHasta !== '' && $dm['cancelada_en'] >= $fechaDesde . ' 00:00:00' && $dm['cancelada_en'] <= $fechaHasta . ' 23:59:59')
             || ($fechaDesde !== '' && $fechaHasta === '' && $dm['cancelada_en'] >= $fechaDesde . ' 00:00:00')
             || ($fechaDesde === '' && $fechaHasta !== '' && $dm['cancelada_en'] <= $fechaHasta . ' 23:59:59');
-        if ($enRangoIngreso) $totalEntradaDev += floatval($dm['total_devuelto']);
+        if ($enRangoIngreso) $totalEntradaDev += floatval($dm['monto_ingreso_real']);
     }
 }
 
@@ -831,7 +872,14 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                                 || ($fechaDesde === '' && $fechaHasta !== '' && substr($fechaCanc,0,10) <= $fechaHasta)
                             );
                         ?>
-                        <?php if ($enRangoRet): ?>
+                        <?php
+                            // [FIX-ALTO-H2-01] Solo se muestra como Retiro/Ingreso si de verdad
+                            // hubo movimiento de efectivo (monto_real > 0); una devolucion de
+                            // credito sin excedente, por ejemplo, no mueve dinero de la caja.
+                            $montoRetiroReal  = floatval($dm['monto_retiro_real']);
+                            $montoIngresoReal = floatval($dm['monto_ingreso_real']);
+                        ?>
+                        <?php if ($enRangoRet && $montoRetiroReal > 0.001): ?>
                         <tr>
                             <td>
                                 <span class="badge badge-retiro">&#8595; Retiro</span>
@@ -839,7 +887,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                                 <div style="font-size:10px;color:#aaa;margin-top:2px;">Devolución cancelada</div>
                                 <?php endif; ?>
                             </td>
-                            <td style="font-weight:700;color:#c0392b;">-$<?= number_format($dm['total_devuelto'],2) ?></td>
+                            <td style="font-weight:700;color:#c0392b;">-$<?= number_format($montoRetiroReal,2) ?></td>
                             <td>
                                 <div class="mov-nota">Efectivo dado al cliente · <?= htmlspecialchars($folioRef) ?> (<?= htmlspecialchars($dm['metodo_pago']) ?>)</div>
                             </td>
@@ -847,10 +895,10 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                             <td style="color:#aaa;font-size:12px;white-space:nowrap;"><?= date('d/m/Y H:i', strtotime($fechaProc)) ?></td>
                         </tr>
                         <?php endif; ?>
-                        <?php if ($enRangoIng): ?>
+                        <?php if ($enRangoIng && $montoIngresoReal > 0.001): ?>
                         <tr>
                             <td><span class="badge badge-ingreso">&#8593; Ingreso</span></td>
-                            <td style="font-weight:700;color:#2e7d32;">+$<?= number_format($dm['total_devuelto'],2) ?></td>
+                            <td style="font-weight:700;color:#2e7d32;">+$<?= number_format($montoIngresoReal,2) ?></td>
                             <td>
                                 <div class="mov-nota">Devolución cancelada · cliente regresó efectivo · <?= htmlspecialchars($folioRef) ?></div>
                             </td>

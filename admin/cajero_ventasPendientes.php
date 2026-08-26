@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if ($sucursalVista === 0) {
@@ -35,13 +37,19 @@ if (isset($_GET['liquidar'])) {
     $venta_id = intval($_GET['liquidar']);
 
     // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
+    // [FIX-CRIT-D1-01] Faltaba exigir también que la caja de esa venta sea de la
+    // sucursal que se está viendo/operando ($sucursalVista). Sin este filtro, un
+    // Administrador con caja abierta en dos sucursales a la vez podía liquidar aquí
+    // (viendo la sucursal A) una pendiente creada en la sucursal B: el stock se
+    // descontaba de A (la sucursal equivocada, que nunca tuvo esos productos
+    // reservados) y el dinero se reasignaba a la caja de A en vez de a la de B.
     $stmtV = $pdo->prepare("
         SELECT v.venta_id, v.cliente_id, v.metodo_pago, v.total
         FROM ventas v
         JOIN cajas c ON v.caja_id = c.caja_id
-        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ?
+        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ? AND c.sucursal_id = ?
     ");
-    $stmtV->execute([$venta_id, $_SESSION['usuario_id']]);
+    $stmtV->execute([$venta_id, $_SESSION['usuario_id'], $sucursalVista]);
     $ventaLiq = $stmtV->fetch(PDO::FETCH_ASSOC);
 
     if ($ventaLiq) {
@@ -59,7 +67,15 @@ if (isset($_GET['liquidar'])) {
             // mismo tiempo sobre esta misma venta y ya gano la carrera, este UPDATE no afecta
             // ninguna fila y se aborta la liquidacion completa (linea siguiente) ANTES de tocar
             // el stock — evita que una venta quede "Cancelada" con el stock ya descontado.
-            $stmtLiq = $pdo->prepare("UPDATE ventas SET estado = 'Completada', caja_id = ? WHERE venta_id = ? AND estado = 'Pendiente'");
+            // [FIX-ALTO-D1-06] created_at = NOW(): antes se conservaba la fecha de CREACION de
+            // la pendiente. El corte de caja de hoy ya contaba bien el dinero (por el
+            // reasignado de caja_id de arriba), pero cualquier reporte que filtra por fecha
+            // (reporteVentas.php, reporteProductos.php, "ultima_compra" del cliente, etc.) usa
+            // created_at — con la fecha vieja, la venta aparecia en el reporte de un dia ya
+            // cerrado (cambiandolo retroactivamente) y faltaba en el de hoy, aunque el efectivo
+            // fisico si estuviera en la caja de hoy. Al actualizar created_at al momento real de
+            // cobro, corte y reportes vuelven a contar la misma historia.
+            $stmtLiq = $pdo->prepare("UPDATE ventas SET estado = 'Completada', caja_id = ?, created_at = NOW() WHERE venta_id = ? AND estado = 'Pendiente'");
             $stmtLiq->execute([$cajaActualId, $venta_id]);
             if ($stmtLiq->rowCount() === 0) {
                 throw new Exception('ya_no_pendiente');
@@ -89,7 +105,30 @@ if (isset($_GET['liquidar'])) {
                 $stmtCheck = $pdo->prepare("SELECT credito_id FROM creditos WHERE venta_id = ? LIMIT 1");
                 $stmtCheck->execute([$venta_id]);
                 if (!$stmtCheck->fetchColumn()) {
-                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', DATE_ADD(CURDATE(), INTERVAL 15 DAY))")
+                    // [FIX-ALTO-D1-04] El límite de crédito solo se validaba al CREAR la
+                    // pendiente. Entre ese momento y la liquidación (puede ser días después,
+                    // ver D1-05) el cliente puede haber hecho otras compras a crédito; sin
+                    // revalidar aquí, la deuda total podía terminar muy por encima de su
+                    // límite autorizado. Se repite la misma validación que en la creación,
+                    // con FOR UPDATE para evitar que dos liquidaciones concurrentes del mismo
+                    // cliente se cuelen ambas antes de que la deuda del otro se refleje.
+                    $stmtLimiteLiq = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");
+                    $stmtLimiteLiq->execute([$ventaLiq['cliente_id']]);
+                    $clienteCreditoLiq = $stmtLimiteLiq->fetch(PDO::FETCH_ASSOC);
+                    if (!$clienteCreditoLiq || !$clienteCreditoLiq['credito_autorizado'] || floatval($clienteCreditoLiq['limite_credito']) <= 0) {
+                        throw new Exception('credito_no_disponible');
+                    }
+                    $stmtDeudaLiq = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+                    $stmtDeudaLiq->execute([$ventaLiq['cliente_id']]);
+                    $deudaActualLiq = floatval($stmtDeudaLiq->fetchColumn());
+                    if ($deudaActualLiq + floatval($ventaLiq['total']) > floatval($clienteCreditoLiq['limite_credito']) + 0.005) {
+                        throw new Exception('credito_excede_limite');
+                    }
+                    // [FIX-MEDIO-D1-10] Antes eran 15 dias aqui pero 3 en cajero_nuevaVenta.php
+                    // y cajero_creditos.php — el mismo tipo de venta (Credito) tenia un plazo
+                    // distinto solo por haberse creado desde Pendientes en vez de Nueva Venta.
+                    // Se unifica a 3 dias en los 3 lugares.
+                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', DATE_ADD(CURDATE(), INTERVAL 3 DAY))")
                         ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total']]);
                 }
             }
@@ -103,6 +142,8 @@ if (isset($_GET['liquidar'])) {
                 header('Location: cajero_ventasPendientes.php?msg=error_sin_stock');
             } elseif ($e->getMessage() === 'ya_no_pendiente') {
                 header('Location: cajero_ventasPendientes.php?msg=error_acceso');
+            } elseif ($e->getMessage() === 'credito_no_disponible' || $e->getMessage() === 'credito_excede_limite') {
+                header('Location: cajero_ventasPendientes.php?msg=error_credito_liquidar');
             } else {
                 header('Location: cajero_ventasPendientes.php?msg=error_liquidar');
             }
@@ -122,12 +163,15 @@ if (isset($_GET['cancelar'])) {
     $venta_id = intval($_GET['cancelar']);
 
     // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
+    // [FIX-CRIT-D1-01] Misma corrección que en "liquidar": exigir también que la caja
+    // sea de la sucursal que se está viendo, para no poder cancelar pendientes de otra
+    // sucursal.
     $stmtOwn = $pdo->prepare("
         SELECT v.venta_id FROM ventas v
         JOIN cajas c ON v.caja_id = c.caja_id
-        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ?
+        WHERE v.venta_id = ? AND v.estado = 'Pendiente' AND c.usuario_id = ? AND c.sucursal_id = ?
     ");
-    $stmtOwn->execute([$venta_id, $_SESSION['usuario_id']]);
+    $stmtOwn->execute([$venta_id, $_SESSION['usuario_id'], $sucursalVista]);
     if (!$stmtOwn->fetch()) {
         header('Location: cajero_ventasPendientes.php?msg=error_acceso');
         exit();
@@ -307,12 +351,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $sumaItems += $cantVal * $precVal;
 
                     // Precio mínimo para ítems sueltos: no menor al 50% del precio de compra
+                    // [FIX-CRIT-D1-02] Igual que en cajero_nuevaVenta.php: cuando precio_compra
+                    // no está capturado ($0), antes esta validación se saltaba por completo y
+                    // permitía vender a $0.00. Ahora se usa como referencia el precio de catálogo
+                    // (venta/mayoreo) cuando no hay costo capturado, con la misma regla del 50%.
                     $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
                     if (!$pqIdVal) {
-                        $stmtPC = $pdo->prepare("SELECT precio_compra FROM productos WHERE producto_id = ?");
+                        $stmtPC = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
                         $stmtPC->execute([intval($it['producto_id'] ?? 0)]);
-                        $precioCompraVal = floatval($stmtPC->fetchColumn());
-                        if ($precioCompraVal > 0 && $precVal < ($precioCompraVal * 0.5)) {
+                        $filaPreciosPend = $stmtPC->fetch(PDO::FETCH_ASSOC);
+                        $precioCompraVal = floatval($filaPreciosPend['precio_compra'] ?? 0);
+
+                        $referenciaFloorPend = $precioCompraVal;
+                        if ($referenciaFloorPend <= 0) {
+                            $precioVentaValPend   = floatval($filaPreciosPend['precio_venta'] ?? 0);
+                            $precioMayoreoValPend = floatval($filaPreciosPend['precio_mayoreo'] ?? 0);
+                            if ($precioVentaValPend > 0 && $precioMayoreoValPend > 0) {
+                                $referenciaFloorPend = min($precioVentaValPend, $precioMayoreoValPend);
+                            } else {
+                                $referenciaFloorPend = max($precioVentaValPend, $precioMayoreoValPend);
+                            }
+                        }
+
+                        if ($referenciaFloorPend > 0 && $precVal < ($referenciaFloorPend * 0.5)) {
+                            throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                        } elseif ($referenciaFloorPend <= 0 && $precVal <= 0) {
                             throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
                         }
                     }
@@ -385,6 +448,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception('El total de la venta no cuadra con los productos. Recarga la página e intenta de nuevo.');
                 }
 
+                // [FIX-MEDIO-D1-08] $cambio (y, para métodos ≠ Efectivo, $monto_efectivo) se
+                // guardaban tal cual llegaban del navegador — a diferencia de
+                // cajero_nuevaVenta.php, que ya recalcula el cambio en el servidor. Un
+                // "cambio" manipulado (ej. monto_efectivo=100 valido pero cambio=99999) se
+                // insertaba sin ninguna verificación. Se recalcula aquí con el total ya
+                // validado arriba.
+                if ($metodo_pago === 'Efectivo') {
+                    $monto_efectivo = round($monto_efectivo, 2);
+                    $cambio         = round($monto_efectivo - $totalEsperado, 2);
+                } else {
+                    $monto_efectivo = 0.0;
+                    $cambio         = 0.0;
+                }
+
                 // Validar límite de crédito antes de generar folio
                 if ($metodo_pago === 'Credito' && $cliente_id) {
                     $stmtLimite = $pdo->prepare("SELECT credito_autorizado, limite_credito FROM clientes WHERE cliente_id = ? AND activo = 1 FOR UPDATE");
@@ -399,7 +476,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (floatval($clienteCredito['limite_credito']) <= 0) {
                         throw new Exception('El límite de crédito del cliente no está configurado.');
                     }
-                    $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado = 'Activo'");
+                    // [FIX-ALTO-E-07] Ver nota en cajero_nuevaVenta.php: incluir 'Vencido' para
+                    // que un cliente moroso no recupere cupo completo por el solo hecho de que
+                    // su credito ya paso la fecha_limite.
+                    $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
                     $stmtDeuda->execute([$cliente_id]);
                     $deudaActual = floatval($stmtDeuda->fetchColumn());
                     $disponible  = floatval($clienteCredito['limite_credito']) - $deudaActual;
@@ -420,8 +500,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // [AUTOFIX] BUG-01: descuento estaba fijo en 0 literal y $descuento iba a comision_terminal
                 // Corregido: descuento=? recibe $descuento, comision_terminal=0 literal (pendientes no usan terminal)
+                // [FIX-ALTO-D1-03] Ver nota en cajero_nuevaVenta.php: guardar $sumaItems y
+                // $descuentoCliente (ya recalculados y acotados en el servidor) en vez del
+                // subtotal/descuento crudos del navegador.
                 $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,0,?,?,?,0,?,'Pendiente',?,?)")
-                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $subtotal, $descuento, $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
+                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $sumaItems, $descuentoCliente, $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
                 $venta_id = $pdo->lastInsertId();
 
                 // Stock NO se descuenta al crear — se descuenta solo cuando se liquida (entrega confirmada)
@@ -438,6 +521,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtStockActual->execute([$item['producto_id'], $sucursalVista]);
                     $stockActual = floatval($stmtStockActual->fetchColumn() ?: 0);
 
+                    // [FIX-ALTO-D1-05] Antes se sumaba TODA pendiente sin importar su antigüedad:
+                    // una pendiente olvidada de hace meses seguía "reservando" stock para
+                    // siempre, de forma invisible, hasta que alguien la liquidara o cancelara a
+                    // mano. Ahora solo cuenta como comprometido si se creó en los últimos 3
+                    // días — pasado ese plazo deja de bloquear stock para nuevas ventas, pero la
+                    // pendiente sigue existiendo tal cual y se puede liquidar/cancelar cuando
+                    // sea (no se borra ni se auto-cancela nada).
                     $stmtComprometido = $pdo->prepare("
                         SELECT COALESCE(SUM(vp.cantidad), 0)
                         FROM venta_productos vp
@@ -446,6 +536,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         WHERE vp.producto_id = ?
                           AND v.estado = 'Pendiente'
                           AND c.sucursal_id = ?
+                          AND v.created_at > (NOW() - INTERVAL 3 DAY)
                     ");
                     $stmtComprometido->execute([$item['producto_id'], $sucursalVista]);
                     $stockComprometido = floatval($stmtComprometido->fetchColumn() ?: 0);
@@ -475,15 +566,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Obtener ventas pendientes
+// [FIX-CRIT-D1-01] Antes solo filtraba por usuario_id, nunca por sucursal. Con un
+// Administrador que puede tener caja abierta en varias sucursales a la vez, esto
+// mostraba (y dejaba liquidar) pendientes creadas en OTRA sucursal a la que se está
+// viendo — ver el fix de "liquidar"/"cancelar" más abajo para el detalle completo.
 $stmt = $pdo->prepare("
     SELECT v.*, c.nombre_completo as cliente, ca.numero_turno
     FROM ventas v
     LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
     JOIN cajas ca ON v.caja_id = ca.caja_id
-    WHERE v.estado = 'Pendiente' AND v.usuario_id = ?
+    WHERE v.estado = 'Pendiente' AND v.usuario_id = ? AND ca.sucursal_id = ?
     ORDER BY v.created_at DESC
 ");
-$stmt->execute([$_SESSION['usuario_id']]);
+$stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
 $pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos para agregar
@@ -503,12 +598,12 @@ $stmtPromosPend = $pdo->prepare("
     FROM promociones pr
     JOIN productos p ON pr.producto_id = p.producto_id
     JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-    WHERE 1=1
+    WHERE (pr.sucursal_id = ? OR pr.sucursal_id IS NULL)
       AND (pr.fecha_inicio IS NULL OR pr.fecha_inicio <= CURDATE())
       AND (pr.fecha_fin    IS NULL OR pr.fecha_fin    >= CURDATE())
       AND pr.activo = 1
 ");
-$stmtPromosPend->execute([$sucursalVista]);
+$stmtPromosPend->execute([$sucursalVista, $sucursalVista]);
 $promosPendById = [];
 foreach ($stmtPromosPend->fetchAll(PDO::FETCH_ASSOC) as $promo) {
     $promosPendById[(int)$promo['producto_id']] = [
@@ -662,6 +757,7 @@ $paquesData = array_values($paqAgrupados);
                     'error_cancelar'  => 'Error al cancelar la venta. Intenta de nuevo.',
                     'error_liquidar'  => 'Error al liquidar la venta. Intenta de nuevo.',
                     'error_sin_stock' => 'No se puede liquidar: uno o más productos no tienen stock suficiente.',
+                    'error_credito_liquidar' => 'No se puede liquidar: el cliente ya no tiene crédito disponible suficiente (revisado al momento de liquidar).',
                 ];
                 $msgKey = $_GET['msg'];
                 if (isset($msgsExito[$msgKey])): ?>

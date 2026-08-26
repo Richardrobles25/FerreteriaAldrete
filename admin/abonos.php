@@ -1,13 +1,52 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
-$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+try {
+    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+} catch (\PDOException $e) {
+    error_log('[Ferreteria/abonos] Error al actualizar vencidos: ' . $e->getMessage());
+}
+
+// [FIX-MEDIO-E-12] Ver el mismo comentario en admin/creditos.php: la mora solo se aplicaba en
+// cajero_creditos.php al cargar esa pagina. Se porta el mismo bloque aqui.
+try {
+    $pdo->beginTransaction();
+    $stmtMoraList = $pdo->query("
+        SELECT cr.credito_id, s.porcentaje_mora
+        FROM creditos cr
+        JOIN ventas v     ON cr.venta_id     = v.venta_id
+        JOIN cajas  ca    ON v.caja_id       = ca.caja_id
+        JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
+        WHERE cr.estado = 'Vencido' AND cr.mora_acumulada = 0 AND s.porcentaje_mora > 0
+    ");
+    foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
+        $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, mora_acumulada FROM creditos WHERE credito_id = ? FOR UPDATE");
+        $stmtLockCred->execute([$cm['credito_id']]);
+        $credLock = $stmtLockCred->fetch(PDO::FETCH_ASSOC);
+        if (!$credLock || floatval($credLock['mora_acumulada']) != 0) continue;
+
+        $saldoBase  = round(floatval($credLock['saldo_pendiente']), 2);
+        $pct        = floatval($cm['porcentaje_mora']);
+        $moraAmt    = round($saldoBase * $pct / 100, 2);
+        $nuevoSaldo = round($saldoBase + $moraAmt, 2);
+        $pdo->prepare("UPDATE creditos SET mora_acumulada = ?, saldo_pendiente = ? WHERE credito_id = ?")
+            ->execute([$moraAmt, $nuevoSaldo, $cm['credito_id']]);
+        $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje) VALUES (?,?,?,?)")
+            ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct]);
+    }
+    $pdo->commit();
+} catch (\PDOException $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    error_log('[Ferreteria/abonos] Error al aplicar mora: ' . $e->getMessage());
+}
 
 $credito_id = intval($_GET['credito_id'] ?? $_GET['ver'] ?? 0);
 $soloVer    = isset($_GET['ver']);
@@ -27,34 +66,76 @@ if ($credito_id) {
 
 // Registrar abono
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$soloVer) {
-    $monto   = floatval($_POST['monto'] ?? 0);
-    $metodo  = $_POST['metodo_pago'] ?? '';
-    $notas   = trim($_POST['notas'] ?? '');
+    requerirCSRF($_POST['_token'] ?? '', 'abonos.php');
+    $monto      = floatval($_POST['monto'] ?? 0);
+    $metodo     = $_POST['metodo_pago'] ?? '';
+    $notas      = trim($_POST['notas'] ?? '');
     $cred_id    = intval($_POST['credito_id'] ?? 0);
     $adelantado = isset($_POST['pago_adelantado']) ? 1 : 0;
 
+    // [FIX-MEDIO-E-13] "!$metodo" solo rechazaba el campo vacio, no un valor ajeno al ENUM de
+    // la columna abonos.metodo_pago. Un metodo_pago inventado se aceptaba aqui y tronaba mas
+    // adelante en el INSERT (500 en produccion, sql_mode estricto) o se guardaba truncado a ''
+    // en local (sql_mode no estricto) — mismo patron de whitelist ya usado en
+    // cajero_nuevaVenta.php (N-02).
+    $metodosPermitidos = ['Efectivo', 'Terminal', 'Transferencia', 'Mixto'];
     if ($monto <= 0) $errores[] = 'El monto debe ser mayor a 0.';
-    if (!$metodo)    $errores[] = 'Selecciona el método de pago.';
-
-    if ($credito && $monto > $credito['saldo_pendiente']) {
-        $errores[] = 'El monto no puede ser mayor al saldo pendiente ($' . number_format($credito['saldo_pendiente'], 2) . ')';
-    }
+    if (!in_array($metodo, $metodosPermitidos, true)) $errores[] = 'Selecciona un método de pago válido.';
+    if (!$cred_id)   $errores[] = 'Crédito no válido.';
 
     if (empty($errores)) {
-        $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, metodo_pago, notas) VALUES (?,?,?,?,?)")
-            ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $metodo, $notas]);
+        // [FIX-CRIT-E-01/E-02/E-05] Antes, el crédito que se VALIDABA venía de $_GET
+        // (cargado arriba en $credito) y el crédito sobre el que se ESCRIBÍA venía de
+        // $_POST['credito_id'] — si alguien enviaba un credito_id de POST distinto al
+        // del GET (o el GET faltaba), el saldo de un crédito completamente distinto
+        // se sobrescribía usando el cálculo de otro, o se liquidaba aceptando
+        // cualquier monto. Tampoco había ningún candado de concurrencia: dos abonos
+        // simultáneos sobre el mismo crédito podían perder uno de los dos descuentos.
+        // Ahora se bloquea y se relee el crédito real (por el id del POST, la única
+        // fuente de verdad) dentro de una transacción, y todo el cálculo usa
+        // exclusivamente esa fila ya bloqueada — igual que ya hace cajero_creditos.php.
+        $pdo->beginTransaction();
+        try {
+            $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, estado, fecha_limite FROM creditos WHERE credito_id = ? FOR UPDATE");
+            $stmtLockCred->execute([$cred_id]);
+            $creditoLock = $stmtLockCred->fetch(PDO::FETCH_ASSOC);
 
-        $nuevoSaldo = $credito['saldo_pendiente'] - $monto;
-        if ($nuevoSaldo <= 0) {
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
-                ->execute([$cred_id]);
-        } else {
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(fecha_limite, INTERVAL 2 DAY), fecha_limite) WHERE credito_id = ?")
-                ->execute([$nuevoSaldo, $adelantado, $cred_id]);
+            if (!$creditoLock) {
+                throw new Exception('Crédito no encontrado.');
+            }
+            if (!in_array($creditoLock['estado'], ['Activo', 'Vencido'], true)) {
+                throw new Exception('Este crédito ya no admite abonos (estado: ' . $creditoLock['estado'] . ').');
+            }
+            if ($monto > floatval($creditoLock['saldo_pendiente']) + 0.001) {
+                throw new Exception('El monto no puede ser mayor al saldo pendiente ($' . number_format($creditoLock['saldo_pendiente'], 2) . ')');
+            }
+
+            $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, metodo_pago, notas) VALUES (?,?,?,?,?)")
+                ->execute([$cred_id, $_SESSION['usuario_id'], $monto, $metodo, $notas]);
+
+            $nuevoSaldo = round(floatval($creditoLock['saldo_pendiente']) - $monto, 2);
+            if ($nuevoSaldo <= 0) {
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
+                    ->execute([$cred_id]);
+            } else {
+                // [FIX-MEDIO-E-10] Antes la extension de fecha limite (por pago adelantado, o
+                // por haber pagado un credito ya vencido) sumaba los dias a partir de la fecha
+                // limite VIEJA (fecha_limite + N dias) — si esa fecha ya llevaba dias/semanas en
+                // el pasado, la nueva fecha "limite" seguia cayendo en el pasado o apenas
+                // alcanzaba hoy. cajero_creditos.php ya corrigio esto (DATE_ADD(CURDATE(), ...)):
+                // la extension debe contarse siempre desde HOY. Se alinea con ese mismo criterio
+                // (incluido el mismo plazo de 3 dias y el reset de mora_acumulada al abonar).
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', mora_acumulada = 0, fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(CURDATE(), INTERVAL 3 DAY), fecha_limite) WHERE credito_id = ?")
+                    ->execute([$nuevoSaldo, $adelantado, $cred_id]);
+            }
+
+            $pdo->commit();
+            header('Location: abonos.php?ver=' . $cred_id . '&msg=abonado');
+            exit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            $errores[] = $e->getMessage();
         }
-
-        header('Location: abonos.php?ver=' . $cred_id . '&msg=abonado');
-        exit();
     }
 }
 
@@ -214,6 +295,7 @@ if (!$credito_id) {
                 <div class="card">
                     <h3>Registrar abono</h3>
                     <form method="POST">
+                        <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                         <input type="hidden" name="credito_id" value="<?= $credito['credito_id'] ?>">
                         <div class="form-group">
                             <label>Monto del abono *</label>

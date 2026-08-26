@@ -1,4 +1,6 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -70,16 +72,19 @@ $stmtSuc->execute([$_SESSION['sucursal_id']]);
 $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 
 // Promociones activas para esta sucursal (indexed by producto_id)
+// [FIX-ALTO-B-09] Solo promociones de esta sucursal (o legacy sin sucursal_id, que
+// siguen aplicando a todas para no romper promos creadas antes de este fix).
 $stmtPromos = $pdo->prepare("
     SELECT pr.promocion_id, pr.producto_id, pr.precio_promocional, pr.descripcion
     FROM promociones pr
     JOIN productos p ON pr.producto_id = p.producto_id
     JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     WHERE pr.activo = 1
+      AND (pr.sucursal_id = ? OR pr.sucursal_id IS NULL)
       AND CURDATE() BETWEEN pr.fecha_inicio AND pr.fecha_fin
     ORDER BY pr.precio_promocional ASC
 ");
-$stmtPromos->execute([$_SESSION['sucursal_id']]);
+$stmtPromos->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
 $promosList = $stmtPromos->fetchAll(PDO::FETCH_ASSOC);
 $promosByProdId = [];
 foreach ($promosList as $promo) {

@@ -1,12 +1,14 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $usuario = null;
 $errores = [];
@@ -26,8 +28,19 @@ if ($esEdicion) {
 $sucursales = $pdo->query("SELECT * FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-ALTO-A-04] CSRF ausente antes — permitía crear/editar cuentas (incluidas
+    // Administrador) desde un POST sin ningún token.
+    requerirCSRF($_POST['_token'] ?? '', $esEdicion ? 'formUsuario.php?id=' . intval($_GET['id']) : 'formUsuario.php');
     $nombre_completo = trim($_POST['nombre_completo'] ?? '');
-    $nombre_usuario  = trim($_POST['nombre_usuario'] ?? '');
+    // [FIX-MEDIO-A-12] usuarios.nombre_usuario es VARCHAR(25): antes se validaba el
+    // duplicado contra la cadena COMPLETA que mandó el navegador, pero la BD ya guarda
+    // los nombres truncados a 25. Con un nombre >25 caracteres, la comprobación de
+    // duplicado comparaba contra un valor que nunca existe tal cual en la BD (pasaba
+    // limpio), y al guardar, el truncado podía chocar con un nombre_usuario ya existente
+    // — que ahora se atrapa como excepción (ver A-11) en vez de crear una colisión
+    // silenciosa. Truncar aquí, antes de validar, hace que la comprobación compare
+    // exactamente lo mismo que se va a guardar.
+    $nombre_usuario  = substr(trim($_POST['nombre_usuario'] ?? ''), 0, 25);
     $telefono        = trim($_POST['telefono'] ?? '');
     $domicilio       = trim($_POST['domicilio'] ?? '');
     $rol             = $_POST['rol'] ?? '';
@@ -39,6 +52,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$nombre_usuario)  $errores[] = 'El nombre de usuario es obligatorio.';
     if (!$rol)             $errores[] = 'El rol es obligatorio.';
     if (!$sucursal_id)     $errores[] = 'La sucursal es obligatoria.';
+    // [FIX-ALTO-A-09] Antes solo se comprobaba que $sucursal_id no fuera 0 — nunca que
+    // perteneciera a una sucursal activa real. Se podia asignar (o editar) un usuario
+    // a una sucursal ya desactivada, y ese usuario seguia operando esa sucursal con
+    // normalidad. $sucursales ya viene filtrado a activo=1 (linea de arriba).
+    elseif (!in_array($sucursal_id, array_map('intval', array_column($sucursales, 'sucursal_id')), true))
+                           $errores[] = 'La sucursal seleccionada no existe o ya no está activa.';
     if ($telefono !== '' && !preg_match('/^\d{10}$/', $telefono)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     if (!$esEdicion && !$contrasena) $errores[] = 'La contraseña es obligatoria.';
     if ($contrasena && $contrasena !== $confirmar) $errores[] = 'Las contraseñas no coinciden.';
@@ -50,38 +69,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($check->fetch()) $errores[] = 'Ese nombre de usuario ya está en uso.';
     }
 
+    // [FIX-MEDIO-A-11] Antes una PDOException aquí (p. ej. una colisión de nombre_usuario
+    // que la comprobación previa no detectó, o cualquier otro rechazo de la BD) se dejaba
+    // sin capturar: HTTP 500 con la ruta del servidor expuesta en vez de un error normal.
     if (empty($errores)) {
-        if ($esEdicion) {
-            $id = intval($_GET['id']);
-            if ($contrasena) {
-                $stmt = $pdo->prepare("
-                    UPDATE usuarios SET nombre_completo=?, nombre_usuario=?, telefono=?,
-                    domicilio=?, rol=?, sucursal_id=?, contrasena=? WHERE usuario_id=?
-                ");
-                $stmt->execute([
-                    $nombre_completo, $nombre_usuario, $telefono, $domicilio,
-                    $rol, $sucursal_id, password_hash($contrasena, PASSWORD_DEFAULT), $id
-                ]);
+        try {
+            if ($esEdicion) {
+                $id = intval($_GET['id']);
+                if ($contrasena) {
+                    $stmt = $pdo->prepare("
+                        UPDATE usuarios SET nombre_completo=?, nombre_usuario=?, telefono=?,
+                        domicilio=?, rol=?, sucursal_id=?, contrasena=? WHERE usuario_id=?
+                    ");
+                    $stmt->execute([
+                        $nombre_completo, $nombre_usuario, $telefono, $domicilio,
+                        $rol, $sucursal_id, password_hash($contrasena, PASSWORD_DEFAULT), $id
+                    ]);
+                } else {
+                    $stmt = $pdo->prepare("
+                        UPDATE usuarios SET nombre_completo=?, nombre_usuario=?, telefono=?,
+                        domicilio=?, rol=?, sucursal_id=? WHERE usuario_id=?
+                    ");
+                    $stmt->execute([$nombre_completo, $nombre_usuario, $telefono, $domicilio, $rol, $sucursal_id, $id]);
+                }
+                header('Location: usuarios.php?msg=editado');
             } else {
                 $stmt = $pdo->prepare("
-                    UPDATE usuarios SET nombre_completo=?, nombre_usuario=?, telefono=?,
-                    domicilio=?, rol=?, sucursal_id=? WHERE usuario_id=?
+                    INSERT INTO usuarios (sucursal_id, nombre_completo, telefono, domicilio, nombre_usuario, contrasena, rol, activo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                 ");
-                $stmt->execute([$nombre_completo, $nombre_usuario, $telefono, $domicilio, $rol, $sucursal_id, $id]);
+                $stmt->execute([
+                    $sucursal_id, $nombre_completo, $telefono, $domicilio,
+                    $nombre_usuario, password_hash($contrasena, PASSWORD_DEFAULT), $rol
+                ]);
+                header('Location: usuarios.php?msg=creado');
             }
-            header('Location: usuarios.php?msg=editado');
-        } else {
-            $stmt = $pdo->prepare("
-                INSERT INTO usuarios (sucursal_id, nombre_completo, telefono, domicilio, nombre_usuario, contrasena, rol, activo)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-            ");
-            $stmt->execute([
-                $sucursal_id, $nombre_completo, $telefono, $domicilio,
-                $nombre_usuario, password_hash($contrasena, PASSWORD_DEFAULT), $rol
-            ]);
-            header('Location: usuarios.php?msg=creado');
+            exit();
+        } catch (PDOException $e) {
+            $errores[] = 'No se pudo guardar el usuario. Verifica los datos (nombre de usuario en uso, sucursal válida) e intenta de nuevo.';
         }
-        exit();
     }
 }
 ?>
@@ -133,6 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <?php endif; ?>
 
             <form method="POST">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <div class="form-row">
                     <div class="form-group">
                         <label>Nombre completo *</label>
@@ -142,7 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                     <div class="form-group">
                         <label>Nombre de usuario *</label>
-                        <input type="text" name="nombre_usuario"
+                        <input type="text" name="nombre_usuario" maxlength="25"
                             value="<?= htmlspecialchars($_POST['nombre_usuario'] ?? $usuario['nombre_usuario'] ?? '') ?>"
                             placeholder="Ej. jperez">
                     </div>

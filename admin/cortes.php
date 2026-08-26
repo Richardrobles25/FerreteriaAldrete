@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
 $fechaFin    = $_GET['fecha_fin']    ?? date('Y-m-d');
@@ -16,9 +18,23 @@ $where  = "WHERE 1=1";
 $params = [];
 if ($sucursal)                 { $where .= " AND c.sucursal_id = ?";                      $params[] = $sucursal; }
 if ($usuario)                  { $where .= " AND c.usuario_id = ?";                       $params[] = $usuario; }
-if ($fechaInicio && $fechaFin) { $where .= " AND DATE(c.abierta_en) BETWEEN ? AND ?";     $params[] = $fechaInicio; $params[] = $fechaFin; }
-elseif ($fechaInicio)          { $where .= " AND DATE(c.abierta_en) >= ?";                $params[] = $fechaInicio; }
-elseif ($fechaFin)             { $where .= " AND DATE(c.abierta_en) <= ?";                $params[] = $fechaFin; }
+// [FIX-MEDIO-F-11] Antes el rango de fechas filtraba SIEMPRE por c.abierta_en, aunque este
+// reporte es de "Cortes" (turnos ya cerrados). Un turno abierto ayer y cerrado hoy no
+// aparecia al filtrar "hoy" (aunque el corte, el evento que importa, ocurrio hoy); un turno
+// abierto hoy pero cerrado mañana si aparecia. Ahora un corte ya cerrado se filtra por su
+// fecha de CIERRE (lo que realmente pregunta el filtro para un turno terminado); un turno
+// todavia abierto (cerrada_en IS NULL, sigue mostrandose como "En curso" mas abajo) se sigue
+// filtrando por su fecha de apertura, para no ocultar turnos en curso del dia.
+if ($fechaInicio && $fechaFin) {
+    $where .= " AND ((c.cerrada_en IS NOT NULL AND DATE(c.cerrada_en) BETWEEN ? AND ?) OR (c.cerrada_en IS NULL AND DATE(c.abierta_en) BETWEEN ? AND ?))";
+    $params[] = $fechaInicio; $params[] = $fechaFin; $params[] = $fechaInicio; $params[] = $fechaFin;
+} elseif ($fechaInicio) {
+    $where .= " AND ((c.cerrada_en IS NOT NULL AND DATE(c.cerrada_en) >= ?) OR (c.cerrada_en IS NULL AND DATE(c.abierta_en) >= ?))";
+    $params[] = $fechaInicio; $params[] = $fechaInicio;
+} elseif ($fechaFin) {
+    $where .= " AND ((c.cerrada_en IS NOT NULL AND DATE(c.cerrada_en) <= ?) OR (c.cerrada_en IS NULL AND DATE(c.abierta_en) <= ?))";
+    $params[] = $fechaFin; $params[] = $fechaFin;
+}
 
 $stmt = $pdo->prepare("
     SELECT c.*,
@@ -31,11 +47,25 @@ $stmt = $pdo->prepare("
         COALESCE(SUM(CASE WHEN v.metodo_pago='Credito' THEN v.total ELSE 0 END),0) AS cred,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef,
         COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_terminal ELSE 0 END),0) AS mixto_term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) AS transf
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) AS transf,
+        -- [FIX-MEDIO-F-13] Para una caja todavia Abierta, monto_esperado es NULL (esa columna
+        -- solo se llena al cerrar, en cajero_corteCaja.php) -- la columna Esperado mostraba
+        -- $0.00 para cualquier turno en curso, aunque ya tuviera ventas y movimientos reales.
+        -- Se agregan aqui los mismos ingresos/retiros EN EFECTIVO (excluyendo el sufijo legado
+        -- Terminal/Transferencia, igual que cajero_corteCaja.php) para poder calcular un
+        -- esperado en tiempo real para las cajas abiertas en el PHP de abajo.
+        COALESCE(SUM(CASE WHEN mc.tipo='Ingreso' AND mc.nota NOT REGEXP '\\\\[(Terminal|Transferencia)\\\\]$' THEN mc.monto ELSE 0 END),0) AS ingresos_cash,
+        COALESCE(SUM(CASE WHEN mc.tipo='Retiro'  AND mc.nota NOT REGEXP '\\\\[(Terminal|Transferencia)\\\\]$' THEN mc.monto ELSE 0 END),0) AS retiros_cash
     FROM cajas c
     JOIN usuarios u ON c.usuario_id = u.usuario_id
     JOIN sucursales s ON c.sucursal_id = s.sucursal_id
-    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado = 'Completada'
+    -- [FIX-CRIT-F-01] Tras una devolucion parcial la venta pasa a Modificado (sigue
+    -- siendo dinero real cobrado); con Devuelto el total ya queda en 0, asi que
+    -- incluirlo es inocuo. cajero_corteCaja.php y cajero_historialCortes.php ya usan
+    -- este mismo criterio -- antes esta pantalla se quedo con el viejo y mostraba
+    -- 0 ventas en cajas que si tuvieron ventas reales.
+    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado IN ('Completada','Modificado','Devuelto')
+    LEFT JOIN movimientos_caja mc ON c.caja_id = mc.caja_id
     $where
     GROUP BY c.caja_id
     ORDER BY c.abierta_en DESC
@@ -44,11 +74,51 @@ $stmt = $pdo->prepare("
 $stmt->execute($params);
 $cortes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Totales del filtro
-$totalVentas   = array_sum(array_column($cortes,'total_ventas'));
-$totalCobrado  = array_sum(array_column($cortes,'total_cobrado'));
-$totalFaltante = array_sum(array_map(fn($c) => min(0, floatval($c['diferencia']??0)), $cortes));
-$totalSobrante = array_sum(array_map(fn($c) => max(0, floatval($c['diferencia']??0)), $cortes));
+foreach ($cortes as &$c) {
+    if ($c['estado'] === 'Abierta') {
+        $c['esperado_tiempo_real'] = floatval($c['monto_apertura']) + floatval($c['ef']) + floatval($c['mixto_ef'])
+            + floatval($c['ingresos_cash']) - floatval($c['retiros_cash']);
+    }
+}
+unset($c);
+
+// [FIX-MEDIO-F-12] Los totales de las tarjetas de arriba se calculaban en PHP sumando
+// SOLO las filas de $cortes, que trae "LIMIT 200" — con mas de 200 cortes coincidiendo con
+// el filtro (facil en "Todas las sucursales" sin rango de fechas), las tarjetas quedaban
+// truncadas silenciosamente a los primeros 200. Se recalculan con una consulta agregada
+// separada, sin LIMIT, sobre el mismo $where.
+// Nota: se separan en dos consultas porque el JOIN a ventas multiplica cada fila de cajas
+// (fan-out por cada venta) — sumar c.diferencia directamente sobre ese join la contaria una
+// vez por cada venta de la caja. Se agrega por separado ventas (que si necesita el join) y
+// cajas (diferencia, que es un solo valor por caja).
+$stmtTotalesVentas = $pdo->prepare("
+    SELECT COUNT(v.venta_id) AS total_ventas, COALESCE(SUM(v.total),0) AS total_cobrado
+    FROM cajas c
+    JOIN usuarios u ON c.usuario_id = u.usuario_id
+    JOIN sucursales s ON c.sucursal_id = s.sucursal_id
+    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado IN ('Completada','Modificado','Devuelto')
+    $where
+");
+$stmtTotalesVentas->execute($params);
+$totalesVentasAgg = $stmtTotalesVentas->fetch(PDO::FETCH_ASSOC);
+$totalVentas  = intval($totalesVentasAgg['total_ventas']);
+$totalCobrado = floatval($totalesVentasAgg['total_cobrado']);
+
+$stmtTotalesCajas = $pdo->prepare("
+    SELECT
+        COUNT(*) AS total_cortes,
+        COALESCE(SUM(CASE WHEN c.diferencia < 0 THEN c.diferencia ELSE 0 END),0) AS total_faltante,
+        COALESCE(SUM(CASE WHEN c.diferencia > 0 THEN c.diferencia ELSE 0 END),0) AS total_sobrante
+    FROM cajas c
+    JOIN usuarios u ON c.usuario_id = u.usuario_id
+    JOIN sucursales s ON c.sucursal_id = s.sucursal_id
+    $where
+");
+$stmtTotalesCajas->execute($params);
+$totalesCajasAgg = $stmtTotalesCajas->fetch(PDO::FETCH_ASSOC);
+$totalCortesReal = intval($totalesCajasAgg['total_cortes']);
+$totalFaltante = floatval($totalesCajasAgg['total_faltante']);
+$totalSobrante = floatval($totalesCajasAgg['total_sobrante']);
 
 $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
 $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHERE activo = 1 AND rol IN ('Cajero','Inventario/Cajero') ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC);
@@ -177,8 +247,14 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
             </div>
         </form>
 
+        <?php if ($totalCortesReal > count($cortes)): ?>
+            <div style="background:#fff8e1;color:#8a6d00;border-left:3px solid #f9a825;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:12px;">
+                Mostrando los <?= count($cortes) ?> cortes más recientes de <?= $totalCortesReal ?> que coinciden con estos filtros (las tarjetas de arriba sí reflejan el total real).
+            </div>
+        <?php endif; ?>
+
         <div class="stats">
-            <div class="stat"><p>Total cortes</p><h3><?= count($cortes) ?></h3></div>
+            <div class="stat"><p>Total cortes</p><h3><?= $totalCortesReal ?></h3></div>
             <div class="stat"><p>Total ventas</p><h3><?= $totalVentas ?></h3></div>
             <div class="stat"><p>Total cobrado</p><h3>$<?= number_format($totalCobrado,0) ?></h3></div>
             <div class="stat"><p>Faltantes</p><h3 style="color:#c0392b;">$<?= number_format(abs($totalFaltante),0) ?></h3></div>
@@ -219,7 +295,14 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
                                 <?php if ($c['cred'] > 0): ?>Cred:$<?= number_format($c['cred'],0) ?><?php endif; ?>
                             </div>
                         </td>
-                        <td>$<?= number_format($c['monto_esperado']??0,2) ?></td>
+                        <td>
+                            <?php if ($c['estado'] === 'Abierta'): ?>
+                                $<?= number_format($c['esperado_tiempo_real'] ?? 0, 2) ?>
+                                <div style="font-size:10px;color:#aaa;">en curso</div>
+                            <?php else: ?>
+                                $<?= number_format($c['monto_esperado']??0,2) ?>
+                            <?php endif; ?>
+                        </td>
                         <td>$<?= number_format($c['monto_cierre']??0,2) ?></td>
                         <td>
                             <?php if ($c['diferencia'] !== null): ?>

@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $periodo = $_GET['periodo'] ?? 'mes';
 $sucursal = intval($_GET['sucursal'] ?? 0);
@@ -27,7 +29,11 @@ if ($periodo === 'personalizado') {
     $fechaHasta = $_GET['hasta'] ?? date('Y-m-d');
 }
 
-$where = "WHERE v.estado = 'Completada' AND DATE(v.created_at) BETWEEN ? AND ?";
+// [FIX-ALTO-F-03] Mismo patron que F-02/F-01: "estado = 'Completada'" excluia ventas con
+// devolucion parcial ('Modificado') o total ('Devuelto'), sesgando el ranking de productos
+// mas vendidos (127.5 piezas y $1,346.40 perdidos en la prueba de la auditoria). Mismo
+// criterio unificado que ya se uso en cajero_historialCortes.php y reporteVentas.php.
+$where = "WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) BETWEEN ? AND ?";
 $params = [$fechaDesde, $fechaHasta];
 
 if ($sucursal) {

@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d', strtotime('-7 days'));
 $fechaFin    = $_GET['fecha_fin']    ?? date('Y-m-d');
@@ -23,6 +25,12 @@ elseif ($fechaFin)                  { $where .= " AND DATE(m.created_at) <= ?"; 
 if ($tipo)                          { $where .= " AND m.tipo = ?";                               $params[] = $tipo; }
 if ($busqueda)                      { $where .= " AND p.nombre_producto LIKE ?";                 $params[] = '%'.$busqueda.'%'; }
 
+// [FIX-MEDIO-F-07] "JOIN sucursales" era INNER: movimientos_inventario.sucursal_id es
+// nullable (ver cajero_devoluciones.php, que ya documenta registros viejos con sucursal_id
+// NULL), asi que cualquier movimiento sin sucursal capturada desaparecia por completo del
+// historial (lista, resumen y exportacion) sin ningun aviso — ni siquiera contaba en los
+// totales. Se cambia a LEFT JOIN en las tres consultas de abajo para conservarlos.
+
 // ── Exportar ─────────────────────────────────────────────────────────
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
@@ -32,7 +40,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
         JOIN usuarios u ON m.usuario_id = u.usuario_id
-        JOIN sucursales s ON m.sucursal_id = s.sucursal_id
+        LEFT JOIN sucursales s ON m.sucursal_id = s.sucursal_id
         $where
         ORDER BY m.created_at DESC
     ");
@@ -58,7 +66,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         $r['stock_nuevo'],
         $r['motivo'] ?? '',
         $r['usuario'],
-        $r['sucursal'],
+        $r['sucursal'] ?? 'Sin sucursal',
         date('d/m/Y H:i', strtotime($r['created_at'])),
     ], $expData);
 
@@ -74,13 +82,28 @@ $stmt = $pdo->prepare("
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
-    JOIN sucursales s ON m.sucursal_id = s.sucursal_id
+    LEFT JOIN sucursales s ON m.sucursal_id = s.sucursal_id
     $where
     ORDER BY m.created_at DESC
     LIMIT 300
 ");
 $stmt->execute($params);
 $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// [FIX-MEDIO-F-10] La lista siempre se corta en 300 filas (LIMIT 300 arriba) sin decir nada —
+// con los filtros por defecto (ultimos 7 dias) es facil que una sucursal con mucho movimiento
+// tenga mas de 300 y el admin vea la lista como "completa" sin saber que faltan filas. Se
+// cuenta el total real (mismo $where, sin LIMIT) solo para mostrar un aviso cuando se trunca.
+$stmtCount = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM movimientos_inventario m
+    JOIN productos p ON m.producto_id = p.producto_id
+    JOIN usuarios u ON m.usuario_id = u.usuario_id
+    LEFT JOIN sucursales s ON m.sucursal_id = s.sucursal_id
+    $where
+");
+$stmtCount->execute($params);
+$totalMovimientos = intval($stmtCount->fetchColumn());
 
 // Resumen
 $stmtRes = $pdo->prepare("
@@ -92,7 +115,7 @@ $stmtRes = $pdo->prepare("
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     JOIN usuarios u ON m.usuario_id = u.usuario_id
-    JOIN sucursales s ON m.sucursal_id = s.sucursal_id
+    LEFT JOIN sucursales s ON m.sucursal_id = s.sucursal_id
     $where
 ");
 $stmtRes->execute($params);
@@ -243,6 +266,12 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transf'] ?? 0 ?></h3></div>
         </div>
 
+        <?php if ($totalMovimientos > count($movimientos)): ?>
+            <div style="background:#fff8e1;color:#8a6d00;border-left:3px solid #f9a825;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:12px;">
+                Mostrando los <?= count($movimientos) ?> movimientos más recientes de <?= $totalMovimientos ?> que coinciden con estos filtros. Ajusta los filtros o usa "Exportar" para ver todos.
+            </div>
+        <?php endif; ?>
+
         <div class="tabla-wrapper">
             <?php if (count($movimientos) > 0): ?>
             <table>
@@ -256,7 +285,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                             <strong><?= htmlspecialchars($m['nombre_producto']) ?></strong>
                             <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($m['codigo']) ?></div>
                         </td>
-                        <td style="font-size:12px;"><?= htmlspecialchars($m['sucursal']) ?></td>
+                        <td style="font-size:12px;"><?= htmlspecialchars($m['sucursal'] ?? 'Sin sucursal') ?></td>
                         <td><span class="badge-tipo tipo-<?= strtolower($m['tipo']) ?>"><?= $m['tipo'] ?></span></td>
                         <?php $sube = $m['stock_nuevo'] >= $m['stock_anterior']; ?>
                         <td class="<?= $sube?'cantidad-entrada':'cantidad-salida' ?>">

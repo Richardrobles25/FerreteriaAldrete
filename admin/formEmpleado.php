@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $editando  = null;
 $errores   = [];
@@ -27,9 +29,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $activo         = isset($_POST['activo']) ? 1 : 0;
     $empleado_id    = intval($_POST['empleado_id']  ?? 0);
 
+    // [FIX-ALTO-G-07] "!strtotime($fecha_ingreso)" no bloqueaba nada: strtotime() acepta
+    // expresiones relativas como "+1 year" o "next monday" y regresa un timestamp valido
+    // para esas cadenas, así que pasaban la validación. Esa cadena (no una fecha real) se
+    // guardaba tal cual en la columna DATE, y MySQL la truncaba a '0000-00-00' (local, no
+    // estricto) o rechazaba el INSERT con error 500 (producción, estricto). Ahora se exige
+    // el formato YYYY-MM-DD exacto y que sea una fecha de calendario real.
+    // [FIX-MEDIO-G-14] empleados.nombre es VARCHAR(100); el input tenia maxlength=100 en el
+    // HTML pero nada lo exigia en el servidor. Un nombre mas largo (pegado desde otro lado,
+    // o el maxlength saltado a mano) se truncaba en silencio (local, sql_mode no estricto) o
+    // tronaba con 500 (produccion, estricto) — mismo patron ya corregido en otros formularios.
+    if (mb_strlen($nombre) > 100)                          $errores[] = 'El nombre no puede tener más de 100 caracteres.';
     if ($nombre === '')                                    $errores[] = 'El nombre es obligatorio.';
-    if (!$fecha_ingreso || !strtotime($fecha_ingreso))    $errores[] = 'La fecha de ingreso no es valida.';
-    elseif ($fecha_ingreso > date('Y-m-d'))               $errores[] = 'La fecha de ingreso no puede ser en el futuro.';
+    // [FIX-MEDIO-G-13] No habia ninguna comprobacion de nombre duplicado: dos altas por error
+    // (doble captura, o un empleado que se re-registra en vez de reactivar su registro
+    // existente) creaban dos empleado_id distintos para la misma persona, y cada uno acumulaba
+    // asistencia/adelantos/nomina por separado — se le terminaba pagando dos sueldos base
+    // completos por la misma semana trabajada una sola vez. Se compara sin distinguir mayus/
+    // minusculas ni espacios de mas, contra CUALQUIER empleado (activo o no), para no permitir
+    // "reactivar por duplicado" a un inactivo tampoco.
+    if ($nombre !== '') {
+        $stmtDupNombre = $pdo->prepare("SELECT COUNT(*) FROM empleados WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?)) AND empleado_id != ?");
+        $stmtDupNombre->execute([$nombre, $empleado_id]);
+        if ($stmtDupNombre->fetchColumn() > 0) {
+            $errores[] = 'Ya existe un empleado con ese nombre. Si es la misma persona, edita su registro existente en vez de crear uno nuevo.';
+        }
+    }
+    if (!$fecha_ingreso || !preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fecha_ingreso, $mFecha) || !checkdate((int)$mFecha[2], (int)$mFecha[3], (int)$mFecha[1])) {
+        $errores[] = 'La fecha de ingreso no es valida.';
+    } elseif ($fecha_ingreso > date('Y-m-d'))               $errores[] = 'La fecha de ingreso no puede ser en el futuro.';
     if ($sueldo_semanal <= 0)                             $errores[] = 'El sueldo semanal debe ser mayor a $0.';
 
     if (empty($errores)) {

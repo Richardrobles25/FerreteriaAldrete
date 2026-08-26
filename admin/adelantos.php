@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 // Registrar nuevo adelanto
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])) {
@@ -19,6 +21,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
     $errores = [];
     if ($empleado_id <= 0) $errores[] = 'Selecciona un empleado.';
     if ($monto <= 0) $errores[] = 'El monto debe ser mayor a $0.00.';
+    // [FIX-MEDIO-G-15] adelantos_sueldo.motivo es VARCHAR(255) sin ningun tope en el
+    // servidor (el textarea tampoco tenia maxlength) — mismo patron de truncado
+    // silencioso/500 ya visto y corregido en otros formularios de este mismo modulo.
+    if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
 
     // El adelanto es contra el sueldo de la semana en curso (lunes a sabado)
     $lunesSemana  = date('Y-m-d', strtotime('monday this week'));
@@ -29,8 +35,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
         $errores[] = 'Solo se puede adelantar el sueldo de la semana en curso (' . date('d/m/Y', strtotime($lunesSemana)) . ' al ' . date('d/m/Y', strtotime($sabadoSemana)) . ').';
     }
 
+    // [FIX-CRIT-G-02] Si la semana en curso ya se pago (existe fila en pagos_nomina
+    // para este empleado y esta semana), un adelanto registrado ahora ya no tiene
+    // ninguna nomina pendiente de la que descontarse — antes se aceptaba igual y
+    // quedaba "Pendiente" para siempre, dinero entregado que el sistema nunca
+    // recuperaba. Se rechaza con un mensaje claro en vez de aceptarlo en silencio.
+    if ($empleado_id > 0 && empty($errores)) {
+        $stmtYaPagada = $pdo->prepare("SELECT 1 FROM pagos_nomina WHERE empleado_id = ? AND semana_inicio = ?");
+        $stmtYaPagada->execute([$empleado_id, $lunesSemana]);
+        if ($stmtYaPagada->fetchColumn()) {
+            $errores[] = 'La semana en curso ya fue pagada para este empleado. Este adelanto no podría descontarse de ningún sueldo pendiente — regístralo la próxima semana en su lugar.';
+        }
+    }
+
     // Tope: los adelantos de la semana no pueden superar el sueldo semanal
-    if ($empleado_id > 0 && $monto > 0) {
+    if ($empleado_id > 0 && $monto > 0 && empty($errores)) {
         $stmtSueldo = $pdo->prepare("SELECT sueldo_semanal FROM empleados WHERE empleado_id = ? AND activo = 1");
         $stmtSueldo->execute([$empleado_id]);
         $sueldoSem = floatval($stmtSueldo->fetchColumn());
@@ -44,6 +63,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
                 $disponible = max(0, $sueldoSem - $yaAdelantado);
                 $errores[] = 'No se puede adelantar mas de una semana de sueldo ($' . number_format($sueldoSem, 2) . '). Ya tiene $' . number_format($yaAdelantado, 2) . ' adelantado esta semana; el maximo disponible es $' . number_format($disponible, 2) . '.';
             }
+        }
+    }
+
+    // [FIX-MEDIO-G-19] Un doble clic en "Registrar adelanto" (o un reenvio del formulario)
+    // mandaba dos POSTs identicos antes de que el primero terminara de redirigir, y no habia
+    // nada que detectara que eran la misma solicitud — se creaban dos adelantos_sueldo
+    // iguales, duplicando el monto entregado realmente una sola vez. Se rechaza si ya existe
+    // un adelanto pendiente para el mismo empleado, mismo monto y misma fecha, creado en los
+    // ultimos 10 segundos (ventana mas que suficiente para un doble clic, demasiado corta
+    // para chocar con un adelanto legitimo distinto capturado despues).
+    if (empty($errores) && $empleado_id > 0) {
+        $stmtDupAdel = $pdo->prepare("
+            SELECT 1 FROM adelantos_sueldo
+            WHERE empleado_id = ? AND monto = ? AND fecha = ?
+              AND created_at >= NOW() - INTERVAL 10 SECOND
+            LIMIT 1
+        ");
+        $stmtDupAdel->execute([$empleado_id, $monto, $fecha]);
+        if ($stmtDupAdel->fetchColumn()) {
+            $errores[] = 'Este adelanto ya se registró hace unos segundos (parece un envío duplicado). Revisa el historial antes de intentar de nuevo.';
         }
     }
 
@@ -312,7 +351,7 @@ $totalLiquidadoGlobal  = array_sum(array_map(
                 <input type="date" name="fecha" id="fecha" value="<?= date('Y-m-d') ?>" min="<?= $lunesForm ?>" max="<?= $sabadoForm ?>" required>
 
                 <label for="motivo">Motivo (opcional)</label>
-                <textarea name="motivo" id="motivo" rows="3" placeholder="Ej. Emergencia familiar"></textarea>
+                <textarea name="motivo" id="motivo" rows="3" maxlength="255" placeholder="Ej. Emergencia familiar"></textarea>
 
                 <button type="submit" class="btn-guardar">Registrar adelanto</button>
             </form>

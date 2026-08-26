@@ -1,14 +1,19 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 // Eliminar gasto
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
+    // [FIX-CRIT-G-01] CSRF ausente antes — permitía crear, reescribir o borrar la
+    // bitácora de gastos completa con un POST desde cualquier página.
+    requerirCSRF($_POST['_token'] ?? '', 'gastos.php');
     $pdo->prepare("DELETE FROM gastos WHERE gasto_id = ?")->execute([intval($_POST['eliminar_id'])]);
     header('Location: gastos.php?' . http_build_query(array_filter([
         'fecha_inicio'       => $_POST['fi'] ?? '',
@@ -48,17 +53,48 @@ $stmt = $pdo->prepare("
 $stmt->execute($params);
 $gastos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$totalMonto = array_sum(array_column($gastos, 'monto'));
+// [FIX-ALTO-G-09] Antes el total y el desglose por categoria se calculaban en PHP a
+// partir de $gastos, que trae como maximo 500 filas (LIMIT 500 de la consulta de arriba,
+// para no reventar la tabla en pantalla con miles de filas). Si el filtro activo tenia mas
+// de 500 gastos, el total silenciosamente solo sumaba los 500 mas recientes — gasto real
+// desaparecia del total sin ningun aviso. Ahora el total y el desglose salen de un SUM/
+// GROUP BY en SQL sobre el mismo filtro, sin el LIMIT, así que siempre reflejan TODO lo
+// que cae en el filtro aunque la tabla de abajo solo muestre las 500 filas mas recientes.
+$stmtTotal = $pdo->prepare("
+    SELECT COALESCE(SUM(g.monto), 0) AS total
+    FROM gastos g
+    JOIN sucursales s         ON g.sucursal_id = s.sucursal_id
+    JOIN categorias_gastos cg ON g.categoria_gasto_id = cg.categoria_gasto_id
+    $where
+");
+$stmtTotal->execute($params);
+$totalMonto = floatval($stmtTotal->fetchColumn());
 
-// Totales por categoría
+$stmtPorCat = $pdo->prepare("
+    SELECT cg.nombre AS categoria, SUM(g.monto) AS total
+    FROM gastos g
+    JOIN sucursales s         ON g.sucursal_id = s.sucursal_id
+    JOIN categorias_gastos cg ON g.categoria_gasto_id = cg.categoria_gasto_id
+    $where
+    GROUP BY cg.categoria_gasto_id, cg.nombre
+");
+$stmtPorCat->execute($params);
 $porCategoria = [];
-foreach ($gastos as $g) {
-    $cat = $g['nombre_categoria'];
-    $porCategoria[$cat] = ($porCategoria[$cat] ?? 0) + floatval($g['monto']);
+foreach ($stmtPorCat->fetchAll(PDO::FETCH_ASSOC) as $pc) {
+    $porCategoria[$pc['categoria']] = floatval($pc['total']);
 }
 arsort($porCategoria);
 
-$sucursales  = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
+// [FIX-MEDIO-G-21] El filtro de sucursal solo listaba "activo=1" — un gasto ya registrado en
+// una sucursal que despues se desactivo seguia contando en "Todas", pero ya no habia forma de
+// filtrar/aislar especificamente esa sucursal para revisarlo (la opcion desaparecia del
+// combo). Se incluyen tambien las sucursales inactivas que SI tienen gastos registrados, para
+// que su historial siga siendo consultable.
+$sucursales  = $pdo->query("
+    SELECT sucursal_id, nombre, activo FROM sucursales
+    WHERE activo = 1 OR sucursal_id IN (SELECT DISTINCT sucursal_id FROM gastos)
+    ORDER BY activo DESC, nombre
+")->fetchAll(PDO::FETCH_ASSOC);
 $categorias  = $pdo->query("SELECT categoria_gasto_id, nombre FROM categorias_gastos WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
 
 $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) || ($fechaFin !== date('Y-m-d'));
@@ -181,7 +217,7 @@ $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) |
                     <select name="sucursal">
                         <option value="0">Todas</option>
                         <?php foreach ($sucursales as $s): ?>
-                            <option value="<?= $s['sucursal_id'] ?>" <?= $sucursal === intval($s['sucursal_id']) ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre']) ?></option>
+                            <option value="<?= $s['sucursal_id'] ?>" <?= $sucursal === intval($s['sucursal_id']) ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre']) ?><?= !$s['activo'] ? ' (inactiva)' : '' ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -281,6 +317,7 @@ $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) |
         <h3>Eliminar gasto</h3>
         <p id="modalTexto">¿Seguro que deseas eliminar este gasto?</p>
         <form method="POST" id="formEliminar">
+            <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
             <input type="hidden" name="eliminar_id" id="eliminarId">
             <input type="hidden" name="fi" value="<?= htmlspecialchars($fechaInicio) ?>">
             <input type="hidden" name="ff" value="<?= htmlspecialchars($fechaFin) ?>">

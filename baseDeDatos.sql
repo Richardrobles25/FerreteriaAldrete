@@ -508,3 +508,71 @@ CREATE TABLE IF NOT EXISTS pagos_nomina (
     UNIQUE KEY uq_pago_empleado_semana (empleado_id, semana_inicio),
     FOREIGN KEY (empleado_id) REFERENCES empleados(empleado_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+
+
+-- MODIFICACIONES A BASE DE DATOS
+-- Migración idempotente para el servidor de producción.
+-- Segura de correr las veces que sea: si algo ya existe, lo detecta y lo salta
+-- (verás el mensaje "ya existe, se omite" en vez de un error). No borra ni
+-- modifica ninguna fila existente, solo agrega tabla/columnas/índices si faltan.
+-- Probada en local: 1) con todo ya aplicado (detecta y omite los 4 pasos),
+-- 2) revirtiendo los 3 cambios y corriendo de nuevo (los vuelve a crear bien).
+
+-- 1) Tabla intentos_login (rate limiting del login, hallazgo A-07)
+CREATE TABLE IF NOT EXISTS intentos_login (
+  intento_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  nombre_usuario VARCHAR(50) NOT NULL,
+  ip VARCHAR(45) NOT NULL,
+  exitoso TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_usuario_fecha (nombre_usuario, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 2) promociones.sucursal_id (promociones por sucursal, hallazgo B-09)
+SET @dbname = DATABASE();
+
+SET @stmt = (SELECT IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'promociones' AND COLUMN_NAME = 'sucursal_id') > 0,
+  'SELECT ''promociones.sucursal_id ya existe, se omite'' AS resultado',
+  'ALTER TABLE promociones ADD COLUMN sucursal_id INT UNSIGNED NULL AFTER producto_id'
+));
+PREPARE s1 FROM @stmt; EXECUTE s1; DEALLOCATE PREPARE s1;
+
+SET @stmt = (SELECT IF(
+  (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+   WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'promociones' AND CONSTRAINT_NAME = 'fk_promociones_sucursal') > 0,
+  'SELECT ''fk_promociones_sucursal ya existe, se omite'' AS resultado',
+  'ALTER TABLE promociones ADD CONSTRAINT fk_promociones_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id)'
+));
+PREPARE s2 FROM @stmt; EXECUTE s2; DEALLOCATE PREPARE s2;
+
+-- 3) cajas.abierta_flag + índice único (una caja abierta por usuario/sucursal, hallazgo D3-02)
+SET @stmt = (SELECT IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'cajas' AND COLUMN_NAME = 'abierta_flag') > 0,
+  'SELECT ''cajas.abierta_flag ya existe, se omite'' AS resultado',
+  "ALTER TABLE cajas ADD COLUMN abierta_flag TINYINT GENERATED ALWAYS AS (IF(estado='Abierta',1,NULL)) STORED"
+));
+PREPARE s3 FROM @stmt; EXECUTE s3; DEALLOCATE PREPARE s3;
+
+SET @stmt = (SELECT IF(
+  (SELECT COUNT(*) FROM information_schema.STATISTICS
+   WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = 'cajas' AND INDEX_NAME = 'uk_caja_abierta_suc_usr') > 0,
+  'SELECT ''uk_caja_abierta_suc_usr ya existe, se omite'' AS resultado',
+  'ALTER TABLE cajas ADD UNIQUE KEY uk_caja_abierta_suc_usr (sucursal_id, usuario_id, abierta_flag)'
+));
+PREPARE s4 FROM @stmt; EXECUTE s4; DEALLOCATE PREPARE s4;
+
+
+ALTER TABLE stock_sucursal ADD CONSTRAINT fk_stock_sucursal_producto FOREIGN KEY (producto_id) REFERENCES productos(producto_id);
+ALTER TABLE stock_sucursal ADD CONSTRAINT fk_stock_sucursal_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id);
+
+ALTER TABLE transferencias MODIFY COLUMN estado ENUM('Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada','Cancelada') NOT NULL;
+
+ALTER TABLE ventas ADD COLUMN folio_periodo INT GENERATED ALWAYS AS (YEAR(created_at)*100 + MONTH(created_at)) STORED;
+ALTER TABLE ventas ADD UNIQUE KEY uk_ventas_folio_periodo (folio_periodo, folio);
+
+ALTER TABLE cajas ADD COLUMN observaciones_cierre TEXT NULL AFTER observaciones;

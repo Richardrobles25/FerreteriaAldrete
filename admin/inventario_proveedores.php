@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 if (isset($_GET['eliminar'])) {
     requerirCSRF($_GET['_token'] ?? '', 'inventario_proveedores.php');
     $pdo->prepare("UPDATE proveedores SET activo = 0 WHERE proveedor_id = ?")->execute([intval($_GET['eliminar'])]);
@@ -42,7 +44,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmtDup->fetch()) $errores[] = 'Ya existe un proveedor activo con ese nombre.';
     }
 
+    // [FIX-MEDIO-H-07] Guardar un proveedor (UPDATE/INSERT + borrar y re-insertar sus
+    // categorias) corria como escrituras sueltas: una falla a mitad del foreach dejaba al
+    // proveedor con solo algunas de las categorias que el formulario en realidad mando (o
+    // ninguna, si el DELETE tuvo exito pero los INSERT fallaron), desincronizado en silencio.
     if (empty($errores)) {
+        $pdo->beginTransaction();
+        try {
         if ($id) {
             $pdo->prepare("UPDATE proveedores SET nombre=?, telefono=?, correo=?, direccion=? WHERE proveedor_id=?")
                 ->execute([$nombre, $telefono, $correo, $direccion, $id]);
@@ -50,6 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach ($cats as $cat) {
                 $pdo->prepare("INSERT INTO proveedor_categorias (proveedor_id, categoria_id) VALUES (?,?)")->execute([$id, $cat]);
             }
+            $pdo->commit();
             header('Location: inventario_proveedores.php?msg=editado');
         } else {
             $pdo->prepare("INSERT INTO proveedores (nombre, telefono, correo, direccion, activo) VALUES (?,?,?,?,1)")
@@ -58,16 +67,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach ($cats as $cat) {
                 $pdo->prepare("INSERT INTO proveedor_categorias (proveedor_id, categoria_id) VALUES (?,?)")->execute([$nuevoId, $cat]);
             }
+            $pdo->commit();
             header('Location: inventario_proveedores.php?msg=creado');
         }
         exit();
+        } catch (\PDOException $e) {
+            $pdo->rollBack();
+            $errores[] = 'No se pudo guardar el proveedor. Intenta de nuevo.';
+        }
     }
 }
 
 $busqueda  = trim($_GET['buscar'] ?? '');
 $filtrocat = intval($_GET['categoria'] ?? 0);
+// [FIX-MEDIO-B-15] Antes el listado solo mostraba activos, sin ninguna forma de ver los
+// desactivados — el boton "Activar" (que ya existia en la fila) nunca era alcanzable
+// porque la fila que lo mostraba jamas aparecia. Mismo patron de "ver inactivos" que
+// clientes.php.
+$mostrarInactivos = isset($_GET['inactivos']);
 
-$where  = "WHERE p.activo = 1";
+$where  = $mostrarInactivos ? "WHERE 1=1" : "WHERE p.activo = 1";
 $params = [];
 if ($busqueda)  { $where .= " AND p.nombre LIKE ?"; $params[] = '%'.$busqueda.'%'; }
 if ($filtrocat) { $where .= " AND pc.categoria_id = ?"; $params[] = $filtrocat; }
@@ -252,8 +271,10 @@ if ($editando) {
                             <?php endforeach; ?>
                         </select>
                     </div>
+                    <?php if ($mostrarInactivos): ?><input type="hidden" name="inactivos" value="1"><?php endif; ?>
                     <button class="btn-filtrar" type="submit">Filtrar</button>
                     <?php if ($busqueda || $filtrocat): ?><a class="btn-limpiar" href="inventario_proveedores.php">Limpiar</a><?php endif; ?>
+                    <a class="btn-limpiar" href="inventario_proveedores.php?<?= $mostrarInactivos ? '' : 'inactivos=1' ?>"><?= $mostrarInactivos ? 'Ocultar inactivos' : 'Ver inactivos' ?></a>
                 </div>
             </form>
 
@@ -269,8 +290,8 @@ if ($editando) {
                             $stmtC->execute([$p['proveedor_id']]);
                             $cats = $stmtC->fetchAll(PDO::FETCH_COLUMN);
                         ?>
-                        <tr>
-                            <td><strong><?= htmlspecialchars($p['nombre']) ?></strong></td>
+                        <tr style="<?= $p['activo'] ? '' : 'opacity:.55;' ?>">
+                            <td><strong><?= htmlspecialchars($p['nombre']) ?></strong><?= $p['activo'] ? '' : ' <span style="color:#c0392b;font-size:11px;font-weight:600;">(Inactivo)</span>' ?></td>
                             <td><?= htmlspecialchars($p['telefono']??'—') ?></td>
                             <td style="font-size:12px;"><?= htmlspecialchars($p['correo']??'—') ?></td>
                             <td>

@@ -1,12 +1,14 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 // Toggle activo
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
@@ -17,6 +19,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
     exit();
 }
 
+// [FIX-MEDIO-G-18] Se trae tambien el adelanto pendiente de cada empleado para poder avisar
+// antes de desactivarlo (ver confirm() del boton Desactivar mas abajo) — un empleado inactivo
+// deja de aparecer en el flujo normal de nomina (semanaLaboral.php ya lo sigue mostrando ahi
+// si tiene pendientes, pero aqui es donde se decide desactivarlo, y es donde debe verse la
+// advertencia primero).
 $empleados = $pdo->query("
     SELECT e.*,
            COALESCE((
@@ -25,7 +32,12 @@ $empleados = $pdo->query("
                WHERE v.empleado_id = e.empleado_id
                  AND v.anio = YEAR(CURDATE())
                  AND v.estado != 'Rechazado'
-           ), 0) AS dias_tomados_anio
+           ), 0) AS dias_tomados_anio,
+           COALESCE((
+               SELECT SUM(a.monto)
+               FROM adelantos_sueldo a
+               WHERE a.empleado_id = e.empleado_id AND a.estado = 'Pendiente'
+           ), 0) AS adelanto_pendiente
     FROM empleados e
     ORDER BY e.activo DESC, e.nombre ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -180,7 +192,12 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                     <td><span class="badge <?= $emp['activo'] ? 'badge-activo' : 'badge-inactivo' ?>"><?= $emp['activo'] ? 'Activo' : 'Inactivo' ?></span></td>
                     <td>
                         <a class="btn-editar" href="formEmpleado.php?id=<?= $emp['empleado_id'] ?>">Editar</a>
-                        <form method="POST" style="display:inline;" onsubmit="return confirm('¿<?= $emp['activo'] ? 'Desactivar' : 'Activar' ?> a <?= htmlspecialchars(addslashes($emp['nombre']), ENT_QUOTES) ?>?')">
+                        <?php
+                            $avisoAdelanto = ($emp['activo'] && floatval($emp['adelanto_pendiente']) > 0)
+                                ? ' Ojo: tiene $' . number_format($emp['adelanto_pendiente'], 2) . ' de adelanto pendiente de cobro.'
+                                : '';
+                        ?>
+                        <form method="POST" style="display:inline;" onsubmit="return confirm('¿<?= $emp['activo'] ? 'Desactivar' : 'Activar' ?> a <?= htmlspecialchars(addslashes($emp['nombre']), ENT_QUOTES) ?>?<?= htmlspecialchars(addslashes($avisoAdelanto), ENT_QUOTES) ?>')">
                             <input type="hidden" name="toggle_id" value="<?= $emp['empleado_id'] ?>">
                             <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                             <button type="submit" class="<?= $emp['activo'] ? 'btn-toggle-on' : 'btn-toggle-off' ?>"><?= $emp['activo'] ? 'Desactivar' : 'Activar' ?></button>

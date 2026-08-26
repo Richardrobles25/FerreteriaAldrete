@@ -1,13 +1,56 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
-$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+try {
+    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+} catch (\PDOException $e) {
+    error_log('[Ferreteria/creditos] Error al actualizar vencidos: ' . $e->getMessage());
+}
+
+// [FIX-MEDIO-E-12] La mora solo se aplicaba en cajero_creditos.php al cargar esa pagina; si
+// nadie la visitaba, un credito podia quedar "Vencido" indefinidamente sin que mora_acumulada
+// ni saldo_pendiente reflejaran nunca el recargo (aqui en admin/creditos.php, o en abonos.php,
+// nunca se disparaba). Se porta el mismo bloque (con el mismo candado FOR UPDATE por credito
+// para evitar aplicar la mora dos veces si dos cargas caen casi juntas) para que la mora se
+// aplique sin importar cual de las pantallas de credito visite el administrador primero.
+try {
+    $pdo->beginTransaction();
+    $stmtMoraList = $pdo->query("
+        SELECT cr.credito_id, s.porcentaje_mora
+        FROM creditos cr
+        JOIN ventas v     ON cr.venta_id     = v.venta_id
+        JOIN cajas  ca    ON v.caja_id       = ca.caja_id
+        JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
+        WHERE cr.estado = 'Vencido' AND cr.mora_acumulada = 0 AND s.porcentaje_mora > 0
+    ");
+    foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
+        $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, mora_acumulada FROM creditos WHERE credito_id = ? FOR UPDATE");
+        $stmtLockCred->execute([$cm['credito_id']]);
+        $credLock = $stmtLockCred->fetch(PDO::FETCH_ASSOC);
+        if (!$credLock || floatval($credLock['mora_acumulada']) != 0) continue;
+
+        $saldoBase  = round(floatval($credLock['saldo_pendiente']), 2);
+        $pct        = floatval($cm['porcentaje_mora']);
+        $moraAmt    = round($saldoBase * $pct / 100, 2);
+        $nuevoSaldo = round($saldoBase + $moraAmt, 2);
+        $pdo->prepare("UPDATE creditos SET mora_acumulada = ?, saldo_pendiente = ? WHERE credito_id = ?")
+            ->execute([$moraAmt, $nuevoSaldo, $cm['credito_id']]);
+        $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje) VALUES (?,?,?,?)")
+            ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct]);
+    }
+    $pdo->commit();
+} catch (\PDOException $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    error_log('[Ferreteria/creditos] Error al aplicar mora: ' . $e->getMessage());
+}
 
 $busqueda = trim($_GET['buscar'] ?? '');
 $estado = $_GET['estado'] ?? '';

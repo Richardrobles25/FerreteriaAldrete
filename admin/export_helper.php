@@ -31,6 +31,31 @@ define('COLOR_AZUL',     '#14ace7');
 define('COLOR_AZUL_HEX', '14ace7');
 define('COLOR_DARK',     '#1a1a2e');
 
+// [FIX-MEDIO-F-08] Un valor de origen (nombre de producto, motivo, notas...) puede traer un
+// BOM UTF-8 (EF BB BF) incrustado si alguien lo escribio/pego desde un editor que lo agrega al
+// texto (no solo al inicio de archivo). Ese BOM, insertado en medio del HTML que se le pasa a
+// mPDF, no es un caracter imprimible valido ahi — mPDF corrompe el layout del resto del
+// documento a partir de ese punto (columnas/filas desalineadas o corte de contenido). Se limpia
+// centralizado aqui, en el unico punto por el que pasan todos los exports (PDF y Excel).
+function limpiarBOM($valor): string
+{
+    return str_replace("\xEF\xBB\xBF", '', (string) $valor);
+}
+
+// [FIX-MEDIO-F-09] Inyeccion de formulas en Excel: si una celda empieza con =, +, -, @, TAB o
+// retorno de carro, Excel (y PhpSpreadsheet, que auto-detecta "=" como formula) puede
+// interpretar el contenido como una formula al abrir el archivo — un nombre de producto o un
+// motivo de movimiento con ese prefijo (a proposito o por accidente) podria ejecutar una
+// formula/macro en vez de mostrarse como texto. Mitigacion estandar (OWASP CSV/Excel
+// injection): anteponer un apostrofe para forzar texto literal.
+function sanearFormulaExcel(string $valor): string
+{
+    if ($valor !== '' && strpbrk($valor[0], "=+-@\t\r") !== false) {
+        return "'" . $valor;
+    }
+    return $valor;
+}
+
 /* ─────────────────────────────────────────────────────────────────── */
 /*  PDF                                                                 */
 /* ─────────────────────────────────────────────────────────────────── */
@@ -130,9 +155,9 @@ function exportarPDF(
     }
     </style>";
 
-    $html .= "<h2>" . htmlspecialchars($titulo) . "</h2>";
+    $html .= "<h2>" . htmlspecialchars(limpiarBOM($titulo)) . "</h2>";
     if ($subtitulo) {
-        $html .= "<div class='sub'>" . htmlspecialchars($subtitulo) . "</div>";
+        $html .= "<div class='sub'>" . htmlspecialchars(limpiarBOM($subtitulo)) . "</div>";
     }
 
     // Resumen
@@ -140,8 +165,8 @@ function exportarPDF(
         $html .= "<table style='width:100%;margin-bottom:12px;'><tr>";
         foreach ($resumen as $item) {
             $html .= "<td style='text-align:center;background:#eef8ff;border:1px solid #c0e8f8;border-radius:5px;border-top:3px solid #14ace7;padding:7px 12px;'>
-                <div style='font-size:8px;color:#14ace7;text-transform:uppercase;font-weight:bold;letter-spacing:0.5px;'>" . htmlspecialchars($item['label']) . "</div>
-                <div style='font-size:13px;font-weight:bold;color:#1a1a2e;margin-top:2px;'>" . htmlspecialchars($item['valor']) . "</div>
+                <div style='font-size:8px;color:#14ace7;text-transform:uppercase;font-weight:bold;letter-spacing:0.5px;'>" . htmlspecialchars(limpiarBOM($item['label'])) . "</div>
+                <div style='font-size:13px;font-weight:bold;color:#1a1a2e;margin-top:2px;'>" . htmlspecialchars(limpiarBOM($item['valor'])) . "</div>
             </td>";
         }
         $html .= "</tr></table>";
@@ -150,7 +175,7 @@ function exportarPDF(
     // Tabla de datos
     $html .= "<table><thead><tr>";
     foreach ($columnas as $col) {
-        $html .= "<th>" . htmlspecialchars($col) . "</th>";
+        $html .= "<th>" . htmlspecialchars(limpiarBOM($col)) . "</th>";
     }
     $html .= "</tr></thead><tbody>";
 
@@ -158,7 +183,7 @@ function exportarPDF(
         $cls = ($i % 2 === 1) ? " class='alt'" : "";
         $html .= "<tr$cls>";
         foreach ($fila as $celda) {
-            $html .= "<td>" . htmlspecialchars((string)$celda) . "</td>";
+            $html .= "<td>" . htmlspecialchars(limpiarBOM((string)$celda)) . "</td>";
         }
         $html .= "</tr>";
     }
@@ -199,8 +224,8 @@ function exportarExcel(
     $sheet->mergeCells("B2:{$lastCol}2");
     $sheet->mergeCells("B3:{$lastCol}3");
 
-    $sheet->setCellValue('B1', EMPRESA_NOMBRE);
-    $sheet->setCellValue('B2', EMPRESA_CIUDAD . '  |  ' . EMPRESA_TEL);
+    $sheet->setCellValue('B1', limpiarBOM(EMPRESA_NOMBRE));
+    $sheet->setCellValue('B2', limpiarBOM(EMPRESA_CIUDAD . '  |  ' . EMPRESA_TEL));
     $sheet->setCellValue('B3', 'Generado: ' . date('d/m/Y H:i'));
 
     $sheet->getStyle('B1')->applyFromArray([
@@ -237,7 +262,7 @@ function exportarExcel(
 
     // ── Fila 5-6: Título del reporte ────────────────────────────────
     $sheet->mergeCells("A5:{$lastCol}5");
-    $sheet->setCellValue('A5', $titulo);
+    $sheet->setCellValue('A5', limpiarBOM($titulo));
     $sheet->getStyle('A5')->applyFromArray([
         'font' => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FF1a1a2e']],
         'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT],
@@ -247,7 +272,7 @@ function exportarExcel(
     $filaActual = 6;
     if ($subtitulo) {
         $sheet->mergeCells("A6:{$lastCol}6");
-        $sheet->setCellValue('A6', $subtitulo);
+        $sheet->setCellValue('A6', limpiarBOM($subtitulo));
         $sheet->getStyle('A6')->applyFromArray([
             'font' => ['size' => 9, 'italic' => true, 'color' => ['argb' => 'FF888888']],
         ]);
@@ -263,7 +288,7 @@ function exportarExcel(
             $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col);
             $nextCol   = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($col + 1);
 
-            $sheet->setCellValue("{$colLetter}{$filaActual}", $item['label']);
+            $sheet->setCellValue("{$colLetter}{$filaActual}", limpiarBOM($item['label']));
             $sheet->getStyle("{$colLetter}{$filaActual}")->applyFromArray([
                 'font' => ['size' => 8, 'bold' => true, 'color' => ['argb' => 'FF888888']],
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFf0f9ff']],
@@ -273,7 +298,7 @@ function exportarExcel(
             $sheet->getRowDimension($filaActual)->setRowHeight(14);
 
             $filaActual++;
-            $sheet->setCellValue("{$colLetter}{$filaActual}", $item['valor']);
+            $sheet->setCellValue("{$colLetter}{$filaActual}", limpiarBOM($item['valor']));
             $sheet->getStyle("{$colLetter}{$filaActual}")->applyFromArray([
                 'font' => ['size' => 11, 'bold' => true],
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFf0f9ff']],
@@ -295,7 +320,7 @@ function exportarExcel(
     $filaHeaders = $filaActual;
     foreach ($columnas as $i => $col) {
         $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-        $sheet->setCellValue("{$colLetter}{$filaHeaders}", $col);
+        $sheet->setCellValue("{$colLetter}{$filaHeaders}", limpiarBOM($col));
     }
     $sheet->getStyle("A{$filaHeaders}:{$lastCol}{$filaHeaders}")->applyFromArray([
         'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF'], 'size' => 10],
@@ -312,7 +337,15 @@ function exportarExcel(
         $filaExcel = $filaHeaders + 1 + $i;
         foreach ($fila as $j => $celda) {
             $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($j + 1);
-            $sheet->setCellValue("{$colLetter}{$filaExcel}", (string)$celda);
+            // [FIX-MEDIO-F-09] setCellValueExplicit(...TYPE_STRING) fuerza texto literal,
+            // ademas del apostrofe de sanearFormulaExcel() — doble defensa contra inyeccion
+            // de formulas por valores que vienen de datos del usuario (nombre de producto,
+            // motivo, notas, etc.).
+            $sheet->setCellValueExplicit(
+                "{$colLetter}{$filaExcel}",
+                sanearFormulaExcel(limpiarBOM((string)$celda)),
+                \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING
+            );
         }
 
         $fillColor = ($i % 2 === 1) ? 'FFf0f9ff' : 'FFFFFFFF';

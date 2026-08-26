@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 $editando  = null;
 $errores   = [];
@@ -19,6 +21,12 @@ if ($esEdicion) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-CRIT-G-01] CSRF ausente antes. Se valida con verificarCSRF() (no
+    // requerirCSRF()) para que el error se muestre igual que las demás validaciones
+    // de este formulario — inline, sin perder lo que el usuario ya había capturado.
+    if (!verificarCSRF($_POST['_token'] ?? '')) {
+        $errores[] = 'La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.';
+    }
     $sucursal_id        = intval($_POST['sucursal_id']        ?? 0);
     $categoria_gasto_id = intval($_POST['categoria_gasto_id'] ?? 0);
     $descripcion        = trim($_POST['descripcion']          ?? '');
@@ -32,25 +40,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($descripcion === '')                         $errores[] = 'La descripcion es obligatoria.';
     if ($monto <= 0)                                 $errores[] = 'El monto debe ser mayor a $0.';
     if (!$fecha || !strtotime($fecha))               $errores[] = 'La fecha no es valida.';
+    // [FIX-MEDIO-G-16] No habia tope contra fechas futuras.
+    elseif ($fecha > date('Y-m-d'))                  $errores[] = 'La fecha no puede ser en el futuro.';
 
+    // [FIX-ALTO-G-12] Antes una PDOException (p. ej. sucursal_id/categoria_gasto_id de un
+    // <select> desactualizado que ya no existe o esta inactivo, violando la FK) se dejaba
+    // sin capturar: HTTP 500 con la ruta del servidor y el esquema de la BD expuestos en
+    // vez de un mensaje de error normal en el formulario.
     if (empty($errores)) {
-        if ($gasto_id) {
-            $pdo->prepare("
-                UPDATE gastos SET sucursal_id = ?, categoria_gasto_id = ?, descripcion = ?, monto = ?, fecha = ?, notas = ?
-                WHERE gasto_id = ?
-            ")->execute([$sucursal_id, $categoria_gasto_id, $descripcion, $monto, $fecha, $notas ?: null, $gasto_id]);
-        } else {
-            $pdo->prepare("
-                INSERT INTO gastos (sucursal_id, usuario_id, categoria_gasto_id, descripcion, monto, fecha, notas)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ")->execute([$sucursal_id, $_SESSION['usuario_id'], $categoria_gasto_id, $descripcion, $monto, $fecha, $notas ?: null]);
+        try {
+            if ($gasto_id) {
+                $pdo->prepare("
+                    UPDATE gastos SET sucursal_id = ?, categoria_gasto_id = ?, descripcion = ?, monto = ?, fecha = ?, notas = ?
+                    WHERE gasto_id = ?
+                ")->execute([$sucursal_id, $categoria_gasto_id, $descripcion, $monto, $fecha, $notas ?: null, $gasto_id]);
+            } else {
+                $pdo->prepare("
+                    INSERT INTO gastos (sucursal_id, usuario_id, categoria_gasto_id, descripcion, monto, fecha, notas)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ")->execute([$sucursal_id, $_SESSION['usuario_id'], $categoria_gasto_id, $descripcion, $monto, $fecha, $notas ?: null]);
+            }
+            header('Location: gastos.php');
+            exit();
+        } catch (PDOException $e) {
+            $errores[] = 'No se pudo guardar el gasto. Verifica que la sucursal y la categoría sigan siendo válidas e intenta de nuevo.';
         }
-        header('Location: gastos.php');
-        exit();
     }
 }
 
-$sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
+// [FIX-MEDIO-G-21] El combo de sucursales solo traia "activo=1" — si la sucursal de un gasto
+// ya existente se desactivaba despues, el <select> al editar ya no tenia esa opcion, el
+// navegador caia al valor en blanco, y guardar CUALQUIER cambio (hasta solo corregir la
+// descripcion) quedaba bloqueado por "Selecciona una sucursal" a menos que se reasignara el
+// gasto a una sucursal distinta de la real. Se incluye la sucursal actual del gasto aunque
+// este inactiva, marcada como tal.
+$sucursalActualId = $editando['sucursal_id'] ?? null;
+if ($sucursalActualId) {
+    $sucursales = $pdo->prepare("SELECT sucursal_id, nombre, activo FROM sucursales WHERE activo = 1 OR sucursal_id = ? ORDER BY nombre");
+    $sucursales->execute([$sucursalActualId]);
+    $sucursales = $sucursales->fetchAll(PDO::FETCH_ASSOC);
+} else {
+    $sucursales = $pdo->query("SELECT sucursal_id, nombre, activo FROM sucursales WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
+}
 $categorias = $pdo->query("SELECT categoria_gasto_id, nombre FROM categorias_gastos WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
 
 $v = [
@@ -149,6 +180,7 @@ $v = [
             <?php endif; ?>
 
             <form method="POST">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <?php if ($esEdicion): ?>
                     <input type="hidden" name="gasto_id" value="<?= $editando['gasto_id'] ?>">
                 <?php endif; ?>
@@ -158,7 +190,7 @@ $v = [
                     <select name="sucursal_id" required>
                         <option value="">-- Seleccionar --</option>
                         <?php foreach ($sucursales as $s): ?>
-                            <option value="<?= $s['sucursal_id'] ?>" <?= $v['sucursal_id'] == $s['sucursal_id'] ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre']) ?></option>
+                            <option value="<?= $s['sucursal_id'] ?>" <?= $v['sucursal_id'] == $s['sucursal_id'] ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre']) ?><?= !$s['activo'] ? ' (inactiva)' : '' ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -188,7 +220,7 @@ $v = [
 
                 <div class="form-group">
                     <label>Fecha</label>
-                    <input type="date" name="fecha" value="<?= htmlspecialchars($v['fecha']) ?>" required>
+                    <input type="date" name="fecha" value="<?= htmlspecialchars($v['fecha']) ?>" max="<?= date('Y-m-d') ?>" required>
                 </div>
 
                 <div class="form-group">

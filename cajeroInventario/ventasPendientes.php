@@ -1,4 +1,6 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -428,6 +430,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtStockActual->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
                     $stockActual = floatval($stmtStockActual->fetchColumn() ?: 0);
 
+                    // [FIX-ALTO-D1-05] Ver nota en admin/cajero_ventasPendientes.php: una
+                    // pendiente sin liquidar bloqueaba stock para siempre, de forma invisible.
+                    // Solo cuenta como comprometido si se creo en los ultimos 3 dias.
                     $stmtComprometido = $pdo->prepare("
                         SELECT COALESCE(SUM(vp.cantidad), 0)
                         FROM venta_productos vp
@@ -436,6 +441,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         WHERE vp.producto_id = ?
                           AND v.estado = 'Pendiente'
                           AND c.sucursal_id = ?
+                          AND v.created_at > (NOW() - INTERVAL 3 DAY)
                     ");
                     $stmtComprometido->execute([$item['producto_id'], $_SESSION['sucursal_id']]);
                     $stockComprometido = floatval($stmtComprometido->fetchColumn() ?: 0);
@@ -493,12 +499,12 @@ $stmtPromosPend = $pdo->prepare("
     FROM promociones pr
     JOIN productos p ON pr.producto_id = p.producto_id
     JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-    WHERE 1=1
+    WHERE (pr.sucursal_id = ? OR pr.sucursal_id IS NULL)
       AND (pr.fecha_inicio IS NULL OR pr.fecha_inicio <= CURDATE())
       AND (pr.fecha_fin    IS NULL OR pr.fecha_fin    >= CURDATE())
       AND pr.activo = 1
 ");
-$stmtPromosPend->execute([$_SESSION['sucursal_id']]);
+$stmtPromosPend->execute([$_SESSION['sucursal_id'], $_SESSION['sucursal_id']]);
 $promosPendById = [];
 foreach ($stmtPromosPend->fetchAll(PDO::FETCH_ASSOC) as $promo) {
     $promosPendById[(int)$promo['producto_id']] = [

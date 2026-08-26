@@ -1,28 +1,37 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 if (isset($_GET['eliminar'])) {
+    // [FIX-CRIT-A-01] Esta accion borra en cascada TODO el historial contable de la
+    // sucursal (ventas, cajas, creditos, movimientos) y antes era un GET sin token —
+    // alcanzable con un simple enlace/imagen en cualquier pagina que el Administrador
+    // visitara con su sesion abierta. Ahora exige el mismo token CSRF que ya usa el
+    // resto del sistema.
+    requerirCSRF($_GET['_token'] ?? '', 'sucursales.php');
     $sid = intval($_GET['eliminar']);
 
-    // Bloquear si hay usuarios activos
-    $stmtU = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE sucursal_id = ? AND activo = 1");
+    // [FIX-ALTO-A-05] Antes esta guarda solo contaba usuarios/stock ACTIVOS, pero el
+    // DELETE de abajo borra TODAS las filas de esas tablas sin importar su estado —
+    // un usuario desactivado o una fila de stock_sucursal ya inactiva (o en 0) pasaban
+    // la guarda como si no existieran y se perdian en silencio junto con la sucursal.
+    // Ahora las guardas cuentan TODO lo que el DELETE realmente va a tocar.
+    // Bloquear si hay CUALQUIER usuario asignado (activo o no)
+    $stmtU = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE sucursal_id = ?");
     $stmtU->execute([$sid]);
     if ($stmtU->fetchColumn() > 0) {
         header('Location: sucursales.php?error=con_usuarios'); exit();
     }
 
-    // Bloquear si hay productos con stock
-    $stmtChk = $pdo->prepare("
-        SELECT COUNT(*) FROM stock_sucursal ss
-        JOIN productos p ON p.producto_id = ss.producto_id AND p.activo = 1
-        WHERE ss.sucursal_id = ? AND ss.activo = 1 AND ss.stock_actual > 0
-    ");
+    // Bloquear si hay CUALQUIER fila de stock para esta sucursal (activa, inactiva, o en 0)
+    $stmtChk = $pdo->prepare("SELECT COUNT(*) FROM stock_sucursal WHERE sucursal_id = ?");
     $stmtChk->execute([$sid]);
     if ($stmtChk->fetchColumn() > 0) {
         header('Location: sucursales.php?error=con_stock'); exit();
@@ -54,12 +63,19 @@ if (isset($_GET['eliminar'])) {
     }
 }
 
+// [FIX-ALTO-A-05] total_usuarios/con_stock siguen contando solo lo ACTIVO — son la
+// estadistica que se muestra en la tarjeta ("N usuarios", "N productos en stock") y esa
+// lectura de negocio no cambia. Para decidir si el boton "Eliminar" debe estar
+// habilitado se usan dos columnas nuevas que cuentan TODO (igual que el DELETE real),
+// para que el boton nunca prometa algo que la guarda del servidor luego rechaza.
 $stmt = $pdo->query("
     SELECT s.*,
         (SELECT COUNT(*) FROM usuarios u WHERE u.sucursal_id = s.sucursal_id AND u.activo = 1) AS total_usuarios,
         (SELECT COUNT(*) FROM stock_sucursal ss
          JOIN productos p ON p.producto_id = ss.producto_id AND p.activo = 1
-         WHERE ss.sucursal_id = s.sucursal_id AND ss.activo = 1 AND ss.stock_actual > 0) AS con_stock
+         WHERE ss.sucursal_id = s.sucursal_id AND ss.activo = 1 AND ss.stock_actual > 0) AS con_stock,
+        (SELECT COUNT(*) FROM usuarios u2 WHERE u2.sucursal_id = s.sucursal_id) AS usuarios_totales_incl_inactivos,
+        (SELECT COUNT(*) FROM stock_sucursal ss2 WHERE ss2.sucursal_id = s.sucursal_id) AS stock_filas_incl_inactivas
     FROM sucursales s
     ORDER BY s.nombre ASC
 ");
@@ -160,7 +176,15 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <a class="btn-nuevo" href="formSucursal.php">+ Nueva sucursal</a>
         </div>
 
-        <?php if (isset($_GET['msg'])): ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_token'): ?>
+            <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #c0392b;">
+                La sesión expiró o el enlace no es válido. Recarga la página e intenta de nuevo.
+            </div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'error_no_existe'): ?>
+            <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #c0392b;">
+                No se guardaron los cambios: esa sucursal ya no existe (pudo haberse eliminado desde otra sesión).
+            </div>
+        <?php elseif (isset($_GET['msg'])): ?>
             <?php $msgs = ['creado' => 'Sucursal creada.', 'editado' => 'Sucursal actualizada.', 'eliminado' => 'Sucursal eliminada correctamente.']; ?>
             <div style="background:#e8f5e9;color:#2e7d32;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #2e7d32;">
                 <?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?>
@@ -209,13 +233,13 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                 <div class="suc-acciones">
                     <a class="btn-accion btn-editar" href="formSucursal.php?id=<?= $s['sucursal_id'] ?>">Editar datos</a>
-                    <?php if (intval($s['total_usuarios']) > 0): ?>
-                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene usuarios activos">Eliminar</span>
-                    <?php elseif (intval($s['con_stock']) > 0): ?>
-                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene <?= intval($s['con_stock']) ?> producto(s) en stock">Eliminar</span>
+                    <?php if (intval($s['usuarios_totales_incl_inactivos']) > 0): ?>
+                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene usuarios asignados (incluidos inactivos)">Eliminar</span>
+                    <?php elseif (intval($s['stock_filas_incl_inactivas']) > 0): ?>
+                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene registros de stock (incluidos inactivos o en 0)">Eliminar</span>
                     <?php else: ?>
                         <a class="btn-accion btn-eliminar"
-                           href="sucursales.php?eliminar=<?= $s['sucursal_id'] ?>"
+                           href="sucursales.php?eliminar=<?= $s['sucursal_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                            onclick="return confirm('¿Eliminar la sucursal <?= htmlspecialchars($s['nombre'], ENT_QUOTES) ?>? Se eliminaran todos sus datos. Esta accion no se puede deshacer.')">Eliminar</a>
                     <?php endif; ?>
                 </div>

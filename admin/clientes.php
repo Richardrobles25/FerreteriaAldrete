@@ -1,13 +1,18 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 if (isset($_GET['toggle'])) {
+    // [FIX-ALTO-E-06] CSRF ausente antes — cualquier pagina visitada con la sesion del
+    // Administrador abierta podia activar/desactivar un cliente por un simple GET.
+    requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
     $cid = intval($_GET['toggle']);
     $actual = $pdo->prepare("SELECT activo FROM clientes WHERE cliente_id = ?");
     $actual->execute([$cid]);
@@ -37,6 +42,8 @@ if (isset($_GET['editar'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-ALTO-E-06] CSRF ausente antes en alta/edición de cliente.
+    requerirCSRF($_POST['_token'] ?? '', 'clientes.php');
     $nombre = trim($_POST['nombre_completo'] ?? '');
     $telefono = trim($_POST['telefono'] ?? '');
     $direccion = trim($_POST['direccion'] ?? '');
@@ -103,21 +110,24 @@ if ($sucursal) {
 // ── Exportar deudores ─────────────────────────────────────────────────────
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'deudores') {
     require_once __DIR__ . '/export_helper.php';
+    // [FIX-ALTO-E-09] "AND c.activo = 1" antes excluia del reporte a clientes desactivados
+    // que aun asi tienen deuda viva — dinero por cobrar que dejaba de aparecer en cualquier
+    // reporte en cuanto alguien desactivaba al cliente (a proposito o por error).
     $stmtD = $pdo->query("
-        SELECT c.nombre_completo, c.telefono, c.correo,
+        SELECT c.nombre_completo, c.telefono, c.correo, c.activo,
                COUNT(cr.credito_id)              AS creditos_abiertos,
                COALESCE(SUM(cr.saldo_pendiente),0) AS total_por_cobrar,
                MAX(cr.fecha_limite)               AS proximo_vencimiento
         FROM clientes c
         JOIN creditos cr ON cr.cliente_id = c.cliente_id
-        WHERE cr.estado IN ('Activo','Vencido') AND c.activo = 1
-        GROUP BY c.cliente_id, c.nombre_completo, c.telefono, c.correo
+        WHERE cr.estado IN ('Activo','Vencido')
+        GROUP BY c.cliente_id, c.nombre_completo, c.telefono, c.correo, c.activo
         ORDER BY total_por_cobrar DESC
     ");
     $deudores = $stmtD->fetchAll(PDO::FETCH_ASSOC);
     $columnas = ['Cliente','Teléfono','Correo','Créditos abiertos','Total por cobrar','Próx. vencimiento'];
     $filas = array_map(fn($r) => [
-        $r['nombre_completo'],
+        $r['nombre_completo'] . ($r['activo'] ? '' : ' (Inactivo)'),
         $r['telefono']  ?: '—',
         $r['correo']    ?: '—',
         $r['creditos_abiertos'],
@@ -412,7 +422,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                                         <?php if ($cliente['activo'] && $cliente['saldo_pendiente'] > 0): ?>
                                             <span class="btn-accion" style="background:#f0f0f0;color:#aaa;cursor:not-allowed;" title="Tiene crédito pendiente de $<?= number_format($cliente['saldo_pendiente'],2) ?>">Desactivar</span>
                                         <?php else: ?>
-                                            <a class="btn-accion <?= $cliente['activo'] ? 'btn-desactivar' : 'btn-activar' ?>" href="clientes.php?toggle=<?= $cliente['cliente_id'] ?>" onclick="return confirm('Deseas cambiar el estado de este cliente?')"><?= $cliente['activo'] ? 'Desactivar' : 'Activar' ?></a>
+                                            <a class="btn-accion <?= $cliente['activo'] ? 'btn-desactivar' : 'btn-activar' ?>" href="clientes.php?toggle=<?= $cliente['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Deseas cambiar el estado de este cliente?')"><?= $cliente['activo'] ? 'Desactivar' : 'Activar' ?></a>
                                         <?php endif; ?>
                                     </div></td>
                                 </tr>
@@ -430,6 +440,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <h3><?= $editando ? 'Editar cliente' : 'Nuevo cliente' ?></h3>
                 <?php if (!empty($errores)): ?><div class="errores"><ul><?php foreach ($errores as $error): ?><li><?= htmlspecialchars($error) ?></li><?php endforeach; ?></ul></div><?php endif; ?>
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="cliente_id" value="<?= intval($editando['cliente_id'] ?? 0) ?>">
                     <div class="form-group"><label>Nombre completo *</label><input type="text" name="nombre_completo" value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan Garcia"></div>
                     <div class="form-row">

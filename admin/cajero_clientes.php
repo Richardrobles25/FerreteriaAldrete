@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 
 // Eliminar cliente
 if (isset($_GET['eliminar'])) {
@@ -20,6 +22,17 @@ if (isset($_GET['eliminar'])) {
         exit();
     }
 
+    // [FIX-ALTO-E-08] clientes.php sí bloqueaba desactivar un cliente con crédito
+    // pendiente; esta pantalla (misma acción, ruta distinta) no lo hacía — bastaba con
+    // usar este menú en vez del otro para desactivar a un deudor y perder rastro de él
+    // en los reportes que filtran por cliente activo.
+    $stmtCredPend = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+    $stmtCredPend->execute([$id]);
+    if ($stmtCredPend->fetchColumn() > 0) {
+        header('Location: cajero_clientes.php?msg=error_credito_pendiente');
+        exit();
+    }
+
     $pdo->prepare("UPDATE clientes SET activo = 0 WHERE cliente_id = ?")->execute([$id]);
     header('Location: cajero_clientes.php?msg=eliminado');
     exit();
@@ -29,6 +42,20 @@ if (isset($_GET['eliminar'])) {
 if (isset($_GET['toggle'])) {
     requerirCSRF($_GET['_token'] ?? '', 'cajero_clientes.php');
     $id = intval($_GET['toggle']);
+
+    // [FIX-ALTO-E-08] Mismo candado que arriba: el toggle no pasaba por ninguna
+    // validación y podía desactivar a un cliente con deuda viva en un solo clic.
+    $actualToggle = $pdo->prepare("SELECT activo FROM clientes WHERE cliente_id = ?");
+    $actualToggle->execute([$id]);
+    if ($actualToggle->fetchColumn()) {
+        $stmtCredPend2 = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+        $stmtCredPend2->execute([$id]);
+        if ($stmtCredPend2->fetchColumn() > 0) {
+            header('Location: cajero_clientes.php?msg=error_credito_pendiente');
+            exit();
+        }
+    }
+
     $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$id]);
     header('Location: cajero_clientes.php');
     exit();
@@ -191,9 +218,13 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="content">
         <!-- Lista -->
         <div>
-            <?php if (isset($_GET['msg'])): ?>
+            <?php if (isset($_GET['msg']) && in_array($_GET['msg'], ['creado','editado','eliminado'], true)): ?>
                 <?php $msgs = ['creado'=>'Cliente registrado.','editado'=>'Cliente actualizado.','eliminado'=>'Cliente eliminado.']; ?>
-                <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
+                <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?></div>
+            <?php elseif (($_GET['msg'] ?? '') === 'error_tiene_pendientes'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar: el cliente tiene ventas pendientes.</div>
+            <?php elseif (($_GET['msg'] ?? '') === 'error_credito_pendiente'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar este cliente porque tiene un crédito pendiente de pago.</div>
             <?php endif; ?>
 
             <form method="GET" action="cajero_clientes.php">

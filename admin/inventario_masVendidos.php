@@ -1,16 +1,29 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $periodo    = $_GET['periodo'] ?? 'mes';
-$sucursal   = intval($_GET['sucursal'] ?? $sucursalVista);
+// [FIX-ALTO-C-02] Antes se leia $_GET['sucursal'] directo, sin pasar por el rol: un
+// usuario Inventario/Inventario-Cajero (limitado a su propia sucursal) podia editar la
+// URL para ver las ventas de OTRA sucursal. _admin_sucursal_filtro.php ya calcula
+// $sucursalVista respetando el rol (solo Administrador puede elegir via GET) — se usa
+// esa variable en vez de leer el parametro de nuevo.
+$sucursal   = $sucursalVista;
+// [FIX-MEDIO-C-10] $limite se interpola directo en el SQL (LIMIT no acepta placeholder de
+// forma confiable en todas las configuraciones de PDO) sin validar signo ni rango — un
+// "?limite=-1" producia "LIMIT -1", un error de sintaxis SQL que quedaba sin capturar y
+// tronaba con detalle del servidor. Se restringe a los mismos valores que ofrece el
+// selector (10/20/50).
 $limite     = intval($_GET['limite'] ?? 20);
+if (!in_array($limite, [10, 20, 50], true)) $limite = 20;
 
 $fechaDesde = match($periodo) {
     'hoy'    => date('Y-m-d'),
@@ -43,9 +56,9 @@ $stmt = $pdo->prepare("
     JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
     JOIN productos p ON vp.producto_id = p.producto_id
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-    WHERE v.estado = 'Completada'
+    WHERE v.estado IN ('Completada','Modificado','Devuelto')
       AND DATE(v.created_at) >= ?
-    GROUP BY p.producto_id
+    GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre, p.precio_venta
     ORDER BY total_vendido DESC
     LIMIT $limite
 ");
@@ -62,7 +75,7 @@ $stmtTotal = $pdo->prepare("
     JOIN ventas v ON vp.venta_id = v.venta_id
     JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
     JOIN productos p ON vp.producto_id = p.producto_id
-    WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
+    WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) >= ?
 ");
 $paramsTotal = [];
 if ($sucursal !== 0) { $paramsTotal[] = $sucursal; }
@@ -85,8 +98,8 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         JOIN cajas ca ON v.caja_id = ca.caja_id $condSucCaja
         JOIN productos p ON vp.producto_id = p.producto_id
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-        WHERE v.estado = 'Completada' AND DATE(v.created_at) >= ?
-        GROUP BY p.producto_id
+        WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) >= ?
+        GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre
         ORDER BY total_vendido DESC
     ");
     $paramsExp = [$sucursal, $sucursal];

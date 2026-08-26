@@ -1,4 +1,6 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -136,7 +138,11 @@ if (isset($_GET['buscar_paquete'])) {
 // ── AJAX: buscar producto ────────────────────────────────────────────────────
 if (isset($_GET['buscar_producto'])) {
     $termino     = trim($_GET['buscar_producto']);
-    $sucursal_id = intval($_GET['sucursal_id'] ?? $_SESSION['sucursal_id']);
+    // [FIX-ALTO-A-08] Antes se aceptaba ?sucursal_id= directo del GET — un Cajero
+    // podia leer el inventario completo (existencias reales) de cualquier otra
+    // sucursal con solo cambiar ese parametro. El endpoint hermano scan_codigo (mas
+    // abajo) ya usa siempre la sucursal de la sesion; aqui se alinea al mismo patron.
+    $sucursal_id = intval($_SESSION['sucursal_id']);
     $stmt = $pdo->prepare("
         SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta,
                p.precio_mayoreo, ss.stock_actual, p.tipo_venta

@@ -1,11 +1,14 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
+require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 // Semana activa: lunes a sabado
 $semanaParam = trim($_GET['semana'] ?? '');
@@ -44,35 +47,60 @@ if ($esSemanaActual) {
     $diasTranscurridos = 6;
 }
 
-// Todos los empleados activos
-$empleados = $pdo->query("
-    SELECT e.*
+// [FIX-MEDIO-G-18] Antes esta lista era SIEMPRE "activo=1" -- al desactivar un empleado,
+// desaparecia por completo de esta pantalla, incluyendo semanas PASADAS en las que si trabajo
+// (borrando efectivamente su historial de nomina de la vista) y ocultando cualquier adelanto
+// 'Pendiente' que le quedara sin descontar de ningun sueldo futuro (porque un inactivo nunca
+// vuelve a aparecer aqui para que se le pueda aplicar el descuento). Ahora se incluye tambien
+// un empleado inactivo si tiene asistencia o un pago ya registrado ESTA semana especifica, o
+// si todavia tiene algun adelanto 'Pendiente' sin liquidar (para que esa deuda se seria
+// visible y accionable en cualquier semana, no solo desaparezca).
+$stmtEmp = $pdo->prepare("
+    SELECT DISTINCT e.*
     FROM empleados e
-    WHERE e.activo = 1
-    ORDER BY e.nombre
-")->fetchAll(PDO::FETCH_ASSOC);
+    LEFT JOIN asistencia a      ON a.empleado_id = e.empleado_id AND a.fecha BETWEEN ? AND ?
+    LEFT JOIN pagos_nomina pn   ON pn.empleado_id = e.empleado_id AND pn.semana_inicio = ?
+    LEFT JOIN adelantos_sueldo ad ON ad.empleado_id = e.empleado_id AND ad.estado = 'Pendiente'
+    WHERE e.activo = 1 OR a.asistencia_id IS NOT NULL OR pn.pago_id IS NOT NULL OR ad.adelanto_id IS NOT NULL
+    ORDER BY e.activo DESC, e.nombre
+");
+$stmtEmp->execute([$lunes, $fechaCorte, $lunes]);
+$empleados = $stmtEmp->fetchAll(PDO::FETCH_ASSOC);
 
-// Registros de asistencia acumulados hasta el corte
-// DAYOFWEEK: 1=Dom, 2=Lun...7=Sab → sabado=7 → 6hrs, resto=9hrs
+// [FIX-MEDIO-G-25] Antes la regla de "horas esperadas por dia" estaba repetida aqui como un
+// CASE SQL propio (y, por venir de DAYOFWEEK(), en realidad trataba domingo igual que un dia
+// entre semana -- 9h -- en vez de las 0h que ya establecio el fix G-05 en formAsistencia.php).
+// Se trae el registro crudo y se agrega en PHP usando horasEsperadasDia(), la misma fuente de
+// verdad que ya usa formAsistencia.php y que ahora tambien lee el JS del navegador ahi mismo.
 $stmtA = $pdo->prepare("
-    SELECT empleado_id,
-           SUM(horas_no_trabajadas) AS total_no_trabajadas,
-           SUM(horas_extra)         AS total_extra,
-           COUNT(*)                 AS total_registros,
-           SUM(CASE WHEN tipo != 'Falta'
-               THEN (CASE WHEN DAYOFWEEK(fecha) = 7 THEN 6.0 ELSE 9.0 END)
-                    - horas_no_trabajadas + horas_extra
-               ELSE 0 END)         AS total_horas_trabajadas,
-           SUM(CASE WHEN tipo = 'Asistencia normal' THEN 1 ELSE 0 END) AS dias_normales,
-           SUM(CASE WHEN tipo = 'Falta'             THEN 1 ELSE 0 END) AS dias_falta
+    SELECT empleado_id, fecha, tipo, horas_no_trabajadas, horas_extra
     FROM asistencia
     WHERE fecha BETWEEN ? AND ?
-    GROUP BY empleado_id
 ");
 $stmtA->execute([$lunes, $fechaCorte]);
 $asistenciaMap = [];
 foreach ($stmtA->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $asistenciaMap[$row['empleado_id']] = $row;
+    $eid = $row['empleado_id'];
+    if (!isset($asistenciaMap[$eid])) {
+        $asistenciaMap[$eid] = [
+            'total_no_trabajadas'    => 0.0,
+            'total_extra'            => 0.0,
+            'total_registros'        => 0,
+            'total_horas_trabajadas' => 0.0,
+            'dias_normales'          => 0,
+            'dias_falta'             => 0,
+        ];
+    }
+    $hnt = floatval($row['horas_no_trabajadas']);
+    $he  = floatval($row['horas_extra']);
+    $asistenciaMap[$eid]['total_no_trabajadas'] += $hnt;
+    $asistenciaMap[$eid]['total_extra']         += $he;
+    $asistenciaMap[$eid]['total_registros']++;
+    if ($row['tipo'] !== 'Falta') {
+        $asistenciaMap[$eid]['total_horas_trabajadas'] += horasEsperadasDia($row['fecha']) - $hnt + $he;
+    }
+    if ($row['tipo'] === 'Asistencia normal') $asistenciaMap[$eid]['dias_normales']++;
+    if ($row['tipo'] === 'Falta')             $asistenciaMap[$eid]['dias_falta']++;
 }
 
 // Armar tabla
@@ -98,7 +126,16 @@ foreach ($empleados as $emp) {
     $horasNetaDeducir   = round($horasNT    - $horasCompensadas, 2);
     $horasExtraNeta     = round($horasExtra - $horasCompensadas, 2);
 
-    $deduccion  = round($horasNetaDeducir * $tarifa,       2);
+    // [FIX-MEDIO-G-17] "Pagar" a mitad de semana (antes de llegar a sabado) tomaba SIEMPRE
+    // el sueldo semanal COMPLETO como base, aunque los dias que faltan por transcurrir no
+    // tuvieran ningun registro de asistencia (y por lo tanto ninguna deduccion) todavia — se
+    // le pagaba por adelantado dias que ni siquiera habian pasado. Se prorratea la porcion de
+    // dias restantes de la semana (de 6 dias laborales) como una deduccion adicional; en una
+    // semana ya cerrada ($semanaCompleta) esto es 0 y no cambia nada.
+    $diasRestantesSemana  = max(0, 6 - $diasTranscurridos);
+    $sueldoNoDevengado    = $semanaCompleta ? 0.0 : round($sueldo * $diasRestantesSemana / 6, 2);
+
+    $deduccion  = round($horasNetaDeducir * $tarifa,       2) + $sueldoNoDevengado;
     $bono       = round($horasExtraNeta   * $tarifa * 1.5, 2);
     $pagoFinal  = round($sueldo - $deduccion + $bono,      2);
 
@@ -110,6 +147,7 @@ foreach ($empleados as $emp) {
     $filas[] = [
         'empleado_id'      => $eid,
         'empleado'         => $emp['nombre'],
+        'activo'           => intval($emp['activo']),
         'sueldo'           => $sueldo,
         'horas_trabajadas' => round($horasTrabajadas, 2),
         'dias_normales'    => $diasNormales,
@@ -120,6 +158,7 @@ foreach ($empleados as $emp) {
         'horas_comp'       => $horasCompensadas,
         'horas_neta_ded'   => $horasNetaDeducir,
         'horas_extra_neta' => $horasExtraNeta,
+        'sueldo_no_devengado' => $sueldoNoDevengado,
         'deduccion'        => $deduccion,
         'bono'             => $bono,
         'pago_final'       => $pagoFinal,
@@ -143,15 +182,20 @@ foreach ($stmtVac->fetchAll(PDO::FETCH_ASSOC) as $vr) {
     $vacMap[$vr['empleado_id']] = ($vacMap[$vr['empleado_id']] ?? 0) + $dias;
 }
 
-// Adelantos por empleado de ESTA semana (el adelanto se descuenta del sueldo
-// de la semana en que se pidio, sin importar si ya se marco liquidado)
+// [FIX-ALTO-G-06] Antes solo se sumaban los adelantos TOMADOS en esta semana especifica
+// (fecha BETWEEN lunes AND sabado). Si el pago de la semana no alcanzaba para cubrir el
+// adelanto completo, el UPDATE de abajo lo marcaba 'Liquidado' de todos modos — el
+// remanente no cubierto se condonaba en silencio, sin dejar ningun rastro. Ahora se suma
+// TODO adelanto todavia 'Pendiente' del empleado (sin importar en que semana se tomo), asi
+// que un saldo no cubierto sigue apareciendo — y descontandose — en las semanas
+// siguientes hasta quedar liquidado por completo.
 $stmtAdel = $pdo->prepare("
     SELECT empleado_id, SUM(monto) AS total
     FROM adelantos_sueldo
-    WHERE fecha BETWEEN ? AND ?
+    WHERE estado = 'Pendiente'
     GROUP BY empleado_id
 ");
-$stmtAdel->execute([$lunes, $sabado]);
+$stmtAdel->execute();
 $adelantosMap = [];
 foreach ($stmtAdel->fetchAll(PDO::FETCH_ASSOC) as $ar) {
     $adelantosMap[$ar['empleado_id']] = floatval($ar['total']);
@@ -168,24 +212,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pagar_empleado'])) {
     }
 
     if ($filaPago) {
-        $adelantoPago = $adelantosMap[$eidPago] ?? 0;
-        $montoPagado  = max(0, $filaPago['pago_final'] - $adelantoPago);
+        $adelantoDisponible = $adelantosMap[$eidPago] ?? 0;
+        // No se puede recuperar mas adelanto del que el pago de esta semana realmente cubre.
+        $adelantoRecuperado = min($adelantoDisponible, max(0, $filaPago['pago_final']));
+        $montoPagado        = max(0, $filaPago['pago_final'] - $adelantoRecuperado);
+
+        $pdo->beginTransaction();
         try {
             $pdo->prepare("
                 INSERT INTO pagos_nomina (empleado_id, semana_inicio, sueldo_base, deduccion, bono, adelanto_descontado, monto_pagado)
                 VALUES (?,?,?,?,?,?,?)
-            ")->execute([$eidPago, $lunes, $filaPago['sueldo'], $filaPago['deduccion'], $filaPago['bono'], $adelantoPago, $montoPagado]);
+            ")->execute([$eidPago, $lunes, $filaPago['sueldo'], $filaPago['deduccion'], $filaPago['bono'], $adelantoRecuperado, $montoPagado]);
 
-            // El pago ya descuenta el adelanto de la semana: liquidarlo automaticamente
-            $pdo->prepare("
-                UPDATE adelantos_sueldo SET estado = 'Liquidado'
-                WHERE empleado_id = ? AND fecha BETWEEN ? AND ? AND estado = 'Pendiente'
-            ")->execute([$eidPago, $lunes, $sabado]);
+            // Aplicar lo recuperado contra los adelantos pendientes, del mas antiguo al mas
+            // reciente (FIFO): si cubre el adelanto completo se marca 'Liquidado'; si solo
+            // cubre una parte, se reduce su monto y sigue 'Pendiente' para la semana que sigue.
+            if ($adelantoRecuperado > 0.001) {
+                $stmtAdelRows = $pdo->prepare("
+                    SELECT adelanto_id, monto FROM adelantos_sueldo
+                    WHERE empleado_id = ? AND estado = 'Pendiente'
+                    ORDER BY fecha ASC, adelanto_id ASC
+                    FOR UPDATE
+                ");
+                $stmtAdelRows->execute([$eidPago]);
+                $restante = $adelantoRecuperado;
+                foreach ($stmtAdelRows->fetchAll(PDO::FETCH_ASSOC) as $ar) {
+                    if ($restante <= 0.001) break;
+                    $montoRow = floatval($ar['monto']);
+                    if ($restante >= $montoRow - 0.001) {
+                        $pdo->prepare("UPDATE adelantos_sueldo SET estado = 'Liquidado' WHERE adelanto_id = ?")
+                            ->execute([$ar['adelanto_id']]);
+                        $restante = round($restante - $montoRow, 2);
+                    } else {
+                        $nuevoMonto = round($montoRow - $restante, 2);
+                        $pdo->prepare("UPDATE adelantos_sueldo SET monto = ? WHERE adelanto_id = ?")
+                            ->execute([$nuevoMonto, $ar['adelanto_id']]);
+                        $restante = 0.0;
+                    }
+                }
+            }
 
+            $pdo->commit();
             header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=pagado');
         } catch (PDOException $e) {
-            // Clave unica: ya existe un pago de esa semana para ese empleado
-            header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=ya_pagado');
+            $pdo->rollBack();
+            // [FIX-MEDIO-G-26] Antes CUALQUIER PDOException (deadlock, conexion caida, disco
+            // lleno, cualquier error real) redirigia al mismo mensaje "ya_pagado" que el
+            // choque genuino contra el indice unico (empleado_id, semana_inicio). El
+            // administrador veia "ya tiene un pago registrado" y asumia que todo estaba bien
+            // — pero en un error real NO se registro nada (rollback), el empleado no queda
+            // pagado en el sistema aunque en la practica ya se le haya entregado el dinero, y
+            // nadie se entera de que hay que reintentar. Solo el codigo 23000 (violacion de
+            // restriccion unica) es realmente "ya pagado"; cualquier otro error muestra un
+            // aviso real de fallo.
+            if ($e->getCode() === '23000') {
+                header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=ya_pagado');
+            } else {
+                error_log('[Ferreteria/semanaLaboral] Error al pagar nomina empleado_id=' . $eidPago . ': ' . $e->getMessage());
+                header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=error_pago');
+            }
         }
         exit();
     }
@@ -310,6 +395,8 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
             <div class="msg msg-exito">Pago registrado correctamente. El adelanto de la semana (si habia) quedo liquidado.</div>
         <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'ya_pagado'): ?>
             <div class="msg" style="background:#fff9e6;color:#b7860b;border-left:3px solid #f0b429;">Este empleado ya tiene un pago registrado para esta semana.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'error_pago'): ?>
+            <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">No se pudo registrar el pago por un error del sistema. NO quedó guardado — intenta de nuevo antes de dar por pagado a este empleado.</div>
         <?php endif; ?>
 
         <!-- Navegacion de semana -->
@@ -376,6 +463,9 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                 <tr>
                     <td style="font-weight:600;">
                         <?= htmlspecialchars($f['empleado']) ?>
+                        <?php if (empty($f['activo'])): ?>
+                            <span style="font-size:10px;color:#999;font-weight:400;">(inactivo)</span>
+                        <?php endif; ?>
                         <?php if (isset($vacMap[$f['empleado_id']])): ?>
                             <div style="font-size:10px;background:#eef8ff;color:#1a7db5;border:1px solid #cce5f7;border-radius:99px;padding:1px 8px;display:inline-block;margin-top:3px;white-space:nowrap;">
                                 De vacaciones &mdash; <?= $vacMap[$f['empleado_id']] ?> d&iacute;a<?= $vacMap[$f['empleado_id']] != 1 ? 's' : '' ?> esta semana
@@ -407,6 +497,9 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                         <?php endif; ?>
                         <?php if ($f['horas_comp'] > 0): ?>
                             <div style="font-size:10px;color:#1a7db5;margin-top:2px;"><?= number_format($f['horas_comp'], 2) ?> h compensadas</div>
+                        <?php endif; ?>
+                        <?php if ($f['sueldo_no_devengado'] > 0): ?>
+                            <div style="font-size:10px;color:#c0392b;margin-top:2px;">incluye -$<?= number_format($f['sueldo_no_devengado'], 2) ?> por días aún no transcurridos</div>
                         <?php endif; ?>
                     </td>
                     <td>

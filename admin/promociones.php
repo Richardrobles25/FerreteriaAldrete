@@ -1,4 +1,6 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -8,6 +10,9 @@ verificarRol(['Administrador']);
 
 $msg    = '';
 $error  = '';
+if (($_GET['msg'] ?? '') === 'error_token') {
+    $error = 'La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.';
+}
 
 // ── Búsqueda de productos por sucursal (AJAX) ────────────────────────────────
 if (isset($_GET['buscar_prods'])) {
@@ -31,25 +36,50 @@ if (isset($_GET['buscar_prods'])) {
 
 // ── Acciones POST ────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-CRIT-B-03] CSRF ausente antes en las 4 acciones (crear/desactivar/activar/eliminar).
+    requerirCSRF($_POST['_token'] ?? '', 'promociones.php');
     $accion = $_POST['accion'] ?? '';
 
     if ($accion === 'crear') {
         $productoId       = intval($_POST['producto_id'] ?? 0);
+        // [FIX-ALTO-B-09] Antes la sucursal elegida en el formulario solo servia para
+        // filtrar la busqueda de productos; la promocion se guardaba sin sucursal_id
+        // (columna que ni existia) y quedaba activa en TODAS las sucursales sin que el
+        // admin lo supiera, y el listado la mostraba con la sucursal del creador (que
+        // para un Administrador es NULL, ocultandola por completo del listado).
+        $sucursalId       = intval($_POST['sucursal_id'] ?? 0);
         $precioPromo      = floatval($_POST['precio_promocional'] ?? 0);
         $fechaInicio      = trim($_POST['fecha_inicio'] ?? '');
         $fechaFin         = trim($_POST['fecha_fin'] ?? '');
         $descripcion      = trim($_POST['descripcion'] ?? '');
 
+        // [FIX-ALTO-B-10] precio_promocional es DECIMAL(10,2): un valor como 0.001 pasaba
+        // la validacion "> 0" en PHP pero se guardaba redondeado a $0.00 en la BD,
+        // regalando el producto. Se exige al menos 1 centavo.
+        // [FIX-MEDIO-B-18] "!$fechaInicio || !$fechaFin" solo comprobaba que no vinieran
+        // vacías, no que fueran fechas reales — un valor no-fecha (posible con un POST
+        // directo, sin pasar por el <input type="date"> del navegador) se guardaba tal
+        // cual en columnas DATE, y se truncaba a '0000-00-00' en silencio (local) o
+        // tiraba error 500 (producción, sql_mode estricto). Mismo patrón que ya se aplicó
+        // en formEmpleado.php (G-07): exigir formato YYYY-MM-DD real.
+        $fechaInicioValida = preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaInicio, $mFI) && checkdate((int)$mFI[2], (int)$mFI[3], (int)$mFI[1]);
+        $fechaFinValida    = preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaFin, $mFF)    && checkdate((int)$mFF[2], (int)$mFF[3], (int)$mFF[1]);
+
         if (!$productoId)         $error = 'Selecciona un producto.';
-        elseif ($precioPromo <= 0) $error = 'El precio promocional debe ser mayor a 0.';
-        elseif (!$fechaInicio || !$fechaFin) $error = 'Ingresa las fechas de la promoción.';
+        elseif (!$sucursalId)     $error = 'Selecciona la sucursal donde aplicará la promoción.';
+        elseif ($precioPromo < 0.01) $error = 'El precio promocional debe ser de al menos $0.01.';
+        elseif (!$fechaInicioValida || !$fechaFinValida) $error = 'Ingresa fechas válidas para la promoción.';
         elseif ($fechaFin < $fechaInicio)    $error = 'La fecha de fin no puede ser anterior al inicio.';
         else {
             // Verificar que el precio promo es menor al precio normal
             $stmtP = $pdo->prepare("SELECT precio_venta, nombre_producto FROM productos WHERE producto_id = ?");
             $stmtP->execute([$productoId]);
             $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
+            $stmtSuc = $pdo->prepare("SELECT nombre FROM sucursales WHERE sucursal_id = ? AND activo = 1");
+            $stmtSuc->execute([$sucursalId]);
+            $sucNombre = $stmtSuc->fetchColumn();
             if (!$prod) { $error = 'Producto no encontrado.'; }
+            elseif ($sucNombre === false) { $error = 'La sucursal seleccionada no existe o está inactiva.'; }
             elseif ($precioPromo >= $prod['precio_venta']) {
                 $error = 'El precio promocional ($' . number_format($precioPromo,2) . ') debe ser menor al precio normal ($' . number_format($prod['precio_venta'],2) . ').';
             } else {
@@ -60,24 +90,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // en vez de que aquí se avisara del conflicto antes de que existiera.
                 // Traslape de rangos [A_inicio,A_fin] y [B_inicio,B_fin]:
                 // se traslapan si A_inicio <= B_fin Y A_fin >= B_inicio.
+                // [FIX-ALTO-B-09] El traslape ahora se limita a promociones que realmente
+                // aplicarian en la MISMA sucursal: la nueva sucursal exacta, o una promo
+                // previa sin sucursal_id (promos antiguas antes de este fix, que siguen
+                // aplicando a todas las sucursales para no romper lo ya creado).
                 $stmtSolape = $pdo->prepare("
                     SELECT promocion_id, precio_promocional, fecha_inicio, fecha_fin
                     FROM promociones
                     WHERE producto_id = ? AND activo = 1
+                      AND (sucursal_id = ? OR sucursal_id IS NULL)
                       AND fecha_inicio <= ? AND fecha_fin >= ?
                     LIMIT 1
                 ");
-                $stmtSolape->execute([$productoId, $fechaFin, $fechaInicio]);
+                $stmtSolape->execute([$productoId, $sucursalId, $fechaFin, $fechaInicio]);
                 $solape = $stmtSolape->fetch(PDO::FETCH_ASSOC);
                 if ($solape) {
-                    $error = 'Ya existe una promoción activa para "' . htmlspecialchars($prod['nombre_producto']) . '" del '
+                    $error = 'Ya existe una promoción activa para "' . htmlspecialchars($prod['nombre_producto']) . '" en esa sucursal, del '
                         . date('d/m/Y', strtotime($solape['fecha_inicio'])) . ' al ' . date('d/m/Y', strtotime($solape['fecha_fin']))
                         . ' (precio $' . number_format($solape['precio_promocional'], 2) . '). '
                         . 'Desactívala primero o ajusta las fechas para que no se traslapen.';
                 } else {
-                    $pdo->prepare("INSERT INTO promociones (producto_id, precio_promocional, fecha_inicio, fecha_fin, descripcion, usuario_id) VALUES (?,?,?,?,?,?)")
-                        ->execute([$productoId, $precioPromo, $fechaInicio, $fechaFin, $descripcion ?: null, $_SESSION['usuario_id']]);
-                    $msg = 'Promoción creada para "' . htmlspecialchars($prod['nombre_producto']) . '".';
+                    $pdo->prepare("INSERT INTO promociones (producto_id, sucursal_id, precio_promocional, fecha_inicio, fecha_fin, descripcion, usuario_id) VALUES (?,?,?,?,?,?,?)")
+                        ->execute([$productoId, $sucursalId, $precioPromo, $fechaInicio, $fechaFin, $descripcion ?: null, $_SESSION['usuario_id']]);
+                    $msg = 'Promoción creada para "' . htmlspecialchars($prod['nombre_producto']) . '" en ' . htmlspecialchars($sucNombre) . '.';
                 }
             }
         }
@@ -92,19 +127,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // [FIX] Reactivar una promoción también puede reintroducir un traslape: si se creó
         // otra promoción del mismo producto mientras esta estaba desactivada, al reactivarla
         // podrían quedar dos vigentes al mismo tiempo. Se aplica la misma validación que al crear.
-        $stmtProm = $pdo->prepare("SELECT producto_id, fecha_inicio, fecha_fin FROM promociones WHERE promocion_id = ?");
+        $stmtProm = $pdo->prepare("SELECT producto_id, sucursal_id, fecha_inicio, fecha_fin FROM promociones WHERE promocion_id = ?");
         $stmtProm->execute([$id]);
         $promAct = $stmtProm->fetch(PDO::FETCH_ASSOC);
         if (!$promAct) {
             $error = 'Promoción no encontrada.';
         } else {
+            // [FIX-ALTO-B-09] Traslape acotado a la misma sucursal (o promos legacy sin
+            // sucursal_id), igual que al crear.
             $stmtSolapeAct = $pdo->prepare("
                 SELECT promocion_id FROM promociones
                 WHERE producto_id = ? AND activo = 1 AND promocion_id != ?
+                  AND (sucursal_id <=> ? OR sucursal_id IS NULL)
                   AND fecha_inicio <= ? AND fecha_fin >= ?
                 LIMIT 1
             ");
-            $stmtSolapeAct->execute([$promAct['producto_id'], $id, $promAct['fecha_fin'], $promAct['fecha_inicio']]);
+            $stmtSolapeAct->execute([$promAct['producto_id'], $id, $promAct['sucursal_id'], $promAct['fecha_fin'], $promAct['fecha_inicio']]);
             if ($stmtSolapeAct->fetch()) {
                 $error = 'No se puede reactivar: se traslapa en fechas con otra promoción activa del mismo producto. Desactívala primero.';
             } else {
@@ -126,7 +164,11 @@ $filtroEstado   = $_GET['estado_f'] ?? 'todas';
 
 $where  = '1=1';
 $params = [];
-if ($filtroSucursal) { $where .= ' AND u.sucursal_id = ?'; $params[] = $filtroSucursal; }
+// [FIX-ALTO-B-09] Filtrar por la sucursal real de la promo (pr.sucursal_id), no por la
+// sucursal del usuario que la creo (u.sucursal_id) — para un Administrador esa columna
+// es NULL y ocultaba sus promos del listado por completo. Las promos legacy sin
+// sucursal_id (creadas antes de este fix) siguen contando como validas en cualquier filtro.
+if ($filtroSucursal) { $where .= ' AND (pr.sucursal_id = ? OR pr.sucursal_id IS NULL)'; $params[] = $filtroSucursal; }
 if ($filtroEstado === 'activas') {
     $where .= " AND pr.activo = 1 AND CURDATE() BETWEEN pr.fecha_inicio AND pr.fecha_fin";
 } elseif ($filtroEstado === 'proximas') {
@@ -142,9 +184,9 @@ $stmtList = $pdo->prepare("
            s.nombre AS sucursal_nombre,
            u.nombre_completo AS creador
     FROM promociones pr
-    JOIN productos p   ON pr.producto_id = p.producto_id
-    JOIN usuarios u    ON pr.usuario_id   = u.usuario_id
-    JOIN sucursales s  ON u.sucursal_id   = s.sucursal_id
+    JOIN productos p        ON pr.producto_id = p.producto_id
+    JOIN usuarios u         ON pr.usuario_id   = u.usuario_id
+    LEFT JOIN sucursales s  ON pr.sucursal_id  = s.sucursal_id
     WHERE $where
     ORDER BY pr.created_at DESC
     LIMIT 200
@@ -334,7 +376,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                                 <div style="font-size:11px;color:#888;margin-top:2px;"><?= htmlspecialchars($pr['descripcion']) ?></div>
                                 <?php endif; ?>
                             </td>
-                            <td style="font-size:12px;"><?= htmlspecialchars($pr['sucursal_nombre']) ?></td>
+                            <td style="font-size:12px;"><?= $pr['sucursal_nombre'] !== null ? htmlspecialchars($pr['sucursal_nombre']) : '<em style="color:#aaa;">Todas (legacy)</em>' ?></td>
                             <td class="precio-orig">$<?= number_format($pr['precio_venta'], 2) ?></td>
                             <td style="font-weight:700;color:#2e7d32;">$<?= number_format($pr['precio_promocional'], 2) ?></td>
                             <td><span class="ahorro-badge">-<?= $ahorroPct ?>%</span></td>
@@ -349,18 +391,21 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                                 <div class="acciones">
                                     <?php if ($pr['activo']): ?>
                                     <form method="POST" action="promociones.php" style="display:inline;">
+                                        <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                                         <input type="hidden" name="accion" value="desactivar">
                                         <input type="hidden" name="promocion_id" value="<?= $pr['promocion_id'] ?>">
                                         <button class="btn-sm btn-desact" type="submit">Pausar</button>
                                     </form>
                                     <?php else: ?>
                                     <form method="POST" action="promociones.php" style="display:inline;">
+                                        <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                                         <input type="hidden" name="accion" value="activar">
                                         <input type="hidden" name="promocion_id" value="<?= $pr['promocion_id'] ?>">
                                         <button class="btn-sm btn-act" type="submit">Activar</button>
                                     </form>
                                     <?php endif; ?>
                                     <form method="POST" action="promociones.php" style="display:inline;" onsubmit="return confirm('Eliminar esta promocion definitivamente?')">
+                                        <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                                         <input type="hidden" name="accion" value="eliminar">
                                         <input type="hidden" name="promocion_id" value="<?= $pr['promocion_id'] ?>">
                                         <button class="btn-sm btn-del" type="submit">Eliminar</button>
@@ -385,12 +430,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <!-- [AUTOFIX] BUG-09: validacion movida a onsubmit del form para que funcione
                      tanto con click como con Enter, y action explicito para evitar GET params -->
                 <form method="POST" action="promociones.php" id="formPromo" onsubmit="return validarForm()">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="accion" value="crear">
                     <input type="hidden" id="inputProductoId" name="producto_id">
 
                     <div class="form-group">
                         <label>Sucursal *</label>
-                        <select id="selSucursal" onchange="onSucursalChange(this.value)">
+                        <select id="selSucursal" name="sucursal_id" onchange="onSucursalChange(this.value)">
                             <option value="">-- Selecciona sucursal --</option>
                             <?php foreach ($sucursales as $s): ?>
                             <option value="<?= $s['sucursal_id'] ?>"><?= htmlspecialchars($s['nombre']) ?></option>
@@ -524,6 +570,9 @@ function actualizarPreview() {
 }
 
 function validarForm() {
+    if (!document.getElementById('selSucursal').value) {
+        alert('Selecciona la sucursal.'); return false;
+    }
     if (!document.getElementById('inputProductoId').value) {
         alert('Selecciona un producto.'); return false;
     }

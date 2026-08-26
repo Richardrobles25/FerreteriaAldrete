@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // [FIX] sucursal=0 ("Todas las sucursales") es el valor por DEFECTO al iniciar sesion como
@@ -29,9 +31,15 @@ $stmtBajo->execute($paramsSuc);
 $stockBajo = $stmtBajo->fetchAll(PDO::FETCH_ASSOC);
 
 // Estadísticas generales
+// [FIX-MEDIO-C-12] En vista agregada ("Todas las sucursales") el JOIN con stock_sucursal
+// no filtra por sucursal, asi que cada producto aparece una vez POR CADA sucursal donde
+// tiene stock — COUNT(*) contaba esos pares producto×sucursal como si fueran productos
+// distintos (80 en vez de las 50 reales, por ejemplo). Los demas contadores (stock bajo,
+// sin stock, valor de inventario) SI tienen sentido sumados por sucursal — solo el conteo
+// de productos necesita ser de productos UNICOS.
 $stmtStats = $pdo->prepare("
     SELECT
-        COUNT(*) AS total_productos,
+        COUNT(DISTINCT p.producto_id) AS total_productos,
         SUM(CASE WHEN ss.stock_actual <= ss.stock_minimo THEN 1 ELSE 0 END) AS con_stock_bajo,
         SUM(CASE WHEN ss.stock_actual = 0 THEN 1 ELSE 0 END) AS sin_stock,
         COALESCE(SUM(ss.stock_actual * p.precio_compra), 0) AS valor_inventario
@@ -284,7 +292,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
             <div class="stat">
                 <p>Total productos</p>
                 <h3><?= $stats['total_productos'] ?></h3>
-                <small>En esta sucursal</small>
+                <small><?= $sucursalVista === 0 ? 'En todas las sucursales' : 'En esta sucursal' ?></small>
             </div>
             <div class="stat">
                 <p>Stock bajo</p>

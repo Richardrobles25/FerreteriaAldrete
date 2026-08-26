@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $productoPreseleccionado = null;
@@ -70,36 +72,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// [FIX-MEDIO-C-06] Antes, en "Todas las sucursales" (sucursalVista === 0), el historial
+// filtraba "m.sucursal_id = 0 OR m.sucursal_id IS NULL" — sucursal_id=0 nunca existe, asi
+// que solo aparecian movimientos legacy sin sucursal (casi ninguno), y la lista de
+// productos (INNER JOIN sucursal_id = 0) salia vacia por completo, dejando el formulario
+// sin nada que seleccionar. Ahora, en vista global, se quita el filtro de sucursal para
+// mostrar todo; en una sucursal especifica el comportamiento no cambia.
 // Historial de entradas recientes
-$stmtH = $pdo->prepare("
-    SELECT m.cantidad, m.stock_anterior, m.stock_nuevo, m.motivo, m.created_at,
-           p.nombre_producto, p.codigo,
-           pr.nombre AS nombre_proveedor
-    FROM movimientos_inventario m
-    JOIN productos p ON m.producto_id = p.producto_id
-    LEFT JOIN proveedores pr ON m.proveedor_id = pr.proveedor_id
-    WHERE m.tipo = 'Entrada' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
-    ORDER BY m.created_at DESC
-    LIMIT 25
-");
-$stmtH->execute([$sucursalVista]);
+if ($sucursalVista === 0) {
+    $stmtH = $pdo->prepare("
+        SELECT m.cantidad, m.stock_anterior, m.stock_nuevo, m.motivo, m.created_at,
+               p.nombre_producto, p.codigo,
+               pr.nombre AS nombre_proveedor
+        FROM movimientos_inventario m
+        JOIN productos p ON m.producto_id = p.producto_id
+        LEFT JOIN proveedores pr ON m.proveedor_id = pr.proveedor_id
+        WHERE m.tipo = 'Entrada'
+        ORDER BY m.created_at DESC
+        LIMIT 25
+    ");
+    $stmtH->execute();
+} else {
+    $stmtH = $pdo->prepare("
+        SELECT m.cantidad, m.stock_anterior, m.stock_nuevo, m.motivo, m.created_at,
+               p.nombre_producto, p.codigo,
+               pr.nombre AS nombre_proveedor
+        FROM movimientos_inventario m
+        JOIN productos p ON m.producto_id = p.producto_id
+        LEFT JOIN proveedores pr ON m.proveedor_id = pr.proveedor_id
+        WHERE m.tipo = 'Entrada' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
+        ORDER BY m.created_at DESC
+        LIMIT 25
+    ");
+    $stmtH->execute([$sucursalVista]);
+}
 $historial = $stmtH->fetchAll(PDO::FETCH_ASSOC);
 
-// Productos con su proveedor default
-$stmtProds = $pdo->prepare("
-    SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
-           MIN(pp.proveedor_id) AS proveedor_default_id,
-           MIN(prov.nombre)     AS proveedor_default_nombre
-    FROM productos p
-    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
-    LEFT JOIN producto_proveedor pp ON p.producto_id = pp.producto_id
-    LEFT JOIN proveedores prov      ON pp.proveedor_id = prov.proveedor_id
-    WHERE p.activo = 1
-    GROUP BY p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
-    ORDER BY p.nombre_producto ASC
-");
-$stmtProds->execute([$sucursalVista]);
-$productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
+// Productos con su proveedor default — el formulario de arriba ya bloquea el submit en
+// vista global (linea "Selecciona una sucursal especifica..."), asi que la lista de
+// productos solo tiene sentido cuando hay una sucursal especifica elegida.
+$productos = [];
+if ($sucursalVista !== 0) {
+    $stmtProds = $pdo->prepare("
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
+               MIN(pp.proveedor_id) AS proveedor_default_id,
+               MIN(prov.nombre)     AS proveedor_default_nombre
+        FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+        LEFT JOIN producto_proveedor pp ON p.producto_id = pp.producto_id
+        LEFT JOIN proveedores prov      ON pp.proveedor_id = prov.proveedor_id
+        WHERE p.activo = 1
+        GROUP BY p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
+        ORDER BY p.nombre_producto ASC
+    ");
+    $stmtProds->execute([$sucursalVista]);
+    $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
+}
 
 // Todos los proveedores activos
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo = 1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
@@ -222,6 +250,9 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>
+                <?php if ($sucursalVista === 0): ?>
+                    <div class="msg" style="background:#fff8e1;color:#e65100;">Selecciona una sucursal específica arriba para registrar una entrada.</div>
+                <?php endif; ?>
 
                 <form method="POST">
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
@@ -268,9 +299,13 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
 
                     <div class="form-group">
                         <label>Cantidad a ingresar *</label>
+                        <!-- [FIX-MEDIO-C-09] Faltaba htmlspecialchars: un valor de cantidad
+                             manipulado por POST directo (sin pasar por el input type=number
+                             del navegador) se reflejaba crudo en el atributo value, permitiendo
+                             cerrar el atributo e inyectar HTML/JS. -->
                         <input type="number" name="cantidad" id="inputCantidad"
                             placeholder="0" step="1" min="1"
-                            value="<?= $_POST['cantidad'] ?? '' ?>">
+                            value="<?= htmlspecialchars($_POST['cantidad'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
                     </div>
 
                     <div class="form-group">

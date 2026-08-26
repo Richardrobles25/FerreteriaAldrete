@@ -1,12 +1,14 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 // Eliminar vacacion
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
@@ -74,7 +76,16 @@ $colorEstado = [
     'Rechazado'  => ['bg'=>'#fff0f0','color'=>'#c0392b','border'=>'#e74c3c'],
 ];
 
-$aniosList = range(date('Y'), date('Y') - 3);
+// [FIX-MEDIO-G-22] El filtro de año era un rango fijo (año actual y los 3 anteriores). Un
+// registro con "anio" fuera de ese rango (datos historicos mas viejos, o una fila corrupta de
+// antes del fix G-04 con un año atipico) quedaba inaccesible desde la interfaz: no aparecia en
+// la vista por defecto (año actual) y tampoco se podia seleccionar en el dropdown para
+// encontrarlo. Se listan los años que realmente existen en la tabla (mas el año actual, para
+// que siempre pueda registrarse uno nuevo aunque aun no haya datos), y se agrega "Todos" para
+// nunca depender de adivinar el año correcto.
+$aniosReales = array_map('intval', $pdo->query("SELECT DISTINCT anio FROM vacaciones ORDER BY anio DESC")->fetchAll(PDO::FETCH_COLUMN));
+$aniosList   = array_unique(array_merge([intval(date('Y'))], $aniosReales));
+rsort($aniosList);
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -238,6 +249,7 @@ $aniosList = range(date('Y'), date('Y') - 3);
                 <div class="filtro-group">
                     <label>Año</label>
                     <select name="anio" onchange="document.getElementById('formFiltros').submit()">
+                        <option value="0" <?= $anioFiltro === 0 ? 'selected' : '' ?>>Todos</option>
                         <?php foreach ($aniosList as $a): ?>
                             <option value="<?= $a ?>" <?= $anioFiltro == $a ? 'selected' : '' ?>><?= $a ?></option>
                         <?php endforeach; ?>

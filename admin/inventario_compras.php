@@ -1,11 +1,13 @@
 ﻿<?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Ver detalle de compra
@@ -73,6 +75,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             }
             if ($precChk < 0) {
                 $errores[] = 'El precio unitario de "' . ($item['nombre'] ?? 'un producto') . '" no puede ser negativo.';
+                break;
+            }
+            // [FIX-ALTO-C-04] Antes se aceptaba cualquier decimal para cualquier producto,
+            // igual que en Salidas: un producto por Unidad podía "entrar" 3.7 piezas.
+            $stmtTipoChk = $pdo->prepare("SELECT tipo_venta FROM productos WHERE producto_id = ?");
+            $stmtTipoChk->execute([$prodIdChk]);
+            $tipoVentaChk = $stmtTipoChk->fetchColumn();
+            if ($tipoVentaChk !== false && $tipoVentaChk !== 'Suelto' && floor($cantChk) != $cantChk) {
+                $errores[] = '"' . ($item['nombre'] ?? 'Un producto') . '" se maneja por unidad; la cantidad debe ser un número entero.';
+                break;
+            }
+            // [FIX-ALTO-C-05] Antes, si "actualizar_precio" venía marcado con un precio de
+            // compra de $0 (captura vacía o error de dedo), el margen se aplicaba sobre $0 y
+            // el precio de venta quedaba en $0 sin ningún aviso — el producto se regalaba en
+            // el POS hasta que alguien lo notara.
+            if (!empty($item['actualizar_precio']) && $precChk <= 0) {
+                $errores[] = 'No puedes actualizar el precio de venta de "' . ($item['nombre'] ?? 'un producto') . '" con un precio de compra de $0.';
                 break;
             }
         }

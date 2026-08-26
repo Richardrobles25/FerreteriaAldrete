@@ -1,4 +1,6 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
@@ -26,53 +28,127 @@ if (isset($_GET['accion']) && isset($_GET['id'])) {
         $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?")
             ->execute([$_SESSION['usuario_id'], $id, $miSucursal]);
     } elseif ($accion === 'enviar') {
-        // Origen marca como enviado (sin mover stock aún)
-        $pdo->prepare("UPDATE transferencias SET estado='En tránsito' WHERE transferencias_id=? AND estado='Aprobada' AND sucursal_origen_id=?")
-            ->execute([$id, $miSucursal]);
+        // [FIX-CRIT-C-01] Antes esta acción solo cambiaba el estado sin tocar el stock,
+        // mientras que admin/inventario_transferencias.php SÍ descuenta el stock del
+        // origen al enviar. Si el envío se hacía aquí y la recepción se confirmaba desde
+        // admin/ (o viceversa), el stock del origen se descontaba dos veces — ya
+        // confirmado con evidencia real en la base de datos de producción. Ahora este
+        // módulo usa exactamente el mismo protocolo que admin/: el stock se descuenta
+        // AL ENVIAR, con el mismo formato de marcador ('Transferencia enviada #<id>')
+        // para que cualquiera de los dos módulos reconozca que ya se descontó.
+        $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? AND estado = 'Aprobada' AND sucursal_origen_id = ?");
+        $stmt->execute([$id, $miSucursal]);
+        $transf = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($transf) {
+            $pdo->beginTransaction();
+            try {
+                $stmtLockEnv = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+                $stmtLockEnv->execute([$id]);
+                $transf = $stmtLockEnv->fetch(PDO::FETCH_ASSOC);
+                if (!$transf || $transf['estado'] !== 'Aprobada' || $transf['sucursal_origen_id'] != $miSucursal) {
+                    $pdo->rollBack();
+                    header('Location: transferencias.php?msg=enviar'); exit();
+                }
+
+                $stmtOr = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtOr->execute([$transf['producto_id'], $miSucursal]);
+                $stockOr = $stmtOr->fetchColumn();
+
+                if ($stockOr === false || floatval($stockOr) < floatval($transf['cantidad'])) {
+                    $pdo->rollBack();
+                    header('Location: transferencias.php?msg=error_stock_envio'); exit();
+                }
+
+                $stockAntOrigen   = floatval($stockOr);
+                $stockNuevoOrigen = $stockAntOrigen - floatval($transf['cantidad']);
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                    ->execute([$stockNuevoOrigen, $transf['producto_id'], $miSucursal]);
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
+                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $miSucursal, $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen, 'Transferencia enviada #' . $id]);
+
+                $pdo->prepare("UPDATE transferencias SET estado='En tránsito' WHERE transferencias_id=? AND estado='Aprobada' AND sucursal_origen_id=?")
+                    ->execute([$id, $miSucursal]);
+
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                error_log('[Ferreteria/inventario/transferencias] Error al enviar #' . $id . ': ' . $e->getMessage());
+                header('Location: transferencias.php?msg=error_envio'); exit();
+            }
+        }
     } elseif ($accion === 'recibir') {
-        // Destino confirma recepción → aquí se mueve el stock
+        // Destino confirma recepción → aquí se aplica el stock de destino, y el de
+        // origen SOLO si todavía no se había descontado al enviar (compatibilidad con
+        // transferencias que quedaron "En tránsito" antes de este cambio).
         $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ?");
         $stmt->execute([$id]);
         $transf = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($transf && $transf['estado'] === 'En tránsito' && $transf['sucursal_destino_id'] == $miSucursal) {
-            $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
-            $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
-            $prodOrigen = $stmtOrigen->fetch(PDO::FETCH_ASSOC);
-
-            if ($prodOrigen && $prodOrigen['stock_actual'] >= $transf['cantidad']) {
-                $stockAntOrigen   = $prodOrigen['stock_actual'];
-                $stockNuevoOrigen = $stockAntOrigen - $transf['cantidad'];
-                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-                    ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
-                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
-
-                // Buscar producto destino por codigo (los producto_id difieren entre sucursales)
-                $stmtDest = $pdo->prepare("
-                    SELECT p2.producto_id, ss2.stock_actual
-                    FROM productos p1
-                    JOIN productos p2 ON p1.codigo = p2.codigo
-                        AND p2.activo = 1
-                    JOIN stock_sucursal ss2 ON ss2.producto_id = p2.producto_id AND ss2.sucursal_id = ?
-                    WHERE p1.producto_id = ?
-                    LIMIT 1
-                ");
-                $stmtDest->execute([$transf['sucursal_destino_id'], $transf['producto_id']]);
-                $prodDest = $stmtDest->fetch(PDO::FETCH_ASSOC);
-
-                if ($prodDest) {
-                    $destProdId     = $prodDest['producto_id'];
-                    $stockAntDest   = $prodDest['stock_actual'];
-                    $stockNuevoDest = $stockAntDest + $transf['cantidad'];
-                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-                        ->execute([$stockNuevoDest, $destProdId, $transf['sucursal_destino_id']]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia recibida')")
-                        ->execute([$destProdId, $_SESSION['usuario_id'], $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest]);
+            $pdo->beginTransaction();
+            try {
+                $stmtLock = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+                $stmtLock->execute([$id]);
+                $transf = $stmtLock->fetch(PDO::FETCH_ASSOC);
+                if (!$transf || $transf['estado'] !== 'En tránsito' || $transf['sucursal_destino_id'] != $miSucursal) {
+                    $pdo->rollBack();
+                    header('Location: transferencias.php?msg=recibir'); exit();
                 }
+
+                // [FIX-CRIT-C-01] Comprobar el MISMO marcador que usa admin/ antes de
+                // descontar el origen — así, sin importar en qué módulo se envió, el
+                // destino nunca vuelve a descontar el stock del origen.
+                $stmtMarca = $pdo->prepare("
+                    SELECT COUNT(*) FROM movimientos_inventario
+                    WHERE tipo = 'Transferencia' AND motivo = ? AND sucursal_id = ?
+                ");
+                $stmtMarca->execute(['Transferencia enviada #' . $id, $transf['sucursal_origen_id']]);
+                $origenYaDescontado = intval($stmtMarca->fetchColumn()) > 0;
+
+                if (!$origenYaDescontado) {
+                    $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                    $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
+                    $stockOrLegacy = $stmtOrigen->fetchColumn();
+
+                    if ($stockOrLegacy === false || floatval($stockOrLegacy) < floatval($transf['cantidad'])) {
+                        $pdo->rollBack();
+                        header('Location: transferencias.php?msg=error_stock_recibir'); exit();
+                    }
+                    $stockAntOrigen   = floatval($stockOrLegacy);
+                    $stockNuevoOrigen = $stockAntOrigen - floatval($transf['cantidad']);
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                        ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
+                        ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
+                }
+
+                $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
+                $stockDest = $stmtDest->fetchColumn();
+
+                if ($stockDest !== false) {
+                    $stockAntDest   = floatval($stockDest);
+                    $stockNuevoDest = $stockAntDest + floatval($transf['cantidad']);
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                        ->execute([$stockNuevoDest, $transf['producto_id'], $transf['sucursal_destino_id']]);
+                } else {
+                    $stockNuevoDest = floatval($transf['cantidad']);
+                    $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
+                        ->execute([$transf['producto_id'], $transf['sucursal_destino_id'], $stockNuevoDest]);
+                    $stockAntDest = 0;
+                }
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
+                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest, 'Transferencia recibida #' . $id]);
 
                 $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
                     ->execute([$_SESSION['usuario_id'], $id]);
+
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                $pdo->rollBack();
+                error_log('[Ferreteria/inventario/transferencias] Error al recibir #' . $id . ': ' . $e->getMessage());
+                header('Location: transferencias.php?msg=error_recibir'); exit();
             }
         }
     }
@@ -299,14 +375,23 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
         <!-- Lista de transferencias -->
         <div>
             <?php if (isset($_GET['msg'])): ?>
-                <?php $msgs = [
-                    'solicitado' => 'Solicitud enviada. La sucursal origen debe aprobarla.',
-                    'aprobar'    => 'Transferencia aprobada. Se agrego una nota para la sucursal que recibira el pedido.',
-                    'rechazar'   => 'Transferencia rechazada.',
-                    'enviar'     => 'Productos marcados como enviados. La sucursal destino debe confirmar la recepcion.',
-                    'recibir'    => 'Recepcion confirmada. El stock fue actualizado en ambas sucursales.',
-                ]; ?>
-                <div class="msg msg-exito"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
+                <?php
+                    $msgErrores = ['error_stock_envio', 'error_envio', 'error_stock_recibir', 'error_recibir'];
+                    $msgs = [
+                        'solicitado'          => 'Solicitud enviada. La sucursal origen debe aprobarla.',
+                        'aprobar'             => 'Transferencia aprobada. Se agrego una nota para la sucursal que recibira el pedido.',
+                        'rechazar'            => 'Transferencia rechazada.',
+                        // [FIX-CRIT-C-01] El stock ya se descuenta del origen al enviar, no al recibir.
+                        'enviar'              => 'Productos enviados. El stock ya se descontó de tu sucursal; la sucursal destino debe confirmar la recepción.',
+                        'recibir'             => 'Recepción confirmada. El stock fue sumado a tu sucursal.',
+                        'error_stock_envio'   => 'No se puede enviar: ya no hay stock suficiente en tu sucursal para esta transferencia.',
+                        'error_envio'         => 'Error al registrar el envío. Intenta de nuevo.',
+                        'error_stock_recibir' => 'No se puede confirmar: la sucursal origen ya no tiene stock suficiente registrado.',
+                        'error_recibir'       => 'Error al confirmar la recepción. Intenta de nuevo.',
+                    ];
+                    $esMsgError = in_array($_GET['msg'], $msgErrores, true);
+                ?>
+                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
             <?php endif; ?>
 
             <div class="card" style="padding:0;">

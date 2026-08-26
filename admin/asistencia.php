@@ -1,17 +1,41 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
+require_once '../includes/topbar_info.php';
 
 // Eliminar registro
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     requerirCSRF($_POST['_token'] ?? '', 'asistencia.php');
-    $pdo->prepare("DELETE FROM asistencia WHERE asistencia_id = ?")->execute([intval($_POST['eliminar_id'])]);
+    $idElim = intval($_POST['eliminar_id']);
     $sep = strpos($_SERVER['REQUEST_URI'], '?') !== false ? '&' : '?';
+
+    // [FIX-ALTO-G-10] Antes se podia borrar cualquier registro de asistencia sin importar
+    // si la semana a la que pertenece ya tiene un pago de nomina registrado en
+    // pagos_nomina — el pago ya calculado quedaba divergente (y sin ningun rastro) de lo
+    // que la bitacora de asistencia muestra ahora. Se bloquea si la semana (lunes a
+    // sabado) de la fecha de este registro ya tiene pago para ese empleado.
+    $stmtRow = $pdo->prepare("SELECT empleado_id, fecha FROM asistencia WHERE asistencia_id = ?");
+    $stmtRow->execute([$idElim]);
+    $rowElim = $stmtRow->fetch(PDO::FETCH_ASSOC);
+    if ($rowElim) {
+        $dtElim = new DateTime($rowElim['fecha']);
+        $dtElim->modify('-' . ((int)$dtElim->format('N') - 1) . ' days');
+        $semanaElim = $dtElim->format('Y-m-d');
+        $stmtPagadoElim = $pdo->prepare("SELECT COUNT(*) FROM pagos_nomina WHERE empleado_id = ? AND semana_inicio = ?");
+        $stmtPagadoElim->execute([$rowElim['empleado_id'], $semanaElim]);
+        if ($stmtPagadoElim->fetchColumn() > 0) {
+            header('Location: ' . $_SERVER['REQUEST_URI'] . $sep . 'msg=error_semana_pagada');
+            exit();
+        }
+    }
+
+    $pdo->prepare("DELETE FROM asistencia WHERE asistencia_id = ?")->execute([$idElim]);
     header('Location: ' . $_SERVER['REQUEST_URI'] . $sep . 'msg=eliminado');
     exit();
 }
@@ -168,6 +192,8 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
             <div class="msg msg-exito">Registro eliminado correctamente.</div>
         <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'registrado'): ?>
             <div class="msg msg-exito">Registro guardado correctamente.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'error_semana_pagada'): ?>
+            <div class="msg" style="background:#fff0f0;color:#c0392b;">No se puede eliminar: la semana de este registro ya tiene un pago de nómina registrado.</div>
         <?php endif; ?>
 
         <form method="GET">

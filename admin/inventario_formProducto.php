@@ -1,11 +1,17 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
-verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+// [FIX-CRIT-B-04] El diseño del negocio es explícito: Inventario/Cajero puede agregar
+// productos ya existentes del catálogo global a su sucursal, pero NO puede crear ni
+// editar el catálogo global (eso incluye este formulario). Antes este archivo también
+// aceptaba ese rol, permitiéndole crear productos y cambiar precios de compra/venta.
+verificarRol(['Administrador', 'Inventario']);
+require_once '../includes/topbar_info.php';
 
 $editando  = null;
 $errores   = [];
@@ -15,8 +21,27 @@ $esAdmin = $_SESSION['rol'] === 'Administrador';
 
 // ?todas=1  → crear producto en TODAS las sucursales (solo admin)
 $todasSucursales = !$esEdicion && $esAdmin && isset($_GET['todas']);
-// Sucursal de contexto para stock en edición / unidades de medida
-$sucursalEdit = intval($_GET['sucursal'] ?? 0) ?: intval($_SESSION['sucursal_id']);
+// Sucursal de contexto para stock en edición / unidades de medida.
+// [FIX-CRIT-B-04/H-03] Antes se tomaba ?sucursal= directo del GET sin comprobar rol ni
+// existencia — un usuario de Inventario (o antes también Inventario/Cajero) de la
+// sucursal 1 podía escribir/editar stock de la sucursal 2 (o de un sucursal_id
+// inexistente) con solo cambiar el parámetro de la URL. Ahora: para no-Administrador
+// SIEMPRE es su propia sucursal (se ignora el GET, igual que hace
+// _admin_sucursal_filtro.php para el resto del sistema); para Administrador se valida
+// contra la lista real de sucursales activas antes de aceptarla.
+if ($esAdmin) {
+    $sucursalGetVal = intval($_GET['sucursal'] ?? 0);
+    $sucursalEdit = intval($_SESSION['sucursal_id']);
+    if ($sucursalGetVal > 0) {
+        $stmtValSucEdit = $pdo->prepare("SELECT 1 FROM sucursales WHERE sucursal_id = ? AND activo = 1");
+        $stmtValSucEdit->execute([$sucursalGetVal]);
+        if ($stmtValSucEdit->fetchColumn()) {
+            $sucursalEdit = $sucursalGetVal;
+        }
+    }
+} else {
+    $sucursalEdit = intval($_SESSION['sucursal_id']);
+}
 $stockEdicion = ['stock_actual' => 0, 'stock_minimo' => 0, 'stock_maximo' => 0];
 
 function esValorEnteroValido($valor): bool {
@@ -57,6 +82,9 @@ if ($esEdicion) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-CRIT-B-03] CSRF ausente antes — documentado desde la primera auditoría de
+    // cajeroInventario/ (SEC-24 allá) pero nunca corregido en esta copia de admin/.
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_formProducto.php');
     $codigo           = strtoupper(trim($_POST['codigo'] ?? ''));
     $nombre_producto  = trim($_POST['nombre_producto'] ?? '');
     $descripcion      = trim($_POST['descripcion'] ?? '');
@@ -94,7 +122,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en el catálogo.';
     }
 
+    // [FIX-MEDIO-H-07] Guardar un producto es una secuencia de varias escrituras (catalogo,
+    // stock_sucursal, movimiento de inventario inicial, y borrar+re-insertar sus proveedores)
+    // que antes corria sin transaccion: una falla a mitad de la secuencia podia dejar, por
+    // ejemplo, un producto nuevo en el catalogo SIN fila de stock_sucursal (invisible/
+    // invendible en la sucursal aunque "exista"), o sus proveedores borrados sin el
+    // re-insertado que los reemplaza.
     if (empty($errores)) {
+        $pdo->beginTransaction();
+        try {
         // Auto-insertar unidad en sucursal(es) afectadas
         if ($unidad_medida !== '' && !$todasSucursales) {
             $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")->execute([$unidad_medida, $sucursalEdit]);
@@ -129,8 +165,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("INSERT INTO stock_sucursal (producto_id,sucursal_id,stock_actual,stock_minimo,stock_maximo,activo) VALUES (?,?,?,?,?,1)")
                     ->execute([$producto_id,$sucursalEdit,$cantidad_inicial,$stock_minimo,$stock_maximo]);
                 if ($cantidad_inicial > 0) {
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,'Entrada',?,0,?,'Inventario inicial')")
-                        ->execute([$producto_id,$_SESSION['usuario_id'],$cantidad_inicial,$cantidad_inicial]);
+                    // [FIX-MEDIO-B-16] Antes se guardaba sin sucursal_id: el inventario inicial
+                    // quedaba invisible en cualquier historial de movimientos filtrado por sucursal.
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,?,'Entrada',?,0,?,'Inventario inicial')")
+                        ->execute([$producto_id,$_SESSION['usuario_id'],$sucursalEdit,$cantidad_inicial,$cantidad_inicial]);
                 }
             }
         }
@@ -144,8 +182,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([$producto_id, intval($prov_id), $cod]);
         }
 
+        $pdo->commit();
         header('Location: inventario_productos.php?msg='.($esEdicion?'editado':'creado'));
         exit();
+        } catch (\PDOException $e) {
+            $pdo->rollBack();
+            $errores[] = 'No se pudo guardar el producto. Intenta de nuevo.';
+        }
     }
 }
 
@@ -304,6 +347,9 @@ if ($editando && $editando['categoria_id']) {
             </div>
             <?php endif; ?>
 
+            <?php if (($_GET['msg'] ?? '') === 'error_token'): ?>
+                <div class="errores"><ul><li>La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.</li></ul></div>
+            <?php endif; ?>
             <?php if (!empty($errores)): ?>
                 <div class="errores">
                     <ul><?php foreach($errores as $e): ?><li><?= htmlspecialchars($e) ?></li><?php endforeach; ?></ul>
@@ -311,6 +357,7 @@ if ($editando && $editando['categoria_id']) {
             <?php endif; ?>
 
             <form method="POST" id="formProducto">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <input type="hidden" name="producto_id" value="<?= $editando['producto_id'] ?? 0 ?>">
                 <input type="hidden" name="categoria_id" id="hiddenCategoriaId" value="<?= $editando['categoria_id'] ?? '' ?>">
 

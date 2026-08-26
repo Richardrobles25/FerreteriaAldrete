@@ -1,17 +1,25 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
-verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+// [FIX-CRIT-B-04] Inventario/Cajero no debe crear/editar el catálogo global de categorías.
+verificarRol(['Administrador', 'Inventario']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
+    // [FIX-CRIT-B-03] Sin CSRF antes — cualquier página visitada con la sesión del
+    // Administrador abierta podía borrar categorías del catálogo global.
+    requerirCSRF($_GET['_token'] ?? '', 'inventario_categorias.php');
     $id = intval($_GET['eliminar']);
-    // Verificar que no tenga productos asociados
-    $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE categoria_id = ? AND activo = 1");
+    // [FIX-ALTO-B-08] Antes solo se contaban productos activos: una categoria con
+    // productos desactivados (pero aun ligados por la FK) tronaba el DELETE con un
+    // error SQL crudo (violacion de llave foranea) en lugar de un mensaje claro.
+    $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE categoria_id = ?");
     $check->execute([$id]);
     if ($check->fetchColumn() > 0) {
         header('Location: inventario_categorias.php?msg=error_productos');
@@ -25,6 +33,8 @@ if (isset($_GET['eliminar'])) {
 
 // Guardar categoría (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-CRIT-B-03] CSRF ausente antes.
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_categorias.php');
     $nombre = trim($_POST['nombre'] ?? '');
     $id     = intval($_POST['categoria_id'] ?? 0);
 
@@ -195,6 +205,8 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">Ya existe una categoría con ese nombre. Elige un nombre diferente.</div>
                 <?php elseif ($_GET['msg'] === 'vacio'): ?>
                     <div class="msg msg-error">El nombre de la categoría es obligatorio.</div>
+                <?php elseif ($_GET['msg'] === 'error_token'): ?>
+                    <div class="msg msg-error">La sesión expiró o el enlace no es válido. Intenta de nuevo.</div>
                 <?php endif; ?>
             <?php endif; ?>
 
@@ -228,7 +240,7 @@ if (isset($_GET['editar'])) {
                             <td>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="inventario_categorias.php?editar=<?= $c['categoria_id'] ?>">Editar</a>
-                                    <a class="btn-accion btn-eliminar" href="inventario_categorias.php?eliminar=<?= $c['categoria_id'] ?>" onclick="return confirm('¿Eliminar esta categoría?')">Eliminar</a>
+                                    <a class="btn-accion btn-eliminar" href="inventario_categorias.php?eliminar=<?= $c['categoria_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar esta categoría?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>
@@ -246,6 +258,7 @@ if (isset($_GET['editar'])) {
             <div class="card">
                 <h3><?= $editando ? 'Editar categoría' : 'Nueva categoría' ?></h3>
                 <form method="POST">
+                    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="categoria_id" value="<?= $editando['categoria_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>

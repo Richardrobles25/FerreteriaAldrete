@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $cajaAbierta     = null;
@@ -19,13 +21,19 @@ if ($sucursalVista !== 0) {
     $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
     $cajaAbierta = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // Turno = cuántas cajas de OTROS usuarios están abiertas en esta sucursal + 1
+    // [FIX-MEDIO-D3-10] Antes "numero_turno" se calculaba como "cuantas cajas de OTROS
+    // usuarios estan ABIERTAS ahora mismo + 1" — un numero de turnos CONCURRENTES, no un
+    // consecutivo real. En la operacion tipica (un solo cajero a la vez por sucursal) ese
+    // conteo casi siempre da 0, asi que absolutamente todos los turnos del dia se abrian
+    // como "Turno #1", sin importar cuantos hubiera habido antes. Ahora es un consecutivo
+    // real: cuantas cajas (abiertas o ya cerradas, de cualquier usuario) se han abierto HOY
+    // en esta sucursal + 1.
     $stmtTurno = $pdo->prepare("
         SELECT COUNT(*) + 1
         FROM cajas
-        WHERE sucursal_id = ? AND estado = 'Abierta' AND usuario_id != ?
+        WHERE sucursal_id = ? AND DATE(abierta_en) = CURDATE()
     ");
-    $stmtTurno->execute([$sucursalVista, $_SESSION['usuario_id']]);
+    $stmtTurno->execute([$sucursalVista]);
     $siguienteTurno = $stmtTurno->fetchColumn();
 
     // Contar cajas abiertas de otros usuarios en la sucursal (para mostrar aviso)
@@ -52,16 +60,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
             $erroresApertura[] = 'El monto de apertura es obligatorio y no puede ser negativo.';
         } elseif ($monto_apertura == 0) {
             $erroresApertura[] = 'El monto de apertura debe ser mayor a $0.00. Si no tienes fondo inicial, contacta al administrador.';
+        } elseif ($monto_apertura > 50000) {
+            // [FIX-ALTO-D3-03] Antes no habia tope superior: un error de dedo (un cero de
+            // mas) se aceptaba tal cual y monto_apertura (DECIMAL(10,2)) o se truncaba en
+            // silencio a $99,999,999.99 (local, sql_mode no estricto) o tiraba error 500
+            // (produccion, sql_mode estricto). $50,000 cubre cualquier apertura real de
+            // una sucursal y bloquea el error de captura antes de que llegue a la BD.
+            $erroresApertura[] = 'El monto de apertura no puede ser mayor a $50,000.00. Verifica la cantidad capturada.';
         }
 
         if (empty($erroresApertura)) {
-            $stmt = $pdo->prepare("
-                INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
-                VALUES (?, ?, ?, ?, 'Abierta', ?)
-            ");
-            $stmt->execute([$sucursalVista, $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
-            header('Location: cajero_inicio.php?msg=cajaAbierta');
-            exit();
+            // [FIX-CRIT-D3-02] Antes: solo un SELECT-luego-INSERT sin transacción ni
+            // candado, así que dos sesiones del mismo usuario (dos dispositivos, o un
+            // doble envío) podían abrir dos cajas "Abierta" a la vez en la misma
+            // sucursal — una caja fantasma con su propio monto de apertura que nunca
+            // existió físicamente. Ahora: (a) se relee y bloquea la ausencia de caja
+            // abierta dentro de una transacción justo antes de insertar, y (b) hay un
+            // índice UNIQUE en la base de datos (sucursal_id, usuario_id, mientras
+            // estado='Abierta') como respaldo final — si aun así dos peticiones
+            // llegaran exactamente juntas, la base de datos rechaza la segunda en vez
+            // de aceptar ambas.
+            $pdo->beginTransaction();
+            try {
+                $stmtRelock = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' FOR UPDATE");
+                $stmtRelock->execute([$_SESSION['usuario_id'], $sucursalVista]);
+                if ($stmtRelock->fetch()) {
+                    $pdo->rollBack();
+                    header('Location: cajero_inicio.php?msg=cajaAbierta');
+                    exit();
+                }
+
+                $stmt = $pdo->prepare("
+                    INSERT INTO cajas (sucursal_id, usuario_id, monto_apertura, observaciones, estado, numero_turno)
+                    VALUES (?, ?, ?, ?, 'Abierta', ?)
+                ");
+                $stmt->execute([$sucursalVista, $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
+                $pdo->commit();
+                header('Location: cajero_inicio.php?msg=cajaAbierta');
+                exit();
+            } catch (\PDOException $e) {
+                $pdo->rollBack();
+                if ($e->getCode() === '23000') {
+                    // El indice UNIQUE evito una segunda caja simultanea.
+                    header('Location: cajero_inicio.php?msg=cajaAbierta');
+                    exit();
+                }
+                throw $e;
+            }
         }
     }
 }
@@ -161,6 +206,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     ⚠ Necesitas abrir una caja en esta sucursal para acceder a ese módulo.
                 </div>
             <?php endif; ?>
+            <?php // [FIX-MEDIO-D3-08] requerirCSRF() redirige con "?msg=error_token" si el token es
+                  // invalido/expirado, pero esta pagina no mostraba ningun aviso para ese caso. ?>
+            <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_token'): ?>
+                <div class="alerta-box">
+                    ⚠ Tu sesión expiró o la página estuvo abierta demasiado tiempo. Recarga la página e intenta abrir la caja de nuevo.
+                </div>
+            <?php endif; ?>
 
             <?php if ($sucursalVista === 0): ?>
                 <h1>Selecciona una sucursal</h1>
@@ -193,7 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Monto inicial en caja *</label>
-                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0.01" required autofocus
+                        <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0.01" max="50000" required autofocus
                                value="<?= isset($_POST['monto_apertura']) ? htmlspecialchars($_POST['monto_apertura']) : '' ?>">
                     </div>
                     <div class="form-group">

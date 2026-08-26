@@ -1,11 +1,13 @@
 <?php
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
-require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
+require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if ($sucursalVista === 0) {
@@ -84,7 +86,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Verificar que el campo no esté vacío antes de convertir a float.
     // floatval('') = 0.0, lo que permitía cerrar sin escribir nada.
     $monto_cierre_raw = $_POST['monto_cierre'] ?? '';
-    $observaciones    = trim($_POST['observaciones'] ?? '');
+    // [FIX-MEDIO-D3-09] Antes se guardaba en la MISMA columna "observaciones" que ya
+    // tenia las notas de apertura, borrandolas sin dejar rastro. Ahora las de cierre van
+    // a su propia columna (observaciones_cierre) y las de apertura ya no se tocan.
+    $observaciones_cierre = trim($_POST['observaciones'] ?? '');
 
     if ($monto_cierre_raw === '') {
         $errores[] = 'El monto contado es obligatorio. Escribe la cantidad que encontraste en caja.';
@@ -99,16 +104,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // "AND estado = 'Abierta'": un doble envio del formulario (doble clic, reenvio)
         // ya no sobrescribe el corte con otro monto.
-        $pdo->prepare("
+        $stmtCierre = $pdo->prepare("
             UPDATE cajas SET
                 estado = 'Cerrada',
                 monto_cierre = ?,
                 monto_esperado = ?,
                 diferencia = ?,
-                observaciones = ?,
+                observaciones_cierre = ?,
                 cerrada_en = NOW()
             WHERE caja_id = ? AND estado = 'Abierta'
-        ")->execute([$monto_cierre, $efectivoEsperado, $diferencia, $observaciones, $caja['caja_id']]);
+        ");
+        $stmtCierre->execute([$monto_cierre, $efectivoEsperado, $diferencia, $observaciones_cierre, $caja['caja_id']]);
+
+        // [FIX-MEDIO-D3-07] Antes se redirigia a "cajaCerrada" sin verificar si el UPDATE
+        // realmente afecto una fila. Si dos peticiones de cierre llegaban casi juntas (doble
+        // clic en dos pestañas, o un reenvio tras timeout), ambas pasaban la lectura inicial
+        // de $caja con estado='Abierta', pero solo la primera UPDATE (con el guard
+        // "AND estado='Abierta'") afectaba una fila real — la segunda afectaba 0 filas y
+        // aun asi mostraba el mismo mensaje de exito, ocultando que su monto contado nunca
+        // se guardo.
+        if ($stmtCierre->rowCount() === 0) {
+            header('Location: cajero_inicio.php?msg=error_ya_cerrada');
+            exit();
+        }
 
         header('Location: cajero_inicio.php?msg=cajaCerrada');
         exit();
@@ -309,6 +327,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div>
             <div class="card">
                 <h3>Registrar cierre</h3>
+
+                <?php
+                // [FIX-MEDIO-D3-08] requerirCSRF() redirige con "?msg=error_token" cuando el
+                // token es invalido/expirado, pero esta pagina no mostraba ningun aviso para
+                // ese caso — el cierre simplemente no se guardaba y el cajero se quedaba sin
+                // saber por que, viendo el mismo formulario vacio otra vez.
+                $msgsCorte = [
+                    'error_token' => 'Tu sesión expiró o la página estuvo abierta demasiado tiempo. Recarga la página e intenta cerrar la caja de nuevo.',
+                ];
+                $msgCorte = $_GET['msg'] ?? '';
+                ?>
+                <?php if (isset($msgsCorte[$msgCorte])): ?>
+                    <div class="errores"><?= htmlspecialchars($msgsCorte[$msgCorte]) ?></div>
+                <?php endif; ?>
 
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><?= htmlspecialchars($errores[0]) ?></div>

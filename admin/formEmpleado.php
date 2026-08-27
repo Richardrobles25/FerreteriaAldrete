@@ -59,6 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errores[] = 'La fecha de ingreso no es valida.';
     } elseif ($fecha_ingreso > date('Y-m-d'))               $errores[] = 'La fecha de ingreso no puede ser en el futuro.';
     if ($sueldo_semanal <= 0)                             $errores[] = 'El sueldo semanal debe ser mayor a $0.';
+    // [FIX-PRECIO-MAX-SUELDO] sueldo_semanal es DECIMAL(10,2); sin tope, un valor absurdo
+    // tronaba con HTTP 500 crudo en vez de un mensaje claro (verificado en vivo).
+    if ($sueldo_semanal > 500000)                         $errores[] = 'El sueldo semanal no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
 
     if (empty($errores)) {
         if ($empleado_id) {

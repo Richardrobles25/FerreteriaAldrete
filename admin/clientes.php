@@ -57,6 +57,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($nombre === '') $errores[] = 'El nombre completo es obligatorio.';
     if ($descuento < 0 || $descuento > 100) $errores[] = 'El descuento fijo debe estar entre 0 y 100.';
     if (!$creditoAutorizado) $limiteCredito = 0;
+    // [FIX-PRECIO-MAX-CREDITO] limite_credito es DECIMAL(10,2); sin tope, un valor absurdo
+    // tronaba con HTTP 500 crudo en vez de un mensaje claro (mismo patrón ya corregido en
+    // formProducto.php/paquetes.php). Se agrega también el negativo, que faltaba aquí
+    // (admin/cajero_clientes.php y cajeroInventario/clientes.php ya lo validaban).
+    if ($limiteCredito < 0) $errores[] = 'El límite de crédito no puede ser negativo.';
+    if ($limiteCredito > 500000) $errores[] = 'El límite de crédito no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
 
     if (empty($errores)) {
         if ($clienteId > 0) {

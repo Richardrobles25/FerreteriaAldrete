@@ -100,6 +100,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [AUTOFIX] V-02: Validar rangos de descuento y limite de credito
     if ($descuento_fijo < 0 || $descuento_fijo > 100) $errores[] = 'El descuento debe estar entre 0 y 100.';
     if ($limite_credito < 0) $errores[] = 'El límite de crédito no puede ser negativo.';
+    // [FIX-PRECIO-MAX-CREDITO] limite_credito es DECIMAL(10,2); sin tope superior, un valor
+    // absurdo tronaba con HTTP 500 crudo en vez de un mensaje claro (verificado en vivo,
+    // mismo bug replicado en admin/clientes.php y admin/cajero_clientes.php).
+    if ($limite_credito > 500000) $errores[] = 'El límite de crédito no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
 
     if (empty($errores)) {
         if ($cliente_id) {

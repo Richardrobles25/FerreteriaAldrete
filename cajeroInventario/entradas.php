@@ -59,6 +59,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($cantidad < $cantidadMin) {
                 $errores[] = $esSuelto ? 'La cantidad debe ser mayor a 0.' : 'La cantidad debe ser al menos 1.';
             }
+            // [FIX-CANTIDAD-MAX-ENTRADA] stock_actual es DECIMAL(10,3); una cantidad absurda
+            // tronaba con HTTP 500 crudo al sumarse al stock (verificado en vivo, sin
+            // corrupción porque la transacción hace rollback, pero sin mensaje claro).
+            if ($cantidad > 999999) {
+                $errores[] = 'La cantidad no puede ser mayor a 999,999. Verifica la cantidad capturada.';
+            }
         }
 
         if (empty($errores) && $prod) {

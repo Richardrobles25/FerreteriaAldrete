@@ -61,6 +61,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$nombre)             $errores[] = 'El nombre es obligatorio.';
     if (!$codigo)             $errores[] = 'El código es obligatorio.';
     if ($precio_paquete <= 0) $errores[] = 'El precio debe ser mayor a 0.';
+    // [FIX-PRECIO-MAX-PAQUETE] precio_paquete es DECIMAL(10,2) (tope real 99,999,999.99);
+    // sin validar, un valor absurdo tronaba con HTTP 500 crudo en vez de un mensaje claro
+    // (mismo patrón ya corregido en formProducto.php/compras.php/importador de Excel).
+    if ($precio_paquete > 500000) $errores[] = 'El precio no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
     if (empty($items))        $errores[] = 'Agrega al menos un producto.';
 
     // [FIX-ALTO-B-12] Antes se guardaban tal cual: un item con cantidad <= 0 o un

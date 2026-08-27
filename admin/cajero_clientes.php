@@ -101,6 +101,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
     if ($limite_credito < 0) $errores[] = 'El límite de crédito no puede ser negativo.';
+    // [FIX-PRECIO-MAX-CREDITO] limite_credito es DECIMAL(10,2); sin tope superior, un valor
+    // absurdo tronaba con HTTP 500 crudo en vez de un mensaje claro (verificado en vivo).
+    if ($limite_credito > 500000) $errores[] = 'El límite de crédito no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
 
     if (empty($errores)) {
         if ($cliente_id) {

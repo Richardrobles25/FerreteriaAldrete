@@ -39,6 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$categoria_gasto_id)                        $errores[] = 'Selecciona una categoria.';
     if ($descripcion === '')                         $errores[] = 'La descripcion es obligatoria.';
     if ($monto <= 0)                                 $errores[] = 'El monto debe ser mayor a $0.';
+    // [FIX-PRECIO-MAX-GASTO] monto es DECIMAL(10,2); sin tope, un valor absurdo caía en el
+    // catch generico de abajo con un mensaje que no explica la causa real.
+    if ($monto > 500000)                             $errores[] = 'El monto no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
     if (!$fecha || !strtotime($fecha))               $errores[] = 'La fecha no es valida.';
     // [FIX-MEDIO-G-16] No habia tope contra fechas futuras.
     elseif ($fecha > date('Y-m-d'))                  $errores[] = 'La fecha no puede ser en el futuro.';

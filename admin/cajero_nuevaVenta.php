@@ -2199,6 +2199,24 @@ function limpiarVenta() {
     document.getElementById('chkAjusteDano').checked = false;
     document.getElementById('panelAjusteDano').style.display = 'none';
     document.getElementById('panelCamposAjuste').style.display = 'none';
+    // [FIX-CACHE-01] Al cancelar o terminar una venta, limpiar tambien los campos de pago y
+    // la busqueda de cliente (antes quedaban con el valor de la venta anterior si el siguiente
+    // cliente elegia el mismo metodo de pago), y volcar el estado limpio a localStorage —
+    // si no, un F5 o volver a esta pagina restauraba cliente/descuento/pago de la venta ya
+    // terminada via restaurarEstadoVenta().
+    const _inputCli = document.getElementById('inputCliente');
+    if (_inputCli) _inputCli.value = '';
+    const _montoEf2 = document.getElementById('montoEfectivo');
+    if (_montoEf2) _montoEf2.value = '';
+    const _resCambio2 = document.getElementById('resCambio');
+    if (_resCambio2) _resCambio2.textContent = '$0.00';
+    const _transferRef2 = document.getElementById('transferReferencia');
+    if (_transferRef2) _transferRef2.value = '';
+    const _mixtoEf2 = document.getElementById('mixtoEfectivo');
+    if (_mixtoEf2) _mixtoEf2.value = '';
+    const _mixtoTerm2 = document.getElementById('mixtoTerminal');
+    if (_mixtoTerm2) _mixtoTerm2.value = '';
+    guardarEstadoVenta();
 }
 
 // ── Motor de recomendación de paquetes ───────────────────────────────────────
@@ -2721,6 +2739,13 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
             if (panelAdj) panelAdj.style.display = 'none';
             const panelCamp = document.getElementById('panelCamposAjuste');
             if (panelCamp) panelCamp.style.display = 'none';
+            // [FIX-CACHE-01] Limpiar tambien el texto de busqueda de cliente (si se escribio
+            // algo sin llegar a seleccionar a nadie) y volcar el estado ya limpio a
+            // localStorage — si no, la venta recien terminada queda guardada como "ventaExtra"
+            // y restaurarEstadoVenta() la vuelve a traer en el siguiente F5/recarga de la pagina.
+            const _inputCli2 = document.getElementById('inputCliente');
+            if (_inputCli2) _inputCli2.value = '';
+            guardarEstadoVenta();
             document.getElementById('inputProducto').focus();
         })
         .catch(err => {

@@ -15,6 +15,14 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx as ReaderXlsx;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
+// [FIX-IMPORT-02] Regla confirmada 2026-08-26: la importación por Excel (crear/actualizar
+// el catálogo global en bloque desde un archivo) es SOLO para Administrador — ni Inventario
+// (puro) ni Inventario/Cajero. Ambos SÍ pueden editar precio/nombre/categoría de un producto
+// que ya tienen en su sucursal, pero uno por uno vía formProducto.php, y agregar productos
+// existentes del catálogo a su sucursal vía "+Agregar del catálogo" (accion=agregar_catalogo)
+// — nunca crear productos nuevos ni actualizar el catálogo en bloque por Excel.
+$puedeImportarExcel = ($_SESSION['rol'] ?? '') === 'Administrador';
+
 // Exportar PDF
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     require_once __DIR__ . '/../admin/export_helper.php';
@@ -117,6 +125,18 @@ if ($sucursalPostConsulta !== intval($_SESSION['sucursal_id']) && $_SERVER['REQU
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
+    // [FIX-CRIT-B-03] (portado de admin/inventario_productos.php): CSRF ausente antes — es
+    // el vector de mayor impacto de este archivo, ya que la importación actualiza por
+    // código el precio_compra/precio_venta/precio_mayoreo de productos existentes desde un
+    // POST sin ningún token.
+    requerirCSRF($_POST['_token'] ?? '', 'productos.php');
+    // [FIX-IMPORT-02] Bloquear la importación completa (no solo la creación de productos
+    // nuevos) para Inventario/Cajero: ese rol solo puede jalar productos ya existentes del
+    // catálogo global a su sucursal, nunca crear ni actualizar el catálogo en bloque.
+    if (!$puedeImportarExcel) {
+        header('Location: productos.php?msg=no_autorizado_import');
+        exit();
+    }
     $archivo = $_FILES['archivo_excel'];
     if ($archivo['error'] === 0) {
         try {
@@ -132,12 +152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $omitidos   = 0;
             $bloqueados = 0;
             $negativos  = 0;
-            // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php/inventario_categorias.php:
-            // el diseño real es que Administrador e Inventario SI pueden dar de alta catalogo
-            // global nuevo; solo Inventario/Cajero no puede (solo agrega del catalogo existente
-            // a su sucursal). Antes este importador solo dejaba al Administrador, bloqueando de
-            // mas al rol Inventario que en el resto del sistema si tiene ese permiso.
-            $puedeCrearCatalogo = in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario']);
+            // Administrador e Inventario pueden dar de alta catálogo global nuevo desde el
+            // Excel; ya se validó arriba que solo ellos llegan a este bloque.
+            $puedeCrearCatalogo = $puedeImportarExcel;
 
             foreach ($rows as $row) {
                 if (empty($row[0]) || empty($row[1])) continue;
@@ -242,16 +259,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
 // Descargar plantilla
 if (isset($_GET['plantilla'])) {
+    // [FIX-IMPORT-02] Sin sentido ofrecer la plantilla de importación a quien no puede
+    // importar — mismo candado que el POST del Excel.
+    if (!$puedeImportarExcel) {
+        header('Location: productos.php?msg=no_autorizado_import');
+        exit();
+    }
     try {
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Plantilla');
-        $headers = ['Código*','Nombre*','Categoría','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
+        // [FIX-PLANTILLA-01] Faltaba la columna "Precio compra": el importador de este mismo
+        // archivo lee las columnas por posición fija esperando 12 (con precio_compra en la
+        // posición 4, igual que admin/inventario_productos.php) — con solo 11 columnas aquí,
+        // llenar esta plantilla tal cual y volver a subirla recorría precio_venta/mayoreo/
+        // stocks una columna, corrompiendo todos los datos.
+        $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
         $sheet->fromArray($headers, null, 'A1');
-        $sheet->getStyle('A1:K1')->getFont()->setBold(true);
-        $ejemplo = ['PROD001','Ejemplo producto','Herrería','100','80','10','5','100','Unidad','Descripción opcional','pieza'];
-        $sheet->fromArray($ejemplo, null, 'A2');
-        foreach (range('A','K') as $col) {
+        $sheet->getStyle('A1:L1')->getFont()->setBold(true);
+        // Varios ejemplos representativos de una ferretería: por unidad y por granel/kg,
+        // con y sin mayoreo, con y sin categoría/descripción.
+        $ejemplos = [
+            ['TOR-001', 'Tornillo Phillips 1/4" x 1"', 'Tornillería', '0.50', '1.00', '0.80', '500', '100', '2000', 'Unidad', 'Caja con 500 piezas', 'pieza'],
+            ['CEM-050', 'Cemento gris 50kg', 'Materiales', '145.00', '185.00', '170.00', '80', '10', '200', 'Unidad', 'Saco de 50kg', 'saco'],
+            ['ARE-001', 'Arena de río', 'Materiales', '', '25.00', '', '500', '50', '0', 'Suelto', 'Se vende por kg', 'kg'],
+            ['PINT-BL1', 'Pintura vinílica blanca 1L', 'Pinturas', '60.00', '95.00', '', '30', '5', '80', 'Unidad', '', 'pieza'],
+            ['CABLE-12', 'Cable eléctrico calibre 12', '', '8.50', '13.00', '11.50', '200', '20', '0', 'Suelto', 'Se vende por metro', 'metro'],
+        ];
+        $sheet->fromArray($ejemplos, null, 'A2');
+        foreach (range('A','L') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
         $tmpFile = sys_get_temp_dir() . '/plt_' . uniqid() . '.xlsx';
@@ -656,6 +692,16 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <div class="content-header">
             <h1>Inventario de productos</h1>
             <div class="acciones-header">
+                <?php if ($puedeImportarExcel): ?>
+                <!-- [FIX-IMPORT-UI-01] El botón para abrir el panel de importación (y por lo
+                     tanto el acceso a "Descargar plantilla") nunca se agregó a este HTML — el
+                     CSS y el backend (?plantilla=1, POST archivo_excel) ya existían, pero
+                     toggleImport() no lo llamaba nadie: la función de importar Excel completa
+                     era inalcanzable desde la interfaz. Solo Administrador/Inventario la ven
+                     (FIX-IMPORT-02): Inventario/Cajero solo jala del catálogo existente. -->
+                <a class="btn-plantilla" href="productos.php?plantilla=1">Descargar plantilla</a>
+                <button class="btn-excel-import" type="button" onclick="toggleImport()">Importar Excel</button>
+                <?php endif; ?>
                 <a class="btn-excel-export" href="productos.php?exportar=excel">Exportar Excel</a>
                 <a class="btn-pdf-export" href="productos.php?exportar=pdf">Exportar PDF</a>
                 <?php if (!$soloLectura): ?>
@@ -675,7 +721,8 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         </div>
         <?php endif; ?>
 
-        <!-- Panel de importación -->
+        <!-- Panel de importación (FIX-IMPORT-02: solo Administrador/Inventario) -->
+        <?php if ($puedeImportarExcel): ?>
         <div class="import-card" id="importCard">
             <h3>Importar productos desde Excel</h3>
             <?php if (!empty($erroresImport)): ?>
@@ -688,6 +735,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 <div class="msg msg-exito"><?= htmlspecialchars($exitoImport, ENT_QUOTES, 'UTF-8') ?></div>
             <?php endif; ?>
             <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <div class="import-form">
                     <input type="file" name="archivo_excel" accept=".xlsx,.xls" required>
                     <button class="btn-subir" type="submit">Importar</button>
@@ -697,6 +745,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 </p>
             </form>
         </div>
+        <?php endif; ?>
 
         <?php if ($totalStockBajo > 0 && !$stock_bajo): ?>
             <div class="alerta-stock">
@@ -720,6 +769,11 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'solo_catalogo'): ?>
             <div class="msg msg-error" style="background:#fff8e1;color:#795548;border-left-color:#f9a825;">
                 Para agregar un producto nuevo al catálogo global, contacta al administrador. Usa el botón <strong>"+ Agregar del catálogo"</strong> para activar productos ya existentes en tu sucursal.
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'no_autorizado_import'): ?>
+            <div class="msg msg-error" style="background:#fff8e1;color:#795548;border-left-color:#f9a825;">
+                Tu rol no puede importar productos por Excel. Usa el botón <strong>"+ Agregar del catálogo"</strong> para activar productos ya existentes en tu sucursal.
             </div>
         <?php endif; ?>
 

@@ -6,11 +6,12 @@ require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
-// [FIX-CRIT-B-04] El diseño del negocio es explícito: Inventario/Cajero puede agregar
-// productos ya existentes del catálogo global a su sucursal, pero NO puede crear ni
-// editar el catálogo global (eso incluye este formulario). Antes este archivo también
-// aceptaba ese rol, permitiéndole crear productos y cambiar precios de compra/venta.
-verificarRol(['Administrador', 'Inventario']);
+// [FIX-CRIT-B-04, ajustado 2026-08-26] Este formulario crea Y edita productos sin separar
+// esas dos capacidades por rol — y crear productos nuevos es SOLO Administrador (regla
+// confirmada), así que se restringe el archivo completo a Administrador. La edición de un
+// producto que Inventario/Inventario-Cajero ya tiene en su sucursal se hace por su propio
+// formProducto.php (cajeroInventario/), que sí es edit-only y sí acepta esos roles.
+verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
 $editando  = null;

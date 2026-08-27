@@ -8,6 +8,14 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
+// [FIX-CRIT-04 REVERTIDO 2026-08-26] Regla real confirmada por el usuario: nadie más que
+// Administrador CREA productos nuevos ni usa el importador de Excel (ver productos.php),
+// pero cualquier rol (Administrador, Inventario, Inventario/Cajero) SÍ puede editar
+// precio/nombre/categoría/etc. de un producto que YA tiene en su propia sucursal — este
+// archivo es EDIT-ONLY (ver candado de $producto_id abajo) y solo encuentra productos que
+// ya tienen fila en stock_sucursal para $_SESSION['sucursal_id'], así que nunca se toca un
+// producto que la sucursal no tenga ya.
+
 $editando  = null;
 $errores   = [];
 $esEdicion = isset($_GET['id']);
@@ -124,7 +132,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Actualizar catálogo (datos compartidos) — este archivo es EDIT-ONLY, nunca crea
-            // productos nuevos (ver candado de $producto_id arriba).
+            // productos nuevos (ver candado de $producto_id arriba), y solo edita productos
+            // que ya existen en la sucursal del usuario. Cualquier rol que llegue aquí puede
+            // tocar estos campos (regla confirmada 2026-08-26: solo CREAR está restringido).
             $pdo->prepare("
                 UPDATE productos SET codigo=?,nombre_producto=?,descripcion=?,categoria_id=?,
                 precio_compra=?,precio_venta=?,precio_mayoreo=?,tipo_venta=?,unidad_medida=?
@@ -132,11 +142,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ")->execute([$codigo,$nombre_producto,$descripcion,$categoria_id,
                          $precio_compra,$precio_venta,$precio_mayoreo,
                          $tipo_venta,$unidad_medida ?: null,$producto_id]);
-            // Actualizar stock de esta sucursal
-            $pdo->prepare("
-                UPDATE stock_sucursal SET stock_minimo=?,stock_maximo=?
-                WHERE producto_id=? AND sucursal_id=?
-            ")->execute([$stock_minimo,$stock_maximo,$producto_id,$_SESSION['sucursal_id']]);
 
             // Actualizar proveedores
             $pdo->prepare("DELETE FROM producto_proveedor WHERE producto_id = ?")->execute([$producto_id]);
@@ -146,6 +151,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("INSERT INTO producto_proveedor (producto_id,proveedor_id,codigo_proveedor) VALUES (?,?,?)")
                     ->execute([$producto_id, intval($prov_id), $cod]);
             }
+            // Actualizar stock de esta sucursal
+            $pdo->prepare("
+                UPDATE stock_sucursal SET stock_minimo=?,stock_maximo=?
+                WHERE producto_id=? AND sucursal_id=?
+            ")->execute([$stock_minimo,$stock_maximo,$producto_id,$_SESSION['sucursal_id']]);
             $pdo->commit();
         } catch (\Throwable $e) {
             $pdo->rollBack();

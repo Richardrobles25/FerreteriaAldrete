@@ -10,10 +10,10 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
-    // [FIX-CONSISTENCIA] Igual que en admin/inventario_categorias.php: Administrador e
-    // Inventario SI pueden administrar el catalogo global de categorias; solo
-    // Inventario/Cajero no puede. Antes esto bloqueaba tambien a Inventario.
-    if (!in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario'], true)) {
+    // [FIX-CONSISTENCIA, ajustado 2026-08-26] Regla confirmada: crear/editar/eliminar
+    // categorías (necesarias para la importación de productos) es SOLO Administrador — ni
+    // Inventario (puro) ni Inventario/Cajero.
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
         header('Location: categorias.php?msg=no_autorizado');
         exit();
     }
@@ -38,10 +38,10 @@ if (isset($_GET['eliminar'])) {
 
 // Guardar categoría (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // [FIX-CONSISTENCIA] Igual que en admin/inventario_categorias.php: Administrador e
-    // Inventario SI pueden administrar el catalogo global de categorias; solo
-    // Inventario/Cajero no puede. Antes esto bloqueaba tambien a Inventario.
-    if (!in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario'], true)) {
+    // [FIX-CONSISTENCIA, ajustado 2026-08-26] Regla confirmada: crear/editar/eliminar
+    // categorías (necesarias para la importación de productos) es SOLO Administrador — ni
+    // Inventario (puro) ni Inventario/Cajero.
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
         header('Location: categorias.php?msg=no_autorizado');
         exit();
     }

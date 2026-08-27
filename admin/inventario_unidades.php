@@ -6,8 +6,10 @@ require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
-// [FIX-CRIT-B-04] Inventario/Cajero no debe crear/editar el catálogo global de unidades.
-verificarRol(['Administrador', 'Inventario']);
+// [FIX-CRIT-B-04, ajustado 2026-08-26] Regla confirmada: crear/editar/eliminar unidades de
+// medida (necesarias para la importación de productos) es SOLO Administrador — ni Inventario
+// (puro) ni Inventario/Cajero.
+verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 

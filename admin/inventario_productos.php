@@ -17,6 +17,13 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx as ReaderXlsx;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
+// [FIX-IMPORT-02] La importación por Excel (crear/actualizar el catálogo global en bloque,
+// incluye cambiar precios) es SOLO para Administrador — ni Inventario (puro) ni
+// Inventario/Cajero pueden crear/editar el catálogo global. Este archivo también acepta
+// esos roles en verificarRol() (por si algún día los alcanza), así que el botón y el
+// backend deben bloquearlos aquí.
+$puedeImportarExcel = ($_SESSION['rol'] ?? '') === 'Administrador';
+
 // Exportar PDF
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     require_once __DIR__ . '/export_helper.php';
@@ -240,6 +247,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
     // permitía reescribir precio_compra/precio_venta/precio_mayoreo de productos existentes
     // (la importación actualiza por código) desde un POST sin ningún token.
     requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
+    // [FIX-IMPORT-02] Bloquear la importación completa para Inventario/Cajero.
+    if (!$puedeImportarExcel) {
+        header('Location: inventario_productos.php?msg=no_autorizado_import');
+        exit();
+    }
     set_time_limit(300); // 5 minutos para importaciones grandes
     $archivo = $_FILES['archivo_excel'];
     if ($archivo['error'] === 0) {
@@ -284,10 +296,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $unidadesCache    = []; // evita INSERT repetido para misma unidad
             $unidadesCreadas  = [];
 
-            // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php/inventario_categorias.php:
-            // Administrador e Inventario SI pueden dar de alta catalogo global nuevo; solo
-            // Inventario/Cajero no puede (solo agrega del catalogo existente a su sucursal).
-            $puedeCrearCatalogo = in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario']);
+            // Solo Administrador puede dar de alta catálogo global nuevo; ya se validó arriba
+            // que solo Administrador llega a este bloque ($puedeImportarExcel).
+            $puedeCrearCatalogo = $puedeImportarExcel;
 
             $filasConError = [];
 
@@ -392,9 +403,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         }
                         // Upsert stock de la sucursal (solo si hay una sucursal especifica elegida)
                         if ($sucursalImport !== null) {
+                            // [FIX-CONSISTENCIA] (portado de cajeroInventario/productos.php): faltaba
+                            // "activo = 1" en el UPDATE — si el producto ya habia sido dado de baja
+                            // en esta sucursal, reimportarlo por Excel actualizaba minimo/maximo pero
+                            // lo dejaba invisible/inactivo en vez de reactivarlo.
                             $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
                                 VALUES (?,?,?,?,?,1)
-                                ON DUPLICATE KEY UPDATE stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo)")
+                                ON DUPLICATE KEY UPDATE stock_minimo=VALUES(stock_minimo), stock_maximo=VALUES(stock_maximo), activo=1")
                                 ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
                         }
                         $omitidos++;
@@ -434,6 +449,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
 // Descargar plantilla
 if (isset($_GET['plantilla'])) {
+    // [FIX-IMPORT-02] Sin sentido ofrecer la plantilla de importación a quien no puede
+    // importar — mismo candado que el POST del Excel.
+    if (!$puedeImportarExcel) {
+        header('Location: inventario_productos.php?msg=no_autorizado_import');
+        exit();
+    }
     try {
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
@@ -444,10 +465,21 @@ if (isset($_GET['plantilla'])) {
             $sheet->setCellValue("{$col}1", $h);
             $sheet->getStyle("{$col}1")->getFont()->setBold(true);
         }
-        $ejemplo = ['PROD001','Ejemplo producto','Herrería','50','100','80','10','5','100','Unidad','Descripción opcional','pieza'];
-        foreach ($ejemplo as $i => $v) {
-            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-            $sheet->setCellValue("{$col}2", $v);
+        // Varios ejemplos representativos de una ferretería: por unidad y por granel/kg,
+        // con y sin mayoreo, con y sin categoría/descripción — para que quede claro cómo
+        // llenar cada tipo de producto real, no solo un caso genérico.
+        $ejemplos = [
+            ['TOR-001', 'Tornillo Phillips 1/4" x 1"', 'Tornillería', '0.50', '1.00', '0.80', '500', '100', '2000', 'Unidad', 'Caja con 500 piezas', 'pieza'],
+            ['CEM-050', 'Cemento gris 50kg', 'Materiales', '145.00', '185.00', '170.00', '80', '10', '200', 'Unidad', 'Saco de 50kg', 'saco'],
+            ['ARE-001', 'Arena de río', 'Materiales', '', '25.00', '', '500', '50', '0', 'Suelto', 'Se vende por kg', 'kg'],
+            ['PINT-BL1', 'Pintura vinílica blanca 1L', 'Pinturas', '60.00', '95.00', '', '30', '5', '80', 'Unidad', '', 'pieza'],
+            ['CABLE-12', 'Cable eléctrico calibre 12', '', '8.50', '13.00', '11.50', '200', '20', '0', 'Suelto', 'Se vende por metro', 'metro'],
+        ];
+        foreach ($ejemplos as $fila => $ejemplo) {
+            foreach ($ejemplo as $i => $v) {
+                $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
+                $sheet->setCellValue("{$col}" . ($fila + 2), $v);
+            }
         }
         foreach (range('A','L') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
@@ -789,8 +821,11 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
         <div class="content-header">
             <h1>Inventario de productos</h1>
             <div class="acciones-header">
+                <?php if ($puedeImportarExcel): ?>
+                <!-- [FIX-IMPORT-02] La importación/plantilla es solo para Administrador. -->
                 <a class="btn-plantilla" href="inventario_productos.php?plantilla=1">Descargar plantilla</a>
                 <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
+                <?php endif; ?>
                 <a style="background:#c0392b;color:white;border:none;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;" href="inventario_productos.php?exportar=pdf">⬇ PDF</a>
                 <a class="btn-excel-export" href="inventario_productos.php?exportar=excel">⬇ Excel</a>
                 <?php if ($vistaGlobal): ?>
@@ -801,7 +836,8 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             </div>
         </div>
 
-        <!-- Panel de importación -->
+        <!-- Panel de importación (FIX-IMPORT-02: solo Administrador) -->
+        <?php if ($puedeImportarExcel): ?>
         <div class="import-card" id="importCard">
             <h3>Importar productos desde Excel</h3>
             <?php if ($vistaGlobal): ?>
@@ -841,6 +877,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 </p>
             </form>
         </div>
+        <?php endif; ?>
 
         <?php if ($totalStockBajo > 0 && !$stock_bajo): ?>
             <div class="alerta-stock">
@@ -859,6 +896,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             'error_eliminar'   => '❌ No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
             'error_sin_sucursal' => '❌ Selecciona una sucursal específica (no "Todas las sucursales") para eliminar un producto de su stock.',
             'error_token'      => '❌ La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
+            'no_autorizado_import' => '❌ Tu rol no puede importar productos por Excel. Usa "+ Agregar del catálogo" para activar productos ya existentes en tu sucursal.',
         ];
         $msgActual = $_GET['msg'] ?? '';
         if (isset($msgTextos[$msgActual])):
@@ -1145,10 +1183,15 @@ function cargarCatalogo(q) {
             }
             // Mantener marcados los que ya están en la lista de seleccionados
             const yaSeleccionados = new Set([...document.querySelectorAll('.sel-item')].map(e => e.dataset.id));
+            // [FIX-C6] (portado de cajeroInventario/productos.php): esc() cubre & < > " ' — antes
+            // "nombre" solo escapaba & y " (para el atributo data-nombre) pero p.nombre_producto/
+            // p.categoria/p.codigo se insertaban CRUDOS en el innerHTML de abajo, un nombre de
+            // producto con <script> se ejecutaba en la sesión de quien viera esta pantalla.
+            const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
             lista.innerHTML = data.map(p => {
-                const cat    = p.categoria ? ' · ' + p.categoria : '';
+                const cat    = p.categoria ? ' · ' + esc(p.categoria) : '';
                 const precio = parseFloat(p.precio_venta || 0).toFixed(2);
-                const nombre = p.nombre_producto.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+                const nombre = esc(p.nombre_producto);
                 const enLista = yaSeleccionados.has(String(p.producto_id));
                 const btnStyle = enLista
                     ? 'background:#388e3c;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;'
@@ -1156,8 +1199,8 @@ function cargarCatalogo(q) {
                 const btnText = enLista ? '✓ En lista' : '+ Seleccionar';
                 return `<div class="cat-item" data-id="${p.producto_id}" data-nombre="${nombre}" style="display:flex;justify-content:space-between;align-items:center;padding:10px 20px;border-bottom:1px solid #f5f5f5;">
                     <div style="flex:1;">
-                        <div style="font-weight:600;font-size:13px;">${p.nombre_producto}</div>
-                        <div style="font-size:11px;color:#888;">${p.codigo}${cat}</div>
+                        <div style="font-weight:600;font-size:13px;">${nombre}</div>
+                        <div style="font-size:11px;color:#888;">${esc(p.codigo)}${cat}</div>
                     </div>
                     <div style="display:flex;align-items:center;gap:14px;">
                         <span style="font-size:13px;color:#1565c0;font-weight:600;">$${precio}</span>
@@ -1192,8 +1235,12 @@ function seleccionarProductoCat(btn) {
     fila.className = 'sel-item';
     fila.dataset.id = id;
     fila.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #d0eaf8;';
+    // [FIX-C6] Escapar nombre antes de insertarlo: viene de dataset.nombre (el navegador lo
+    // devuelve ya decodificado), asi que hay que volver a limpiarlo aqui antes de meterlo
+    // en innerHTML, sin depender del esc() de cargarCatalogo() (funcion distinta).
+    const nombreSeguro = nombre.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     fila.innerHTML = `
-        <span style="flex:1;font-size:12px;font-weight:600;color:#222;">${nombre}</span>
+        <span style="flex:1;font-size:12px;font-weight:600;color:#222;">${nombreSeguro}</span>
         <input type="number" class="inp-stock-actual" min="0" step="0.01" placeholder="Inicial" style="${inpStyle}" title="Stock inicial">
         <input type="number" class="inp-stock-min"    min="0" step="0.01" placeholder="Mín"     style="${inpStyle}" title="Stock mínimo">
         <input type="number" class="inp-stock-max"    min="0" step="0.01" placeholder="Máx"     style="${inpStyle}" title="Stock máximo">

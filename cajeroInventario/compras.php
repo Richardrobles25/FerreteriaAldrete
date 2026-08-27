@@ -40,10 +40,12 @@ if ($verDetalle) {
     }
 }
 
-// [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php: Inventario/Cajero no puede
-// editar el catalogo global de precios. "Actualizar precios" al registrar una compra
-// modifica productos.precio_compra/venta/mayoreo (global), asi que se le bloquea igual.
-$puedeEditarPrecios = in_array($_SESSION['rol'] ?? '', ['Administrador', 'Inventario']);
+// [FIX-CONSISTENCIA REVERTIDO 2026-08-26] Regla confirmada: cualquier rol puede editar
+// precio/nombre/categoria de un producto que YA tiene en su sucursal — y esta pantalla solo
+// deja comprar productos con stock_sucursal.activo=1 en la sucursal del usuario (ver query de
+// $productos abajo), nunca un producto ajeno. Lo único restringido a Administrador es CREAR
+// productos nuevos e importar por Excel (ver productos.php).
+$puedeEditarPrecios = true;
 
 // Procesar nueva compra
 $errores = [];

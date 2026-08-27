@@ -348,8 +348,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         throw new Exception('Los precios no pueden ser mayores a $500,000.00.');
                     }
 
-                    // Auto-crear unidad de medida si no existe en la sucursal (con caché para no repetir INSERT)
-                    if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida]) && $puedeCrearCatalogo) {
+                    // [FIX-UNIDAD-GLOBAL-01] unidades_medida.sucursal_id es NOT NULL — en "Todas
+                    // las sucursales" ($sucursalImport === null) este INSERT tronaba con
+                    // "Column 'sucursal_id' cannot be null" en cuanto el Excel traía una unidad
+                    // que aun no existiera en NINGUNA sucursal. El campo unidad_medida del
+                    // producto (un varchar libre, no una FK) igual se guarda bien mas abajo; solo
+                    // se omite la auto-creacion de la unidad como sugerencia cuando no hay una
+                    // sucursal especifica a la cual asociarla.
+                    if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida]) && $puedeCrearCatalogo && $sucursalImport !== null) {
                         $checkUnd = $pdo->prepare("SELECT unidad_id FROM unidades_medida WHERE nombre = ? AND sucursal_id = ? LIMIT 1");
                         $checkUnd->execute([$unidad_medida, $sucursalImport]);
                         if (!$checkUnd->fetchColumn()) {

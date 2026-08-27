@@ -1513,6 +1513,19 @@ const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
+// El sidebar se vuelve a pintar en cada navegacion (no es un SPA), asi que sin esto
+// el scroll siempre vuelve a 0 y hay que bajar de nuevo para ver los modulos de abajo.
+// (mismo fix ya aplicado en admin/_admin_sidebar.php)
+(function() {
+    var menu = document.querySelector('.sidebar-menu');
+    if (!menu) return;
+    var saved = sessionStorage.getItem('cajeroInvSidebarScroll');
+    if (saved !== null) menu.scrollTop = parseInt(saved, 10) || 0;
+    menu.addEventListener('scroll', function() {
+        sessionStorage.setItem('cajeroInvSidebarScroll', menu.scrollTop);
+    });
+})();
+
 // ── Movimiento de caja ────────────────────────────────────────────────────────
 function abrirModalMovCaja() {
     seleccionarTipoMov('Ingreso');

@@ -216,6 +216,21 @@ if (isset($_GET['editar'])) {
     </div>
     <div class="sidebar-footer">v1.0.0</div>
 </div>
+<script>
+// Restaurar el scroll del sidebar ANTES de que se pinte el resto de la pagina — si se
+// hace hasta el <script> del final, primero se ve el sidebar en 0 y luego "salta" a la
+// posicion guardada, dando sensacion de lag. Aqui corre justo despues del sidebar, antes
+// de que el navegador tenga que parsear el resto del contenido de la pagina.
+(function() {
+    var menu = document.querySelector('.sidebar-menu');
+    if (!menu) return;
+    var saved = sessionStorage.getItem('cajeroInvSidebarScroll');
+    if (saved !== null) menu.scrollTop = parseInt(saved, 10) || 0;
+    menu.addEventListener('scroll', function() {
+        sessionStorage.setItem('cajeroInvSidebarScroll', menu.scrollTop);
+    });
+})();
+</script>
 
 <div class="main">
     <div class="topbar">
@@ -318,19 +333,6 @@ if (isset($_GET['editar'])) {
 
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-
-// El sidebar se vuelve a pintar en cada navegacion (no es un SPA), asi que sin esto
-// el scroll siempre vuelve a 0 y hay que bajar de nuevo para ver los modulos de abajo.
-// (mismo fix ya aplicado en admin/_admin_sidebar.php)
-(function() {
-    var menu = document.querySelector('.sidebar-menu');
-    if (!menu) return;
-    var saved = sessionStorage.getItem('cajeroInvSidebarScroll');
-    if (saved !== null) menu.scrollTop = parseInt(saved, 10) || 0;
-    menu.addEventListener('scroll', function() {
-        sessionStorage.setItem('cajeroInvSidebarScroll', menu.scrollTop);
-    });
-})();
 function filtrar(q) {
     const texto = q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     let visibles = 0;

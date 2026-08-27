@@ -180,11 +180,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     $negativos++;
                     continue;
                 }
+                // [FIX-PRECIO-CERO-01] (portado de admin/inventario_productos.php): el
+                // formulario manual exige precio_venta > 0, pero aqui solo se validaba "< 0" —
+                // una celda con texto no numerico (ej. "gratis") pasaba floatval() como 0 y el
+                // producto se importaba para venderse gratis en el POS, sin ningun aviso.
+                if ($precio_venta <= 0) {
+                    $negativos++;
+                    continue;
+                }
                 // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope
                 // tecnico 99,999,999.99), pero ningun producto real cuesta eso — un tope de
                 // $500,000 (igual al que ya usan abrirCaja/corteCaja) atrapa un error de dedo
                 // en el Excel mucho antes.
                 if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
+                    $negativos++;
+                    continue;
+                }
+                // [FIX-STOCK-ENTERO-01] (portado de admin/inventario_productos.php): igual que
+                // compras.php/salidas.php/formProducto.php, un producto que no es "Suelto" no
+                // puede tener stock con decimales.
+                if ($tipo_venta !== 'Suelto' && (floor($stock_actual) != $stock_actual || floor($stock_minimo) != $stock_minimo || floor($stock_maximo) != $stock_maximo)) {
                     $negativos++;
                     continue;
                 }
@@ -256,7 +271,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
                 . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes." : '')
-                . ($negativos > 0 ? " $negativos fila(s) omitida(s): precios/cantidades de stock negativos o precios mayores a \$500,000.00." : '');
+                . ($negativos > 0 ? " $negativos fila(s) omitida(s): precio inválido (negativo, cero, texto o mayor a \$500,000.00) o stock con decimales en un producto por unidad." : '');
         } catch (Exception $e) {
             $erroresImport[] = 'Error al leer el archivo: ' . $e->getMessage();
         }

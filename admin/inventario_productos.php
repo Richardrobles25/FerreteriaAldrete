@@ -340,12 +340,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         || $stock_actual < 0 || $stock_minimo < 0 || $stock_maximo < 0) {
                         throw new Exception('Precios y cantidades de stock no pueden ser negativos.');
                     }
+                    // [FIX-PRECIO-CERO-01] El formulario manual (inventario_formProducto.php)
+                    // exige precio_venta > 0, pero aqui solo se validaba "< 0" — una celda con
+                    // texto no numerico (ej. "gratis") pasaba floatval() como 0 y el producto se
+                    // importaba para venderse gratis en el POS, sin ningun aviso.
+                    if ($precio_venta <= 0) {
+                        throw new Exception('El precio de venta debe ser mayor a 0 (revisa que la celda tenga un número válido).');
+                    }
                     // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope
                     // tecnico 99,999,999.99), pero ningun producto real cuesta eso — un tope
                     // de $500,000 (igual al que ya usan abrirCaja/corteCaja) atrapa un error
                     // de dedo en el Excel mucho antes.
                     if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
                         throw new Exception('Los precios no pueden ser mayores a $500,000.00.');
+                    }
+                    // [FIX-STOCK-ENTERO-01] Igual que compras.php/salidas.php/formProducto.php:
+                    // un producto que no es "Suelto" (se vende por pieza entera) no puede tener
+                    // stock con decimales — antes el Excel lo dejaba pasar tal cual.
+                    if ($tipo_venta !== 'Suelto' && (floor($stock_actual) != $stock_actual || floor($stock_minimo) != $stock_minimo || floor($stock_maximo) != $stock_maximo)) {
+                        throw new Exception('Este producto se maneja por unidad; el stock inicial/mínimo/máximo debe ser un número entero.');
                     }
 
                     // [FIX-UNIDAD-GLOBAL-01] unidades_medida.sucursal_id es NOT NULL — en "Todas

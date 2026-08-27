@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errores)) {
         // [AUTOFIX] INFO-3E-1: Incluir stock_minimo para detectar si queda bajo el mínimo
         $stmtP = $pdo->prepare("
-            SELECT p.nombre_producto, ss.stock_actual, ss.stock_minimo
+            SELECT p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo
             FROM productos p
             INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
             WHERE p.producto_id = ?

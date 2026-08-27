@@ -385,6 +385,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $subtotalFinalVenta += floatval($fp['item_final_total']);
         }
 
+        // [FIX-CANTIDAD-ENTERA-DEVOLUCION] tipo_venta de cada producto de la venta, para
+        // rechazar una cantidad fraccionaria en una devolución de un producto que NO es
+        // "Suelto" — verificado en vivo: sin esto se podía devolver, por ejemplo, 1.5
+        // martillos (tipo "Unidad") y el stock quedaba con una fracción de pieza física
+        // imposible, además de calcular un reembolso proporcional a esa fracción inventada.
+        $tiposVentaProds = [];
+        if (!empty($cantidadesVendidas)) {
+            $idsProdsVenta = array_keys($cantidadesVendidas);
+            $inPlaceholders = implode(',', array_fill(0, count($idsProdsVenta), '?'));
+            $stmtTV = $pdo->prepare("SELECT producto_id, tipo_venta FROM productos WHERE producto_id IN ($inPlaceholders)");
+            $stmtTV->execute($idsProdsVenta);
+            foreach ($stmtTV->fetchAll(PDO::FETCH_ASSOC) as $filaTV) {
+                $tiposVentaProds[intval($filaTV['producto_id'])] = $filaTV['tipo_venta'];
+            }
+        }
+
         // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para diferenciar filas sueltas de filas en paquete.
         //           Así dos entradas del mismo producto con distinto paquete_id mantienen precios independientes.
         $productosAgrupados = [];
@@ -396,6 +412,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mapKey     = $productoId . ':' . ($paqueteId ?? '');
 
             if ($productoId <= 0 || $cantidad <= 0) {
+                continue;
+            }
+
+            if ($paqueteId === null && ($tiposVentaProds[$productoId] ?? null) !== 'Suelto' && floor($cantidad) != $cantidad) {
+                $errores[] = 'La cantidad a devolver de "' . ($prod['nombre_producto'] ?? 'un producto') . '" debe ser un número entero.';
                 continue;
             }
 

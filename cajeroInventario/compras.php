@@ -85,6 +85,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
                 $errores[] = 'El precio unitario de "' . ($item['nombre_producto'] ?? 'un producto') . '" no puede ser negativo.';
                 break;
             }
+            // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope tecnico
+            // 99,999,999.99), pero ninguna compra real a proveedor llega a eso — un tope de
+            // $500,000 (igual al que ya usan abrirCaja/corteCaja) atrapa un error de dedo antes.
+            if ($precChk > 500000) {
+                $errores[] = 'El precio unitario de "' . ($item['nombre_producto'] ?? 'un producto') . '" no puede ser mayor a $500,000.00.';
+                break;
+            }
             // [FIX-ALTO-C-04] (portado de admin/inventario_compras.php): antes se aceptaba
             // cualquier decimal para cualquier producto, igual que en Salidas: un producto
             // por Unidad podía "entrar" 3.7 piezas.

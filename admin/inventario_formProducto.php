@@ -108,6 +108,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$codigo)           $errores[] = 'El código es obligatorio.';
     if (!$nombre_producto)  $errores[] = 'El nombre del producto es obligatorio.';
     if ($precio_venta <= 0) $errores[] = 'El precio de venta debe ser mayor a 0.';
+    // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope tecnico
+    // 99,999,999.99), pero ningun producto real de una ferreteria cuesta eso — un tope de
+    // $500,000 (igual al que ya usan abrirCaja/corteCaja) atrapa un error de dedo mucho antes.
+    if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
+        $errores[] = 'Los precios no pueden ser mayores a $500,000.00. Verifica la cantidad capturada.';
+    }
     if ($tipo_venta !== 'Suelto') {
         if (!esValorEnteroValido($stock_minimo_raw)) $errores[] = 'El stock minimo solo acepta valores enteros cuando el tipo de venta es por unidad.';
         if (!esValorEnteroValido($stock_maximo_raw)) $errores[] = 'El stock maximo solo acepta valores enteros cuando el tipo de venta es por unidad.';

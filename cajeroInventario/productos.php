@@ -180,6 +180,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     $negativos++;
                     continue;
                 }
+                // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope
+                // tecnico 99,999,999.99), pero ningun producto real cuesta eso — un tope de
+                // $500,000 (igual al que ya usan abrirCaja/corteCaja) atrapa un error de dedo
+                // en el Excel mucho antes.
+                if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
+                    $negativos++;
+                    continue;
+                }
 
                 // Auto-crear unidad de medida si no existe en la sucursal
                 if ($unidad_medida !== '') {
@@ -248,7 +256,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
                 . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes." : '')
-                . ($negativos > 0 ? " $negativos fila(s) omitida(s): precios o cantidades de stock negativos." : '');
+                . ($negativos > 0 ? " $negativos fila(s) omitida(s): precios/cantidades de stock negativos o precios mayores a \$500,000.00." : '');
         } catch (Exception $e) {
             $erroresImport[] = 'Error al leer el archivo: ' . $e->getMessage();
         }

@@ -340,6 +340,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         || $stock_actual < 0 || $stock_minimo < 0 || $stock_maximo < 0) {
                         throw new Exception('Precios y cantidades de stock no pueden ser negativos.');
                     }
+                    // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope
+                    // tecnico 99,999,999.99), pero ningun producto real cuesta eso — un tope
+                    // de $500,000 (igual al que ya usan abrirCaja/corteCaja) atrapa un error
+                    // de dedo en el Excel mucho antes.
+                    if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
+                        throw new Exception('Los precios no pueden ser mayores a $500,000.00.');
+                    }
 
                     // Auto-crear unidad de medida si no existe en la sucursal (con caché para no repetir INSERT)
                     if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida]) && $puedeCrearCatalogo) {

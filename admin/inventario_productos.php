@@ -546,55 +546,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
         exit();
     }
 
-    // [DIAG-ELIMINAR-01] Diagnóstico temporal: el botón "Eliminar" está fallando en
-    // producción con el mensaje genérico "error_eliminar" sin poder distinguir la causa
-    // real (datos incompletos, producto no encontrado, o excepción SQL). Se diferencian
-    // los 3 caminos y se loguea el error real de PDO para poder identificarlo.
-    if (!$id || $motivo === '') {
-        header('Location: inventario_productos.php?msg=error_datos_incompletos');
-        exit();
-    }
-
-    {
+    if ($id && $motivo !== '') {
         $stmtProd = $pdo->prepare("SELECT p.producto_id, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
         $stmtProd->execute([$sucursalVista, $id]);
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
-        if (!$productoEliminar) {
-            header('Location: inventario_productos.php?msg=error_producto_no_encontrado');
-            exit();
-        }
-
         if ($productoEliminar) {
-            // [FIX-MEDIO-H-07] La baja de stock y el registro del movimiento (su unica
-            // explicacion en el historial) eran dos escrituras sueltas: si la segunda fallaba
-            // despues de que la primera ya tuviera exito, el producto desaparecia de la
-            // sucursal sin dejar ningun rastro de motivo ni de quien/cuando lo dio de baja.
-            $pdo->beginTransaction();
+            // [FIX-ELIMINAR-CHK-01] La base de datos tiene una restriccion CHECK
+            // (chk_movimientos_inv_cantidad) que no permite cantidad = 0 en
+            // movimientos_inventario. El registro de "Ajuste" que se intentaba insertar
+            // aqui (FIX-MEDIO-H-07) siempre usaba cantidad=0 porque desactivar un producto
+            // no es un cambio real de existencia — esto violaba la restriccion en CADA
+            // intento y el boton "Eliminar" nunca funciono desde que se agrego ese CHECK.
+            // Se quita el registro en movimientos_inventario (no puede representar un
+            // movimiento de cantidad cero); el motivo queda en el log de PHP como respaldo
+            // minimo, ya que no hay una columna dedicada para guardarlo sin migrar el esquema.
             try {
-                $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $sucursalVista]);
-                // [FIX-MEDIO-B-16] Antes se guardaba sin sucursal_id: la baja quedaba invisible
-                // en cualquier historial de movimientos filtrado por sucursal.
-                $pdo->prepare("
-                    INSERT INTO movimientos_inventario
-                    (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-                    VALUES (?, ?, ?, 'Ajuste', 0, ?, ?, ?)
-                ")->execute([
-                    $id,
-                    $_SESSION['usuario_id'],
-                    $sucursalVista,
-                    $productoEliminar['stock_actual'],
-                    $productoEliminar['stock_actual'],
-                    'Producto eliminado: ' . $motivo
-                ]);
-                $pdo->commit();
+                $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")
+                    ->execute([$id, $sucursalVista]);
+                error_log('[inventario_productos.php] Producto desactivado producto_id=' . $id . ' sucursal=' . $sucursalVista . ' por usuario_id=' . $_SESSION['usuario_id'] . ' motivo: ' . $motivo);
                 header('Location: inventario_productos.php?msg=eliminado');
                 exit();
             } catch (\PDOException $e) {
-                $pdo->rollBack();
-                // [DIAG-ELIMINAR-01] Loguear el error real de PDO para diagnosticar por qué
-                // "Eliminar" está fallando en producción — sin esto es imposible saber si es
-                // una FK, un tipo de dato, o algo más sin acceso directo a los logs del server.
                 error_log('[inventario_productos.php] Error al eliminar producto_id=' . $id . ' sucursal=' . $sucursalVista . ': ' . $e->getMessage());
                 header('Location: inventario_productos.php?msg=error_eliminar');
                 exit();
@@ -935,8 +908,6 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             'agregado_catalogo'=> '✅ Producto(s) agregado(s) a la sucursal correctamente.',
             'error_agregar_catalogo' => '❌ No se pudo completar el alta de productos. No se guardó ningún cambio, intenta de nuevo.',
             'error_eliminar'   => '❌ No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
-            'error_datos_incompletos' => '❌ [DIAG] Faltó el ID del producto o el motivo al enviar el formulario.',
-            'error_producto_no_encontrado' => '❌ [DIAG] No se encontró ese producto con stock en la sucursal que estás viendo.',
             'error_sin_sucursal' => '❌ Selecciona una sucursal específica no "Todas las sucursales" para eliminar un producto de su stock.',
             'error_token'      => '❌ La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
             'no_autorizado_import' => '❌ Tu rol no puede importar productos por Excel. Usa "+ Agregar del catálogo" para activar productos ya existentes en tu sucursal.',

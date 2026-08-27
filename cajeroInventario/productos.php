@@ -346,31 +346,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
         if ($productoEliminar) {
-            // [FIX-CONSISTENCIA] Igual que admin/inventario_productos.php (FIX-MEDIO-H-07): la
-            // baja de stock y el registro del movimiento (su unica explicacion en el
-            // historial) eran dos escrituras sueltas — si la segunda fallaba despues de que la
-            // primera ya tuviera exito, el producto desaparecia de la sucursal sin dejar
-            // ningun rastro de motivo ni de quien/cuando lo dio de baja.
-            $pdo->beginTransaction();
+            // [FIX-ELIMINAR-CHK-01] (portado de admin/inventario_productos.php): la base de
+            // datos tiene una restriccion CHECK (chk_movimientos_inv_cantidad) que no permite
+            // cantidad = 0 en movimientos_inventario. Aqui se insertaba stock_actual como
+            // "cantidad" (semanticamente incorrecto — no hubo ningun movimiento real de esa
+            // cantidad) y ademas violaba la restriccion en cuanto un producto con stock_actual
+            // en 0 se intentara eliminar. Se quita el registro (no puede representar un
+            // movimiento de cantidad cero); el motivo queda en el log de PHP como respaldo.
             try {
                 $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?")->execute([$id, $_SESSION['sucursal_id']]);
-                // [FIX] Se agrega sucursal_id: antes quedaba NULL y el movimiento
-                // no aparecía en el historial de ninguna sucursal
-                $pdo->prepare("
-                    INSERT INTO movimientos_inventario
-                    (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
-                    VALUES (?, ?, ?, 'Ajuste', ?, ?, 0, ?)
-                ")->execute([
-                    $id,
-                    $_SESSION['usuario_id'],
-                    $_SESSION['sucursal_id'],
-                    $productoEliminar['stock_actual'],
-                    $productoEliminar['stock_actual'],
-                    'Producto eliminado: ' . $motivo
-                ]);
-                $pdo->commit();
+                error_log('[productos.php] Producto desactivado producto_id=' . $id . ' sucursal=' . $_SESSION['sucursal_id'] . ' por usuario_id=' . $_SESSION['usuario_id'] . ' motivo: ' . $motivo);
             } catch (\Throwable $e) {
-                $pdo->rollBack();
+                error_log('[productos.php] Error al eliminar producto_id=' . $id . ' sucursal=' . $_SESSION['sucursal_id'] . ': ' . $e->getMessage());
                 header('Location: productos.php?msg=error_eliminar');
                 exit();
             }

@@ -66,7 +66,7 @@ $stmtStock = $pdo->query("
 $stockBajo = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
 
 // Auto-marcar vencidos antes de consultar
-$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite <= CURDATE()");
 
 // Créditos vencidos
 $stmtCred = $pdo->query("

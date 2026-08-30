@@ -35,7 +35,7 @@ function siguienteCorteQuincenal(string $fechaDesde): string {
 }
 
 try {
-    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite <= CURDATE()");
 } catch (\PDOException $e) {
     error_log('[Ferreteria/creditos] Error al actualizar vencidos: ' . $e->getMessage());
 }

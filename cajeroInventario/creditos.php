@@ -41,7 +41,7 @@ $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
 
 // [AUTOFIX] BUG-07: Envolver en try/catch para evitar crash si la BD falla
 try {
-    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
+    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite <= CURDATE()");
 } catch (\PDOException $e) {
     error_log('[Ferreteria/creditos] Error al actualizar vencidos: ' . $e->getMessage());
 }

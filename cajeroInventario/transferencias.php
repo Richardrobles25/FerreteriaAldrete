@@ -809,12 +809,13 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 
                     <div class="form-group">
                         <label>Notas (opcional)</label>
-                        <input type="text" name="notas" placeholder="Motivo o indicaciones...">
+                        <input type="text" name="notas" id="notasTransf" placeholder="Motivo o indicaciones..." oninput="guardarEstadoTransf()">
                     </div>
 
                     <button class="btn-guardar" type="submit" onclick="return prepararEnvio()">
                         Enviar solicitud
                     </button>
+                    <button type="button" onclick="limpiarFormularioTransf()" style="width:100%;margin-top:8px;background:none;border:none;color:#aaa;font-size:12px;cursor:pointer;">Limpiar formulario</button>
                 </form>
             </div>
         </div>
@@ -823,7 +824,22 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 
 <script>
 const prodsBySucursal = <?= json_encode($prodsBySucursal) ?>;
-let itemsTransf  = [];
+// [FIX-BORRADOR-TRANSF] Igual que nuevaVenta.php: si venimos de enviar la solicitud con exito
+// (?msg=solicitado), limpiar el borrador ANTES de restaurarlo.
+(function() {
+    if (new URLSearchParams(window.location.search).get('msg') === 'solicitado') {
+        localStorage.removeItem('itemsTransfDraft');
+        localStorage.removeItem('transfExtra');
+    }
+})();
+let itemsTransf = (function() {
+    try {
+        const guardado = JSON.parse(localStorage.getItem('itemsTransfDraft'));
+        return Array.isArray(guardado) ? guardado : [];
+    } catch (e) {
+        return [];
+    }
+})();
 let prodSelId    = null;
 let prodSelTipo  = 'Unidad'; // 'Suelto' o 'Unidad'
 let prodSelStock = 0;        // stock disponible en sucursal origen del producto seleccionado
@@ -843,6 +859,27 @@ function onOrigenChange(val) {
     prodSelId = null;
     hideSug();
     if (val) { setTimeout(() => { input.focus(); }, 50); }
+    guardarEstadoTransf();
+}
+
+// [FIX-BORRADOR-TRANSF] Persistencia de la sucursal origen — mismo patrón que
+// guardarEstadoVenta() en nuevaVenta.php (los items ya se guardan en renderItems()).
+function guardarEstadoTransf() {
+    localStorage.setItem('transfExtra', JSON.stringify({
+        sucursalOrigenId: document.getElementById('selOrigen')?.value || '',
+        notas:            document.getElementById('notasTransf')?.value || ''
+    }));
+}
+
+// [FIX-BORRADOR-TRANSF] Botón "Limpiar formulario" — reinicia lista, sucursal origen y notas
+// por si el usuario quiere empezar de cero sin recargar la página.
+function limpiarFormularioTransf() {
+    if (itemsTransf.length > 0 && !confirm('¿Reiniciar el formulario? Se perderán los productos agregados.')) return;
+    itemsTransf = [];
+    renderItems();
+    document.getElementById('notasTransf').value = '';
+    document.getElementById('selOrigen').value = '';
+    onOrigenChange('');
 }
 
 function buscarProducto() {
@@ -952,6 +989,8 @@ function agregarItem() {
 }
 
 function renderItems() {
+    // [FIX-BORRADOR-TRANSF] Persistir la lista en cada render, igual que nuevaVenta.php.
+    localStorage.setItem('itemsTransfDraft', JSON.stringify(itemsTransf));
     const div = document.getElementById('listaItems');
     if (!itemsTransf.length) {
         div.innerHTML = '<div class="items-vacio">Sin productos agregados</div>';
@@ -1066,6 +1105,25 @@ document.addEventListener('keydown', function(e) {
         cerrarModalEditarCantidad();
     }
 });
+
+// [FIX-BORRADOR-TRANSF] Restaurar productos/sucursal origen en curso, mismo patrón que
+// restaurarEstadoVenta() en nuevaVenta.php. Se lee "extra" ANTES de renderItems() por si
+// acaso esa función llegara a disparar algun guardado propio en el futuro.
+(function restaurarEstadoTransf() {
+    let extra = null;
+    try { extra = JSON.parse(localStorage.getItem('transfExtra')); } catch (e) {}
+
+    renderItems();
+
+    if (extra && extra.sucursalOrigenId) {
+        const sel = document.getElementById('selOrigen');
+        if (Array.from(sel.options).some(o => o.value === extra.sucursalOrigenId)) {
+            sel.value = extra.sucursalOrigenId;
+            onOrigenChange(extra.sucursalOrigenId);
+        }
+    }
+    if (extra && extra.notas) document.getElementById('notasTransf').value = extra.notas;
+})();
 </script>
 
 <!-- Form editar cantidad -->

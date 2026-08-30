@@ -8,11 +8,9 @@ require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 require_once '../includes/topbar_info.php';
-if (isset($_GET['eliminar'])) {
-    requerirCSRF($_GET['_token'] ?? '', 'inventario_proveedores.php');
-    $pdo->prepare("UPDATE proveedores SET activo = 0 WHERE proveedor_id = ?")->execute([intval($_GET['eliminar'])]);
-    header('Location: inventario_proveedores.php?msg=eliminado'); exit();
-}
+// [FIX-ELIMINAR-REDUNDANTE] Se quito el botón/accion "Eliminar" — hacia exactamente lo mismo
+// que "Desactivar" (activo=0, nunca borraba el registro de verdad) y mostrarlos juntos
+// confundia al dar a entender que uno si eliminaba. El toggle de abajo ya cubre ambos casos.
 if (isset($_GET['toggle'])) {
     requerirCSRF($_GET['_token'] ?? '', 'inventario_proveedores.php');
     $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval($_GET['toggle'])]);
@@ -198,8 +196,6 @@ if ($editando) {
     .btn-editar:hover { background: #bbdefb; }
     .btn-desactivar { background: #fff8e1; color: #1565c0; }
     .btn-activar { background: #e8f5e9; color: #2e7d32; }
-    .btn-eliminar { background: #fdecea; color: #c0392b; }
-    .btn-eliminar:hover { background: #ffcdd2; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 600; }
@@ -252,7 +248,7 @@ if ($editando) {
                 </div>
             </div>
             <?php if (isset($_GET['msg'])): ?>
-                <?php $msgs = ['creado'=>'Proveedor creado.','editado'=>'Proveedor actualizado.','eliminado'=>'Proveedor eliminado.']; ?>
+                <?php $msgs = ['creado'=>'Proveedor creado.','editado'=>'Proveedor actualizado.']; ?>
                 <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
             <?php endif; ?>
 
@@ -308,7 +304,6 @@ if ($editando) {
                                     <a class="btn-accion <?= $p['activo']?'btn-desactivar':'btn-activar' ?>" href="inventario_proveedores.php?toggle=<?= $p['proveedor_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Confirmar cambio?')">
                                         <?= $p['activo']?'Desactivar':'Activar' ?>
                                     </a>
-                                    <a class="btn-accion btn-eliminar" href="inventario_proveedores.php?eliminar=<?= $p['proveedor_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar proveedor?')">Eliminar</a>
                                 </div>
                             </td>
                         </tr>

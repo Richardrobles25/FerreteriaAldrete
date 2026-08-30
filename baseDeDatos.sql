@@ -259,7 +259,8 @@
         devolucion_id INT UNSIGNED NULL DEFAULT NULL,
         KEY idx_mi_sucursal (sucursal_id),
         FOREIGN KEY (producto_id) REFERENCES productos(producto_id),
-        FOREIGN KEY (usuario_id)  REFERENCES usuarios(usuario_id)
+        FOREIGN KEY (usuario_id)  REFERENCES usuarios(usuario_id),
+        CONSTRAINT chk_movimientos_inv_cantidad CHECK (cantidad > 0)
     );
 
     -- 16. TRANSFERENCIAS
@@ -576,3 +577,26 @@ ALTER TABLE ventas ADD COLUMN folio_periodo INT GENERATED ALWAYS AS (YEAR(create
 ALTER TABLE ventas ADD UNIQUE KEY uk_ventas_folio_periodo (folio_periodo, folio);
 
 ALTER TABLE cajas ADD COLUMN observaciones_cierre TEXT NULL AFTER observaciones;
+-- [FIX-MORA-QUINCENAL] Tabla de auditoria para "Cancelar mora" (admin): registra cuando un
+-- administrador perdona la ultima mora cobrada a un credito, con motivo obligatorio.
+CREATE TABLE mora_cancelaciones (
+    cancelacion_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    credito_id     INT UNSIGNED NOT NULL,
+    usuario_id     INT UNSIGNED NOT NULL,
+    monto          DECIMAL(10,2) NOT NULL,
+    motivo         VARCHAR(255) NOT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+);
+
+CREATE TABLE mora_cancelaciones (
+    cancelacion_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    credito_id     INT UNSIGNED NOT NULL,
+    usuario_id     INT UNSIGNED NOT NULL,
+    monto          DECIMAL(10,2) NOT NULL,
+    motivo         VARCHAR(255) NOT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+);

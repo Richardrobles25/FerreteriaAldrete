@@ -265,15 +265,19 @@ if (isset($_GET['cancelar_dev'])) {
         // vuelta inflaba el saldo mas alla de lo que realmente se debia antes de
         // devolver. La reduccion real que sufrio el saldo fue $totalDevuelto menos lo
         // que se reembolso en efectivo (montoRetiroOrig) — eso es lo que hay que restaurar.
-        $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido','Liquidado')");
+        $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente, estado FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido','Liquidado')");
         $stmtCred->execute([$dev['venta_id']]);
         $cred = $stmtCred->fetch(PDO::FETCH_ASSOC);
         if ($cred) {
             $reduccionOriginal = $esCreditoDev
                 ? max(0.0, round($totalDevuelto - $montoRetiroOrig, 2))
                 : $totalDevuelto;
-            $pdo->prepare("UPDATE creditos SET saldo_pendiente = saldo_pendiente + ?, estado = 'Activo' WHERE credito_id = ?")
-                ->execute([$reduccionOriginal, $cred['credito_id']]);
+            // [FIX-MORA-QUINCENAL] Al cancelar la devolucion el saldo vuelve a subir, pero eso
+            // no es un pago — si ya estaba "Vencido" debe seguir viendose "Vencido", no
+            // resetearse a "Activo". Solo se saca de "Liquidado" (ya no aplica con saldo > 0).
+            $estadoRestaurado = $cred['estado'] === 'Liquidado' ? 'Activo' : $cred['estado'];
+            $pdo->prepare("UPDATE creditos SET saldo_pendiente = saldo_pendiente + ?, estado = ? WHERE credito_id = ?")
+                ->execute([$reduccionOriginal, $estadoRestaurado, $cred['credito_id']]);
         }
 
         // Marcar devolución como cancelada
@@ -734,13 +738,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Se incluye 'Vencido' ademas de 'Activo': un credito vencido tambien
                     // debe reducir su saldo (y, si aplica, reembolsar el excedente) al
                     // devolver productos de esa venta.
-                    $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido')");
+                    $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente, estado FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido')");
                     $stmtCred->execute([$venta_id]);
                     $cred = $stmtCred->fetch(PDO::FETCH_ASSOC);
                     if ($cred) {
                         $saldoAntesCredito = floatval($cred['saldo_pendiente']);
                         $nuevoSaldo        = max(0.0, round($saldoAntesCredito - $totalDevuelto, 2));
-                        $nuevoEstadoCred   = $nuevoSaldo <= 0.001 ? 'Liquidado' : 'Activo';
+                        // [FIX-MORA-QUINCENAL] Una devolución reduce lo que se debe, pero no es
+                        // un pago — si el crédito ya estaba Vencido, sigue Vencido mientras no
+                        // quede en $0 (mismo criterio que los abonos: solo Liquidado sale de mora).
+                        $nuevoEstadoCred   = $nuevoSaldo <= 0.001 ? 'Liquidado' : $cred['estado'];
                         $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
                             ->execute([$nuevoSaldo, $nuevoEstadoCred, $cred['credito_id']]);
 

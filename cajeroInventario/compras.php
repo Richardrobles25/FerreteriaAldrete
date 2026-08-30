@@ -513,9 +513,10 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <input type="hidden" name="items" id="inputItemsCompra">
                     <div class="form-group" style="margin-top:12px;">
                         <label>Notas (opcional)</label>
-                        <input type="text" name="notas" placeholder="Observaciones de la compra...">
+                        <input type="text" name="notas" id="notasCompra" placeholder="Observaciones de la compra..." oninput="guardarEstadoCompra()">
                     </div>
                     <button class="btn-guardar" type="submit" onclick="return prepararCompra()">Registrar compra</button>
+                    <button type="button" onclick="limpiarFormularioCompra()" style="width:100%;margin-top:8px;background:none;border:none;color:#aaa;font-size:12px;cursor:pointer;">Limpiar formulario</button>
                 </form>
             </div>
         </div>
@@ -556,7 +557,22 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 const productosData   = <?= json_encode(array_values($productos)) ?>;
 const proveedoresData = <?= json_encode(array_values($proveedores)) ?>;
 const puedeEditarPrecios = <?= $puedeEditarPrecios ? 'true' : 'false' ?>;
-let itemsCompra = [];
+// [FIX-BORRADOR-COMPRAS] Igual que nuevaVenta.php/ventasPendientes.php: si venimos de
+// registrar la compra con exito (?msg=creado), limpiar el borrador ANTES de restaurarlo.
+(function() {
+    if (new URLSearchParams(window.location.search).get('msg') === 'creado') {
+        localStorage.removeItem('itemsCompraDraft');
+        localStorage.removeItem('compraExtra');
+    }
+})();
+let itemsCompra = (function() {
+    try {
+        const guardado = JSON.parse(localStorage.getItem('itemsCompraDraft'));
+        return Array.isArray(guardado) ? guardado : [];
+    } catch (e) {
+        return [];
+    }
+})();
 
 function normalizar(str) {
     return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -588,11 +604,35 @@ function seleccionarProveedorCompra(id) {
     document.getElementById('proveedorChipCompra').style.display = 'flex';
     document.getElementById('buscarProveedorCompra').value = '';
     document.getElementById('dropProveedoresCompra').style.display = 'none';
+    guardarEstadoCompra();
 }
 function limpiarProveedorCompra() {
     document.getElementById('proveedorIdCompra').value = '';
     document.getElementById('proveedorChipCompra').style.display = 'none';
     document.getElementById('buscarProveedorCompra').value = '';
+    guardarEstadoCompra();
+}
+
+// [FIX-BORRADOR-COMPRAS] Persistencia del proveedor seleccionado — mismo patrón que
+// guardarEstadoVenta() en nuevaVenta.php (los productos ya se guardan en renderListaCompra()).
+function guardarEstadoCompra() {
+    const extra = {
+        proveedorId:     document.getElementById('proveedorIdCompra')?.value || '',
+        proveedorNombre: document.getElementById('proveedorChipNombreCompra')?.textContent || '',
+        notas:           document.getElementById('notasCompra')?.value || ''
+    };
+    localStorage.setItem('compraExtra', JSON.stringify(extra));
+}
+
+// [FIX-BORRADOR-COMPRAS] Botón "Limpiar formulario" — reinicia lista, proveedor y notas
+// por si el usuario quiere empezar de cero sin recargar la página.
+function limpiarFormularioCompra() {
+    if (itemsCompra.length > 0 && !confirm('¿Reiniciar el formulario? Se perderán los productos agregados.')) return;
+    itemsCompra = [];
+    renderListaCompra();
+    document.getElementById('notasCompra').value = '';
+    limpiarProveedorCompra();
+    document.getElementById('buscarProdCompra')?.focus();
 }
 
 // ── Autocomplete de producto en compra ──────────────────────────────────────
@@ -680,6 +720,8 @@ function agregarProdCompra() {
 }
 
 function renderListaCompra() {
+    // [FIX-BORRADOR-COMPRAS] Persistir la lista en cada render, igual que nuevaVenta.php.
+    localStorage.setItem('itemsCompraDraft', JSON.stringify(itemsCompra));
     const div = document.getElementById('listaCompra');
     const tot = document.getElementById('totalCompra');
     if (!itemsCompra.length) {
@@ -737,7 +779,7 @@ function renderListaCompra() {
 }
 
 function quitarProdCompra(i) { itemsCompra.splice(i, 1); renderListaCompra(); }
-function toggleActualizarPrecio(idx, val) { itemsCompra[idx].actualizar_precio = val; }
+function toggleActualizarPrecio(idx, val) { itemsCompra[idx].actualizar_precio = val; localStorage.setItem('itemsCompraDraft', JSON.stringify(itemsCompra)); }
 
 function prepararCompra() {
     const prov = document.getElementById('proveedorIdCompra').value;
@@ -754,6 +796,21 @@ document.addEventListener('click', function(e) {
         document.getElementById('dropProdCompra').style.display = 'none';
     }
 });
+
+// [FIX-BORRADOR-COMPRAS] Restaurar productos/proveedor en curso, mismo patrón que
+// restaurarEstadoVenta() en nuevaVenta.php. Se lee "extra" ANTES de renderListaCompra() por
+// si acaso esa función llegara a disparar algun guardado propio en el futuro.
+(function restaurarEstadoCompra() {
+    let extra = null;
+    try { extra = JSON.parse(localStorage.getItem('compraExtra')); } catch (e) {}
+
+    renderListaCompra();
+
+    if (extra && extra.proveedorId && proveedoresData.find(p => p.proveedor_id == extra.proveedorId)) {
+        seleccionarProveedorCompra(parseInt(extra.proveedorId, 10));
+    }
+    if (extra && extra.notas) document.getElementById('notasCompra').value = extra.notas;
+})();
 </script>
 <script src="../includes/auto_filter.js"></script>
 </body>

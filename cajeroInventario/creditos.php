@@ -8,6 +8,31 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
+// [FIX-QUINCENA-FIJA] Los cortes de credito NO son "15 dias despues de hoy" (rodante) sino
+// fechas fijas de calendario: el dia 15 y el ultimo dia de cada mes, iguales para todos los
+// clientes (asi es como realmente se cobra). Si el corte cae en domingo (la tienda cierra ese
+// dia), se recorre al lunes siguiente para que el cliente sí tenga oportunidad de ir a pagar
+// antes de que se le considere vencido.
+function siguienteCorteQuincenal(string $fechaDesde): string {
+    $ts   = strtotime($fechaDesde);
+    $dia  = (int)date('j', $ts);
+    $mes  = (int)date('n', $ts);
+    $anio = (int)date('Y', $ts);
+    $ultimoDiaMes = (int)date('t', $ts);
+
+    if ($dia < 15) {
+        $corte = mktime(0, 0, 0, $mes, 15, $anio);
+    } elseif ($dia < $ultimoDiaMes) {
+        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
+    } else {
+        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
+    }
+    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
+        $corte = strtotime('+1 day', $corte);
+    }
+    return date('Y-m-d', $corte);
+}
+
 // Datos bancarios de la sucursal
 $sucursalInfo = $pdo->prepare("SELECT banco, titular_cuenta, numero_cuenta, clabe_interbancaria, alias_tarjeta, comision_terminal_pct, porcentaje_mora FROM sucursales WHERE sucursal_id = ?");
 $sucursalInfo->execute([$_SESSION['sucursal_id']]);
@@ -21,11 +46,16 @@ try {
     error_log('[Ferreteria/creditos] Error al actualizar vencidos: ' . $e->getMessage());
 }
 
-// Aplicar mora a créditos vencidos que aún no la tienen (mora_acumulada = 0)
-// [FIX-NC1] Bloquear cada credito con FOR UPDATE dentro de una transaccion antes de leer su
-// saldo_pendiente: esta consulta corre en cada carga de la pagina, y sin candado, dos cargas
-// casi simultaneas podian leer el mismo saldo base y aplicar/registrar la mora dos veces, o
-// pisar un abono hecho justo en medio.
+// [FIX-MORA-QUINCENAL] La mora ahora se cobra de forma recurrente cada quincena (15 dias)
+// que el credito siga sin liquidarse, no solo una vez. El gatillo ya no es
+// "mora_acumulada = 0" (que solo permitia una unica aplicacion en la vida del credito) sino
+// que la fecha_limite ya haya pasado; al cobrar la mora se recorre fecha_limite otros 15 dias
+// para que sirva como el proximo punto de corte. El while interno alcanza al credito si paso
+// mas de una quincena sin que nadie visitara esta pagina (aplica una mora por cada quincena
+// vencida, compuesta sobre el saldo que ya trae mora anterior).
+// [FIX-NC1] Se mantiene el candado FOR UPDATE por credito dentro de una transaccion: sin esto,
+// dos cargas casi simultaneas podian leer el mismo saldo base y aplicar/registrar la mora dos
+// veces, o pisar un abono hecho justo en medio.
 try {
     $pdo->beginTransaction();
     $stmtMoraList = $pdo->query("
@@ -34,24 +64,38 @@ try {
         JOIN ventas v     ON cr.venta_id     = v.venta_id
         JOIN cajas  ca    ON v.caja_id       = ca.caja_id
         JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
-        WHERE cr.estado = 'Vencido' AND cr.mora_acumulada = 0 AND s.porcentaje_mora > 0
+        WHERE cr.estado = 'Vencido' AND cr.fecha_limite <= CURDATE() AND s.porcentaje_mora > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
-        $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, mora_acumulada FROM creditos WHERE credito_id = ? FOR UPDATE");
+        $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, fecha_limite, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
         $stmtLockCred->execute([$cm['credito_id']]);
         $credLock = $stmtLockCred->fetch(PDO::FETCH_ASSOC);
         // Revalidar dentro del candado: otra peticion pudo haber aplicado la mora, o un abono
-        // pudo haber cambiado el saldo, mientras esta esperaba.
-        if (!$credLock || floatval($credLock['mora_acumulada']) != 0) continue;
+        // pudo haber liquidado el credito, mientras esta esperaba.
+        if (!$credLock || $credLock['estado'] !== 'Vencido') continue;
 
-        $saldoBase  = round(floatval($credLock['saldo_pendiente']), 2);
-        $pct        = floatval($cm['porcentaje_mora']);
-        $moraAmt    = round($saldoBase * $pct / 100, 2);
-        $nuevoSaldo = round($saldoBase + $moraAmt, 2);
-        $pdo->prepare("UPDATE creditos SET mora_acumulada = ?, saldo_pendiente = ? WHERE credito_id = ?")
-            ->execute([$moraAmt, $nuevoSaldo, $cm['credito_id']]);
-        $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje) VALUES (?,?,?,?)")
-            ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct]);
+        $pct               = floatval($cm['porcentaje_mora']);
+        $saldoActual       = round(floatval($credLock['saldo_pendiente']), 2);
+        $fechaLimiteActual = $credLock['fecha_limite'];
+        $ultimaMora        = 0.0;
+
+        while (strtotime($fechaLimiteActual) <= strtotime(date('Y-m-d'))) {
+            $moraAmt           = round($saldoActual * $pct / 100, 2);
+            $saldoBase         = $saldoActual;
+            $saldoActual       = round($saldoActual + $moraAmt, 2);
+            // [FIX-MORA-QUINCENAL] Se registra con la fecha real en que venció esa quincena
+            // (no "hoy"), para que el historial de mora no muestre la misma fecha repetida
+            // cuando se ponen al día varias quincenas atrasadas en una sola carga de pagina.
+            $fechaEstaMora     = $fechaLimiteActual;
+            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
+            $ultimaMora        = $moraAmt;
+            $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
+                ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);
+        }
+        if ($ultimaMora > 0) {
+            $pdo->prepare("UPDATE creditos SET mora_acumulada = ?, saldo_pendiente = ?, fecha_limite = ? WHERE credito_id = ?")
+                ->execute([$ultimaMora, $saldoActual, $fechaLimiteActual, $cm['credito_id']]);
+        }
     }
     $pdo->commit();
 } catch (\PDOException $e) {
@@ -110,7 +154,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         $referencia = trim($_POST['referencia'] ?? '');
         $monto_ef   = floatval($_POST['monto_efectivo'] ?? 0);
         $monto_term = floatval($_POST['monto_terminal'] ?? 0);
-        $adelantado = ($_POST['pago_adelantado'] ?? '') === '1' ? 1 : 0;
 
         if ($monto <= 0) throw new Exception('El monto debe ser mayor a 0.');
         if (!in_array($metodo, ['Efectivo','Terminal','Transferencia','Mixto'])) throw new Exception('Selecciona el método de pago.');
@@ -141,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
 
         // Créditos del cliente, del más antiguo al más reciente (globales — el cliente paga en cualquier sucursal)
         $stmtCrs = $pdo->prepare("
-            SELECT credito_id, saldo_pendiente
+            SELECT credito_id, saldo_pendiente, estado
             FROM creditos
             WHERE cliente_id = ? AND estado IN ('Activo', 'Vencido')
             ORDER BY created_at ASC
@@ -173,24 +216,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         }
 
         // Aplicar FIFO: liquidar créditos del más antiguo al más reciente
+        // [FIX-MORA-QUINCENAL] Un abono parcial ya NO regresa el crédito a "Activo" ni le
+        // toca fecha_limite/mora_acumulada — el crédito fiado sigue viéndose "Vencido" (si ya
+        // lo estaba) hasta liquidarse por completo. La fecha_limite es ahora exclusivamente
+        // el reloj de la mora quincenal (ver bloque de arriba), independiente de los abonos.
         $restante = $monto;
         foreach ($creditsRows as $cr) {
             if ($restante <= 0.001) break;
             $pagoEste    = min($restante, floatval($cr['saldo_pendiente']));
             $nuevoSaldo  = max(0, floatval($cr['saldo_pendiente']) - $pagoEste);
-            $nuevoEstado = $nuevoSaldo <= 0.001 ? 'Liquidado' : 'Activo';
+            $seLiquida   = $nuevoSaldo <= 0.001;
             $comisionEste = ($monto > 0 && $comisionTotal > 0) ? round($comisionTotal * $pagoEste / $monto, 2) : 0;
 
             $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
                 ->execute([$cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $comisionEste, $metodo, $notas]);
-            if ($nuevoEstado === 'Liquidado') {
+            if ($seLiquida) {
                 $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
                     ->execute([$cr['credito_id']]);
             } else {
-                // [AUTOFIX] BUG-03: Usar CURDATE() como base para la extensión, no fecha_limite pasada.
-                // Si venció hace 10 días y se suma desde ahí, sigue vencido. Ahora siempre queda 3 días en el futuro.
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = 'Activo', mora_acumulada = 0, fecha_limite = IF(fecha_limite <= CURDATE() OR ?, DATE_ADD(CURDATE(), INTERVAL 3 DAY), fecha_limite) WHERE credito_id = ?")
-                    ->execute([$nuevoSaldo, $adelantado, $cr['credito_id']]);
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ? WHERE credito_id = ?")
+                    ->execute([$nuevoSaldo, $cr['credito_id']]);
             }
 
             $restante -= $pagoEste;
@@ -239,6 +284,7 @@ if (isset($_GET['get_creditos_cliente'])) {
         $stmt = $pdo->prepare("
             SELECT cr.credito_id, cr.monto_total, cr.saldo_pendiente, cr.mora_acumulada, cr.estado,
                    cr.created_at, cr.fecha_limite,
+                   (SELECT COALESCE(SUM(a.monto), 0) FROM abonos a WHERE a.credito_id = cr.credito_id) AS total_abonado,
                    v.folio, v.total AS total_venta, v.created_at AS fecha_venta,
                    GROUP_CONCAT(
                        CASE
@@ -863,13 +909,6 @@ $totales = $pdo->query("
                     <input type="text" name="notas" placeholder="Observaciones del abono...">
                 </div>
 
-                <div class="ab-fg" id="abFgAdelantado" style="display:none;">
-                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;font-size:13px;">
-                        <input type="checkbox" name="pago_adelantado" value="1" id="abAdelantado" style="width:auto;padding:0;border:none;">
-                        Pago por adelantado (extiende fecha límite 3 días)
-                    </label>
-                </div>
-
                 <input type="hidden" name="monto_efectivo" id="abHiddenEf" value="0">
                 <input type="hidden" name="monto_terminal" id="abHiddenTerm" value="0">
 
@@ -964,8 +1003,10 @@ function abrirDetalles(clienteId, nombre) {
                         </table>
                     </div>`;
                 }
+                const abonado = parseFloat(cr.total_abonado || 0);
                 html += `<div class="credito-det-footer">
                     <span style="font-size:12px;color:#888;">Monto original: $${parseFloat(cr.monto_total).toFixed(2)}</span>
+                    ${abonado > 0 ? `<span style="font-size:12px;color:#2e7d32;font-weight:600;">✓ Abonado: $${abonado.toFixed(2)}</span>` : ''}
                     ${mora > 0 ? `<span style="font-size:12px;color:#e67e22;font-weight:600;">⚠ Mora actual: +$${mora.toFixed(2)}</span>` : ''}
                     ${saldo <= 0 ? '<span style="font-size:12px;color:#2e7d32;font-weight:600;">Liquidado</span>' : ''}
                 </div>
@@ -1045,14 +1086,13 @@ function abrirAbonar() {
             });
             listHtml += '</div>';
         }
+        const abonadoAb = parseFloat(cr.total_abonado || 0);
+        if (abonadoAb > 0) {
+            listHtml += `<div style="padding:2px 0 6px;font-size:12px;color:#2e7d32;font-weight:600;">✓ Abonado hasta ahora: $${abonadoAb.toFixed(2)}</div>`;
+        }
         listHtml += '</div>';
     });
     document.getElementById('abCreditosList').innerHTML = listHtml;
-
-    const tieneActivo = _creditosActuales.some(c => c.estado !== 'Vencido');
-    const fgAd = document.getElementById('abFgAdelantado');
-    fgAd.style.display = tieneActivo ? 'block' : 'none';
-    if (!tieneActivo) document.getElementById('abAdelantado').checked = false;
 
     document.getElementById('modalAbonarOverlay').classList.add('visible');
     cargarHistorialPagos(_clienteIdActual);

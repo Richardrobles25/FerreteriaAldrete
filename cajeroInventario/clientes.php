@@ -105,6 +105,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // mismo bug replicado en admin/clientes.php y admin/cajero_clientes.php).
     if ($limite_credito > 500000) $errores[] = 'El límite de crédito no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
 
+    // [FIX-TELEFONO-DUPLICADO] El nombre del cliente no es único (dos personas reales pueden
+    // llamarse igual), pero el teléfono sí debería serlo — es lo que realmente distingue a un
+    // cliente de otro en el buscador de Nueva Venta. Sin esto, un cajero podía crear un cliente
+    // duplicado por error y luego un pago/crédito se registraba en el registro equivocado.
+    if (empty($errores) && $telefono !== '') {
+        $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ?");
+        $stmtDupTel->execute([$telefono, $cliente_id]);
+        $dupTel = $stmtDupTel->fetchColumn();
+        if ($dupTel !== false) {
+            $errores[] = 'Ya existe un cliente con este teléfono: "' . $dupTel . '". Verifica que no sea la misma persona.';
+        }
+    }
+
     if (empty($errores)) {
         if ($cliente_id) {
             $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=? WHERE cliente_id=?")

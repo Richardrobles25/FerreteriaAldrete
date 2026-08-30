@@ -15,6 +15,29 @@ if ($sucursalVista === 0) {
     exit();
 }
 
+// [FIX-QUINCENA-FIJA] El plazo de un credito fiado es un corte fijo de calendario (dia 15 o
+// ultimo dia del mes, igual para todos los clientes), no "15 dias desde hoy". Si el corte cae
+// en domingo (la tienda cierra ese dia) se recorre al lunes siguiente.
+function siguienteCorteQuincenal(string $fechaDesde): string {
+    $ts   = strtotime($fechaDesde);
+    $dia  = (int)date('j', $ts);
+    $mes  = (int)date('n', $ts);
+    $anio = (int)date('Y', $ts);
+    $ultimoDiaMes = (int)date('t', $ts);
+
+    if ($dia < 15) {
+        $corte = mktime(0, 0, 0, $mes, 15, $anio);
+    } elseif ($dia < $ultimoDiaMes) {
+        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
+    } else {
+        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
+    }
+    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
+        $corte = strtotime('+1 day', $corte);
+    }
+    return date('Y-m-d', $corte);
+}
+
 // Verificar que hay caja abierta en la sucursal elegida; si no, redirigir a abrirCaja
 $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
 $_stmtCajaGuard->execute([$_SESSION['usuario_id'], $sucursalVista]);
@@ -124,12 +147,11 @@ if (isset($_GET['liquidar'])) {
                     if ($deudaActualLiq + floatval($ventaLiq['total']) > floatval($clienteCreditoLiq['limite_credito']) + 0.005) {
                         throw new Exception('credito_excede_limite');
                     }
-                    // [FIX-MEDIO-D1-10] Antes eran 15 dias aqui pero 3 en cajero_nuevaVenta.php
-                    // y cajero_creditos.php — el mismo tipo de venta (Credito) tenia un plazo
-                    // distinto solo por haberse creado desde Pendientes en vez de Nueva Venta.
-                    // Se unifica a 3 dias en los 3 lugares.
-                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', DATE_ADD(CURDATE(), INTERVAL 3 DAY))")
-                        ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total']]);
+                    // [FIX-QUINCENA-FIJA] La primera fecha limite es el proximo corte fijo
+                    // (15 o fin de mes), no "15 dias desde hoy".
+                    $primerCorteLiq = siguienteCorteQuincenal(date('Y-m-d'));
+                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', ?)")
+                        ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total'], $primerCorteLiq]);
                 }
             }
 
@@ -1025,10 +1047,11 @@ $paquesData = array_values($paqAgrupados);
 
                     <div class="form-group">
                         <label>Dirección / Notas de entrega</label>
-                        <input type="text" name="notas" placeholder="Ej. Calle Morelos #45, Col. Centro">
+                        <input type="text" name="notas" id="notasPend" placeholder="Ej. Calle Morelos #45, Col. Centro" oninput="guardarEstadoPendiente()">
                     </div>
 
                     <button class="btn-guardar" type="submit" onclick="return prepararPendiente()">Registrar venta pendiente</button>
+                    <button type="button" onclick="limpiarFormularioPendiente()" style="width:100%;margin-top:8px;background:white;color:#666;border:1px solid #ddd;padding:10px;border-radius:6px;font-size:13px;cursor:pointer;">Limpiar formulario</button>
                 </form>
             </div>
         </div>
@@ -1094,7 +1117,24 @@ $paquesData = array_values($paqAgrupados);
 </style>
 
 <script>
-let carritoP = [];
+// [FIX-BORRADOR-PENDIENTE] Igual que nuevaVenta.php: si venimos de crear la venta con exito
+// (?ticket=<id> en la URL), limpiar cualquier borrador viejo ANTES de restaurarlo, para que
+// la venta recien creada no se quede "pegada" en el formulario del siguiente F5/recarga.
+(function() {
+    const ticketIdCheck = parseInt(new URLSearchParams(window.location.search).get('ticket') || '0', 10);
+    if (ticketIdCheck > 0) {
+        localStorage.removeItem('carritoPendiente');
+        localStorage.removeItem('pendienteExtra');
+    }
+})();
+let carritoP = (function() {
+    try {
+        const guardado = JSON.parse(localStorage.getItem('carritoPendiente'));
+        return Array.isArray(guardado) ? guardado : [];
+    } catch (e) {
+        return [];
+    }
+})();
 let prodSelPendActual = null;
 let paqSelPendActual  = null;
 let clientePendActual = null;
@@ -1131,9 +1171,11 @@ const clientesPend = <?= json_encode(array_values(array_map(fn($c) => [
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 
-// Al cargar: mostrar Efectivo por defecto y auto-abrir ticket si viene ?ticket=ID tras crear venta
+// Al cargar: auto-abrir ticket si viene ?ticket=ID tras crear venta.
+// [FIX-BORRADOR-PENDIENTE] El método de pago por defecto ('Efectivo') ya no se fuerza aquí —
+// lo maneja restaurarEstadoPendiente() al final del script, para no pisar un borrador
+// restaurado con otro método ya seleccionado.
 document.addEventListener('DOMContentLoaded', function() {
-    cambiarMetodoPend('Efectivo');
     const params  = new URLSearchParams(window.location.search);
     const ticketId = parseInt(params.get('ticket') || '0', 10);
     if (ticketId > 0) {
@@ -1426,6 +1468,8 @@ function cancelarSelPaqPend() {
 
 /* ── Carrito ── */
 function renderCarritoMini() {
+    // [FIX-BORRADOR-PENDIENTE] Persistir el carrito en cada render, igual que nuevaVenta.php.
+    localStorage.setItem('carritoPendiente', JSON.stringify(carritoP));
     const div = document.getElementById('carritoMini');
     const tot = document.getElementById('totalMini');
     if (!carritoP.length) {
@@ -1507,6 +1551,37 @@ function recalcularTotalPend() {
         document.getElementById('inputMontoEfectivoPend').value = '0.00';
         document.getElementById('inputCambioPend').value        = '0.00';
     }
+    guardarEstadoPendiente();
+}
+
+// [FIX-BORRADOR-PENDIENTE] Persistencia de cliente/método/campos — mismo patrón que
+// guardarEstadoVenta() en nuevaVenta.php (el carrito ya se guarda en renderCarritoMini()).
+function guardarEstadoPendiente() {
+    const extra = {
+        clientePendActual,
+        metodoPago:    document.getElementById('metodoPagoPend')?.value || '',
+        aplicarDesc:   document.getElementById('aplicarDescPend')?.checked || false,
+        descPorc:      document.getElementById('inputDescClientePend')?.value || '',
+        montoEfectivo: document.getElementById('montoEfectivoPend')?.value || '',
+        refTransf:     document.getElementById('refTransfPend')?.value || '',
+        notas:         document.getElementById('notasPend')?.value || ''
+    };
+    localStorage.setItem('pendienteExtra', JSON.stringify(extra));
+}
+
+// [FIX-BORRADOR-PENDIENTE] Botón "Limpiar formulario" — reinicia carrito, cliente, método de
+// pago y campos por si el usuario quiere empezar de cero sin recargar la página.
+function limpiarFormularioPendiente() {
+    if (carritoP.length > 0 && !confirm('¿Reiniciar el formulario? Se perderán los productos agregados.')) return;
+    carritoP = [];
+    renderCarritoMini();
+    quitarClientePend();
+    document.getElementById('montoEfectivoPend').value = '';
+    document.getElementById('refTransfPend').value = '';
+    const notas = document.getElementById('notasPend');
+    if (notas) notas.value = '';
+    cambiarMetodoPend('Efectivo');
+    document.getElementById('buscarProductoPendiente')?.focus();
 }
 
 /* ── Búsqueda de clientes ── */
@@ -1935,6 +2010,44 @@ function imprimirTicketPend() {
     }
 }
 
+// [FIX-BORRADOR-PENDIENTE] Restaurar carrito/cliente/método/campos en curso, mismo patrón
+// que restaurarEstadoVenta() en cajero_nuevaVenta.php.
+(function restaurarEstadoPendiente() {
+    // [FIX-BORRADOR-PENDIENTE] Leer "extra" ANTES de renderCarritoMini(): esa función llama a
+    // recalcularTotalPend(), que ahora guarda el estado — si se leyera despues, el primer
+    // render ya habria sobrescrito el borrador guardado con los valores por defecto.
+    let extra = null;
+    try { extra = JSON.parse(localStorage.getItem('pendienteExtra')); } catch (e) {}
+
+    renderCarritoMini();
+
+    if (!extra) { cambiarMetodoPend('Efectivo'); recalcularTotalPend(); return; }
+
+    if (extra.clientePendActual && clientesPend.find(c => c.id === extra.clientePendActual.id)) {
+        seleccionarClientePend(extra.clientePendActual.id);
+    }
+
+    if (extra.metodoPago) {
+        document.getElementById('metodoPagoPend').value = extra.metodoPago;
+        cambiarMetodoPend(extra.metodoPago);
+    } else {
+        cambiarMetodoPend('Efectivo');
+    }
+
+    // [FIX-BORRADOR-PENDIENTE] seleccionarClientePend() (arriba) marca el checkbox como
+    // true automaticamente si el cliente tiene descuento_fijo > 0, sin importar si el usuario
+    // lo habia dejado desmarcado a proposito. Aqui se restaura el valor real guardado
+    // (true o false), no solo se activa cuando es true.
+    if (document.getElementById('descClientePendGrupo').style.display !== 'none') {
+        document.getElementById('aplicarDescPend').checked = !!extra.aplicarDesc;
+    }
+    if (extra.descPorc !== '') document.getElementById('inputDescClientePend').value = extra.descPorc;
+    if (extra.montoEfectivo) document.getElementById('montoEfectivoPend').value = extra.montoEfectivo;
+    if (extra.refTransf) document.getElementById('refTransfPend').value = extra.refTransf;
+    if (extra.notas) document.getElementById('notasPend').value = extra.notas;
+
+    recalcularTotalPend();
+})();
 </script>
 </body>
 </html>

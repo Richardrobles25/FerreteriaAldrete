@@ -8,6 +8,29 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
+// [FIX-QUINCENA-FIJA] El plazo de un credito fiado es un corte fijo de calendario (dia 15 o
+// ultimo dia del mes, igual para todos los clientes), no "15 dias desde hoy". Si el corte cae
+// en domingo (la tienda cierra ese dia) se recorre al lunes siguiente.
+function siguienteCorteQuincenal(string $fechaDesde): string {
+    $ts   = strtotime($fechaDesde);
+    $dia  = (int)date('j', $ts);
+    $mes  = (int)date('n', $ts);
+    $anio = (int)date('Y', $ts);
+    $ultimoDiaMes = (int)date('t', $ts);
+
+    if ($dia < 15) {
+        $corte = mktime(0, 0, 0, $mes, 15, $anio);
+    } elseif ($dia < $ultimoDiaMes) {
+        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
+    } else {
+        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
+    }
+    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
+        $corte = strtotime('+1 day', $corte);
+    }
+    return date('Y-m-d', $corte);
+}
+
 $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
 $stmt->execute([$_SESSION['usuario_id']]);
 $caja = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -823,9 +846,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
 
             if ($metodo_pago === 'Credito' && $cliente_id) {
-                // [AUTOFIX] BUG-05: Cambiado de INTERVAL 1 DAY (valor de prueba) a INTERVAL 3 DAY
-                $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado,fecha_limite) VALUES (?,?,?,?,'Activo',DATE_ADD(CURDATE(), INTERVAL 3 DAY))")
-                    ->execute([$cliente_id,$venta_id,$total,$total]);
+                // [FIX-QUINCENA-FIJA] La primera fecha limite es el proximo corte fijo (15 o
+                // fin de mes), no "15 dias desde hoy".
+                $primerCorte = siguienteCorteQuincenal(date('Y-m-d'));
+                $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado,fecha_limite) VALUES (?,?,?,?,'Activo',?)")
+                    ->execute([$cliente_id,$venta_id,$total,$total,$primerCorte]);
             }
 
             $pdo->commit();

@@ -9,6 +9,31 @@ verificarSesion();
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
+// [FIX-QUINCENA-FIJA] Los cortes de credito NO son "15 dias despues de hoy" (rodante) sino
+// fechas fijas de calendario: el dia 15 y el ultimo dia de cada mes, iguales para todos los
+// clientes (asi es como realmente se cobra). Si el corte cae en domingo (la tienda cierra ese
+// dia), se recorre al lunes siguiente para que el cliente sí tenga oportunidad de ir a pagar
+// antes de que se le considere vencido.
+function siguienteCorteQuincenal(string $fechaDesde): string {
+    $ts   = strtotime($fechaDesde);
+    $dia  = (int)date('j', $ts);
+    $mes  = (int)date('n', $ts);
+    $anio = (int)date('Y', $ts);
+    $ultimoDiaMes = (int)date('t', $ts);
+
+    if ($dia < 15) {
+        $corte = mktime(0, 0, 0, $mes, 15, $anio);
+    } elseif ($dia < $ultimoDiaMes) {
+        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
+    } else {
+        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
+    }
+    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
+        $corte = strtotime('+1 day', $corte);
+    }
+    return date('Y-m-d', $corte);
+}
+
 try {
     $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 } catch (\PDOException $e) {
@@ -21,6 +46,13 @@ try {
 // nunca se disparaba). Se porta el mismo bloque (con el mismo candado FOR UPDATE por credito
 // para evitar aplicar la mora dos veces si dos cargas caen casi juntas) para que la mora se
 // aplique sin importar cual de las pantallas de credito visite el administrador primero.
+// [FIX-MORA-QUINCENAL] La mora ahora se cobra de forma recurrente cada quincena (15 dias)
+// que el credito siga sin liquidarse, no solo una vez. El gatillo ya no es
+// "mora_acumulada = 0" (que solo permitia una unica aplicacion en la vida del credito) sino
+// que la fecha_limite ya haya pasado; al cobrar la mora se recorre fecha_limite otros 15 dias
+// para que sirva como el proximo punto de corte. El while interno alcanza al credito si paso
+// mas de una quincena sin que nadie visitara esta pagina (aplica una mora por cada quincena
+// vencida, compuesta sobre el saldo que ya trae mora anterior).
 try {
     $pdo->beginTransaction();
     $stmtMoraList = $pdo->query("
@@ -29,22 +61,36 @@ try {
         JOIN ventas v     ON cr.venta_id     = v.venta_id
         JOIN cajas  ca    ON v.caja_id       = ca.caja_id
         JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
-        WHERE cr.estado = 'Vencido' AND cr.mora_acumulada = 0 AND s.porcentaje_mora > 0
+        WHERE cr.estado = 'Vencido' AND cr.fecha_limite <= CURDATE() AND s.porcentaje_mora > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
-        $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, mora_acumulada FROM creditos WHERE credito_id = ? FOR UPDATE");
+        $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, fecha_limite, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
         $stmtLockCred->execute([$cm['credito_id']]);
         $credLock = $stmtLockCred->fetch(PDO::FETCH_ASSOC);
-        if (!$credLock || floatval($credLock['mora_acumulada']) != 0) continue;
+        if (!$credLock || $credLock['estado'] !== 'Vencido') continue;
 
-        $saldoBase  = round(floatval($credLock['saldo_pendiente']), 2);
-        $pct        = floatval($cm['porcentaje_mora']);
-        $moraAmt    = round($saldoBase * $pct / 100, 2);
-        $nuevoSaldo = round($saldoBase + $moraAmt, 2);
-        $pdo->prepare("UPDATE creditos SET mora_acumulada = ?, saldo_pendiente = ? WHERE credito_id = ?")
-            ->execute([$moraAmt, $nuevoSaldo, $cm['credito_id']]);
-        $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje) VALUES (?,?,?,?)")
-            ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct]);
+        $pct               = floatval($cm['porcentaje_mora']);
+        $saldoActual       = round(floatval($credLock['saldo_pendiente']), 2);
+        $fechaLimiteActual = $credLock['fecha_limite'];
+        $ultimaMora        = 0.0;
+
+        while (strtotime($fechaLimiteActual) <= strtotime(date('Y-m-d'))) {
+            $moraAmt           = round($saldoActual * $pct / 100, 2);
+            $saldoBase         = $saldoActual;
+            $saldoActual       = round($saldoActual + $moraAmt, 2);
+            // [FIX-MORA-QUINCENAL] Se registra con la fecha real en que venció esa quincena
+            // (no "hoy"), para que el historial de mora no muestre la misma fecha repetida
+            // cuando se ponen al día varias quincenas atrasadas en una sola carga de pagina.
+            $fechaEstaMora     = $fechaLimiteActual;
+            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
+            $ultimaMora        = $moraAmt;
+            $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
+                ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);
+        }
+        if ($ultimaMora > 0) {
+            $pdo->prepare("UPDATE creditos SET mora_acumulada = ?, saldo_pendiente = ?, fecha_limite = ? WHERE credito_id = ?")
+                ->execute([$ultimaMora, $saldoActual, $fechaLimiteActual, $cm['credito_id']]);
+        }
     }
     $pdo->commit();
 } catch (\PDOException $e) {

@@ -55,6 +55,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $clienteId = intval($_POST['cliente_id'] ?? 0);
 
     if ($nombre === '') $errores[] = 'El nombre completo es obligatorio.';
+    // [FIX-TELEFONO-FORMATO] Faltaba aqui (cajeroInventario/clientes.php y
+    // admin/cajero_clientes.php ya lo validaban) — sin esto, "311 425 4121" y "3114254121" se
+    // guardaban como telefonos "distintos" para la comparacion exacta del check de duplicados,
+    // dejando pasar un cliente duplicado del mismo numero con formato diferente (verificado en
+    // vivo: cliente_id 62 se creo duplicando el telefono de Nicolas Cisneros).
+    if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     if ($descuento < 0 || $descuento > 100) $errores[] = 'El descuento fijo debe estar entre 0 y 100.';
     if (!$creditoAutorizado) $limiteCredito = 0;
     // [FIX-PRECIO-MAX-CREDITO] limite_credito es DECIMAL(10,2); sin tope, un valor absurdo
@@ -63,6 +69,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // (admin/cajero_clientes.php y cajeroInventario/clientes.php ya lo validaban).
     if ($limiteCredito < 0) $errores[] = 'El límite de crédito no puede ser negativo.';
     if ($limiteCredito > 500000) $errores[] = 'El límite de crédito no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
+
+    // [FIX-TELEFONO-DUPLICADO] El nombre del cliente no es único (dos personas reales pueden
+    // llamarse igual), pero el teléfono sí debería serlo — es lo que realmente distingue a un
+    // cliente de otro en el buscador de Nueva Venta. Mismo fix aplicado en
+    // cajeroInventario/clientes.php y admin/cajero_clientes.php.
+    if (empty($errores) && $telefono !== '') {
+        $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ?");
+        $stmtDupTel->execute([$telefono, $clienteId]);
+        $dupTel = $stmtDupTel->fetchColumn();
+        if ($dupTel !== false) {
+            $errores[] = 'Ya existe un cliente con este teléfono: "' . $dupTel . '". Verifica que no sea la misma persona.';
+        }
+    }
 
     if (empty($errores)) {
         if ($clienteId > 0) {

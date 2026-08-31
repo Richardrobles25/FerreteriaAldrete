@@ -293,13 +293,13 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
         <div class="stats">
             <div class="stat"><p>Total ventas</p><h3><?= $resumen['total_ventas'] ?></h3></div>
-            <div class="stat"><p>Total cobrado</p><h3>$<?= number_format($resumen['total_cobrado'],0) ?></h3></div>
-            <div class="stat"><p>Descuentos</p><h3>$<?= number_format($resumen['total_descuentos'],0) ?></h3></div>
-            <div class="stat"><p>Comisiones term.</p><h3>$<?= number_format($resumen['total_comisiones'],0) ?></h3></div>
+            <div class="stat"><p>Total cobrado</p><h3>$<?= number_format($resumen['total_cobrado'],2) ?></h3></div>
+            <div class="stat"><p>Descuentos</p><h3>$<?= number_format($resumen['total_descuentos'],2) ?></h3></div>
+            <div class="stat"><p>Comisiones term.</p><h3>$<?= number_format($resumen['total_comisiones'],2) ?></h3></div>
             <div class="stat"><p>Días con ventas</p><h3><?= $resumen['dias_con_ventas'] ?></h3></div>
             <div class="stat">
                 <p>Promedio por día</p>
-                <h3>$<?= $resumen['dias_con_ventas']>0 ? number_format($resumen['total_cobrado']/$resumen['dias_con_ventas'],0) : 0 ?></h3>
+                <h3>$<?= $resumen['dias_con_ventas']>0 ? number_format($resumen['total_cobrado']/$resumen['dias_con_ventas'],2) : '0.00' ?></h3>
             </div>
         </div>
 

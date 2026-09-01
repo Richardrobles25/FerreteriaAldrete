@@ -526,14 +526,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             // 1) Suma de los productos a precio final (los precios por ítem se validan
             //    más abajo contra precio_compra, y los de paquete contra el precio del paquete)
             $sumaItems = 0.0;
-            foreach ($items as $it) {
-                $cantVal = floatval($it['cantidad'] ?? 0);
+            foreach ($items as &$it) {
+                // [FIX-PRECISION-CANTIDAD] Redondear a 3 decimales ANTES de calcular con ella:
+                // venta_productos.cantidad es DECIMAL(10,3) y MySQL la trunca/redondea al
+                // guardar. Si aquí se siguiera usando el valor crudo (con más decimales, ej.
+                // de una báscula digital o tecleado a mano), el subtotal calculado no
+                // correspondería a la cantidad que realmente queda almacenada.
+                $it['cantidad'] = round(floatval($it['cantidad'] ?? 0), 3);
+                $cantVal = $it['cantidad'];
                 $precVal = floatval($it['precio'] ?? -1);
                 if ($cantVal <= 0 || $precVal < 0) {
                     throw new Exception('El carrito contiene cantidades o precios inválidos.');
                 }
                 $sumaItems += $cantVal * $precVal;
             }
+            unset($it);
             $sumaItems = round($sumaItems, 2);
 
             // 2) Validar paquetes: que existan, estén completos y su importe cuadre con su precio
@@ -596,6 +603,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                         $precioUnitPaq = $cantTotalPaq > 0
                             ? round((floatval($precioPaqVal) * $combosPaq - $distribuidoPaq) / $cantTotalPaq, 2)
                             : 0;
+                        // [FIX-PAQUETE-CENTAVO] Con un solo producto en el grupo (o cuando la
+                        // cantidad no divide exacto el resto), cantidad*precioUnitPaq redondeado
+                        // no siempre reconstruye el resto exacto (ej. $10/3 = $3.33 -> 3*3.33 =
+                        // $9.99, perdiendo 1 centavo contra el total real de $10.00). Se guarda
+                        // el resto exacto como subtotal para que la suma de líneas SIEMPRE
+                        // cuadre con precio_paquete*combos, sin importar cómo divida.
+                        $items[$itPaq['_idx']]['subtotal_exacto'] = round(floatval($precioPaqVal) * $combosPaq - $distribuidoPaq, 2);
                     } else {
                         $precioUnitPaq = $totalCantPaq > 0
                             ? round(floatval($precioPaqVal) / $totalCantPaq, 2)
@@ -605,6 +619,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     $items[$itPaq['_idx']]['precio'] = $precioUnitPaq;
                 }
             }
+
+            // [FIX-PAQUETE-SUBTOTAL-VENTA] $sumaItems (arriba) se calculó con los precios de
+            // ENTRADA de cada item, antes de que el bloque de paquetes los redistribuyera y
+            // fijara el resto exacto del último item (subtotal_exacto). Sin este recálculo,
+            // ventas.subtotal quedaba desincronizado de SUM(venta_productos.subtotal) — y como
+            // las devoluciones usan ventas.subtotal como base del "factor neto proporcional",
+            // una venta con paquete de un solo producto (precio no divisible exacto) dejaba
+            // centavos sin devolver y nunca llegaba a estado 'Devuelto' aunque se devolviera
+            // todo. Se recalcula aquí, ya con los precios/subtotales finales.
+            $sumaItems = 0.0;
+            foreach ($items as $itFinal) {
+                $sumaItems += isset($itFinal['subtotal_exacto'])
+                    ? floatval($itFinal['subtotal_exacto'])
+                    : floatval($itFinal['cantidad']) * floatval($itFinal['precio']);
+            }
+            $sumaItems = round($sumaItems, 2);
 
             // 3) Descuento de cliente implícito = descuento enviado − descuentos por ítem
             //    (las promos y ajustes ya vienen reflejados en el precio de cada ítem)
@@ -738,7 +768,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             foreach ($items as $item) {
                 $precioFinal  = floatval($item['precio']);
                 $precioOrig   = floatval($item['precio_orig'] ?? $precioFinal);
-                $subtotalItem = $item['cantidad'] * $precioFinal;
+                // [FIX-PAQUETE-CENTAVO] Para el último item de un grupo de paquete, usar el
+                // resto exacto calculado arriba en vez de cantidad*precio (ver comentario donde
+                // se calcula $subtotal_exacto) — evita perder centavos contra precio_paquete.
+                $subtotalItem = isset($item['subtotal_exacto']) ? $item['subtotal_exacto'] : $item['cantidad'] * $precioFinal;
                 $notaAjuste   = trim($item['nota_ajuste'] ?? '');
                 $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
 

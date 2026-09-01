@@ -376,7 +376,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para evitar colisión de precio cuando el mismo
         //           producto aparece como suelto y como parte de paquete en la misma venta.
         $stmtPreciosDB = $pdo->prepare("
-            SELECT producto_id, paquete_id, precio_final, precio_final * cantidad AS item_final_total
+            SELECT producto_id, paquete_id, precio_final, cantidad, subtotal
             FROM venta_productos
             WHERE venta_id = ?
         ");
@@ -385,8 +385,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $subtotalFinalVenta = 0.0;
         foreach ($stmtPreciosDB->fetchAll(PDO::FETCH_ASSOC) as $fp) {
             $mapKey = intval($fp['producto_id']) . ':' . ($fp['paquete_id'] ?? '');
-            $preciosRealDB[$mapKey] = floatval($fp['precio_final']);
-            $subtotalFinalVenta += floatval($fp['item_final_total']);
+            // [FIX-PAQUETE-SUBTOTAL-DEVOLUCION] precio_final tiene solo 2 decimales; para un
+            // paquete cuyo precio no divide exacto entre sus componentes (ver
+            // FIX-PAQUETE-CENTAVO en nuevaVenta.php), cantidad×precio_final pierde centavos
+            // contra "subtotal" (que sí guarda el resto exacto para el último item del grupo).
+            // Se usa subtotal/cantidad como precio efectivo de mayor precisión: para una
+            // devolución total de la línea, esto reproduce el subtotal real exacto.
+            $cantLineaFinal = floatval($fp['cantidad']);
+            $preciosRealDB[$mapKey] = $cantLineaFinal > 0.0001
+                ? floatval($fp['subtotal']) / $cantLineaFinal
+                : floatval($fp['precio_final']);
+            $subtotalFinalVenta += floatval($fp['subtotal']);
         }
 
         // [FIX-CANTIDAD-ENTERA-DEVOLUCION] tipo_venta de cada producto de la venta, para

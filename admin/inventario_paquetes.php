@@ -73,6 +73,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!empty($items)) {
         $idsValidos = array_column($pdo->query("SELECT producto_id FROM productos WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC), 'producto_id');
         $idsValidos = array_map('intval', $idsValidos);
+        // [FIX-PAQUETE-DUPLICADO] Un mismo producto repetido dos veces en el mismo paquete
+        // (con distinta cantidad cada vez) generaba dos filas en paquete_productos para el
+        // mismo producto_id — al vender, el motor solo usa la ULTIMA cantidad (sobrescribe
+        // un array asociativo por producto_id), dejando la primera fila como dato corrupto
+        // y mostrando el producto duplicado en la lista de "requeridos" de Nueva Venta.
+        $idsVistos = [];
         foreach ($items as $item) {
             $cantidadItem = floatval($item['cantidad'] ?? 0);
             $productoItem = intval($item['producto_id'] ?? 0);
@@ -84,6 +90,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errores[] = 'El paquete contiene un producto inválido o inactivo.';
                 break;
             }
+            if (in_array($productoItem, $idsVistos, true)) {
+                $errores[] = 'No puedes agregar el mismo producto dos veces en el paquete.';
+                break;
+            }
+            $idsVistos[] = $productoItem;
         }
     }
 

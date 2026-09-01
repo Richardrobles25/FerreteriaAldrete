@@ -352,8 +352,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // subtotal/descuento/total llegan del navegador y podían manipularse con las
                 // DevTools (F12). Aquí se verifica que cuadren con los productos reales.
                 $sumaItems = 0.0;
-                foreach ($items as $it) {
-                    $cantVal = floatval($it['cantidad'] ?? 0);
+                foreach ($items as &$it) {
+                    // [FIX-PRECISION-CANTIDAD] Ver mismo fix en cajero_nuevaVenta.php: redondear
+                    // a 3 decimales antes de calcular, para que coincida con lo que
+                    // venta_productos.cantidad (DECIMAL(10,3)) realmente va a guardar.
+                    $it['cantidad'] = round(floatval($it['cantidad'] ?? 0), 3);
+                    $cantVal = $it['cantidad'];
                     $precVal = floatval($it['precio'] ?? -1);
                     if ($cantVal <= 0 || $precVal < 0) {
                         throw new Exception('El carrito contiene cantidades o precios inválidos.');
@@ -391,15 +395,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
                 }
+                unset($it);
                 $sumaItems = round($sumaItems, 2);
 
                 // Validar paquetes: que existan, estén completos y su importe cuadre con su precio
                 $gruposPaq = [];
-                foreach ($items as $it) {
+                foreach ($items as $idxIt => $it) {
                     $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
                     if ($pqIdVal) {
                         $gruposPaq[$pqIdVal]['monto']   = ($gruposPaq[$pqIdVal]['monto'] ?? 0) + floatval($it['cantidad']) * floatval($it['precio']);
-                        $gruposPaq[$pqIdVal]['items'][] = $it;
+                        $gruposPaq[$pqIdVal]['items'][] = $it + ['_idx' => $idxIt];
                     }
                 }
                 foreach ($gruposPaq as $pqIdVal => $grupo) {
@@ -434,7 +439,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (abs($grupo['monto'] - floatval($precioPaqVal) * $combosPaq) > 0.05) {
                         throw new Exception('El importe del paquete no cuadra con su precio.');
                     }
+
+                    // [FIX-ALTO-B-13/FIX-PAQUETE-CENTAVO] Igual que cajero_nuevaVenta.php: no
+                    // confiar en el reparto por producto que manda el cliente (un item podía
+                    // quedar en $0 mientras otro compensaba, manteniendo el total del grupo
+                    // correcto pero regalando un componente). Se recalcula el precio de cada
+                    // item en el servidor con el mismo reparto proporcional que usa el POS
+                    // (último item absorbe el resto exacto).
+                    $totalCantPaq = 0;
+                    foreach ($reqsPaq as $reqCant) { $totalCantPaq += $reqCant * $combosPaq; }
+                    $distribuidoPaq = 0.0;
+                    $lastIdxPaq     = count($grupo['items']) - 1;
+                    foreach ($grupo['items'] as $iPos => $itPaq) {
+                        $cantTotalPaq = floatval($itPaq['cantidad']);
+                        if ($iPos === $lastIdxPaq) {
+                            $precioUnitPaq = $cantTotalPaq > 0
+                                ? round((floatval($precioPaqVal) * $combosPaq - $distribuidoPaq) / $cantTotalPaq, 2)
+                                : 0;
+                            $items[$itPaq['_idx']]['subtotal_exacto'] = round(floatval($precioPaqVal) * $combosPaq - $distribuidoPaq, 2);
+                        } else {
+                            $precioUnitPaq = $totalCantPaq > 0
+                                ? round(floatval($precioPaqVal) / $totalCantPaq, 2)
+                                : 0;
+                            $distribuidoPaq += $precioUnitPaq * $cantTotalPaq;
+                        }
+                        $items[$itPaq['_idx']]['precio'] = $precioUnitPaq;
+                    }
                 }
+
+                // [FIX-PAQUETE-SUBTOTAL-VENTA] Recalcular $sumaItems con los precios/subtotales
+                // finales YA redistribuidos arriba — ver mismo fix en cajero_nuevaVenta.php.
+                $sumaItems = 0.0;
+                foreach ($items as $itFinal) {
+                    $sumaItems += isset($itFinal['subtotal_exacto'])
+                        ? floatval($itFinal['subtotal_exacto'])
+                        : floatval($itFinal['cantidad']) * floatval($itFinal['precio']);
+                }
+                $sumaItems = round($sumaItems, 2);
 
                 // Descuento de cliente implícito = descuento enviado − descuentos por ítem (promos)
                 $descuentoCliente = round($descuento - (round($subtotal, 2) - $sumaItems), 2);
@@ -526,7 +567,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $precioOrig   = floatval($item['precio_normal'] ?? $item['precio']);
                     $precioFinal  = floatval($item['precio']);
                     $cantidadItem = floatval($item['cantidad']);
-                    $subtotalItem = $cantidadItem * $precioFinal;
+                    // [FIX-PAQUETE-CENTAVO] Ver mismo fix en cajero_nuevaVenta.php: usar el resto
+                    // exacto del último item de un paquete en vez de cantidad*precio.
+                    $subtotalItem = isset($item['subtotal_exacto']) ? floatval($item['subtotal_exacto']) : $cantidadItem * $precioFinal;
                     $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
 
                     // Validar stock disponible = stock_actual - comprometido en otras pendientes activas

@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -446,7 +447,7 @@ if ($verCreditoId) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -581,7 +582,7 @@ if ($verCreditoId) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Abonos a créditos (global) — operando en <?= htmlspecialchars($nombreSucursalVista) ?></h2>
         </div>
         <div class="topbar-right">
@@ -804,7 +805,7 @@ if ($verCreditoId) {
                 </div>
 
                 <div class="ab-panel ab-panel-terminal ab-campos-pago" id="abCamposTerminal">
-                    <h4>💳 Comisión de terminal</h4>
+                    <h4><?= icono('credit-card') ?> Comisión de terminal</h4>
                     <?php if ($comisionPct > 0): ?>
                         <div class="ab-dato"><span>Porcentaje</span><span style="color:#1565c0;"><?= number_format($comisionPct,2) ?>%</span></div>
                         <div class="ab-dato"><span>Comisión (cargo extra)</span><span id="abComisionMonto" style="color:#c0392b;">$0.00</span></div>
@@ -818,7 +819,7 @@ if ($verCreditoId) {
 
                 <div class="ab-campos-pago" id="abCamposTransferencia">
                     <div class="ab-panel-trans" style="border-radius:8px;padding:11px 14px;margin-bottom:10px;">
-                        <h4>📋 Datos para transferencia</h4>
+                        <h4><?= icono('clipboard-list') ?> Datos para transferencia</h4>
                         <?php if (!empty($datosBanco['banco'])): ?>
                             <div class="ab-dato"><span>Banco</span><span><?= htmlspecialchars($datosBanco['banco']) ?></span></div>
                         <?php endif; ?>
@@ -878,6 +879,10 @@ if ($verCreditoId) {
 </div>
 
 <script>
+const ICONS = <?= json_encode([
+    'checkBig' => icono('circle-check-big', '', 12),
+    'warning'  => icono('triangle-alert', '', 12),
+]) ?>;
 function esc(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function intval(n) { return parseInt(n, 10) || 0; }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
@@ -972,8 +977,8 @@ function abrirDetalles(clienteId, nombre) {
                 const abonado = parseFloat(cr.total_abonado || 0);
                 html += `<div class="credito-det-footer">
                     <span style="font-size:12px;color:#888;">Monto original: $${parseFloat(cr.monto_total).toFixed(2)}</span>
-                    ${abonado > 0 ? `<span style="font-size:12px;color:#2e7d32;font-weight:600;">✓ Abonado: $${abonado.toFixed(2)}</span>` : ''}
-                    ${mora > 0 ? `<span style="font-size:12px;color:#e67e22;font-weight:600;">⚠ Mora actual: +$${mora.toFixed(2)}</span>` : ''}
+                    ${abonado > 0 ? `<span style="font-size:12px;color:#2e7d32;font-weight:600;">${ICONS.checkBig} Abonado: $${abonado.toFixed(2)}</span>` : ''}
+                    ${mora > 0 ? `<span style="font-size:12px;color:#e67e22;font-weight:600;">${ICONS.warning} Mora actual: +$${mora.toFixed(2)}</span>` : ''}
                     ${mora > 0 ? `<button type="button" class="btn-cancelar-mora" onclick="cancelarMora(${intval(cr.credito_id)}, ${mora})">Cancelar mora</button>` : ''}
                     ${saldo <= 0 ? '<span style="font-size:12px;color:#2e7d32;font-weight:600;">Liquidado</span>' : ''}
                 </div>
@@ -1079,7 +1084,7 @@ function abrirAbonar() {
         }
         const abonadoAb = parseFloat(cr.total_abonado || 0);
         if (abonadoAb > 0) {
-            listHtml += `<div style="padding:2px 0 6px;font-size:12px;color:#2e7d32;font-weight:600;">✓ Abonado hasta ahora: $${abonadoAb.toFixed(2)}</div>`;
+            listHtml += `<div style="padding:2px 0 6px;font-size:12px;color:#2e7d32;font-weight:600;">${ICONS.checkBig} Abonado hasta ahora: $${abonadoAb.toFixed(2)}</div>`;
         }
         listHtml += '</div>';
     });

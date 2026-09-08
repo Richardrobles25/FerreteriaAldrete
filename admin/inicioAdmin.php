@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -125,7 +126,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -189,7 +190,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Panel Administrador</h2>
         </div>
         <div class="topbar-right">
@@ -236,19 +237,19 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
         <div class="alertas">
             <?php if (count($stockBajo) > 0): ?>
             <div class="alerta alerta-roja">
-                <span>⚠ <strong><?= count($stockBajo) ?></strong> producto(s) con stock bajo</span>
+                <span><?= icono('triangle-alert') ?> <strong><?= count($stockBajo) ?></strong> producto(s) con stock bajo</span>
                 <a href="inventario_productos.php?stock_bajo=1">Ver</a>
             </div>
             <?php endif; ?>
             <?php if ($creditosVencidos['vencidos'] > 0): ?>
             <div class="alerta alerta-amarilla">
-                <span>💳 <strong><?= $creditosVencidos['vencidos'] ?></strong> crédito(s) vencido(s) - $<?= number_format($creditosVencidos['monto_vencido'],0) ?></span>
+                <span><?= icono('credit-card') ?> <strong><?= $creditosVencidos['vencidos'] ?></strong> crédito(s) vencido(s) - $<?= number_format($creditosVencidos['monto_vencido'],0) ?></span>
                 <a href="creditos.php?estado=Vencido">Ver</a>
             </div>
             <?php endif; ?>
             <?php if ($transfPend > 0): ?>
             <div class="alerta alerta-azul">
-                <span>📦 <strong><?= $transfPend ?></strong> transferencia(s) pendiente(s) de aprobar</span>
+                <span><?= icono('package') ?> <strong><?= $transfPend ?></strong> transferencia(s) pendiente(s) de aprobar</span>
                 <a href="inventario_transferencias.php">Ver</a>
             </div>
             <?php endif; ?>

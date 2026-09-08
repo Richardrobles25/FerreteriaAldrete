@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -13,7 +14,11 @@ if (isset($_GET['toggle'])) {
     // [FIX-ALTO-E-06] CSRF ausente antes — cualquier pagina visitada con la sesion del
     // Administrador abierta podia activar/desactivar un cliente por un simple GET.
     requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
-    $cid = intval($_GET['toggle']);
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php,
+    // admin/empleados.php, etc.) intval() sobre un array se coacciona en silencio a 1/0
+    // en vez de fallar -- sin este guard, "?toggle[]=x" activaria/desactivaria siempre
+    // el cliente real cliente_id=1 sin importar que id se haya mandado.
+    $cid = intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0);
     $actual = $pdo->prepare("SELECT activo FROM clientes WHERE cliente_id = ?");
     $actual->execute([$cid]);
     $activo = $actual->fetchColumn();
@@ -37,24 +42,52 @@ $editando = null;
 
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM clientes WHERE cliente_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
+    // [FIX-CLIENTE-EDITAR-FANTASMA] (espejo de cajeroInventario/clientes.php y
+    // admin/cajero_clientes.php, que ya tenian esta comprobacion): sin esto, un cliente_id
+    // inexistente en "?editar=" mostraba el formulario en blanco como "Nuevo cliente" en vez
+    // de avisar que ese cliente ya no existe.
+    if ($editando === false) {
+        header('Location: clientes.php?msg=no_encontrado');
+        exit();
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-ALTO-E-06] CSRF ausente antes en alta/edición de cliente.
     requerirCSRF($_POST['_token'] ?? '', 'clientes.php');
-    $nombre = trim($_POST['nombre_completo'] ?? '');
-    $telefono = trim($_POST['telefono'] ?? '');
-    $direccion = trim($_POST['direccion'] ?? '');
-    $correo = trim($_POST['correo'] ?? '');
-    $descuento = floatval($_POST['descuento_fijo'] ?? 0);
-    $notas = trim($_POST['notas'] ?? '');
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php) un campo
+    // mandado como array truena trim()/htmlspecialchars() con un TypeError sin capturar.
+    $nombre = trim(is_scalar($_POST['nombre_completo'] ?? null) ? (string)$_POST['nombre_completo'] : '');
+    $telefono = trim(is_scalar($_POST['telefono'] ?? null) ? (string)$_POST['telefono'] : '');
+    $direccion = trim(is_scalar($_POST['direccion'] ?? null) ? (string)$_POST['direccion'] : '');
+    $correo = trim(is_scalar($_POST['correo'] ?? null) ? (string)$_POST['correo'] : '');
+    $descuento = floatval(is_scalar($_POST['descuento_fijo'] ?? null) ? $_POST['descuento_fijo'] : 0);
+    $notas = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
     $creditoAutorizado = isset($_POST['credito_autorizado']) ? 1 : 0;
-    $limiteCredito = floatval($_POST['limite_credito'] ?? 0);
-    $clienteId = intval($_POST['cliente_id'] ?? 0);
+    $limiteCredito = floatval(is_scalar($_POST['limite_credito'] ?? null) ? $_POST['limite_credito'] : 0);
+    // [FIX-CLIENTE-ID-DESINCRONIZADO] (mismo patron ya corregido en admin/formGasto.php,
+    // admin/formEmpleado.php) Antes $clienteId salia directo del campo oculto del POST,
+    // sin ninguna relacion con el "?editar=" de la URL que decide cual cliente se esta
+    // mostrando/validando -- un POST manipulado podia editar/sobreescribir CUALQUIER otro
+    // cliente real con los datos del formulario que se esta viendo. Se ancla al cliente_id
+    // de $editando (ya resuelto contra la URL) cuando se esta editando; para un alta nueva
+    // (sin "?editar=" en la URL) siempre es 0, sin importar que venga en el POST.
+    $clienteId = (isset($_GET['editar']) && $editando) ? intval($editando['cliente_id']) : 0;
 
     if ($nombre === '') $errores[] = 'El nombre completo es obligatorio.';
+    // [FIX-CLIENTE-LARGO] (espejo de cajeroInventario/clientes.php): nombre_completo (100),
+    // direccion (255), correo (100) y notas (255) sin tope de longitud en el servidor — se
+    // truncaban en silencio y se guardaban como "creado correctamente".
+    if (mb_strlen($nombre) > 100)    $errores[] = 'El nombre no puede tener más de 100 caracteres.';
+    if (mb_strlen($direccion) > 255) $errores[] = 'La dirección no puede tener más de 255 caracteres.';
+    if (mb_strlen($correo) > 100)    $errores[] = 'El correo no puede tener más de 100 caracteres.';
+    if (mb_strlen($notas) > 255)     $errores[] = 'Las notas no pueden tener más de 255 caracteres.';
+    // [FIX-CONSISTENCIA] admin/cajero_clientes.php y cajeroInventario/clientes.php ya validan
+    // el formato de correo con filter_var(); aqui faltaba por completo — cualquier texto se
+    // aceptaba como "correo" valido.
+    if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
     // [FIX-TELEFONO-FORMATO] Faltaba aqui (cajeroInventario/clientes.php y
     // admin/cajero_clientes.php ya lo validaban) — sin esto, "311 425 4121" y "3114254121" se
     // guardaban como telefonos "distintos" para la comparacion exacta del check de duplicados,
@@ -74,6 +107,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // llamarse igual), pero el teléfono sí debería serlo — es lo que realmente distingue a un
     // cliente de otro en el buscador de Nueva Venta. Mismo fix aplicado en
     // cajeroInventario/clientes.php y admin/cajero_clientes.php.
+    // [FIX-TELEFONO-RACE] La tabla clientes no tiene UNIQUE en telefono (verificado en
+    // baseDeDatos.sql), asi que el check-then-insert de arriba es una condicion de carrera
+    // clasica: dos altas casi simultaneas con el mismo telefono pueden pasar ambas el SELECT
+    // antes de que cualquiera haga el INSERT. No se pudo forzar el duplicado en el entorno
+    // local (el servidor de pruebas de PHP serializa las peticiones), pero el mismo patron ya
+    // se corrigio de forma preventiva en devoluciones.php esta sesion -- se aplica el mismo
+    // candado GET_LOCK aqui, ahora candado + verificacion dentro de la misma seccion critica.
+    $lockTelefono   = null;
+    $lockTelAdquirido = true;
+    if ($telefono !== '') {
+        $lockTelefono     = 'cliente_telefono_' . $telefono;
+        $lockTelAdquirido = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockTelefono) . ", 5)")->fetchColumn();
+        if (!$lockTelAdquirido) {
+            $errores[] = 'Otro usuario está guardando un cliente con este mismo teléfono en este momento. Intenta de nuevo.';
+        }
+    }
+
     if (empty($errores) && $telefono !== '') {
         $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ?");
         $stmtDupTel->execute([$telefono, $clienteId]);
@@ -91,6 +141,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 WHERE cliente_id = ?
             ");
             $stmt->execute([$nombre, $telefono, $direccion, $correo, $descuento, $notas, $creditoAutorizado, $limiteCredito, $clienteId]);
+            // [FIX-CLIENTE-EDITAR-FANTASMA] (espejo de cajeroInventario/clientes.php): rowCount()
+            // por si solo no basta (PDO/MySQL reporta filas MODIFICADAS, no encontradas — guardar
+            // sin cambios tambien da 0), asi que se verifica existencia por separado.
+            if ($stmt->rowCount() === 0) {
+                $stmtExisteCliente = $pdo->prepare("SELECT 1 FROM clientes WHERE cliente_id = ?");
+                $stmtExisteCliente->execute([$clienteId]);
+                if (!$stmtExisteCliente->fetchColumn()) {
+                    if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
+                    header('Location: clientes.php?msg=no_encontrado');
+                    exit();
+                }
+            }
+            if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
             header('Location: clientes.php?msg=editado');
             exit();
         }
@@ -100,13 +163,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
         ");
         $stmt->execute([$nombre, $telefono, $direccion, $correo, $descuento, $notas, $creditoAutorizado, $limiteCredito]);
+        if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
         header('Location: clientes.php?msg=creado');
         exit();
     }
+    if ($lockTelefono && $lockTelAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
-$sucursal = intval($_GET['sucursal'] ?? 0);
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$sucursal = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
 $soloCredito = $_GET['credito'] ?? '';
 $mostrarInactivos = isset($_GET['inactivos']);
 
@@ -139,21 +204,22 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'deudores') {
     // que aun asi tienen deuda viva — dinero por cobrar que dejaba de aparecer en cualquier
     // reporte en cuanto alguien desactivaba al cliente (a proposito o por error).
     $stmtD = $pdo->query("
-        SELECT c.nombre_completo, c.telefono, c.correo, c.activo,
+        SELECT c.nombre_completo, c.telefono, c.direccion, c.correo, c.activo,
                COUNT(cr.credito_id)              AS creditos_abiertos,
                COALESCE(SUM(cr.saldo_pendiente),0) AS total_por_cobrar,
                MAX(cr.fecha_limite)               AS proximo_vencimiento
         FROM clientes c
         JOIN creditos cr ON cr.cliente_id = c.cliente_id
         WHERE cr.estado IN ('Activo','Vencido')
-        GROUP BY c.cliente_id, c.nombre_completo, c.telefono, c.correo, c.activo
+        GROUP BY c.cliente_id, c.nombre_completo, c.telefono, c.direccion, c.correo, c.activo
         ORDER BY total_por_cobrar DESC
     ");
     $deudores = $stmtD->fetchAll(PDO::FETCH_ASSOC);
-    $columnas = ['Cliente','Teléfono','Correo','Créditos abiertos','Total por cobrar','Próx. vencimiento'];
+    $columnas = ['Cliente','Teléfono','Domicilio','Correo','Créditos abiertos','Total por cobrar','Próx. vencimiento'];
     $filas = array_map(fn($r) => [
         $r['nombre_completo'] . ($r['activo'] ? '' : ' (Inactivo)'),
         $r['telefono']  ?: '—',
+        $r['direccion'] ?: '—',
         $r['correo']    ?: '—',
         $r['creditos_abiertos'],
         '$' . number_format($r['total_por_cobrar'], 2),
@@ -164,7 +230,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'deudores') {
         ['label' => 'Clientes con deuda', 'valor' => count($deudores)],
         ['label' => 'Total por cobrar',   'valor' => '$' . number_format($totalDeuda, 2)],
     ];
-    exportarPDF('Clientes con Saldo Pendiente', 'Generado el ' . date('d/m/Y H:i'), $columnas, $filas, $resumen, 'L');
+    exportarPDF('Clientes con Saldo Pendiente', 'Generado el ' . date('d/m/Y H:i'), $columnas, $filas, $resumen, 'L', '', [20, 13, 24, 17, 9, 10, 7]);
 }
 
 // ── Exportar ─────────────────────────────────────────────────────────
@@ -290,7 +356,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -367,7 +433,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
 <div class="main">
     <div class="topbar">
-        <div class="topbar-left"><button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button><h2>Clientes</h2></div>
+        <div class="topbar-left"><button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button><h2>Clientes</h2></div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">- <?= htmlspecialchars($nombreSucursal) ?></span></span>
             <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesion</button></form>
@@ -379,13 +445,16 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <div class="content-header">
                 <h1>Administracion de clientes</h1>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
-                    <a href="?exportar=deudores" style="background:#6a1b9a;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">💰 Deudores</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
+                    <a href="?exportar=deudores" style="background:#6a1b9a;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('wallet') ?> Deudores</a>
                 </div>
             </div>
-            <?php if (isset($_GET['msg'])): $mensajes = ['creado' => 'Cliente registrado correctamente.', 'editado' => 'Cliente actualizado correctamente.']; ?>
-                <div class="msg msg-exito"><?= htmlspecialchars($mensajes[$_GET['msg']] ?? '') ?></div>
+            <?php $msgKeyCli = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
+            <?php if ($msgKeyCli === 'no_encontrado'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">Cliente no encontrado.</div>
+            <?php elseif ($msgKeyCli !== ''): $mensajes = ['creado' => 'Cliente registrado correctamente.', 'editado' => 'Cliente actualizado correctamente.']; ?>
+                <div class="msg msg-exito"><?= htmlspecialchars($mensajes[$msgKeyCli] ?? '') ?></div>
             <?php endif; ?>
             <?php if (($_GET['error'] ?? '') === 'credito_pendiente'): ?>
                 <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar este cliente porque tiene un crédito pendiente de pago.</div>
@@ -467,16 +536,32 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <form method="POST">
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="cliente_id" value="<?= intval($editando['cliente_id'] ?? 0) ?>">
-                    <div class="form-group"><label>Nombre completo *</label><input type="text" name="nombre_completo" value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan Garcia"></div>
+                    <?php
+                        // [FIX-TIPO-ARRAY-ID] Repoblar el formulario tras un error releyendo
+                        // $_POST crudo tenia el mismo hueco ya corregido en admin/formGasto.php:
+                        // si algun campo llegaba como array, el htmlspecialchars() de abajo
+                        // volveria a tronar. Se usan las variables YA saneadas del manejador de
+                        // POST (siempre escalares) en vez de releer $_POST directo.
+                        $esPostCliente = $_SERVER['REQUEST_METHOD'] === 'POST';
+                        $vNombre    = $esPostCliente ? $nombre    : ($editando['nombre_completo'] ?? '');
+                        $vTelefono  = $esPostCliente ? $telefono  : ($editando['telefono']        ?? '');
+                        $vDireccion = $esPostCliente ? $direccion : ($editando['direccion']       ?? '');
+                        $vCorreo    = $esPostCliente ? $correo    : ($editando['correo']          ?? '');
+                        $vDescuento = $esPostCliente ? $descuento : ($editando['descuento_fijo']  ?? 0);
+                        $vNotas     = $esPostCliente ? $notas     : ($editando['notas']           ?? '');
+                        $vCredAut   = $esPostCliente ? $creditoAutorizado : ($editando['credito_autorizado'] ?? 0);
+                        $vLimite    = $esPostCliente ? $limiteCredito     : ($editando['limite_credito'] ?: '');
+                    ?>
+                    <div class="form-group"><label>Nombre completo *</label><input type="text" name="nombre_completo" maxlength="100" value="<?= htmlspecialchars($vNombre) ?>" placeholder="Ej. Juan Garcia"></div>
                     <div class="form-row">
-                        <div class="form-group"><label>Telefono</label><input type="text" name="telefono" value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>" placeholder="10 digitos"></div>
-                        <div class="form-group"><label>Descuento fijo (%)</label><input type="number" name="descuento_fijo" value="<?= htmlspecialchars($_POST['descuento_fijo'] ?? $editando['descuento_fijo'] ?? 0) ?>" step="0.01" min="0" max="100"></div>
+                        <div class="form-group"><label>Telefono</label><input type="text" name="telefono" value="<?= htmlspecialchars($vTelefono) ?>" placeholder="10 digitos"></div>
+                        <div class="form-group"><label>Descuento fijo (%)</label><input type="number" name="descuento_fijo" value="<?= htmlspecialchars($vDescuento) ?>" step="0.01" min="0" max="100"></div>
                     </div>
-                    <div class="form-group"><label>Direccion</label><input type="text" name="direccion" value="<?= htmlspecialchars($_POST['direccion'] ?? $editando['direccion'] ?? '') ?>" placeholder="Calle, numero, colonia"></div>
-                    <div class="form-group"><label>Correo</label><input type="email" name="correo" value="<?= htmlspecialchars($_POST['correo'] ?? $editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com"></div>
-                    <div class="form-group"><label>Notas</label><textarea name="notas" rows="3" placeholder="Observaciones del cliente"><?= htmlspecialchars($_POST['notas'] ?? $editando['notas'] ?? '') ?></textarea></div>
-                    <div class="check-row"><input type="checkbox" name="credito_autorizado" id="chkCredito" <?= (($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'checked' : '') ?> onchange="toggleCredito(this.checked)"><label for="chkCredito">Autorizar credito a este cliente</label></div>
-                    <div class="credito-campos <?= (($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '') ?>" id="creditoCampos"><div class="form-group"><label>Limite de credito</label><input type="number" name="limite_credito" value="<?= htmlspecialchars($_POST['limite_credito'] ?? ($editando['limite_credito'] ?: '')) ?>" step="0.01" min="0" placeholder="0.00"></div></div>
+                    <div class="form-group"><label>Direccion</label><input type="text" name="direccion" maxlength="255" value="<?= htmlspecialchars($vDireccion) ?>" placeholder="Calle, numero, colonia"></div>
+                    <div class="form-group"><label>Correo</label><input type="email" name="correo" maxlength="100" value="<?= htmlspecialchars($vCorreo) ?>" placeholder="correo@ejemplo.com"></div>
+                    <div class="form-group"><label>Notas</label><textarea name="notas" rows="3" maxlength="255" placeholder="Observaciones del cliente"><?= htmlspecialchars($vNotas) ?></textarea></div>
+                    <div class="check-row"><input type="checkbox" name="credito_autorizado" id="chkCredito" <?= ($vCredAut ? 'checked' : '') ?> onchange="toggleCredito(this.checked)"><label for="chkCredito">Autorizar credito a este cliente</label></div>
+                    <div class="credito-campos <?= ($vCredAut ? 'visible' : '') ?>" id="creditoCampos"><div class="form-group"><label>Limite de credito</label><input type="number" name="limite_credito" value="<?= htmlspecialchars($vLimite) ?>" step="0.01" min="0" placeholder="0.00"></div></div>
                     <button class="btn-guardar" type="submit"><?= $editando ? 'Guardar cambios' : 'Registrar cliente' ?></button>
                     <?php if ($editando): ?><a class="btn-cancelar-edit" href="clientes.php">Cancelar</a><?php endif; ?>
                 </form>

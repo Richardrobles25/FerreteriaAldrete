@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -13,7 +14,7 @@ require_once '../includes/topbar_info.php';
 // confundia al dar a entender que uno si eliminaba. El toggle de abajo ya cubre ambos casos.
 if (isset($_GET['toggle'])) {
     requerirCSRF($_GET['_token'] ?? '', 'inventario_proveedores.php');
-    $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval($_GET['toggle'])]);
+    $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0)]);
     header('Location: inventario_proveedores.php'); exit();
 }
 
@@ -21,20 +22,29 @@ $errores  = [];
 $editando = null;
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM proveedores WHERE proveedor_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requerirCSRF($_POST['_token'] ?? '', 'inventario_proveedores.php');
-    $nombre    = trim($_POST['nombre'] ?? '');
-    $telefono  = trim($_POST['telefono'] ?? '');
-    $correo    = trim($_POST['correo'] ?? '');
-    $direccion = trim($_POST['direccion'] ?? '');
-    $cats      = $_POST['categorias'] ?? [];
-    $id        = intval($_POST['proveedor_id'] ?? 0);
+    $nombre    = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    $telefono  = trim(is_scalar($_POST['telefono'] ?? null) ? (string)$_POST['telefono'] : '');
+    $correo    = trim(is_scalar($_POST['correo'] ?? null) ? (string)$_POST['correo'] : '');
+    $direccion = trim(is_scalar($_POST['direccion'] ?? null) ? (string)$_POST['direccion'] : '');
+    $cats      = is_array($_POST['categorias'] ?? null) ? $_POST['categorias'] : [];
+    // [FIX-PROVEEDOR-ID-DESINCRONIZADO] Se ancla al proveedor ya cargado via ?editar= (arriba),
+    // no al <input hidden name="proveedor_id"> del POST.
+    $id        = $editando ? intval($editando['proveedor_id']) : 0;
 
     if (!$nombre) $errores[] = 'El nombre es obligatorio.';
+    // [FIX-PROVEEDOR-LARGO] (espejo de cajeroInventario/proveedores.php) Ninguno de estos 4
+    // campos tenia tope de longitud en el servidor — se truncaban en silencio y se guardaban
+    // como "creado correctamente" (el correo incluso quedaba con el dominio cortado).
+    if (mb_strlen($nombre) > 100)    $errores[] = 'El nombre no puede tener más de 100 caracteres.';
+    if (mb_strlen($telefono) > 20)   $errores[] = 'El teléfono no puede tener más de 20 caracteres.';
+    if (mb_strlen($correo) > 100)    $errores[] = 'El correo no puede tener más de 100 caracteres.';
+    if (mb_strlen($direccion) > 255) $errores[] = 'La dirección no puede tener más de 255 caracteres.';
 
     if ($nombre && empty($errores)) {
         $stmtDup = $pdo->prepare("SELECT proveedor_id FROM proveedores WHERE LOWER(nombre) = LOWER(?) AND proveedor_id != ? AND activo = 1");
@@ -46,10 +56,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // categorias) corria como escrituras sueltas: una falla a mitad del foreach dejaba al
     // proveedor con solo algunas de las categorias que el formulario en realidad mando (o
     // ninguna, si el DELETE tuvo exito pero los INSERT fallaron), desincronizado en silencio.
+    // [FIX-PROVEEDOR-CATEGORIA-DUPLICADA] (espejo del mismo fix ya aplicado a
+    // producto_proveedor en formProducto.php) proveedor_categorias no tiene restriccion
+    // UNIQUE sobre (proveedor_id, categoria_id) — marcar/enviar dos veces la misma area
+    // (checkbox repetido en un POST manipulado) insertaba dos filas duplicadas, mostrando
+    // el mismo badge de categoria repetido en el listado.
+    $cats = array_values(array_unique(array_map('intval', $cats)));
+
     if (empty($errores)) {
         $pdo->beginTransaction();
         try {
         if ($id) {
+            // [FIX-PROVEEDOR-EDICION-FANTASMA] Antes se reportaba "editado" sin importar si
+            // el proveedor_id realmente existia — un id borrado por otra sesion (o un POST
+            // directo con un id inventado) mostraba "Proveedor actualizado correctamente" sin
+            // que nada hubiera pasado. Se verifica existencia antes de escribir nada.
+            $stmtExisteProv = $pdo->prepare("SELECT 1 FROM proveedores WHERE proveedor_id = ?");
+            $stmtExisteProv->execute([$id]);
+            if (!$stmtExisteProv->fetchColumn()) {
+                $pdo->rollBack();
+                header('Location: inventario_proveedores.php?msg=no_encontrado');
+                exit();
+            }
             $pdo->prepare("UPDATE proveedores SET nombre=?, telefono=?, correo=?, direccion=? WHERE proveedor_id=?")
                 ->execute([$nombre, $telefono, $correo, $direccion, $id]);
             $pdo->prepare("DELETE FROM proveedor_categorias WHERE proveedor_id = ?")->execute([$id]);
@@ -76,8 +104,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$busqueda  = trim($_GET['buscar'] ?? '');
-$filtrocat = intval($_GET['categoria'] ?? 0);
+$busqueda  = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$filtrocat = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 // [FIX-MEDIO-B-15] Antes el listado solo mostraba activos, sin ninguna forma de ver los
 // desactivados — el boton "Activar" (que ya existia en la fila) nunca era alcanzable
 // porque la fila que lo mostraba jamas aparecia. Mismo patron de "ver inactivos" que
@@ -163,7 +191,7 @@ if ($editando) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -229,7 +257,7 @@ if ($editando) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Proveedores</h2>
         </div>
         <div class="topbar-right">
@@ -243,13 +271,18 @@ if ($editando) {
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
                 <h1 style="font-size:20px;color:#222;font-weight:600;">Proveedores</h1>
                 <div style="display:flex;gap:8px;">
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
                 </div>
             </div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs = ['creado'=>'Proveedor creado.','editado'=>'Proveedor actualizado.']; ?>
-                <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
+                <?php $msgKeyProv = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
+                <?php if ($msgKeyProv === 'no_encontrado'): ?>
+                    <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">Ese proveedor ya no existe (puede que otra sesión lo haya eliminado). Recarga la página.</div>
+                <?php elseif (isset($msgs[$msgKeyProv])): ?>
+                    <div class="msg msg-exito"><?= $msgs[$msgKeyProv] ?></div>
+                <?php endif; ?>
             <?php endif; ?>
 
             <form method="GET" action="inventario_proveedores.php">
@@ -327,19 +360,19 @@ if ($editando) {
                     <input type="hidden" name="proveedor_id" value="<?= $editando['proveedor_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>
-                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Nombre del proveedor">
+                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Nombre del proveedor" maxlength="100">
                     </div>
                     <div class="form-group">
                         <label>Teléfono</label>
-                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos">
+                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="20">
                     </div>
                     <div class="form-group">
                         <label>Correo</label>
-                        <input type="email" name="correo" value="<?= htmlspecialchars($editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com">
+                        <input type="email" name="correo" value="<?= htmlspecialchars($editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com" maxlength="100">
                     </div>
                     <div class="form-group">
                         <label>Dirección</label>
-                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="Dirección del proveedor">
+                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="Dirección del proveedor" maxlength="255">
                     </div>
                     <div class="form-group">
                         <label>Áreas que abastece</label>

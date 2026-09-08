@@ -15,7 +15,7 @@ $_todasSucursales = $_suc_stmt->fetchAll(PDO::FETCH_ASSOC);
 // Si llega ?sucursal= y el usuario es Administrador, guardar en sesión
 // sucursal=0 → "Todas las sucursales" (vista global)
 if (isset($_GET['sucursal']) && $_SESSION['rol'] === 'Administrador') {
-    $sucursalGet = intval($_GET['sucursal']);
+    $sucursalGet = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
     $ids = array_column($_todasSucursales, 'sucursal_id');
     if ($sucursalGet === 0 || in_array($sucursalGet, $ids)) {
         $_SESSION['admin_sucursal_filtro'] = $sucursalGet;

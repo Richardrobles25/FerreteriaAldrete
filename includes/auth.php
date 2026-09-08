@@ -42,14 +42,25 @@ function verificarRol($rolesPermitidos) {
 }
 
 // [AUTOFIX] SEC-01: Helper para verificar CSRF token (GET y POST)
-function verificarCSRF(string $token): bool {
+// [FIX-CSRF-TYPEERROR-ARRAY] El type-hint "string $token" hacia que un $_POST['_token']
+// mandado como array (ej. "_token[]=x", posible con cualquier cliente HTTP que no sea un
+// <form> normal) lanzara un TypeError SIN CAPTURAR antes de que esta funcion siquiera
+// empezara a ejecutarse -- probado en vivo en admin/formGasto.php y
+// admin/gastos_categorias.php: "Fatal error: Uncaught TypeError... must be of type string,
+// array given", con la ruta completa del servidor y el stack trace expuestos en la
+// respuesta (HTTP 200, sin ningun mensaje de error normal). Esta funcion la usan
+// practicamente todos los formularios del sistema, asi que se corrige aqui una sola vez
+// en vez de en cada archivo. Se quita el type-hint "string" (para que PHP no rechace la
+// llamada antes de entrar) y se valida el tipo adentro con is_string().
+function verificarCSRF($token): bool {
     return isset($_SESSION['csrf_token'])
-        && !empty($token)
+        && is_string($token)
+        && $token !== ''
         && hash_equals($_SESSION['csrf_token'], $token);
 }
 
 // [AUTOFIX] SEC-01: Verificar CSRF y redirigir con error si falla
-function requerirCSRF(string $token, string $redirectUrl): void {
+function requerirCSRF($token, string $redirectUrl): void {
     if (!verificarCSRF($token)) {
         header('Location: ' . $redirectUrl . '?msg=error_token');
         exit();

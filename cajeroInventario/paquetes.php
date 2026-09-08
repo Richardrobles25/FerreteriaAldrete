@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -39,7 +40,7 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -144,7 +145,7 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Paquetes de productos</h2>
         </div>
         <div class="topbar-right">

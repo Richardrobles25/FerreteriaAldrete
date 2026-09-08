@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -15,14 +16,18 @@ $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX] Verificar CSRF antes de procesar la salida
     requerirCSRF($_POST['_token'] ?? '', 'inventario_salidas.php');
-    $producto_id = intval($_POST['producto_id'] ?? 0);
-    $cantidad    = floatval($_POST['cantidad'] ?? 0);
-    $motivo      = trim($_POST['motivo'] ?? '');
+    $producto_id = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
+    $cantidad    = floatval(is_scalar($_POST['cantidad'] ?? null) ? $_POST['cantidad'] : 0);
+    $motivo      = trim(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : '');
 
     if ($sucursalVista === 0) $errores[] = 'Selecciona una sucursal específica para registrar una salida.';
     if (!$producto_id) $errores[] = 'Selecciona un producto.';
     if ($cantidad <= 0) $errores[] = 'La cantidad debe ser mayor a 0.';
     if (!$motivo)       $errores[] = 'El motivo es obligatorio.';
+    // [FIX-MOTIVO-LARGO] (espejo de cajeroInventario/salidas.php) movimientos_inventario.motivo
+    // es VARCHAR(255) sin ningun tope en el servidor — se truncaba en silencio y se guardaba
+    // como "salida registrada", sin ningun aviso.
+    if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
 
     if (empty($errores)) {
         $stmtP = $pdo->prepare("
@@ -134,7 +139,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -191,7 +196,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Salidas y mermas</h2>
         </div>
         <div class="topbar-right">
@@ -214,7 +219,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php endif; ?>
                 <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito_minimo'): ?>
                     <div class="msg" style="background:#fff8e1;color:#e65100;border-left:3px solid #e65100;">
-                        ⚠️ Salida registrada, pero el stock quedó por debajo del mínimo establecido.
+                        <?= icono('triangle-alert') ?> Salida registrada, pero el stock quedó por debajo del mínimo establecido.
                     </div>
                 <?php endif; ?>
                 <?php if (!empty($errores)): ?>
@@ -256,7 +261,7 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <button type="button" class="motivo-btn" onclick="setMotivo('Robo o extravío')">Robo/Extravío</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Muestra o regalo')">Muestra</button>
                         </div>
-                        <input type="text" name="motivo" id="inputMotivo" placeholder="Describe el motivo de la salida...">
+                        <input type="text" name="motivo" id="inputMotivo" placeholder="Describe el motivo de la salida..." maxlength="255">
                     </div>
 
                     <button class="btn-guardar" type="submit">Registrar salida</button>

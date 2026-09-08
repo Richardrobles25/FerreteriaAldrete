@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -14,7 +15,7 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 if (isset($_GET['toggle'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'proveedores.php');
-    $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval($_GET['toggle'])]);
+    $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0)]);
     header('Location: proveedores.php'); exit();
 }
 
@@ -22,21 +23,31 @@ $errores  = [];
 $editando = null;
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM proveedores WHERE proveedor_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-CSRF-01] Verificar CSRF antes de crear/editar proveedor (antes solo ?eliminar=/?toggle= lo tenian)
     requerirCSRF($_POST['_token'] ?? '', 'proveedores.php');
-    $nombre    = trim($_POST['nombre'] ?? '');
-    $telefono  = trim($_POST['telefono'] ?? '');
-    $correo    = trim($_POST['correo'] ?? '');
-    $direccion = trim($_POST['direccion'] ?? '');
-    $cats      = $_POST['categorias'] ?? [];
-    $id        = intval($_POST['proveedor_id'] ?? 0);
+    $nombre    = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    $telefono  = trim(is_scalar($_POST['telefono'] ?? null) ? (string)$_POST['telefono'] : '');
+    $correo    = trim(is_scalar($_POST['correo'] ?? null) ? (string)$_POST['correo'] : '');
+    $direccion = trim(is_scalar($_POST['direccion'] ?? null) ? (string)$_POST['direccion'] : '');
+    $cats      = is_array($_POST['categorias'] ?? null) ? $_POST['categorias'] : [];
+    // [FIX-PROVEEDOR-ID-DESINCRONIZADO] (portado de admin/inventario_proveedores.php): se
+    // ancla al proveedor ya cargado via ?editar= (arriba), no al hidden del POST.
+    $id        = $editando ? intval($editando['proveedor_id']) : 0;
 
     if (!$nombre) $errores[] = 'El nombre es obligatorio.';
+    // [FIX-PROVEEDOR-LARGO] Ninguno de estos 4 campos tenia tope de longitud en el servidor —
+    // probado en vivo: nombre (VARCHAR(100)), telefono (VARCHAR(20)), correo (VARCHAR(100), el
+    // truncado incluso le cortaba el dominio dejando un correo invalido guardado) y direccion
+    // (VARCHAR(255)) se truncaban en silencio y se guardaban como "creado correctamente".
+    if (mb_strlen($nombre) > 100)    $errores[] = 'El nombre no puede tener más de 100 caracteres.';
+    if (mb_strlen($telefono) > 20)   $errores[] = 'El teléfono no puede tener más de 20 caracteres.';
+    if (mb_strlen($correo) > 100)    $errores[] = 'El correo no puede tener más de 100 caracteres.';
+    if (mb_strlen($direccion) > 255) $errores[] = 'La dirección no puede tener más de 255 caracteres.';
 
     // [AUTOFIX] BUG-02: Verificar nombre duplicado antes de insertar/actualizar
     if ($nombre && empty($errores)) {
@@ -49,10 +60,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // (UPDATE/INSERT + borrar y re-insertar sus categorias) corria como escrituras sueltas
     // — una falla a mitad del foreach dejaba al proveedor con solo algunas de las
     // categorias que el formulario en realidad mando (o ninguna), desincronizado en silencio.
+    // [FIX-PROVEEDOR-CATEGORIA-DUPLICADA] (espejo de admin/inventario_proveedores.php)
+    // proveedor_categorias no tiene restriccion UNIQUE sobre (proveedor_id, categoria_id) —
+    // marcar/enviar dos veces la misma area insertaba dos filas duplicadas.
+    $cats = array_values(array_unique(array_map('intval', $cats)));
+
     if (empty($errores)) {
         $pdo->beginTransaction();
         try {
         if ($id) {
+            // [FIX-PROVEEDOR-EDICION-FANTASMA] (espejo de admin/inventario_proveedores.php)
+            // antes se reportaba "editado" sin importar si el proveedor_id realmente existia.
+            $stmtExisteProv = $pdo->prepare("SELECT 1 FROM proveedores WHERE proveedor_id = ?");
+            $stmtExisteProv->execute([$id]);
+            if (!$stmtExisteProv->fetchColumn()) {
+                $pdo->rollBack();
+                header('Location: proveedores.php?msg=no_encontrado');
+                exit();
+            }
             $pdo->prepare("UPDATE proveedores SET nombre=?, telefono=?, correo=?, direccion=? WHERE proveedor_id=?")
                 ->execute([$nombre, $telefono, $correo, $direccion, $id]);
             $pdo->prepare("DELETE FROM proveedor_categorias WHERE proveedor_id = ?")->execute([$id]);
@@ -79,8 +104,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$busqueda  = trim($_GET['buscar'] ?? '');
-$filtrocat = intval($_GET['categoria'] ?? 0);
+$busqueda  = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$filtrocat = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 // [FIX-MEDIO-B-15] (portado de admin/inventario_proveedores.php): antes el listado solo
 // mostraba activos, sin ninguna forma de ver los desactivados — el boton "Activar" (que
 // ya existia en la fila) nunca era alcanzable porque la fila que lo mostraba jamas
@@ -136,7 +161,7 @@ if ($editando) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -273,7 +298,7 @@ if ($editando) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Proveedores</h2>
         </div>
         <div class="topbar-right">
@@ -286,7 +311,12 @@ if ($editando) {
         <div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs = ['creado'=>'Proveedor creado.','editado'=>'Proveedor actualizado.']; // [AUTOFIX] BUG-02: no se necesita msg especial pues el error ya lo muestra el form ?>
-                <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
+                <?php $msgKeyProv = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
+                <?php if ($msgKeyProv === 'no_encontrado'): ?>
+                    <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">Ese proveedor ya no existe (puede que otra sesión lo haya eliminado). Recarga la página.</div>
+                <?php elseif (isset($msgs[$msgKeyProv])): ?>
+                    <div class="msg msg-exito"><?= $msgs[$msgKeyProv] ?></div>
+                <?php endif; ?>
             <?php endif; ?>
 
             <form method="GET" action="proveedores.php">
@@ -366,19 +396,19 @@ if ($editando) {
                     <input type="hidden" name="proveedor_id" value="<?= $editando['proveedor_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>
-                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Nombre del proveedor">
+                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Nombre del proveedor" maxlength="100">
                     </div>
                     <div class="form-group">
                         <label>Teléfono</label>
-                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos">
+                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="20">
                     </div>
                     <div class="form-group">
                         <label>Correo</label>
-                        <input type="email" name="correo" value="<?= htmlspecialchars($editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com">
+                        <input type="email" name="correo" value="<?= htmlspecialchars($editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com" maxlength="100">
                     </div>
                     <div class="form-group">
                         <label>Dirección</label>
-                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="Dirección del proveedor">
+                        <input type="text" name="direccion" value="<?= htmlspecialchars($editando['direccion'] ?? '') ?>" placeholder="Dirección del proveedor" maxlength="255">
                     </div>
                     <div class="form-group">
                         <label>Áreas que abastece</label>

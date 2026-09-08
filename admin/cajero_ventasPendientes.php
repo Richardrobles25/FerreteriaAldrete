@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -38,15 +39,14 @@ function siguienteCorteQuincenal(string $fechaDesde): string {
     return date('Y-m-d', $corte);
 }
 
-// Verificar que hay caja abierta en la sucursal elegida; si no, redirigir a abrirCaja
+// Caja abierta en la sucursal elegida (se usa al liquidar). [FIX-CAJA-REDIRECT-AJAX] El
+// redirect por falta de caja ya NO vive aqui arriba — "liquidar"/"cancelar" son GET
+// redirect-based (cortar ahi es consistente), pero get_ticket_venta responde JSON y un
+// redirect aqui rompia su fetch().then(r=>r.json()). El guard de "liquidar" vive junto a su
+// propio uso mas abajo; el de pagina completa, al final del archivo antes del HTML.
 $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
 $_stmtCajaGuard->execute([$_SESSION['usuario_id'], $sucursalVista]);
-$cajaActualId = $_stmtCajaGuard->fetchColumn();
-if (!$cajaActualId) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
-    exit();
-}
-$cajaActualId = intval($cajaActualId); // caja abierta del usuario — se usa al liquidar
+$cajaActualId = intval($_stmtCajaGuard->fetchColumn() ?: 0);
 
 // Datos de la sucursal para el ticket
 $stmtSuc = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
@@ -57,7 +57,14 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 if (isset($_GET['liquidar'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'cajero_ventasPendientes.php');
-    $venta_id = intval($_GET['liquidar']);
+    // [FIX-CAJA-REDIRECT-AJAX] Este handler SI necesita una caja abierta (reasigna la venta
+    // a $cajaActualId) y responde por redirect, no JSON — cortar aqui es consistente.
+    if (!$cajaActualId) {
+        header('Location: cajero_abrirCaja.php?msg=sinCaja');
+        exit();
+    }
+    // [FIX-TIPO-ARRAY-ID] intval() sobre un array se coacciona a 1/0 en vez de fallar.
+    $venta_id = intval(is_scalar($_GET['liquidar'] ?? null) ? $_GET['liquidar'] : 0);
 
     // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
     // [FIX-CRIT-D1-01] Faltaba exigir también que la caja de esa venta sea de la
@@ -182,7 +189,7 @@ if (isset($_GET['liquidar'])) {
 if (isset($_GET['cancelar'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'cajero_ventasPendientes.php');
-    $venta_id = intval($_GET['cancelar']);
+    $venta_id = intval(is_scalar($_GET['cancelar'] ?? null) ? $_GET['cancelar'] : 0);
 
     // [AUTOFIX] SEC-06: Verificar que la venta pertenece a la caja del usuario actual
     // [FIX-CRIT-D1-01] Misma corrección que en "liquidar": exigir también que la caja
@@ -222,7 +229,7 @@ if (isset($_GET['cancelar'])) {
 
 // Endpoint: obtener ticket JSON
 if (isset($_GET['get_ticket_venta'])) {
-    $venta_id = intval($_GET['get_ticket_venta']);
+    $venta_id = intval(is_scalar($_GET['get_ticket_venta'] ?? null) ? $_GET['get_ticket_venta'] : 0);
     // [AUTOFIX] SEC-04: Verificar que la venta pertenece a la caja del usuario actual
     // [AUTOFIX] P-05: Reemplazado SELECT * por columnas especificas
     $stmt = $pdo->prepare("
@@ -315,19 +322,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$caja) {
         $errores[] = 'Debes tener una caja abierta para registrar ventas.';
     } else {
-        $items        = json_decode($_POST['items'] ?? '[]', true);
-        $cliente_id   = intval($_POST['cliente_id'] ?? 0) ?: null;
-        $notas        = trim($_POST['notas'] ?? '');
-        $subtotal     = floatval($_POST['subtotal'] ?? 0);
-        $descuento    = floatval($_POST['descuento'] ?? 0);
-        $total        = floatval($_POST['total'] ?? 0);
+        $itemsRaw     = is_scalar($_POST['items'] ?? null) ? $_POST['items'] : '[]';
+        $items        = json_decode($itemsRaw ?? '[]', true);
+        $cliente_id   = intval(is_scalar($_POST['cliente_id'] ?? null) ? $_POST['cliente_id'] : 0) ?: null;
+        $notas        = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+        $subtotal     = floatval(is_scalar($_POST['subtotal'] ?? null) ? $_POST['subtotal'] : 0);
+        $descuento    = floatval(is_scalar($_POST['descuento'] ?? null) ? $_POST['descuento'] : 0);
+        $total        = floatval(is_scalar($_POST['total'] ?? null) ? $_POST['total'] : 0);
         // Ventas pendientes solo admiten Efectivo, Credito y Transferencia
         // [FIX] 'Credito' sin acento: el ENUM ventas.metodo_pago solo acepta 'Credito'.
         // Con acento, MySQL estricto (servidor) rechaza el INSERT y MariaDB (local) guarda '' silenciosamente.
-        $metodo_pago  = in_array($_POST['metodo_pago'] ?? '', ['Efectivo', 'Credito', 'Transferencia']) ? $_POST['metodo_pago'] : 'Efectivo';
-        $ref_transf   = ($metodo_pago === 'Transferencia') ? trim($_POST['referencia_transferencia'] ?? '') : null;
-        $monto_efectivo = ($metodo_pago === 'Efectivo') ? floatval($_POST['monto_efectivo'] ?? 0) : 0;
-        $cambio         = ($metodo_pago === 'Efectivo') ? floatval($_POST['cambio']         ?? 0) : 0;
+        $metodoPagoRaw = is_scalar($_POST['metodo_pago'] ?? null) ? $_POST['metodo_pago'] : '';
+        $metodo_pago  = in_array($metodoPagoRaw, ['Efectivo', 'Credito', 'Transferencia']) ? $metodoPagoRaw : 'Efectivo';
+        $ref_transf   = ($metodo_pago === 'Transferencia') ? trim(is_scalar($_POST['referencia_transferencia'] ?? null) ? (string)$_POST['referencia_transferencia'] : '') : null;
+        $monto_efectivo = ($metodo_pago === 'Efectivo') ? floatval(is_scalar($_POST['monto_efectivo'] ?? null) ? $_POST['monto_efectivo'] : 0) : 0;
+        $cambio         = ($metodo_pago === 'Efectivo') ? floatval(is_scalar($_POST['cambio'] ?? null) ? $_POST['cambio'] : 0) : 0;
 
         // Bug #7: Validar carrito antes de cualquier otra validación
         if (empty($items)) {
@@ -348,6 +357,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errores[] = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
         }
 
+        // [FIX-CREDITO-SIN-CLIENTE] Igual que cajero_nuevaVenta.php (AUTOFIX N-03): sin este
+        // candado, "Credito" + cliente_id vacio se colaba hasta el INSERT sin pasar por
+        // ninguna validacion de limite (el chequeo de abajo esta condicionado a "&& $cliente_id"
+        // y simplemente se saltaba entero). La venta quedaba registrada como pagada/por cobrar
+        // sin ningun cliente ni credito asociado — mercancia y stock salian sin que quedara
+        // registro de a quien cobrarle.
+        if (empty($errores) && $metodo_pago === 'Credito' && !$cliente_id) {
+            $errores[] = 'El pago a crédito requiere seleccionar un cliente.';
+        }
+
         if (!empty($items) && empty($errores)) {
             // Mutex por mes/año — mismo lock que nuevaVenta para evitar colisión entre módulos
             $mesFolio      = date('m');
@@ -363,6 +382,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // [FIX] SEC: Recalcular y validar los totales en el servidor.
                 // subtotal/descuento/total llegan del navegador y podían manipularse con las
                 // DevTools (F12). Aquí se verifica que cuadren con los productos reales.
+                // [FIX-CANTIDAD-ENTERA-VENTA] tipo_venta de cada producto del carrito, para
+                // rechazar una cantidad fraccionaria en un producto que NO es "Suelto" —
+                // igual que nuevaVenta.php y devoluciones.php (FIX-CANTIDAD-ENTERA-DEVOLUCION).
+                $idsProdsCarrito = array_unique(array_map(fn($x) => intval($x['producto_id'] ?? 0), $items));
+                $tiposVentaCarrito = [];
+                if (!empty($idsProdsCarrito)) {
+                    $inPlaceholdersCarrito = implode(',', array_fill(0, count($idsProdsCarrito), '?'));
+                    $stmtTVCarrito = $pdo->prepare("SELECT producto_id, tipo_venta FROM productos WHERE producto_id IN ($inPlaceholdersCarrito)");
+                    $stmtTVCarrito->execute($idsProdsCarrito);
+                    foreach ($stmtTVCarrito->fetchAll(PDO::FETCH_ASSOC) as $rTV) {
+                        $tiposVentaCarrito[intval($rTV['producto_id'])] = $rTV['tipo_venta'];
+                    }
+                }
+
                 $sumaItems = 0.0;
                 foreach ($items as &$it) {
                     // [FIX-PRECISION-CANTIDAD] Ver mismo fix en cajero_nuevaVenta.php: redondear
@@ -374,15 +407,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($cantVal <= 0 || $precVal < 0) {
                         throw new Exception('El carrito contiene cantidades o precios inválidos.');
                     }
+                    $pqIdChk = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
+                    $pidChk  = intval($it['producto_id'] ?? 0);
+                    if ($pqIdChk === null && ($tiposVentaCarrito[$pidChk] ?? null) !== 'Suelto' && floor($cantVal) != $cantVal) {
+                        throw new Exception('La cantidad debe ser un número entero para este producto.');
+                    }
+
+                    // [FIX-PRODUCTO-INACTIVO-PENDIENTE] Igual que cajero_nuevaVenta.php
+                    // (FIX-MEDIO-D1-07): a diferencia de una venta normal, un "venta pendiente"
+                    // puede quedarse horas o dias en el borrador de localStorage del navegador
+                    // antes de enviarse. Si el producto se desactiva (descontinuado) o se retira
+                    // de esta sucursal mientras tanto, no habia ninguna revalidacion aqui —
+                    // solo se checaba stock_actual (un numero), nunca la bandera activo. Un
+                    // carrito viejo podia crear una venta pendiente de un producto ya
+                    // descontinuado sin que nada lo detectara.
+                    $stmtActivoChkPend = $pdo->prepare("
+                        SELECT p.activo AS producto_activo, ss.activo AS stock_activo
+                        FROM productos p
+                        LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+                        WHERE p.producto_id = ?
+                    ");
+                    $stmtActivoChkPend->execute([$sucursalVista, intval($it['producto_id'] ?? 0)]);
+                    $filaActivoChkPend = $stmtActivoChkPend->fetch(PDO::FETCH_ASSOC);
+                    if (!$filaActivoChkPend || !$filaActivoChkPend['producto_activo'] || !$filaActivoChkPend['stock_activo']) {
+                        throw new Exception('Uno de los productos del carrito ya no está disponible en esta sucursal. Recarga la página e intenta de nuevo.');
+                    }
                     $sumaItems += $cantVal * $precVal;
 
-                    // Precio mínimo para ítems sueltos: no menor al 50% del precio de compra
-                    // [FIX-CRIT-D1-02] Igual que en cajero_nuevaVenta.php: cuando precio_compra
-                    // no está capturado ($0), antes esta validación se saltaba por completo y
-                    // permitía vender a $0.00. Ahora se usa como referencia el precio de catálogo
-                    // (venta/mayoreo) cuando no hay costo capturado, con la misma regla del 50%.
+                    // [FIX-PISO-PENDIENTE-50] (espejo de cajeroInventario/ventasPendientes.php)
+                    // El piso seguia en 50% del precio de compra mientras que cajero_nuevaVenta.php
+                    // ya lo tiene en 100% completo — se alinea al mismo piso y a la misma excepcion
+                    // por promocion vigente.
                     $pqIdVal = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
                     if (!$pqIdVal) {
+                        $stmtPromoChkPend = $pdo->prepare("
+                            SELECT precio_promocional FROM promociones
+                            WHERE producto_id = ? AND activo = 1
+                              AND (sucursal_id = ? OR sucursal_id IS NULL)
+                              AND CURDATE() BETWEEN fecha_inicio AND fecha_fin
+                            ORDER BY precio_promocional ASC LIMIT 1
+                        ");
+                        $stmtPromoChkPend->execute([intval($it['producto_id'] ?? 0), $sucursalVista]);
+                        $precioPromoChkPend = $stmtPromoChkPend->fetchColumn();
+                        $esPrecioPromoValidoPend = ($precioPromoChkPend !== false && abs(floatval($precioPromoChkPend) - $precVal) < 0.005);
+
                         $stmtPC = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
                         $stmtPC->execute([intval($it['producto_id'] ?? 0)]);
                         $filaPreciosPend = $stmtPC->fetch(PDO::FETCH_ASSOC);
@@ -399,10 +467,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             }
                         }
 
-                        if ($referenciaFloorPend > 0 && $precVal < ($referenciaFloorPend * 0.5)) {
-                            throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
-                        } elseif ($referenciaFloorPend <= 0 && $precVal <= 0) {
-                            throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                        if (!$esPrecioPromoValidoPend) {
+                            if ($referenciaFloorPend > 0 && $precVal < $referenciaFloorPend - 0.005) {
+                                throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                            } elseif ($referenciaFloorPend <= 0 && $precVal <= 0) {
+                                throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                            }
                         }
                     }
                 }
@@ -724,6 +794,14 @@ foreach ($paqFilas as $f) {
     ];
 }
 $paquesData = array_values($paqAgrupados);
+
+// [FIX-CAJA-REDIRECT-AJAX] Redirect por falta de caja, aplicado unicamente aqui — justo antes
+// de renderizar la pagina completa — para no romper el contrato JSON de get_ticket_venta (ni
+// bloquear "cancelar", que no depende de caja). Cubre la carga normal de la pagina.
+if (!$cajaActualId) {
+    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    exit();
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -752,7 +830,7 @@ $paquesData = array_values($paqAgrupados);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -768,7 +846,7 @@ $paquesData = array_values($paqAgrupados);
     .pendiente-info h4 { font-size: 14px; color: #333; margin: 0 0 4px; }
     .pendiente-info p { font-size: 12px; color: #888; margin: 0; }
     .pendiente-acciones { display: flex; gap: 6px; }
-    .btn-accion { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-block; }
+    .btn-accion { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
     .btn-liquidar { background: #e8f5e9; color: #2e7d32; }
     .btn-liquidar:hover { background: #c8e6c9; }
     .btn-cancelar { background: #fdecea; color: #c0392b; }
@@ -797,7 +875,7 @@ $paquesData = array_values($paqAgrupados);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Ventas pendientes — <?= htmlspecialchars($nombreSucursalVista) ?></h2>
         </div>
         <div class="topbar-right">
@@ -824,7 +902,7 @@ $paquesData = array_values($paqAgrupados);
                     'error_sin_stock' => 'No se puede liquidar: uno o más productos no tienen stock suficiente.',
                     'error_credito_liquidar' => 'No se puede liquidar: el cliente ya no tiene crédito disponible suficiente (revisado al momento de liquidar).',
                 ];
-                $msgKey = $_GET['msg'];
+                $msgKey = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : '';
                 if (isset($msgsExito[$msgKey])): ?>
                     <div class="msg msg-exito"><?= $msgsExito[$msgKey] ?></div>
                 <?php elseif (isset($msgsError[$msgKey])): ?>
@@ -843,7 +921,7 @@ $paquesData = array_values($paqAgrupados);
                             <?php if ($p['notas']): ?><p style="color:#14ace7;"><?= htmlspecialchars($p['notas']) ?></p><?php endif; ?>
                         </div>
                         <div class="pendiente-acciones">
-                            <button class="btn-accion" type="button" style="background:#e3f2fd;color:#1565c0;" onclick="abrirTicketVenta(<?= $p['venta_id'] ?>)">🖨️ Ticket</button>
+                            <button class="btn-accion" type="button" style="background:#e3f2fd;color:#1565c0;" onclick="abrirTicketVenta(<?= $p['venta_id'] ?>)"><?= icono('printer') ?> Ticket</button>
                             <!-- [AUTOFIX] SEC-01: Token CSRF en links destructivos -->
                             <a class="btn-accion btn-liquidar" href="cajero_ventasPendientes.php?liquidar=<?= $p['venta_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Liquidar esta venta?')">Liquidar</a>
                             <a class="btn-accion btn-cancelar" href="cajero_ventasPendientes.php?cancelar=<?= $p['venta_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Cancelar y devolver stock?')">Cancelar</a>
@@ -891,7 +969,7 @@ $paquesData = array_values($paqAgrupados);
                                 : 1;
                         ?>
                         <div class="prod-row">
-                            <span>📦 <?= htmlspecialchars($paqRow['nombre']) ?> × <?= $combos ?></span>
+                            <span><?= icono('package') ?> <?= htmlspecialchars($paqRow['nombre']) ?> × <?= $combos ?></span>
                             <span>$<?= number_format($paqRow['subtotal'], 2) ?></span>
                         </div>
                         <?php endforeach; ?>
@@ -1110,7 +1188,7 @@ $paquesData = array_values($paqAgrupados);
         </div>
         <div id="ticketContenidoVentaPend" style="margin-bottom:16px;"></div>
         <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:16px;">
-            <button type="button" onclick="imprimirTicketPend()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
+            <button type="button" onclick="imprimirTicketPend()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;"><?= icono('printer') ?> Imprimir</button>
             <button type="button" onclick="cerrarTicketVenta()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
         </div>
     </div>
@@ -1160,6 +1238,9 @@ $paquesData = array_values($paqAgrupados);
 </style>
 
 <script>
+const ICONS = <?= json_encode([
+    'package' => icono('package', '', 14),
+]) ?>;
 // [FIX-BORRADOR-PENDIENTE] Igual que nuevaVenta.php: si venimos de crear la venta con exito
 // (?ticket=<id> en la URL), limpiar cualquier borrador viejo ANTES de restaurarlo, para que
 // la venta recien creada no se quede "pegada" en el formulario del siguiente F5/recarga.
@@ -1297,8 +1378,8 @@ function filtrarProductosPendientes(q) {
             return `<div onclick="seleccionarProdPend(${p.producto_id})"
                 style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;display:flex;align-items:center;gap:8px;min-width:0;"
                 onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
-                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${p.nombre}</span>
-                <span style="font-size:11px;color:#aaa;white-space:nowrap;flex-shrink:0;">${p.codigo}</span>
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${esc(p.nombre)}</span>
+                <span style="font-size:11px;color:#aaa;white-space:nowrap;flex-shrink:0;">${esc(p.codigo)}</span>
                 <span style="font-size:11px;color:${stockColor};font-weight:600;white-space:nowrap;flex-shrink:0;">Stock: ${stockStr}</span>
                 <span style="font-size:13px;color:#14ace7;font-weight:600;white-space:nowrap;flex-shrink:0;">$${p.precio.toFixed(2)}</span>
             </div>`;
@@ -1307,7 +1388,7 @@ function filtrarProductosPendientes(q) {
 
     // Sección paquetes (al final)
     if (paqsFiltrados.length) {
-        html += `<div style="padding:6px 12px 3px;font-size:10px;font-weight:700;color:#f57c00;text-transform:uppercase;letter-spacing:.5px;background:#fff8e1;${resultados.length ? 'border-top:0.5px solid #eee;' : ''}">📦 Paquetes</div>`;
+        html += `<div style="padding:6px 12px 3px;font-size:10px;font-weight:700;color:#f57c00;text-transform:uppercase;letter-spacing:.5px;background:#fff8e1;${resultados.length ? 'border-top:0.5px solid #eee;' : ''}">${ICONS.package} Paquetes</div>`;
         html += paqsFiltrados.map(pq => {
             const disponible = pq.maxCombos > 0;
             const label = disponible
@@ -1639,7 +1720,7 @@ function filtrarClientesPend(q) {
             <div onclick="seleccionarClientePend(${c.id})"
                 style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;font-size:13px;"
                 onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
-                ${c.nombre}
+                ${esc(c.nombre)}
                 ${c.descuento > 0 ? `<span style="font-size:11px;color:#2e7d32;font-weight:600;margin-left:4px;">${c.descuento}% desc.</span>` : ''}
                 ${c.credito  > 0 ? `<span style="font-size:11px;color:#1565c0;font-weight:600;margin-left:4px;">Crédito</span>` : ''}
             </div>
@@ -1931,7 +2012,7 @@ function generarTicketHTML(venta) {
     Object.values(paqMap).forEach(pq => {
         const combos    = pq.precio_paquete > 0.001 ? Math.round(pq.subtotal / pq.precio_paquete) : 1;
         const combosStr = combos + (combos === 1 ? ' combo' : ' combos');
-        html += `<div>📦 ${esc(pq.nombre)}</div>`;
+        html += `<div>${ICONS.package} ${esc(pq.nombre)}</div>`;
         html += `<div class="t-fila"><span>${combosStr}</span><span>$${fmt(pq.subtotal)}</span></div>`;
     });
 

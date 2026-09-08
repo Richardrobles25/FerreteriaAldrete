@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -10,9 +11,9 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-$fecha    = $_GET['fecha'] ?? '';
-$tipo     = $_GET['tipo'] ?? '';
-$busqueda = trim($_GET['buscar'] ?? '');
+$fecha    = is_scalar($_GET['fecha'] ?? null) ? $_GET['fecha'] : '';
+$tipo     = is_scalar($_GET['tipo'] ?? null) ? $_GET['tipo'] : '';
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 
 // [FIX] Filtrar por la sucursal del MOVIMIENTO directamente (antes se unia contra
 // stock_sucursal sin fijar su sucursal_id, lo que ademas de mostrar movimientos de
@@ -81,12 +82,28 @@ $stmt->execute($params);
 $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Resumen
+// [FIX-HISTORIAL-AJUSTE-SUMA] Igual que cajeroInventario/historial.php: un Ajuste tambien
+// mueve stock de verdad (stock_nuevo != stock_anterior), pero antes solo se contaba en
+// "total_ajustes" (un conteo) sin sumarse a Entradas/Salidas -- las tarjetas de resumen
+// subestimaban cuanto entro/salio de verdad en cuanto habia un ajuste de por medio. Probado
+// en vivo contra datos reales: mismo filtro (fecha + sucursal) mostraba Salidas=35.00 aqui
+// contra 65.00 en cajeroInventario -- un ajuste negativo de 30 unidades no se contaba.
+// [FIX-HISTORIAL-TOPE-200] total_movimientos agregado para avisar cuando la tabla de abajo
+// (LIMIT 200) se queda corta -- este archivo ademas parte de $fecha='' por defecto (linea 14,
+// a diferencia de cajeroInventario que arranca en "hoy"), asi que la carga inicial ya busca en
+// todo el historico sin filtro de fecha.
+// [FIX-HISTORIAL-TRANSF-SUMA] La primera pasada de este fix (misma sesion) solo agrego
+// 'Ajuste', copiando el patron sin revisar que admin/historial.php (reporte global, mas
+// maduro) YA incluia 'Transferencia' tambien -- una transferencia entre sucursales SI mueve
+// stock real (confirmado con datos reales). Probado en vivo: mismo filtro daba Entradas=123.00
+// aqui contra 134.00 en admin/historial.php -- 11 de diferencia, exactos a las transferencias.
 $stmtRes = $pdo->prepare("
     SELECT
-        SUM(CASE WHEN m.tipo='Entrada' THEN m.cantidad ELSE 0 END) as total_entradas,
-        SUM(CASE WHEN m.tipo='Salida' THEN m.cantidad ELSE 0 END) as total_salidas,
+        SUM(CASE WHEN m.tipo='Entrada' OR (m.tipo IN ('Ajuste','Transferencia') AND m.stock_nuevo > m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_entradas,
+        SUM(CASE WHEN m.tipo='Salida' OR (m.tipo IN ('Ajuste','Transferencia') AND m.stock_nuevo < m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_salidas,
         COUNT(CASE WHEN m.tipo='Ajuste' THEN 1 END) as total_ajustes,
-        COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias
+        COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias,
+        COUNT(*) as total_movimientos
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     $where
@@ -120,7 +137,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -177,7 +194,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Historial de Movimientos</h2>
         </div>
         <div class="topbar-right">
@@ -192,8 +209,8 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
         <div class="content-header">
             <h1>Movimientos de inventario</h1>
             <div style="display:flex;gap:8px;">
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;border:none;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
             </div>
         </div>
 
@@ -231,6 +248,12 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
             <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?? 0 ?></h3></div>
             <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transferencias'] ?? 0 ?></h3></div>
         </div>
+
+        <?php if (intval($resumen['total_movimientos'] ?? 0) > 200): ?>
+        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#8d6e00;">
+            Mostrando los 200 movimientos más recientes de <?= number_format(intval($resumen['total_movimientos'])) ?> que coinciden con este filtro. Agrega una fecha o una búsqueda más específica para ver los demás (o usa Exportar para el listado completo).
+        </div>
+        <?php endif; ?>
 
         <div class="tabla-wrapper">
             <?php if (count($movimientos) > 0): ?>

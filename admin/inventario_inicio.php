@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -140,7 +141,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -180,7 +181,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     .accesos { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 20px; }
     .acceso { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; text-decoration: none; display: flex; align-items: center; gap: 10px; transition: border-color 0.15s; }
     .acceso:hover { border-color: #14ace7; }
-    .acceso-icon { font-size: 20px; }
+    .acceso-icon { font-size: 20px; color: #14ace7; display: inline-flex; align-items: center; }
     .acceso-label { font-size: 13px; font-weight: 600; color: #333; }
     .acceso-sub { font-size: 11px; color: #aaa; }
     .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
@@ -211,7 +212,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Panel de Inventario</h2>
         </div>
         <div class="topbar-right">
@@ -228,7 +229,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <?php if (count($stockBajo) > 0): ?>
         <div class="alerta-stock">
             <div class="alerta-stock-header">
-                <h3>⚠ <?= count($stockBajo) ?> producto(s) con stock bajo</h3>
+                <h3><?= icono('triangle-alert') ?> <?= count($stockBajo) ?> producto(s) con stock bajo</h3>
                 <a href="inventario_productos.php?stock_bajo=1">Ver todos</a>
             </div>
             <?php foreach ($stockBajo as $p): ?>
@@ -261,7 +262,7 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <?php elseif ($transfParaAprobar > 0): ?>
         <div class="notif-transf">
             <div>
-                <div>&#128230; <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
+                <div><?= icono('package') ?> <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
                 <?php foreach ($solicitudesPendientes as $sp): ?>
                 <div style="font-size:12px;margin-top:5px;padding-left:6px;">
                     &bull; <strong><?= htmlspecialchars($sp['nombre_producto']) ?></strong>
@@ -276,13 +277,13 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <?php endif; ?>
         <?php if ($transfParaEnviar > 0): ?>
         <div class="notif-transf-enviar">
-            <span>✅ Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
+            <span><?= icono('circle-check-big') ?> Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
             <a href="inventario_transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
         <?php if ($transfParaRecibir > 0): ?>
         <div class="notif-transf-recibir">
-            <span>🚚 Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepción.</span>
+            <span><?= icono('truck') ?> Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepción.</span>
             <a href="inventario_transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
@@ -314,27 +315,27 @@ $ultimasCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
         <!-- Accesos rápidos -->
         <div class="accesos">
             <a class="acceso" href="inventario_entradas.php">
-                <span class="acceso-icon">📥</span>
+                <span class="acceso-icon"><?= icono('arrow-down-to-line') ?></span>
                 <div><div class="acceso-label">Entradas</div><div class="acceso-sub">Registrar mercancía</div></div>
             </a>
             <a class="acceso" href="inventario_salidas.php">
-                <span class="acceso-icon">📤</span>
+                <span class="acceso-icon"><?= icono('arrow-up-from-line') ?></span>
                 <div><div class="acceso-label">Salidas</div><div class="acceso-sub">Mermas y ajustes</div></div>
             </a>
             <a class="acceso" href="inventario_compras.php">
-                <span class="acceso-icon">🛒</span>
+                <span class="acceso-icon"><?= icono('shopping-cart') ?></span>
                 <div><div class="acceso-label">Compras</div><div class="acceso-sub">Pedidos a proveedor</div></div>
             </a>
             <a class="acceso" href="inventario_transferencias.php">
-                <span class="acceso-icon">🔄</span>
+                <span class="acceso-icon"><?= icono('repeat') ?></span>
                 <div><div class="acceso-label">Transferencias</div><div class="acceso-sub"><?= $totalTransfAlertas>0?$totalTransfAlertas.' pendiente(s)':'Entre sucursales' ?></div></div>
             </a>
             <a class="acceso" href="inventario_productos.php">
-                <span class="acceso-icon">🔧</span>
+                <span class="acceso-icon"><?= icono('wrench') ?></span>
                 <div><div class="acceso-label">Productos</div><div class="acceso-sub">Ver inventario completo</div></div>
             </a>
             <a class="acceso" href="inventario_masVendidos.php">
-                <span class="acceso-icon">📊</span>
+                <span class="acceso-icon"><?= icono('chart-column') ?></span>
                 <div><div class="acceso-label">Más vendidos</div><div class="acceso-sub">Estadísticas</div></div>
             </a>
         </div>

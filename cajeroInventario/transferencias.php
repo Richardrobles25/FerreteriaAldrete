@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -15,12 +16,13 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
     // (aprobar, rechazar, enviar, recibir, editar_cantidad, aceptar/rechazar_modificacion)
     // pasan por aqui antes de llegar a su respectivo elseif.
     requerirCSRF($_accionData['_token'] ?? '', 'transferencias.php');
-    $id         = intval($_accionData['id'] ?? $_GET['id'] ?? 0);
-    $accion     = $_accionData['accion'];
+    $idRaw      = $_accionData['id'] ?? $_GET['id'] ?? 0;
+    $id         = intval(is_scalar($idRaw) ? $idRaw : 0);
+    $accion     = is_scalar($_accionData['accion'] ?? null) ? $_accionData['accion'] : '';
     $miSucursal = $_SESSION['sucursal_id'];
 
     if ($accion === 'editar_cantidad') {
-        $nuevaCantidad = floatval($_POST['nueva_cantidad'] ?? 0);
+        $nuevaCantidad = floatval(is_scalar($_POST['nueva_cantidad'] ?? null) ? $_POST['nueva_cantidad'] : 0);
         if ($nuevaCantidad > 0) {
             // Validar tipo_venta y obtener stock actual del origen en un solo query
             $stmtTV = $pdo->prepare("
@@ -47,21 +49,39 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
             $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
             if ($old) {
                 $notaEdicion = 'Cantidad modificada por origen de ' . number_format($old['cantidad'], 2) . ' a ' . number_format($nuevaCantidad, 2) . ' el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Pendiente de confirmacion por destino.';
-                $pdo->prepare("UPDATE transferencias SET cantidad = ?, estado = 'Modificada', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?")
-                    ->execute([$nuevaCantidad, $notaEdicion, $id, $miSucursal]);
+                $stmtUpd = $pdo->prepare("UPDATE transferencias SET cantidad = ?, estado = 'Modificada', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?");
+                $stmtUpd->execute([$nuevaCantidad, $notaEdicion, $id, $miSucursal]);
+                // [FIX-EDITAR-CANTIDAD-IDOR] Igual que aprobar/rechazar: si el UPDATE no afecto
+                // ninguna fila (no eres la sucursal origen, o el estado ya cambio), no mostrar
+                // "Cantidad modificada" como si hubiera funcionado.
+                if ($stmtUpd->rowCount() === 0) {
+                    header('Location: transferencias.php?msg=error_ya_no_pendiente'); exit();
+                }
+            } else {
+                header('Location: transferencias.php?msg=error_ya_no_pendiente'); exit();
             }
         }
         header('Location: transferencias.php?msg=cantidad_editada'); exit();
 
     } elseif ($accion === 'aceptar_modificacion') {
-        $pdo->prepare("UPDATE transferencias SET estado = 'Aprobada' WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?")
-            ->execute([$id, $miSucursal]);
+        // [FIX-MODIFICACION-IDOR] Igual que aprobar/rechazar/editar_cantidad: verificar que el
+        // UPDATE realmente afecto una fila — si alguien mas ya la acepto/rechazo, o quien llama
+        // no es la sucursal destino, no mostrar "Cambio aceptado" como si hubiera funcionado.
+        $stmtAcept = $pdo->prepare("UPDATE transferencias SET estado = 'Aprobada' WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?");
+        $stmtAcept->execute([$id, $miSucursal]);
+        if ($stmtAcept->rowCount() === 0) {
+            header('Location: transferencias.php?msg=error_ya_no_modificada'); exit();
+        }
         header('Location: transferencias.php?msg=aceptar_modificacion'); exit();
 
     } elseif ($accion === 'rechazar_modificacion') {
+        // [FIX-MODIFICACION-IDOR] Mismo patron que aceptar_modificacion.
         $notaRechazo = 'Modificacion de cantidad rechazada por destino el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '.';
-        $pdo->prepare("UPDATE transferencias SET estado = 'Pendiente', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?")
-            ->execute([$notaRechazo, $id, $miSucursal]);
+        $stmtRechMod = $pdo->prepare("UPDATE transferencias SET estado = 'Pendiente', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?");
+        $stmtRechMod->execute([$notaRechazo, $id, $miSucursal]);
+        if ($stmtRechMod->rowCount() === 0) {
+            header('Location: transferencias.php?msg=error_ya_no_modificada'); exit();
+        }
         header('Location: transferencias.php?msg=rechazar_modificacion'); exit();
 
     } elseif ($accion === 'aprobar') {
@@ -155,7 +175,10 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                 $transf = $stmtLockEnv->fetch(PDO::FETCH_ASSOC);
                 if (!$transf || $transf['estado'] !== 'Aprobada' || $transf['sucursal_origen_id'] != $miSucursal) {
                     $pdo->rollBack();
-                    header('Location: transferencias.php?msg=enviar'); exit();
+                    // [FIX-ENVIAR-IDOR] Antes redirigia a "msg=enviar" (mensaje de exito) aunque
+                    // la revalidacion fallara — quien no era la sucursal origen, o una transferencia
+                    // que ya cambio de estado, veia "Productos enviados" sin que nada pasara.
+                    header('Location: transferencias.php?msg=error_ya_no_aprobada'); exit();
                 }
 
                 // Candado sobre la fila de stock para evitar que una venta simultanea
@@ -188,6 +211,11 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                 error_log('[Ferreteria/transferencias] Error al enviar #' . $id . ': ' . $e->getMessage());
                 header('Location: transferencias.php?msg=error_envio'); exit();
             }
+        } else {
+            // [FIX-ENVIAR-IDOR] Mismo caso que arriba pero en el chequeo SIN candado previo a la
+            // transaccion: si no hay fila (no eres origen, o el estado ya no es 'Aprobada'), no
+            // caer al "header(...msg=$accion)" generico del final (linea ~295) que mostraba exito.
+            header('Location: transferencias.php?msg=error_ya_no_aprobada'); exit();
         }
     } elseif ($accion === 'recibir') {
         $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ?");
@@ -207,7 +235,10 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                 $transf = $stmtLock->fetch(PDO::FETCH_ASSOC);
                 if (!$transf || $transf['estado'] !== 'En tránsito' || $transf['sucursal_destino_id'] != $miSucursal) {
                     $pdo->rollBack();
-                    header('Location: transferencias.php?msg=recibir'); exit();
+                    // [FIX-RECIBIR-IDOR] Antes redirigia a "msg=recibir" (mensaje de exito) aunque
+                    // la revalidacion fallara — reutiliza "error_ya_no_transito" que ya existe con
+                    // el texto correcto ("la transferencia ya no esta En transito").
+                    header('Location: transferencias.php?msg=error_ya_no_transito'); exit();
                 }
 
                 // ¿El origen ya desconto su stock al enviar? (transferencias nuevas lo hacen;
@@ -266,6 +297,11 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                 error_log('[Ferreteria/transferencias] Error al recibir #' . $id . ': ' . $e->getMessage());
                 header('Location: transferencias.php?msg=error_recibir'); exit();
             }
+        } else {
+            // [FIX-RECIBIR-IDOR] Mismo caso que arriba pero en el chequeo SIN candado previo a la
+            // transaccion: si no hay fila (no eres destino, o el estado ya no es 'En transito'),
+            // no caer al "header(...msg=$accion)" generico del final que mostraba exito.
+            header('Location: transferencias.php?msg=error_ya_no_transito'); exit();
         }
     }
     header('Location: transferencias.php?msg='.$accion); exit();
@@ -276,9 +312,10 @@ $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-A1] Verificar CSRF antes de procesar la nueva solicitud de transferencia
     requerirCSRF($_POST['_token'] ?? '', 'transferencias.php');
-    $sucursal_origen_id = intval($_POST['sucursal_origen_id'] ?? 0);
-    $notas              = trim($_POST['notas'] ?? '');
-    $items              = json_decode($_POST['items_transf'] ?? '[]', true);
+    $sucursal_origen_id = intval(is_scalar($_POST['sucursal_origen_id'] ?? null) ? $_POST['sucursal_origen_id'] : 0);
+    $notas              = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+    $itemsTransfRaw     = is_scalar($_POST['items_transf'] ?? null) ? $_POST['items_transf'] : '[]';
+    $items              = json_decode($itemsTransfRaw ?? '[]', true);
 
     if (!$sucursal_origen_id)                              $errores[] = 'Selecciona la sucursal de origen.';
     if ($sucursal_origen_id == $_SESSION['sucursal_id'])   $errores[] = 'La sucursal origen no puede ser la misma que la tuya.';
@@ -352,7 +389,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Filtro de fechas para el historial
 $filtroDesde = $_GET['desde'] ?? date('Y-m-01');
 $filtroHasta = $_GET['hasta'] ?? date('Y-m-d');
-$filtroEstado = trim($_GET['estado_f'] ?? '');
+$filtroEstado = trim(is_scalar($_GET['estado_f'] ?? null) ? (string)$_GET['estado_f'] : '');
 
 $whereExtra = '';
 $paramsExtra = [];
@@ -450,7 +487,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -608,7 +645,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Transferencias entre sucursales</h2>
         </div>
         <div class="topbar-right">
@@ -639,9 +676,12 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                     'error_cancelar'        => 'Error al cancelar la transferencia. Intenta de nuevo.',
                     'error_ya_no_transito'  => 'No se pudo completar: la transferencia ya no esta "En transito" (alguien mas ya la modifico).',
                     'error_ya_no_pendiente' => 'No se pudo completar: la solicitud ya no esta pendiente (alguien mas ya la aprobo, rechazo, o no eres la sucursal origen).',
+                    'error_ya_no_aprobada'  => 'No se pudo completar: la transferencia ya no esta "Aprobada" (alguien mas ya la modifico, o no eres la sucursal origen).',
+                    'error_ya_no_modificada' => 'No se pudo completar: la transferencia ya no tiene un cambio de cantidad pendiente de confirmar (alguien mas ya lo acepto/rechazo, o no eres la sucursal destino).',
                 ]; ?>
-                <?php $esMsgError = str_starts_with($_GET['msg'], 'error'); ?>
-                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?></div>
+                <?php $msgKeyTransf = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
+                <?php $esMsgError = str_starts_with($msgKeyTransf, 'error'); ?>
+                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$msgKeyTransf] ?? '') ?></div>
             <?php endif; ?>
 
             <!-- Filtro de fechas -->
@@ -728,11 +768,11 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
                                         <button class="btn-accion btn-aceptar-mod" type="button"
                                            onclick="return ejecutarAccionTransf('aceptar_modificacion', <?= $t['transferencias_id'] ?>, '¿Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
-                                            ✓ Aceptar cantidad
+                                            <?= icono('circle-check-big') ?> Aceptar cantidad
                                         </button>
                                         <button class="btn-accion btn-rechazar-mod" type="button"
                                            onclick="return ejecutarAccionTransf('rechazar_modificacion', <?= $t['transferencias_id'] ?>, '¿Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
-                                            ✕ Rechazar cambio
+                                            <?= icono('x') ?> Rechazar cambio
                                         </button>
                                     <?php elseif ($t['estado'] === 'Modificada' && $esMiOrigen): ?>
                                         <span style="color:#283593;font-size:11px;font-style:italic;">Esperando confirmacion del destino</span>
@@ -849,6 +889,13 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 function esc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+// [FIX-C1] Escapa un valor para insertarlo dentro de un string JS de comillas simples
+// que a su vez va dentro de un atributo HTML (onclick="...('...')"). esc() por si solo
+// no basta ahi (ni siquiera escapa comillas simples): un nombre con apostrofe rompia el
+// string de JS y tronaba el onclick completo. Mismo criterio que ya usa nuevaVenta.php.
+function escAtribJs(s) {
+    return esc(String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
+}
 
 function onOrigenChange(val) {
     const input = document.getElementById('busquedaProd');
@@ -908,7 +955,7 @@ function renderSug(prods) {
         const stockFmt = esSuelto ? parseFloat(p.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(p.stock);
         const miStockFmt = esSuelto ? parseFloat(p.mi_stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(p.mi_stock);
         return `
-        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${esc(p.nombre)}', '${esc(p.codigo)}', ${p.stock}, ${p.mi_stock}, ${p.bajo}, '${p.tipo_venta||'Unidad'}')">
+        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${escAtribJs(p.nombre)}', '${escAtribJs(p.codigo)}', ${p.stock}, ${p.mi_stock}, ${p.bajo}, '${p.tipo_venta||'Unidad'}')">
             <div>
                 <span class="sug-nombre">${esc(p.nombre)}</span>
                 <span class="sug-codigo">${esc(p.codigo)}</span>
@@ -1172,10 +1219,10 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
         <div id="modalEditStockDisponible" style="display:none;font-size:12px;color:#2e7d32;font-weight:600;margin-bottom:12px;"></div>
         <div style="font-size:12px;color:#888;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:14px;">
-            ⚠ Al guardar, la transferencia pasará a estado <strong>Modificada</strong> y la sucursal destino deberá aceptar o rechazar el cambio.
+            <?= icono('triangle-alert') ?> Al guardar, la transferencia pasará a estado <strong>Modificada</strong> y la sucursal destino deberá aceptar o rechazar el cambio.
         </div>
         <div id="modalEditGranelHint" style="display:none;font-size:12px;color:#555;background:#e8f5e9;border:1px solid #c8e6c9;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
-            🌾 Producto a granel — acepta decimales (ej. 2.5 kg)
+            <?= icono('wheat') ?> Producto a granel — acepta decimales (ej. 2.5 kg)
         </div>
         <div style="margin-bottom:16px;">
             <label style="display:block;font-size:12px;color:#555;font-weight:600;margin-bottom:6px;">Nueva cantidad *</label>

@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 
@@ -13,9 +14,10 @@ require_once '../includes/topbar_info.php';
 $usuario = null;
 $errores = [];
 $esEdicion = isset($_GET['id']);
+$idParam   = is_scalar($_GET['id'] ?? null) ? intval($_GET['id']) : 0;
 
 if ($esEdicion) {
-    $id = intval($_GET['id']);
+    $id = $idParam;
     $stmt = $pdo->prepare("SELECT * FROM usuarios WHERE usuario_id = ?");
     $stmt->execute([$id]);
     $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -30,8 +32,8 @@ $sucursales = $pdo->query("SELECT * FROM sucursales WHERE activo = 1")->fetchAll
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-ALTO-A-04] CSRF ausente antes — permitía crear/editar cuentas (incluidas
     // Administrador) desde un POST sin ningún token.
-    requerirCSRF($_POST['_token'] ?? '', $esEdicion ? 'formUsuario.php?id=' . intval($_GET['id']) : 'formUsuario.php');
-    $nombre_completo = trim($_POST['nombre_completo'] ?? '');
+    requerirCSRF($_POST['_token'] ?? '', $esEdicion ? 'formUsuario.php?id=' . $idParam : 'formUsuario.php');
+    $nombre_completo = trim(is_scalar($_POST['nombre_completo'] ?? null) ? (string)$_POST['nombre_completo'] : '');
     // [FIX-MEDIO-A-12] usuarios.nombre_usuario es VARCHAR(25): antes se validaba el
     // duplicado contra la cadena COMPLETA que mandó el navegador, pero la BD ya guarda
     // los nombres truncados a 25. Con un nombre >25 caracteres, la comprobación de
@@ -40,13 +42,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // — que ahora se atrapa como excepción (ver A-11) en vez de crear una colisión
     // silenciosa. Truncar aquí, antes de validar, hace que la comprobación compare
     // exactamente lo mismo que se va a guardar.
-    $nombre_usuario  = substr(trim($_POST['nombre_usuario'] ?? ''), 0, 25);
-    $telefono        = trim($_POST['telefono'] ?? '');
-    $domicilio       = trim($_POST['domicilio'] ?? '');
-    $rol             = $_POST['rol'] ?? '';
-    $sucursal_id     = intval($_POST['sucursal_id'] ?? 0);
-    $contrasena      = trim($_POST['contrasena'] ?? '');
-    $confirmar       = trim($_POST['confirmar'] ?? '');
+    $nombre_usuario  = substr(trim(is_scalar($_POST['nombre_usuario'] ?? null) ? (string)$_POST['nombre_usuario'] : ''), 0, 25);
+    $telefono        = trim(is_scalar($_POST['telefono'] ?? null) ? (string)$_POST['telefono'] : '');
+    $domicilio       = trim(is_scalar($_POST['domicilio'] ?? null) ? (string)$_POST['domicilio'] : '');
+    $rol             = is_scalar($_POST['rol'] ?? null) ? $_POST['rol'] : '';
+    $sucursal_id     = intval(is_scalar($_POST['sucursal_id'] ?? null) ? $_POST['sucursal_id'] : 0);
+    $contrasena      = trim(is_scalar($_POST['contrasena'] ?? null) ? (string)$_POST['contrasena'] : '');
+    $confirmar       = trim(is_scalar($_POST['confirmar'] ?? null) ? (string)$_POST['confirmar'] : '');
 
     if (!$nombre_completo) $errores[] = 'El nombre completo es obligatorio.';
     if (!$nombre_usuario)  $errores[] = 'El nombre de usuario es obligatorio.';
@@ -65,9 +67,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($contrasena && $contrasena !== $confirmar) $errores[] = 'Las contraseñas no coinciden.';
     if ($contrasena && strlen($contrasena) < 6) $errores[] = 'La contraseña debe tener al menos 6 caracteres.';
 
+    // [FIX-PRIVILEGIO-ADMIN-EDITAR] Editar un usuario (cambiar su rol o resetear su
+    // CONTRASEÑA) es una accion mas poderosa que el toggle activar/desactivar de
+    // usuarios.php -- pero a diferencia de ese toggle (que ya exige ser el Administrador
+    // "principal" para tocar a OTRO Administrador, y bloquea tocar tu propia cuenta), este
+    // formulario no tenia NINGUN candado equivalente. Probado en vivo: un Administrador NO
+    // principal degrado el rol de OTRO Administrador a Cajero Y le reseteo la contraseña en
+    // la misma peticion (toma de cuenta completa); y cualquier Administrador (incluido el
+    // principal) pudo cambiar su PROPIO rol lejos de Administrador, perdiendo el acceso al
+    // panel en la siguiente peticion (verificarSesion() refresca $_SESSION['rol'] desde la
+    // BD en cada carga) -- si fuera el unico Administrador activo, esto habria bloqueado el
+    // acceso admin por completo, el mismo escenario que el toggle ya evita (FIX-CRIT-A-02).
+    if ($esEdicion && $usuario['rol'] === 'Administrador') {
+        $stmtPrincipalEdit = $pdo->prepare("
+            SELECT (
+                u.es_principal = 1
+                OR (
+                    NOT EXISTS (SELECT 1 FROM usuarios u2 WHERE u2.rol = 'Administrador' AND u2.es_principal = 1)
+                    AND u.usuario_id = (SELECT MIN(usuario_id) FROM usuarios WHERE rol = 'Administrador' AND activo = 1)
+                )
+            ) AS es_principal_efectivo
+            FROM usuarios u WHERE u.usuario_id = ?
+        ");
+        $stmtPrincipalEdit->execute([intval($_SESSION['usuario_id'])]);
+        $actorEsPrincipal = (bool) $stmtPrincipalEdit->fetchColumn();
+        $esUnoMismo       = ($idParam === intval($_SESSION['usuario_id']));
+
+        if (!$esUnoMismo && !$actorEsPrincipal) {
+            $errores[] = 'Solo el Administrador principal puede editar a otros Administradores.';
+        } elseif ($esUnoMismo && $rol !== 'Administrador') {
+            $errores[] = 'No puedes cambiar tu propio rol de Administrador. Pide a otro Administrador que lo haga.';
+        } elseif ($rol !== 'Administrador') {
+            $stmtAdminsActivos = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE rol = 'Administrador' AND activo = 1");
+            if (intval($stmtAdminsActivos->fetchColumn()) <= 1) {
+                $errores[] = 'No puedes cambiar el rol del único Administrador activo del sistema.';
+            }
+        }
+    }
+
     if ($nombre_usuario) {
         $check = $pdo->prepare("SELECT usuario_id FROM usuarios WHERE nombre_usuario = ? AND usuario_id != ?");
-        $check->execute([$nombre_usuario, $esEdicion ? intval($_GET['id']) : 0]);
+        $check->execute([$nombre_usuario, $esEdicion ? $idParam : 0]);
         if ($check->fetch()) $errores[] = 'Ese nombre de usuario ya está en uso.';
     }
 
@@ -77,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errores)) {
         try {
             if ($esEdicion) {
-                $id = intval($_GET['id']);
+                $id = $idParam;
                 if ($contrasena) {
                     $stmt = $pdo->prepare("
                         UPDATE usuarios SET nombre_completo=?, nombre_usuario=?, telefono=?,
@@ -130,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2><?= $esEdicion ? 'Editar Usuario' : 'Nuevo Usuario' ?></h2>
         </div>
         <div class="topbar-right">
@@ -166,13 +206,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>Nombre completo *</label>
                         <input type="text" name="nombre_completo"
-                            value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $usuario['nombre_completo'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['nombre_completo'] ?? null) ? $_POST['nombre_completo'] : ($usuario['nombre_completo'] ?? '')) ?>"
                             placeholder="Ej. Juan Pérez">
                     </div>
                     <div class="form-group">
                         <label>Nombre de usuario *</label>
                         <input type="text" name="nombre_usuario" maxlength="25"
-                            value="<?= htmlspecialchars($_POST['nombre_usuario'] ?? $usuario['nombre_usuario'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['nombre_usuario'] ?? null) ? $_POST['nombre_usuario'] : ($usuario['nombre_usuario'] ?? '')) ?>"
                             placeholder="Ej. jperez">
                     </div>
                 </div>
@@ -181,7 +221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>Teléfono</label>
                         <input type="tel" name="telefono"
-                            value="<?= htmlspecialchars($_POST['telefono'] ?? $usuario['telefono'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['telefono'] ?? null) ? $_POST['telefono'] : ($usuario['telefono'] ?? '')) ?>"
                             placeholder="10 dígitos"
                             maxlength="10"
                             pattern="\d{10}"
@@ -192,7 +232,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>Domicilio</label>
                         <input type="text" name="domicilio"
-                            value="<?= htmlspecialchars($_POST['domicilio'] ?? $usuario['domicilio'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['domicilio'] ?? null) ? $_POST['domicilio'] : ($usuario['domicilio'] ?? '')) ?>"
                             placeholder="Dirección del usuario">
                     </div>
                 </div>
@@ -218,7 +258,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <select name="sucursal_id">
                             <option value="">-- Selecciona sucursal --</option>
                             <?php
-                            $sucursalActual = intval($_POST['sucursal_id'] ?? $usuario['sucursal_id'] ?? 0);
+                            $sucursalActual = intval(is_scalar($_POST['sucursal_id'] ?? null) ? $_POST['sucursal_id'] : ($usuario['sucursal_id'] ?? 0));
                             foreach ($sucursales as $s):
                             ?>
                             <option value="<?= $s['sucursal_id'] ?>" <?= $sucursalActual === $s['sucursal_id'] ? 'selected' : '' ?>>

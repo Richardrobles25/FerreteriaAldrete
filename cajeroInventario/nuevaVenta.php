@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -35,11 +36,14 @@ $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND estado = 'Ab
 $stmt->execute([$_SESSION['usuario_id']]);
 $caja = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if (!$caja) {
-    header('Location: abrirCaja.php?msg=sinCaja');
-    exit();
-}
-
+// [FIX-CAJA-REDIRECT-AJAX] (portado de admin/cajero_nuevaVenta.php) El redirect por falta de
+// caja abierta ya NO vive aqui arriba — se aplica mas abajo, en cada punto que de verdad
+// depende de $caja (el handler de movimiento_caja, que responde por redirect igual que este,
+// y confirmar_venta, que responde JSON cuando la peticion es AJAX). Un redirect aqui arriba
+// se ejecutaba ANTES de que cualquier endpoint AJAX de este archivo pudiera correr, rompiendo
+// su contrato JSON — un usuario cuya caja se cierra en otra pestaña/dispositivo mientras esta
+// sigue abierta recibia un 302 en vez de JSON al intentar cobrar. El redirect de pagina
+// completa (carga normal sin AJAX) se aplica al final del archivo, justo antes del HTML.
 $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Movimiento de caja (retiro / ingreso) ────────────────────────────────────
@@ -57,11 +61,18 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 // ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 $msgMovCaja = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['movimiento_caja'])) {
+    // [FIX-CAJA-REDIRECT-AJAX] Este handler responde por redirect (no JSON), asi que cortar
+    // aqui por falta de caja es consistente con su propio contrato.
+    if (!$caja) {
+        header('Location: abrirCaja.php?msg=sinCaja');
+        exit();
+    }
     // [AUTOFIX] BUG-04: Verificar CSRF token en handler de movimiento de caja
     requerirCSRF($_POST['_token'] ?? '', 'nuevaVenta.php');
-    $tipoMov  = in_array($_POST['tipo_mov'] ?? '', ['Retiro','Ingreso']) ? $_POST['tipo_mov'] : null;
-    $montoMov = floatval($_POST['monto_mov'] ?? 0);
-    $notaMov  = trim($_POST['nota_mov'] ?? '');
+    $tipoMovRaw = is_scalar($_POST['tipo_mov'] ?? null) ? $_POST['tipo_mov'] : '';
+    $tipoMov  = in_array($tipoMovRaw, ['Retiro','Ingreso']) ? $tipoMovRaw : null;
+    $montoMov = floatval(is_scalar($_POST['monto_mov'] ?? null) ? $_POST['monto_mov'] : 0);
+    $notaMov  = trim(is_scalar($_POST['nota_mov'] ?? null) ? (string)$_POST['nota_mov'] : '');
     // [FIX] Este es el UNICO lugar donde el cajero escribe una nota totalmente libre para
     // movimientos_caja. corteCaja.php e historialVentas.php clasifican el dinero como
     // "no efectivo" si la nota termina en "[Terminal]"/"[Transferencia]", y como abono o
@@ -76,7 +87,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['movimiento_caja'])) {
             break;
         }
     }
-    if ($tipoMov && $montoMov > 0.004 && $notaMov !== '') {
+    // [FIX-MONTO-MAX-MOVCAJA] monto es DECIMAL(10,2) sin tope superior — un error de dedo en
+    // un retiro/ingreso manual se guardaba truncado en silencio al maximo de la columna
+    // (o tronaba en produccion con sql_mode estricto), y ademas descuadraba el corte de caja
+    // con un monto irreal. Mismo tope de $500,000 que ya usan abrirCaja/corteCaja.
+    if ($montoMov > 500000) {
+        $msgMovCaja = 'error';
+    } elseif ($tipoMov && $montoMov > 0.004 && $notaMov !== '') {
         $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,?,?,?)")
             ->execute([$caja['caja_id'], $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $tipoMov, $montoMov, $notaMov]);
         header('Location: nuevaVenta.php?msg_mov=' . $tipoMov);
@@ -187,7 +204,7 @@ if (isset($_GET['get_paquetes'])) {
 
 // ── AJAX: buscar paquete ─────────────────────────────────────────────────────
 if (isset($_GET['buscar_paquete'])) {
-    $termino = trim($_GET['buscar_paquete']);
+    $termino = trim(is_scalar($_GET['buscar_paquete'] ?? null) ? (string)$_GET['buscar_paquete'] : '');
     // [FIX-CONSISTENCIA] Ver nota en get_paquetes (FIX-ALTO-B-06): se excluye el paquete
     // completo (no solo la fila) si algun componente esta inactivo o sin stock configurado
     // en la sucursal.
@@ -241,7 +258,7 @@ if (isset($_GET['buscar_paquete'])) {
 
 // ── AJAX: búsqueda combinada (producto + paquete en un solo request) ─────────
 if (isset($_GET['buscar_combo'])) {
-    $termino     = trim($_GET['buscar_combo']);
+    $termino     = trim(is_scalar($_GET['buscar_combo'] ?? null) ? (string)$_GET['buscar_combo'] : '');
     // [AUTOFIX] SEC-05: Ignorar sucursal_id del cliente, siempre usar la de la sesion
     $sucursal_id = intval($_SESSION['sucursal_id']);
     $like        = '%' . $termino . '%';
@@ -315,7 +332,7 @@ if (isset($_GET['buscar_combo'])) {
 
 // ── AJAX: buscar producto ────────────────────────────────────────────────────
 if (isset($_GET['buscar_producto'])) {
-    $termino     = trim($_GET['buscar_producto']);
+    $termino     = trim(is_scalar($_GET['buscar_producto'] ?? null) ? (string)$_GET['buscar_producto'] : '');
     // [AUTOFIX] SEC-05: Ignorar sucursal_id del cliente, siempre usar la de la sesion
     $sucursal_id = intval($_SESSION['sucursal_id']);
     $stmt = $pdo->prepare("
@@ -335,7 +352,7 @@ if (isset($_GET['buscar_producto'])) {
 
 // ── AJAX: buscar producto por código exacto (scanner) ───────────────────────
 if (isset($_GET['scan_codigo'])) {
-    $codigo      = trim($_GET['scan_codigo']);
+    $codigo      = trim(is_scalar($_GET['scan_codigo'] ?? null) ? (string)$_GET['scan_codigo'] : '');
     $sucursal_id = $_SESSION['sucursal_id'];
     $stmt = $pdo->prepare("
         SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta,
@@ -354,8 +371,8 @@ if (isset($_GET['scan_codigo'])) {
 
 // ── AJAX: inventario por sucursal ────────────────────────────────────────────
 if (isset($_GET['inventario_sucursal'])) {
-    $sucursal_id = intval($_GET['inventario_sucursal']);
-    $buscar      = trim($_GET['buscar_inv'] ?? '');
+    $sucursal_id = intval(is_scalar($_GET['inventario_sucursal'] ?? null) ? $_GET['inventario_sucursal'] : 0);
+    $buscar      = trim(is_scalar($_GET['buscar_inv'] ?? null) ? (string)$_GET['buscar_inv'] : '');
     $where       = "WHERE p.activo = 1 AND ss.activo = 1 AND ss.sucursal_id = ?";
     $params      = [$sucursal_id];
     if ($buscar) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
@@ -392,7 +409,7 @@ if (isset($_GET['get_clientes_all'])) {
 
 // ── AJAX: buscar cliente (mantenido por compatibilidad) ──────────────────────
 if (isset($_GET['buscar_cliente'])) {
-    $termino = trim($_GET['buscar_cliente']);
+    $termino = trim(is_scalar($_GET['buscar_cliente'] ?? null) ? (string)$_GET['buscar_cliente'] : '');
     $stmt = $pdo->prepare("
         SELECT cliente_id, nombre_completo, telefono,
                descuento_fijo, credito_autorizado
@@ -408,7 +425,7 @@ if (isset($_GET['buscar_cliente'])) {
 
 // ── AJAX: obtener detalle de venta para ticket ───────────────────────────────
 if (isset($_GET['ticket_venta'])) {
-    $venta_id = intval($_GET['ticket_venta']);
+    $venta_id = intval(is_scalar($_GET['ticket_venta'] ?? null) ? $_GET['ticket_venta'] : 0);
     // [AUTOFIX] BUG-02: Agregar filtro de sucursal para evitar que un cajero vea tickets de otra sucursal
     $stmtV = $pdo->prepare("
         SELECT v.*, c.nombre_completo AS cliente, c.telefono AS tel_cliente
@@ -419,10 +436,20 @@ if (isset($_GET['ticket_venta'])) {
     ");
     $stmtV->execute([$_SESSION['sucursal_id'], $venta_id]);
     $venta = $stmtV->fetch(PDO::FETCH_ASSOC);
-    if ($venta) {
-        // Formatear fecha en servidor (evita problemas de zona horaria en JS)
-        $venta['fecha_formateada'] = date('d/m/Y H:i', strtotime($venta['created_at']));
+    // [FIX-IDOR-TICKET] La consulta de venta_productos de abajo corria SIEMPRE, sin importar
+    // si $venta salio false por el filtro de sucursal de arriba — probado en vivo: un cajero
+    // de OTRA sucursal pidiendo ?ticket_venta=<id ajeno> no veia el folio/total/cliente (esos
+    // si estaban protegidos por el "if ($venta)" de abajo) pero SI recibia la lista completa
+    // de productos, cantidades y precios de esa venta ajena, porque "$venta['productos'] = ..."
+    // se ejecutaba fuera de cualquier candado de propiedad. Se corta aqui mismo si la venta no
+    // es de esta sucursal, igual que ya hacen ventasPendientes.php/historialVentas.php.
+    if (!$venta) {
+        header('Content-Type: application/json');
+        echo json_encode(null);
+        exit();
     }
+    // Formatear fecha en servidor (evita problemas de zona horaria en JS)
+    $venta['fecha_formateada'] = date('d/m/Y H:i', strtotime($venta['created_at']));
 
     $stmtP = $pdo->prepare("
         SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.precio_final, vp.subtotal,
@@ -437,9 +464,7 @@ if (isset($_GET['ticket_venta'])) {
     $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
     // [AUTOFIX] descuento_display = descuento almacenado directamente (ya es el valor correcto)
-    if ($venta) {
-        $venta['descuento_display'] = floatval($venta['descuento']);
-    }
+    $venta['descuento_display'] = floatval($venta['descuento']);
 
     header('Content-Type: application/json');
     echo json_encode($venta);
@@ -449,19 +474,31 @@ if (isset($_GET['ticket_venta'])) {
 // ── Procesar venta ───────────────────────────────────────────────────────────
 $errorVenta = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
-    $items             = json_decode($_POST['items'], true);
-    $cliente_id        = intval($_POST['cliente_id'] ?? 0) ?: null;
-    $metodo_pago       = $_POST['metodo_pago'] ?? '';
-    $notas_venta       = trim($_POST['notas_venta'] ?? '');
-    $monto_efectivo    = floatval($_POST['monto_efectivo'] ?? 0);
-    $monto_terminal    = floatval($_POST['monto_terminal'] ?? 0);
-    $comision_terminal = floatval($_POST['comision_terminal'] ?? 0);
-    $descuento         = floatval($_POST['descuento'] ?? 0);
-    $subtotal          = floatval($_POST['subtotal'] ?? 0);
-    $total             = floatval($_POST['total'] ?? 0);
-    $cambio            = floatval($_POST['cambio'] ?? 0);
+    // [FIX-CAJA-REDIRECT-AJAX] Sin caja abierta (cerrada en otra pestaña/dispositivo mientras
+    // esta seguia abierta) ya no se corta con un redirect antes de este bloque — el formulario
+    // SIEMPRE manda _ajax=1, y un redirect rompe su fetch().then(r=>r.json()).
+    if (!$caja) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'Necesitas una caja abierta para registrar una venta. Abre la caja e intenta de nuevo.']);
+            exit();
+        }
+        $errorVenta = 'Necesitas una caja abierta para registrar una venta. Abre la caja e intenta de nuevo.';
+    }
+    $itemsRaw          = is_scalar($_POST['items'] ?? null) ? $_POST['items'] : '[]';
+    $items             = json_decode($itemsRaw ?? '[]', true);
+    $cliente_id        = intval(is_scalar($_POST['cliente_id'] ?? null) ? $_POST['cliente_id'] : 0) ?: null;
+    $metodo_pago       = is_scalar($_POST['metodo_pago'] ?? null) ? $_POST['metodo_pago'] : '';
+    $notas_venta       = trim(is_scalar($_POST['notas_venta'] ?? null) ? (string)$_POST['notas_venta'] : '');
+    $monto_efectivo    = floatval(is_scalar($_POST['monto_efectivo'] ?? null) ? $_POST['monto_efectivo'] : 0);
+    $monto_terminal    = floatval(is_scalar($_POST['monto_terminal'] ?? null) ? $_POST['monto_terminal'] : 0);
+    $comision_terminal = floatval(is_scalar($_POST['comision_terminal'] ?? null) ? $_POST['comision_terminal'] : 0);
+    $descuento         = floatval(is_scalar($_POST['descuento'] ?? null) ? $_POST['descuento'] : 0);
+    $subtotal          = floatval(is_scalar($_POST['subtotal'] ?? null) ? $_POST['subtotal'] : 0);
+    $total             = floatval(is_scalar($_POST['total'] ?? null) ? $_POST['total'] : 0);
+    $cambio            = floatval(is_scalar($_POST['cambio'] ?? null) ? $_POST['cambio'] : 0);
 
-    $referencia_transferencia = ($metodo_pago === 'Transferencia') ? trim($_POST['referencia_transferencia'] ?? '') : null;
+    $referencia_transferencia = ($metodo_pago === 'Transferencia') ? trim(is_scalar($_POST['referencia_transferencia'] ?? null) ? (string)$_POST['referencia_transferencia'] : '') : null;
 
     // [AUTOFIX] N-02: Validar metodo_pago contra whitelist permitido
     $metodosPermitidos = ['Efectivo', 'Terminal', 'Mixto', 'Credito', 'Transferencia'];
@@ -496,6 +533,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         $errorVenta = 'El pago a crédito requiere seleccionar un cliente.';
     }
 
+    // [FIX-REFERENCIA-TRANSFERENCIA] Igual que ventasPendientes.php: la pantalla ya exige
+    // esta referencia antes de permitir "Cobrar" (ver validacion JS mas abajo), pero el
+    // servidor nunca la revalidaba — probado en vivo: un POST directo con metodo_pago=
+    // Transferencia y sin referencia_transferencia se guardaba tal cual, con el campo en
+    // blanco, dejando la venta sin forma de conciliarla contra el estado de cuenta bancario.
+    if (!$errorVenta && $metodo_pago === 'Transferencia' && empty($referencia_transferencia)) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'El número de referencia bancaria es obligatorio para pago por Transferencia.']);
+            exit();
+        }
+        $errorVenta = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
+    }
+
     // [AUTOFIX] V-05: Validar que items sea un array valido antes de procesar
     if (!$errorVenta && (!is_array($items) || empty($items))) {
         if (!empty($_POST['_ajax'])) {
@@ -525,6 +576,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
             // 1) Suma de los productos a precio final (los precios por ítem se validan
             //    más abajo contra precio_compra, y los de paquete contra el precio del paquete)
+            // [FIX-CANTIDAD-ENTERA-VENTA] tipo_venta de cada producto del carrito, para
+            // rechazar una cantidad fraccionaria en un producto que NO es "Suelto" —
+            // verificado en vivo: sin esto se podía vender, por ejemplo, 1.5 martillos (tipo
+            // "Unidad") y quedaba guardado tal cual en venta_productos.cantidad, dejando el
+            // stock con una fracción de pieza física imposible. Igual que ya hace
+            // devoluciones.php (FIX-CANTIDAD-ENTERA-DEVOLUCION).
+            $idsProdsCarrito = array_unique(array_map(fn($x) => intval($x['producto_id'] ?? 0), $items));
+            $tiposVentaCarrito = [];
+            if (!empty($idsProdsCarrito)) {
+                $inPlaceholdersCarrito = implode(',', array_fill(0, count($idsProdsCarrito), '?'));
+                $stmtTVCarrito = $pdo->prepare("SELECT producto_id, tipo_venta FROM productos WHERE producto_id IN ($inPlaceholdersCarrito)");
+                $stmtTVCarrito->execute($idsProdsCarrito);
+                foreach ($stmtTVCarrito->fetchAll(PDO::FETCH_ASSOC) as $rTV) {
+                    $tiposVentaCarrito[intval($rTV['producto_id'])] = $rTV['tipo_venta'];
+                }
+            }
+
             $sumaItems = 0.0;
             foreach ($items as &$it) {
                 // [FIX-PRECISION-CANTIDAD] Redondear a 3 decimales ANTES de calcular con ella:
@@ -537,6 +605,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 $precVal = floatval($it['precio'] ?? -1);
                 if ($cantVal <= 0 || $precVal < 0) {
                     throw new Exception('El carrito contiene cantidades o precios inválidos.');
+                }
+                $pqIdChk = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
+                $pidChk  = intval($it['producto_id'] ?? 0);
+                if ($pqIdChk === null && ($tiposVentaCarrito[$pidChk] ?? null) !== 'Suelto' && floor($cantVal) != $cantVal) {
+                    throw new Exception('La cantidad debe ser un número entero para este producto.');
                 }
                 $sumaItems += $cantVal * $precVal;
             }
@@ -912,6 +985,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         } // fin if lockAdquirido
     }
 }
+
+// [FIX-CAJA-REDIRECT-AJAX] Redirect por falta de caja abierta, aplicado unicamente aqui —
+// justo antes de renderizar la pagina completa — para no romper el contrato JSON de los
+// endpoints AJAX de arriba (todos terminan en su propio exit() antes de llegar aqui).
+if (!$caja) {
+    header('Location: abrirCaja.php?msg=sinCaja');
+    exit();
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -940,7 +1021,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -1220,7 +1301,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Nueva Venta — Turno #<?= $caja['numero_turno'] ?></h2>
         </div>
         <div class="topbar-right">
@@ -1237,7 +1318,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     <div class="content">
         <?php if ($errorVenta): ?>
             <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;border-left:3px solid #c0392b;grid-column:span 2;margin-bottom:4px;">
-                ⚠ <?= htmlspecialchars($errorVenta) ?>
+                <?= icono('triangle-alert') ?> <?= htmlspecialchars($errorVenta) ?>
             </div>
         <?php endif; ?>
 
@@ -1250,7 +1331,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                         <button type="button" id="btnModoScanner"
                             class="btn-scan-mode"
                             onclick="toggleModoScanner()">
-                            📷 Scanner
+                            <?= icono('camera') ?> Scanner
                         </button>
                         <button type="button" onclick="abrirInventario()"
                             style="background:#e3f2fd;color:#1565c0;border:none;padding:5px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;">
@@ -1304,7 +1385,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
                 <!-- Recomendación paquetes -->
                 <div class="rec-paquetes" id="recPaquetes" style="margin-top:10px;">
-                    <div class="rec-titulo">📦 Paquetes disponibles con estos productos</div>
+                    <div class="rec-titulo"><?= icono('package') ?> Paquetes disponibles con estos productos</div>
                     <div id="recLista"></div>
                 </div>
             </div>
@@ -1439,7 +1520,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#555;font-weight:600;user-select:none;">
                         <input type="checkbox" id="chkAjusteDano" onchange="togglePanelAjuste(this.checked)"
                             style="width:15px;height:15px;accent-color:#e65100;cursor:pointer;">
-                        ⚠ Ajuste de precio por daño
+                        <?= icono('triangle-alert') ?> Ajuste de precio por daño
                     </label>
                     <div id="panelAjusteDano" style="display:none;margin-top:10px;padding:12px;background:#fff8f0;border:1px solid #f0c080;border-radius:8px;">
                         <div style="font-size:12px;color:#888;margin-bottom:8px;">Selecciona el producto del carrito al que deseas aplicar el ajuste:</div>
@@ -1548,6 +1629,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 </div>
 
 <script>
+const ICONS = <?= json_encode([
+    'package'  => icono('package', '', 14),
+    'tag'      => icono('tag', '', 14),
+    'warning'  => icono('triangle-alert', '', 14),
+    'checkBig' => icono('circle-check-big', '', 14),
+    'plus'     => icono('plus', '', 14),
+    'printer'  => icono('printer', '', 14),
+]) ?>;
 // ── Estado global ────────────────────────────────────────────────────────────
 let carrito           = (function() {
     try {
@@ -1808,7 +1897,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
                 ? `agregarPaquete(${paq.paquete_id})`
                 : 'alert(\"Stock insuficiente\")'}" >
             <div>
-                <div class="resultado-nombre">📦 ${esc(paq.nombre)}</div>
+                <div class="resultado-nombre">${ICONS.package} ${esc(paq.nombre)}</div>
                 <div class="resultado-codigo">${esc(paq.codigo)} · ${paq.productos.length} productos</div>
             </div>
             <div style="text-align:right;">
@@ -1822,7 +1911,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
         const cls   = p.stock_actual > 0 ? 'stock-ok' : 'stock-bajo';
         const label = p.stock_actual > 0 ? `Stock: ${parseFloat(p.stock_actual).toFixed(p.tipo_venta==='Suelto'?3:0)}` : 'Sin stock';
         html += `<div class="resultado-item"
-            onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${esc(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)})">
+            onclick="agregarProducto(${p.producto_id},'${escAtribJs(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${escAtribJs(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)})">
             <div>
                 <div class="resultado-nombre">${esc(p.nombre_producto)}</div>
                 <div class="resultado-codigo">${esc(p.codigo)}</div>
@@ -2009,17 +2098,17 @@ function renderCarrito() {
                     const pctPromo   = ((1 - item.precio / item.precio_normal) * 100).toFixed(1);
                     const ahorroUnit = (item.precio_normal - item.precio).toFixed(2);
                     const desc       = item.promo_desc ? ` · ${item.promo_desc}` : '';
-                    return `<div style="font-size:10px;color:#2e7d32;margin-top:2px;">🏷 Promoción${desc} &nbsp;·&nbsp; -${pctPromo}% (-$${ahorroUnit}/u)</div>`;
+                    return `<div style="font-size:10px;color:#2e7d32;margin-top:2px;">${ICONS.tag} Promoción${desc} &nbsp;·&nbsp; -${pctPromo}% (-$${ahorroUnit}/u)</div>`;
                 })() : ''}
                 ${tieneMayoreo ? (() => {
                     const pctMay     = ((1 - item.precio_mayoreo / item.precio_normal) * 100).toFixed(1);
                     const ahorroUnit = (item.precio_normal - item.precio_mayoreo).toFixed(2);
-                    return `<div style="font-size:10px;color:#6a1b9a;margin-top:2px;">📦 Precio mayoreo &nbsp;·&nbsp; -${pctMay}% (-$${ahorroUnit}/u)</div>`;
+                    return `<div style="font-size:10px;color:#6a1b9a;margin-top:2px;">${ICONS.package} Precio mayoreo &nbsp;·&nbsp; -${pctMay}% (-$${ahorroUnit}/u)</div>`;
                 })() : ''}
                 ${tieneAjuste ? (() => {
                     const pctDesc   = ((1 - item.precio_ajuste / precioBase) * 100).toFixed(1);
                     const montoDesc = (precioBase - item.precio_ajuste).toFixed(2);
-                    return `<div style="font-size:10px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño &nbsp;·&nbsp; -${pctDesc}% (-$${montoDesc})</div>`;
+                    return `<div style="font-size:10px;color:#e65100;margin-top:2px;">${ICONS.warning} Ajuste por daño &nbsp;·&nbsp; -${pctDesc}% (-$${montoDesc})</div>`;
                 })() : ''}
             </td>
             <td>
@@ -2029,7 +2118,7 @@ function renderCarrito() {
                 ${tieneAjuste ? `<span style="color:#c0392b;font-weight:700;">$${parseFloat(precioFinal).toFixed(2)}</span>` : ''}
                 ${mayoreoDisp ? `<button type="button" onclick="toggleMayoreo(${i})"
                     style="margin-top:4px;display:block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;cursor:pointer;border:1px solid ${tieneMayoreo?'#6a1b9a':'#bbb'};background:${tieneMayoreo?'#f3e5f5':'#f5f5f5'};color:${tieneMayoreo?'#6a1b9a':'#888'};">
-                    📦 ${tieneMayoreo ? 'Mayoreo ✓' : 'Mayoreo'}
+                    ${ICONS.package} ${tieneMayoreo ? 'Mayoreo ✓' : 'Mayoreo'}
                 </button>` : ''}
             </td>
             <td>
@@ -2397,11 +2486,11 @@ function verificarRecomendaciones() {
             </div>
             <div class="rec-desc">
                 ${completo
-                    ? `✅ Tienes todos los productos (${rec.total}/${rec.total})`
+                    ? `${ICONS.checkBig} Tienes todos los productos (${rec.total}/${rec.total})`
                     : `${rec.cubiertos}/${rec.total} productos · Falta: ${rec.faltantes.map(f=>f.nombre+' (×'+f.falta+')').join(', ')}`}
             </div>
             <button class="rec-btn" style="background:${color};" onclick='agregarPaquete(${paqData})'>
-                ${completo ? '✅ Aplicar paquete al carrito' : `➕ Completar paquete (${rec.porcentaje}%)`}
+                ${completo ? `${ICONS.checkBig} Aplicar paquete al carrito` : `${ICONS.plus} Completar paquete (${rec.porcentaje}%)`}
             </button>
         </div>`;
     }).join('');
@@ -2824,8 +2913,8 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
                 notif.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:9999;white-space:nowrap;';
                 document.body.appendChild(notif);
             }
-            notif.innerHTML = `<span>✅ Venta registrada correctamente.</span>
-                <button class="btn-print-ticket" onclick="imprimirTicket(${res.venta_id})">🖨 Imprimir ticket</button>`;
+            notif.innerHTML = `<span>${ICONS.checkBig} Venta registrada correctamente.</span>
+                <button class="btn-print-ticket" onclick="imprimirTicket(${res.venta_id})">${ICONS.printer} Imprimir ticket</button>`;
             notif.style.display = 'flex';
             setTimeout(() => { notif.style.display = 'none'; }, 12000);
 
@@ -3129,7 +3218,7 @@ function renderInventario(productos) {
                 <td><span class="stock-badge ${sinStock?'stock-bajo':'stock-ok'}">${parseFloat(p.stock_actual).toFixed(p.tipo_venta==='Suelto'?3:0)}</span></td>
                 <td>$${parseFloat(p.precio_venta).toFixed(2)}</td>
                 <td>${!esDif && !sinStock
-                    ? `<button class="btn-agregar-inv" onclick="agregarProducto(${p.producto_id},'${esc(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${esc(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)});cerrarInventario()">Agregar</button>`
+                    ? `<button class="btn-agregar-inv" onclick="agregarProducto(${p.producto_id},'${escAtribJs(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${escAtribJs(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)});cerrarInventario()">Agregar</button>`
                     : `<button class="btn-agregar-inv" ${esDif ? 'disabled' : `onclick="alert('No hay stock disponible para este producto.')"`}>${esDif?'Otra suc.':'Sin stock'}</button>`
                 }</td>
             </tr>`;

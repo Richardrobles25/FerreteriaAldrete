@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -11,7 +12,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 // Ver detalle de compra
-$verDetalle = intval($_GET['ver'] ?? 0);
+$verDetalle = intval(is_scalar($_GET['ver'] ?? null) ? $_GET['ver'] : 0);
 $detalle    = null;
 $detalleProductos = [];
 
@@ -61,9 +62,10 @@ $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
     // [FIX] Verificar CSRF antes de procesar la compra
     requerirCSRF($_POST['_token'] ?? '', 'inventario_compras.php');
-    $proveedor_id = intval($_POST['proveedor_id'] ?? 0);
-    $notas        = trim($_POST['notas'] ?? '');
-    $items        = json_decode($_POST['items'] ?? '[]', true);
+    $proveedor_id = intval(is_scalar($_POST['proveedor_id'] ?? null) ? $_POST['proveedor_id'] : 0);
+    $notas        = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+    $itemsRaw     = is_scalar($_POST['items'] ?? null) ? $_POST['items'] : '[]';
+    $items        = json_decode($itemsRaw ?? '[]', true);
 
     if (!$puedeEditarPrecios && is_array($items)) {
         foreach ($items as &$itemSinPrecio) { $itemSinPrecio['actualizar_precio'] = false; }
@@ -97,6 +99,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             // $500,000 (igual al que ya usan abrirCaja/corteCaja) atrapa un error de dedo antes.
             if ($precChk > 500000) {
                 $errores[] = 'El precio unitario de "' . ($item['nombre'] ?? 'un producto') . '" no puede ser mayor a $500,000.00.';
+                break;
+            }
+            // [FIX-STOCK-MAX-COMPRA] cantidad se suma directo a stock_actual (DECIMAL(10,3),
+            // tope tecnico 9,999,999.999) y se guarda tal cual en compra_productos.cantidad
+            // (mismo tipo) — sin este tope, un error de dedo (un cero de mas) se trunca en
+            // silencio al maximo de la columna en vez de rechazarse. Mismo tope de 999,999 que
+            // ya usa entradas.php para el mismo campo.
+            if ($cantChk > 999999) {
+                $errores[] = 'La cantidad de "' . ($item['nombre'] ?? 'un producto') . '" no puede ser mayor a 999,999.';
                 break;
             }
             // [FIX-ALTO-C-04] Antes se aceptaba cualquier decimal para cualquier producto,
@@ -190,7 +201,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
 }
 
 // Listado de compras
-$busqueda = trim($_GET['buscar'] ?? '');
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 $fecha    = $_GET['fecha'] ?? '';
 
 $where  = "WHERE 1=1";
@@ -282,7 +293,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -364,7 +375,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Compras a proveedor</h2>
         </div>
         <div class="topbar-right">
@@ -379,8 +390,8 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
             <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
                 <h1 style="font-size:20px;color:#222;font-weight:600;">Compras a proveedor</h1>
                 <div style="display:flex;gap:8px;">
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
                 </div>
             </div>
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'creado'): ?>
@@ -448,7 +459,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                     </div>
                     <div class="prod-chip" id="proveedorChipCompra">
                         <span id="proveedorChipNombreCompra"></span>
-                        <button type="button" onclick="limpiarProveedorCompra()">✕ Cambiar</button>
+                        <button type="button" onclick="limpiarProveedorCompra()"><?= icono('x') ?> Cambiar</button>
                     </div>
                 </div>
 
@@ -523,6 +534,16 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 <?php endif; ?>
 
 <script>
+const ICONS = <?= json_encode([
+    'clipboard' => icono('clipboard-list', '', 14),
+]) ?>;
+// [FIX-XSS-NOMBRE] nombre/nombre_producto/codigo vienen del catalogo (lo captura
+// Administrador/Inventario) y se insertaban tal cual en innerHTML — un nombre con
+// "<img src=x onerror=...>" ejecutaba JS con solo escribirlo en el buscador, sin
+// necesidad de dar clic. Mismo criterio que ya usa cajero_nuevaVenta.php.
+function esc(str) {
+    return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 const productosData   = <?= json_encode(array_values($productos)) ?>;
 const proveedoresData = <?= json_encode(array_values($proveedores)) ?>;
 const puedeEditarPrecios = <?= $puedeEditarPrecios ? 'true' : 'false' ?>;
@@ -561,7 +582,7 @@ function filtrarProveedoresCompra(q) {
     const norm = normalizar(q);
     const matches = proveedoresData.filter(p => normalizar(p.nombre).includes(norm)).slice(0, 20);
     drop.innerHTML = matches.length
-        ? matches.map(p => '<div class="prod-drop-item" onclick="seleccionarProveedorCompra(' + p.proveedor_id + ')"><strong>' + p.nombre + '</strong></div>').join('')
+        ? matches.map(p => '<div class="prod-drop-item" onclick="seleccionarProveedorCompra(' + p.proveedor_id + ')"><strong>' + esc(p.nombre) + '</strong></div>').join('')
         : '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>';
     drop.style.display = 'block';
 }
@@ -615,7 +636,7 @@ function filtrarProductosCompra(q) {
     drop.innerHTML = matches.length
         ? matches.map(p =>
             '<div class="prod-drop-item" onclick="seleccionarProdCompra(' + p.producto_id + ')">'
-            + '<div><strong>' + p.nombre_producto + '</strong><span style="color:#aaa;font-size:11px;"> · ' + p.codigo + '</span></div>'
+            + '<div><strong>' + esc(p.nombre_producto) + '</strong><span style="color:#aaa;font-size:11px;"> · ' + esc(p.codigo) + '</span></div>'
             + '<span style="font-size:12px;color:#888;">$' + parseFloat(p.precio_compra || 0).toFixed(2) + '</span>'
             + '</div>').join('')
         : '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>';
@@ -717,7 +738,7 @@ function renderListaCompra() {
         let previewHTML = '';
         if (i.actualizar_precio && precioChanged) {
             previewHTML = '<div style="margin-top:6px;background:#fff8e1;border:1px solid #ffe082;border-radius:5px;padding:6px 10px;font-size:11px;color:#555;">'
-                + '<div style="font-weight:700;color:#e65100;margin-bottom:4px;">📋 Actualización de precios (margen ' + nuevos.margenPct + '%)</div>'
+                + '<div style="font-weight:700;color:#e65100;margin-bottom:4px;">' + ICONS.clipboard + ' Actualización de precios (margen ' + nuevos.margenPct + '%)</div>'
                 + '<div>Precio compra: <s style="color:#aaa;">$' + compraViejo.toFixed(2) + '</s> → <strong>$' + i.precio_unitario.toFixed(2) + '</strong></div>'
                 + '<div>Precio venta: <s style="color:#aaa;">$' + parseFloat(prod.precio_venta||0).toFixed(2) + '</s> → <strong style="color:#2e7d32;">$' + nuevos.venta.toFixed(2) + '</strong></div>'
                 + (parseFloat(prod.precio_mayoreo||0) > 0
@@ -731,7 +752,7 @@ function renderListaCompra() {
         return '<div class="compra-item" style="flex-direction:column;align-items:stretch;">'
             + '<div style="display:flex;justify-content:space-between;align-items:center;">'
             + '<div style="flex:1;">'
-            + '<div style="font-size:13px;font-weight:600;">' + i.nombre + '</div>'
+            + '<div style="font-size:13px;font-weight:600;">' + esc(i.nombre) + '</div>'
             + '<div style="font-size:11px;color:#aaa;">' + i.cantidad + ' × $' + i.precio_unitario.toFixed(2)
             + (precioChanged ? ' <span style="color:#e65100;">(antes $' + compraViejo.toFixed(2) + ')</span>' : '') + '</div>'
             + checkboxPrecioHTML

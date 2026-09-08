@@ -1,9 +1,10 @@
-﻿<?php
+<?php
 ob_start();
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 require_once '../vendor/autoload.php';
@@ -118,7 +119,7 @@ $erroresImport = [];
 $exitoImport   = false;
 
 // Bloquear acciones de escritura si se está consultando otra sucursal
-$sucursalPostConsulta = intval($_GET['sucursal_consulta'] ?? $_SESSION['sucursal_id']);
+$sucursalPostConsulta = intval(is_scalar($_GET['sucursal_consulta'] ?? null) ? $_GET['sucursal_consulta'] : $_SESSION['sucursal_id']);
 if ($sucursalPostConsulta !== intval($_SESSION['sucursal_id']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Location: productos.php?sucursal_consulta=' . $sucursalPostConsulta);
     exit();
@@ -203,6 +204,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     $negativos++;
                     continue;
                 }
+                // [FIX-STOCK-MAX-IMPORT] stock_actual/minimo/maximo son DECIMAL(10,3) (tope
+                // tecnico 9,999,999.999) sin validador de tope superior — una celda del Excel
+                // con un error de captura se importaba truncada en silencio al maximo de la
+                // columna, sin ningun aviso. Mismo tope de 999,999 que ya usa entradas.php.
+                if ($stock_actual > 999999 || $stock_minimo > 999999 || $stock_maximo > 999999) {
+                    $negativos++;
+                    continue;
+                }
 
                 // Auto-crear unidad de medida si no existe en la sucursal
                 if ($unidad_medida !== '') {
@@ -265,6 +274,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     // Insertar stock en esta sucursal
                     $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
                         ->execute([$producto_id, $_SESSION['sucursal_id'], $stock_actual, $stock_minimo, $stock_maximo]);
+                    // [FIX-IMPORT-SIN-MOVIMIENTO] Igual que admin/inventario_productos.php: un
+                    // producto NUEVO importado por Excel con stock inicial nunca dejaba rastro
+                    // en el historial de movimientos, a diferencia de formProducto.php y
+                    // "Agregar del catálogo" que sí registran el alta.
+                    if ($stock_actual > 0) {
+                        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,?,'Entrada',?,0,?,'Inventario inicial (importado)')")
+                            ->execute([$producto_id, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $stock_actual, $stock_actual]);
+                    }
                     $importados++;
                 }
             }
@@ -337,8 +354,8 @@ if (isset($_GET['plantilla'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto'])) {
     // [FIX-NA1] Verificar CSRF: esta accion no tenia ninguna validacion de token.
     requerirCSRF($_POST['_token'] ?? '', 'productos.php');
-    $id     = intval($_POST['producto_id'] ?? 0);
-    $motivo = trim($_POST['motivo_eliminacion'] ?? '');
+    $id     = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
+    $motivo = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
 
     if ($id && $motivo !== '') {
         $stmtProd = $pdo->prepare("SELECT p.producto_id, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
@@ -373,7 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
 // AJAX: productos del catálogo global que esta sucursal aún no tiene
 if (isset($_GET['catalogo_disponible'])) {
     header('Content-Type: application/json');
-    $busq = trim($_GET['q'] ?? '');
+    $busq = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
     $where = "WHERE p.activo = 1 AND (ss.producto_id IS NULL OR ss.activo = 0)";
     $params = [$_SESSION['sucursal_id']];
     if ($busq) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busq.'%'; $params[] = '%'.$busq.'%'; }
@@ -401,13 +418,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) 
     $stocks_minimo  = $_POST['stock_minimo'] ?? [];
     $stocks_maximo  = $_POST['stock_maximo'] ?? [];
 
+    // [FIX-STOCK-MAX-CATALOGO] stock_actual/minimo/maximo son DECIMAL(10,3) (tope tecnico
+    // 9,999,999.999) sin ningun validador de tope superior — un valor absurdo (o un dedo
+    // gordo con un cero de mas) no se rechazaba: en modo no estricto MySQL lo trunca en
+    // silencio al maximo de la columna (verificado: 99999999999 se guardo como 9999999.999,
+    // "agregado correctamente", sin ningun aviso de que el valor capturado no era el real).
+    // Mismo tope de 999,999 que ya usa entradas.php para este mismo campo.
+    $excedeTope = false;
     if (is_array($productos_ids)) {
+        foreach ($productos_ids as $i => $pid) {
+            if (floatval($stocks_actual[$i] ?? 0) > 999999 || floatval($stocks_minimo[$i] ?? 0) > 999999 || floatval($stocks_maximo[$i] ?? 0) > 999999) {
+                $excedeTope = true;
+                break;
+            }
+        }
+    }
+    if ($excedeTope) {
+        header('Location: productos.php?msg=error_stock_max');
+        exit();
+    }
+
+    // [FIX-STOCK-ENTERO-CATALOGO] Igual que admin/inventario_productos.php: un producto que
+    // NO es "Suelto" se vende por pieza entera, pero este endpoint nunca revisaba que el
+    // stock capturado aquí fuera entero — probado en vivo: se dio de alta un producto tipo
+    // "Unidad" con stock fraccionario y se guardó tal cual.
+    $tieneDecimalInvalido = false;
+    if (is_array($productos_ids) && !empty($productos_ids)) {
+        $idsNumericos = array_values(array_unique(array_map('intval', $productos_ids)));
+        $placeholdersTV = implode(',', array_fill(0, count($idsNumericos), '?'));
+        $stmtTV = $pdo->prepare("SELECT producto_id, tipo_venta FROM productos WHERE producto_id IN ($placeholdersTV)");
+        $stmtTV->execute($idsNumericos);
+        $tiposVentaCatalogo = [];
+        foreach ($stmtTV->fetchAll(PDO::FETCH_ASSOC) as $rTV) {
+            $tiposVentaCatalogo[intval($rTV['producto_id'])] = $rTV['tipo_venta'];
+        }
+        foreach ($productos_ids as $i => $pid) {
+            $pidChk = intval($pid);
+            if (($tiposVentaCatalogo[$pidChk] ?? null) === 'Suelto') continue;
+            $aChk = floatval($stocks_actual[$i] ?? 0);
+            $mnChk = floatval($stocks_minimo[$i] ?? 0);
+            $mxChk = floatval($stocks_maximo[$i] ?? 0);
+            if (floor($aChk) != $aChk || floor($mnChk) != $mnChk || floor($mxChk) != $mxChk) {
+                $tieneDecimalInvalido = true;
+                break;
+            }
+        }
+    }
+    if ($tieneDecimalInvalido) {
+        header('Location: productos.php?msg=error_stock_decimal');
+        exit();
+    }
+
+    if (is_array($productos_ids)) {
+        // [FIX-CATALOGO-DUPLICADO] El mismo producto_id repetido en el array (doble clic en
+        // "Seleccionar", o un POST manipulado) generaba un upsert de stock por cada aparicion
+        // (inofensivo, ON DUPLICATE KEY solo deja el ultimo valor) PERO tambien un registro de
+        // "Entrada" en movimientos_inventario POR CADA APARICION -- probado en vivo: el mismo
+        // producto_id dos veces (stock_actual 10 y 25) dejo el stock final en 25 (correcto)
+        // pero el historial de movimientos mostraba DOS entradas sumando 35, inflando el
+        // registro de auditoria por encima del stock real que quedo. Se deduplica por
+        // producto_id ANTES de procesar, quedandose con la ULTIMA aparicion (mismo criterio
+        // que ya aplica el upsert de stock_sucursal), para que el historial coincida con el
+        // resultado final.
+        $loteDedup = [];
+        foreach ($productos_ids as $i => $pid) {
+            $pid = intval($pid);
+            if (!$pid) continue;
+            $loteDedup[$pid] = [
+                'actual' => floatval($stocks_actual[$i] ?? 0),
+                'minimo' => floatval($stocks_minimo[$i] ?? 0),
+                'maximo' => floatval($stocks_maximo[$i] ?? 0),
+            ];
+        }
+
         // [FIX-CONSISTENCIA] Igual que admin/inventario_productos.php (FIX-MEDIO-H-07): el
         // lote entero de productos se agregaba fuera de una transaccion — una falla a mitad
         // del foreach (o entre el upsert de stock y su movimiento de "Entrada") dejaba un
         // lote parcial, sin ninguna forma de saber cuales quedaron a medias.
+        // [FIX-CATALOGO-RACE] Candado por sucursal: dos peticiones REALMENTE simultaneas para
+        // el mismo producto duplicaban el registro de "Entrada" en el historial aunque el
+        // stock final quedara correcto (upsert idempotente). Un primer intento usando
+        // rowCount()===1 del upsert (1=insert nuevo, 2=update) resultó incorrecto: un producto
+        // REACTIVADO (ya tenía fila con activo=0) también da rowCount()=2 aunque sea una alta
+        // legítima de un solo request, y con ese criterio dejaba de registrarse su movimiento.
+        // Se usa el mismo candado (GET_LOCK) que ya usan nuevaVenta.php/devoluciones.php: así
+        // el estado "activo" leído justo antes del upsert siempre refleja la realidad.
+        $lockCatalogo     = 'catalogo_sucursal_' . $_SESSION['sucursal_id'];
+        $lockCatAdquirido = $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockCatalogo) . ", 10)")->fetchColumn();
+        if (!$lockCatAdquirido) {
+            header('Location: productos.php?msg=error_agregar_catalogo');
+            exit();
+        }
         $pdo->beginTransaction();
         try {
+            $stmtEstadoPrevio = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id=? AND sucursal_id=?");
             $stmtUpsert = $pdo->prepare("
                 INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
                 VALUES (?, ?, ?, ?, ?, 1)
@@ -417,18 +521,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) 
                 INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
                 VALUES (?, ?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
             ");
-            foreach ($productos_ids as $i => $pid) {
-                $pid    = intval($pid);
-                $actual = floatval($stocks_actual[$i] ?? 0);
-                $minimo = floatval($stocks_minimo[$i] ?? 0);
-                $maximo = floatval($stocks_maximo[$i] ?? 0);
-                if (!$pid) continue;
-                $stmtUpsert->execute([$pid, $_SESSION['sucursal_id'], $actual, $minimo, $maximo]);
-                if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $actual, $actual]);
+            foreach ($loteDedup as $pid => $vals) {
+                $actual = $vals['actual'];
+                $stmtEstadoPrevio->execute([$pid, $_SESSION['sucursal_id']]);
+                $yaEstabaActivo = intval($stmtEstadoPrevio->fetchColumn()) === 1;
+
+                $stmtUpsert->execute([$pid, $_SESSION['sucursal_id'], $actual, $vals['minimo'], $vals['maximo']]);
+                if (!$yaEstabaActivo && $actual > 0) {
+                    $stmtMov->execute([$pid, $_SESSION['usuario_id'], $_SESSION['sucursal_id'], $actual, $actual]);
+                }
             }
             $pdo->commit();
+            $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockCatalogo) . ")");
         } catch (\Throwable $e) {
             $pdo->rollBack();
+            $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockCatalogo) . ")");
             header('Location: productos.php?msg=error_agregar_catalogo');
             exit();
         }
@@ -439,15 +546,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo'])) 
 
 // Sucursales para consulta
 $sucursalesConsulta = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
-$sucursal_consulta = intval($_GET['sucursal_consulta'] ?? $_SESSION['sucursal_id']);
+$sucursal_consulta = intval(is_scalar($_GET['sucursal_consulta'] ?? null) ? $_GET['sucursal_consulta'] : $_SESSION['sucursal_id']);
 $idsSucursales = array_map(fn($s) => intval($s['sucursal_id']), $sucursalesConsulta);
 if (!in_array($sucursal_consulta, $idsSucursales, true)) {
     $sucursal_consulta = intval($_SESSION['sucursal_id']);
 }
 
 // Filtros
-$busqueda   = trim($_GET['buscar'] ?? '');
-$categoria  = intval($_GET['categoria'] ?? 0);
+$busqueda   = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$categoria  = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo = isset($_GET['stock_bajo']);
 
 $where  = "WHERE ss.sucursal_id = ? AND p.activo = 1 AND ss.activo = 1";
@@ -509,7 +616,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -698,7 +805,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Productos</h2>
         </div>
         <div class="topbar-right">
@@ -736,7 +843,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 
         <?php if ($soloLectura): ?>
         <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:#795548;">
-            <span style="font-size:16px;">👁</span>
+            <span style="font-size:16px;"><?= icono('eye') ?></span>
             <span>Estás viendo el inventario de <strong><?php
                 foreach ($sucursalesConsulta as $s) {
                     if (intval($s['sucursal_id']) === $sucursal_consulta) { echo htmlspecialchars($s['nombre']); break; }
@@ -789,6 +896,12 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_agregar_catalogo'): ?>
             <div class="msg msg-error">No se pudieron agregar los productos. Intenta de nuevo.</div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_stock_max'): ?>
+            <div class="msg msg-error">El stock inicial/mínimo/máximo no puede ser mayor a 999,999. Verifica la cantidad capturada.</div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_stock_decimal'): ?>
+            <div class="msg msg-error">Uno de los productos se vende por pieza entera (no "Suelto") — el stock inicial/mínimo/máximo debe ser un número entero.</div>
         <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'solo_catalogo'): ?>
             <div class="msg msg-error" style="background:#fff8e1;color:#795548;border-left-color:#f9a825;">
@@ -863,7 +976,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                         <td>
                             <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
                             <?php if ($esStockBajo): ?>
-                                <span style="font-size:11px;color:#c0392b;margin-left:5px;">⚠ Stock bajo</span>
+                                <span style="font-size:11px;color:#c0392b;margin-left:5px;"><?= icono('triangle-alert') ?> Stock bajo</span>
                             <?php endif; ?>
                         </td>
                         <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
@@ -956,6 +1069,9 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 </div>
 
 <script>
+const ICONS = <?= json_encode([
+    'checkBig' => icono('circle-check-big', '', 12),
+]) ?>;
 function normalizar(str) {
     return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -1043,7 +1159,7 @@ function cargarCatalogo(q) {
                 const precio = parseFloat(p.precio_venta || 0).toFixed(2);
                 const enLista = yaSeleccionados.has(String(p.producto_id));
                 const btnBg  = enLista ? '#388e3c' : '#14ace7';
-                const btnTxt = enLista ? '✓ En lista' : '+ Seleccionar';
+                const btnTxt = enLista ? `${ICONS.checkBig} En lista` : '+ Seleccionar';
                 return `<div class="cat-item" data-id="${p.producto_id}" data-nombre="${esc(p.nombre_producto)}">
                     <div style="flex:1;">
                         <div class="cat-item-nombre">${esc(p.nombre_producto)}</div>

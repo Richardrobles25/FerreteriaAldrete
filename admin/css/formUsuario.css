@@ -29,7 +29,7 @@
         }
         .topbar-left { display: flex; align-items: center; gap: 12px; }
         .topbar h2 { font-size: 15px; font-weight: 600; }
-        .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+        .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
         .toggle-btn:hover { background: rgba(255,255,255,0.2); }
         .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
         .logout-btn {

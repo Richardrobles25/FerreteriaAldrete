@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -10,7 +11,7 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-$periodo    = $_GET['periodo'] ?? 'mes';
+$periodo    = is_scalar($_GET['periodo'] ?? null) ? $_GET['periodo'] : 'mes';
 // [FIX-ALTO-C-02] Antes se leia $_GET['sucursal'] directo, sin pasar por el rol: un
 // usuario Inventario/Inventario-Cajero (limitado a su propia sucursal) podia editar la
 // URL para ver las ventas de OTRA sucursal. _admin_sucursal_filtro.php ya calcula
@@ -22,7 +23,7 @@ $sucursal   = $sucursalVista;
 // "?limite=-1" producia "LIMIT -1", un error de sintaxis SQL que quedaba sin capturar y
 // tronaba con detalle del servidor. Se restringe a los mismos valores que ofrece el
 // selector (10/20/50).
-$limite     = intval($_GET['limite'] ?? 20);
+$limite     = intval(is_scalar($_GET['limite'] ?? null) ? $_GET['limite'] : 20);
 if (!in_array($limite, [10, 20, 50], true)) $limite = 20;
 
 $fechaDesde = match($periodo) {
@@ -77,6 +78,12 @@ $stmt = $pdo->prepare("
     WHERE v.estado IN ('Completada','Modificado','Devuelto')
       AND DATE(v.created_at) >= ?
     GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre, p.precio_venta
+    -- [FIX-MASVENDIDOS-DIVISION-CERO] Igual que cajeroInventario/masVendidos.php: un producto
+    -- vendido y luego devuelto POR COMPLETO en el mismo periodo (cantidad efectiva = 0) seguia
+    -- apareciendo aqui con total_vendido=0, y si era el UNICO movimiento del periodo,
+    -- totalUnidades (abajo) tambien daba 0 y la pagina tronaba con Division by zero al calcular
+    -- el porcentaje de participacion.
+    HAVING total_vendido > 0
     ORDER BY total_vendido DESC
     LIMIT $limite
 ");
@@ -100,7 +107,11 @@ $paramsTotal = [];
 if ($sucursal !== 0) { $paramsTotal[] = $sucursal; }
 $paramsTotal[] = $fechaDesde;
 $stmtTotal->execute($paramsTotal);
-$totalUnidades = $stmtTotal->fetchColumn() ?: 1;
+// [FIX-MASVENDIDOS-DIVISION-CERO] "?: 1" no atrapaba fetchColumn() devolviendo el STRING
+// "0.000" (por el COALESCE+SUM) -- en PHP solo el string exacto "0" es falsy, "0.000" se
+// evalua como verdadero, asi que el fallback nunca se activaba.
+$totalUnidades = floatval($stmtTotal->fetchColumn());
+if ($totalUnidades <= 0) $totalUnidades = 1;
 
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
@@ -120,6 +131,9 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         $devJoinMV
         WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) >= ?
         GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre
+        -- [FIX-MASVENDIDOS-DIVISION-CERO] Mismo fix que la consulta principal de arriba: un
+        -- producto vendido y devuelto por completo en el periodo no cuenta como mas vendido.
+        HAVING total_vendido > 0
         ORDER BY total_vendido DESC
     ");
     $paramsExp = [$sucursal, $sucursal];
@@ -181,7 +195,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -234,7 +248,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Productos más vendidos</h2>
         </div>
         <div class="topbar-right">
@@ -247,8 +261,8 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         <div class="content-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <h1 style="font-size:20px;color:#222;font-weight:600;">Productos más vendidos</h1>
             <div style="display:flex;gap:8px;">
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
             </div>
         </div>
         <form method="GET">

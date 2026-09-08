@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -12,10 +13,11 @@ require_once '../includes/topbar_info.php';
 $editando  = null;
 $errores   = [];
 $esEdicion = isset($_GET['id']);
+$idParam   = is_scalar($_GET['id'] ?? null) ? intval($_GET['id']) : 0;
 
 if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
-    $stmt->execute([intval($_GET['id'])]);
+    $stmt->execute([$idParam]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$editando) { header('Location: sucursales.php'); exit(); }
 }
@@ -24,27 +26,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-MEDIO] CSRF ausente en este formulario (a diferencia de los demás formularios
     // admin, que ya lo tienen) — un POST desde cualquier página con la sesión del
     // Administrador abierta podía crear/editar sucursales, incluyendo sus datos bancarios.
-    requerirCSRF($_POST['_token'] ?? '', $esEdicion ? 'formSucursal.php?id=' . intval($_GET['id']) : 'formSucursal.php');
-    $nombre                = trim($_POST['nombre']                ?? '');
-    $rfc                   = strtoupper(trim($_POST['rfc']        ?? ''));
-    $direccion             = trim($_POST['direccion']             ?? '');
-    $telefono              = trim($_POST['telefono']              ?? '');
-    $datos_ticket          = trim($_POST['datos_ticket']          ?? '');
-    $comision_terminal_pct = floatval($_POST['comision_terminal_pct'] ?? 0);
-    $banco                 = trim($_POST['banco']                 ?? '');
-    $titular_cuenta        = trim($_POST['titular_cuenta']        ?? '');
-    $numero_cuenta         = trim($_POST['numero_cuenta']         ?? '');
-    $clabe_interbancaria   = trim($_POST['clabe_interbancaria']   ?? '');
-    $alias_tarjeta         = trim($_POST['alias_tarjeta']         ?? '');
-    $sucursal_id           = intval($_POST['sucursal_id']         ?? 0);
-    $ticket_font_size      = intval($_POST['ticket_font_size']    ?? 12);
-    $ticket_ancho_mm       = intval($_POST['ticket_ancho_mm']     ?? 58);
-    $ticket_pie            = trim($_POST['ticket_pie']            ?? '');
-    $ticket_pie_efectivo   = trim($_POST['ticket_pie_efectivo']   ?? '');
-    $ticket_pie_credito    = trim($_POST['ticket_pie_credito']    ?? '');
-    $ticket_pie_terminal   = trim($_POST['ticket_pie_terminal']   ?? '');
-    $ticket_nota_credito   = trim($_POST['ticket_nota_credito']   ?? '');
-    $porcentaje_mora       = floatval($_POST['porcentaje_mora']   ?? 0);
+    requerirCSRF($_POST['_token'] ?? '', $esEdicion ? 'formSucursal.php?id=' . $idParam : 'formSucursal.php');
+    $nombre                = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    $rfc                   = strtoupper(trim(is_scalar($_POST['rfc'] ?? null) ? (string)$_POST['rfc'] : ''));
+    $direccion             = trim(is_scalar($_POST['direccion'] ?? null) ? (string)$_POST['direccion'] : '');
+    $telefono              = trim(is_scalar($_POST['telefono'] ?? null) ? (string)$_POST['telefono'] : '');
+    $datos_ticket          = trim(is_scalar($_POST['datos_ticket'] ?? null) ? (string)$_POST['datos_ticket'] : '');
+    $comision_terminal_pct = floatval(is_scalar($_POST['comision_terminal_pct'] ?? null) ? $_POST['comision_terminal_pct'] : 0);
+    $banco                 = trim(is_scalar($_POST['banco'] ?? null) ? (string)$_POST['banco'] : '');
+    $titular_cuenta        = trim(is_scalar($_POST['titular_cuenta'] ?? null) ? (string)$_POST['titular_cuenta'] : '');
+    $numero_cuenta         = trim(is_scalar($_POST['numero_cuenta'] ?? null) ? (string)$_POST['numero_cuenta'] : '');
+    $clabe_interbancaria   = trim(is_scalar($_POST['clabe_interbancaria'] ?? null) ? (string)$_POST['clabe_interbancaria'] : '');
+    $alias_tarjeta         = trim(is_scalar($_POST['alias_tarjeta'] ?? null) ? (string)$_POST['alias_tarjeta'] : '');
+    // [FIX-SUCURSAL-ID-DESINCRONIZADO] Igual que clientes.php: el ID real de edicion debe
+    // anclarse al que ya vino validado por la URL (?id=), no al <input hidden> del POST —
+    // ese hidden se puede alterar para que la edicion de la sucursal mostrada en pantalla
+    // termine sobrescribiendo los datos bancarios/ticket de OTRA sucursal.
+    $sucursal_id           = ($esEdicion && $editando) ? intval($editando['sucursal_id']) : 0;
+    $ticket_font_size      = intval(is_scalar($_POST['ticket_font_size'] ?? null) ? $_POST['ticket_font_size'] : 12);
+    $ticket_ancho_mm       = intval(is_scalar($_POST['ticket_ancho_mm'] ?? null) ? $_POST['ticket_ancho_mm'] : 58);
+    $ticket_pie            = trim(is_scalar($_POST['ticket_pie'] ?? null) ? (string)$_POST['ticket_pie'] : '');
+    $ticket_pie_efectivo   = trim(is_scalar($_POST['ticket_pie_efectivo'] ?? null) ? (string)$_POST['ticket_pie_efectivo'] : '');
+    $ticket_pie_credito    = trim(is_scalar($_POST['ticket_pie_credito'] ?? null) ? (string)$_POST['ticket_pie_credito'] : '');
+    $ticket_pie_terminal   = trim(is_scalar($_POST['ticket_pie_terminal'] ?? null) ? (string)$_POST['ticket_pie_terminal'] : '');
+    $ticket_nota_credito   = trim(is_scalar($_POST['ticket_nota_credito'] ?? null) ? (string)$_POST['ticket_nota_credito'] : '');
+    $porcentaje_mora       = floatval(is_scalar($_POST['porcentaje_mora'] ?? null) ? $_POST['porcentaje_mora'] : 0);
 
     if (!$nombre) $errores[] = 'El nombre de la sucursal es obligatorio.';
     // [FIX-MEDIO-A-17] Antes no habia ningun chequeo de nombre duplicado ni UNIQUE en BD:
@@ -97,8 +103,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } else {
             // ── NUEVA sucursal: guardamos el archivo para después del INSERT ──
+            // [FIX-LOGO-NUEVA-SIN-AVISO] A diferencia de la rama de EDICIÓN de arriba, esta
+            // rama nunca validaba la extensión — un archivo no soportado (ej. .exe, .php) se
+            // ignoraba en silencio (la sucursal se creaba igual, solo sin logo, sin avisar por
+            // qué). Probado en vivo: subir un .exe al crear no mostraba ningún error; editar
+            // esa misma sucursal con el mismo archivo sí bloqueaba con "Formato de imagen no
+            // soportado". Se aplica aquí la misma validación para que ambos caminos se
+            // comporten igual ante el mismo archivo.
             if (!empty($_FILES['ticket_logo_file']['name']) && $_FILES['ticket_logo_file']['error'] === UPLOAD_ERR_OK) {
-                $pendingLogoFile = $_FILES['ticket_logo_file'];
+                $ext = strtolower(pathinfo($_FILES['ticket_logo_file']['name'], PATHINFO_EXTENSION));
+                if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
+                    $pendingLogoFile = $_FILES['ticket_logo_file'];
+                } else {
+                    $errores[] = 'Formato de imagen no soportado. Usa JPG, PNG, GIF o WEBP.';
+                }
             }
             $ticket_logo = null; // se asignará tras conocer el sucursal_id real
         }
@@ -203,7 +221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -243,7 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2><?= $editando?'Editar sucursal':'Nueva sucursal' ?></h2>
         </div>
         <div class="topbar-right">
@@ -272,7 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group">
                     <label>Nombre de la sucursal *</label>
                     <input type="text" name="nombre"
-                        value="<?= htmlspecialchars($_POST['nombre'] ?? $editando['nombre'] ?? '') ?>"
+                        value="<?= htmlspecialchars(is_scalar($_POST['nombre'] ?? null) ? $_POST['nombre'] : ($editando['nombre'] ?? '')) ?>"
                         placeholder="Ej. Ferretería Aldrete Centro">
                 </div>
 
@@ -280,14 +298,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>RFC</label>
                         <input type="text" name="rfc"
-                            value="<?= htmlspecialchars($_POST['rfc'] ?? $editando['rfc'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['rfc'] ?? null) ? $_POST['rfc'] : ($editando['rfc'] ?? '')) ?>"
                             placeholder="AAAA000000AAA"
                             oninput="this.value=this.value.toUpperCase()">
                     </div>
                     <div class="form-group">
                         <label>Teléfono</label>
                         <input type="tel" name="telefono"
-                            value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['telefono'] ?? null) ? $_POST['telefono'] : ($editando['telefono'] ?? '')) ?>"
                             placeholder="10 dígitos"
                             maxlength="10"
                             pattern="\d{10}"
@@ -300,7 +318,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="form-group">
                     <label>Dirección</label>
                     <input type="text" name="direccion"
-                        value="<?= htmlspecialchars($_POST['direccion'] ?? $editando['direccion'] ?? '') ?>"
+                        value="<?= htmlspecialchars(is_scalar($_POST['direccion'] ?? null) ? $_POST['direccion'] : ($editando['direccion'] ?? '')) ?>"
                         placeholder="Calle, número, colonia, ciudad">
                 </div>
 
@@ -308,12 +326,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <label>Datos del ticket</label>
                     <textarea name="datos_ticket"
                         id="datosTicket"
-                        placeholder="Texto que aparecerá en los tickets de venta&#10;Ej:&#10;Ferretería Aldrete S.A. de C.V.&#10;RFC: AAAA000000AAA&#10;Calle Morelos #45, Col. Centro&#10;Tel: 8711234567"><?= htmlspecialchars($_POST['datos_ticket'] ?? $editando['datos_ticket'] ?? '') ?></textarea>
+                        placeholder="Texto que aparecerá en los tickets de venta&#10;Ej:&#10;Ferretería Aldrete S.A. de C.V.&#10;RFC: AAAA000000AAA&#10;Calle Morelos #45, Col. Centro&#10;Tel: 8711234567"><?= htmlspecialchars(is_scalar($_POST['datos_ticket'] ?? null) ? $_POST['datos_ticket'] : ($editando['datos_ticket'] ?? '')) ?></textarea>
                     <div class="hint">Este texto aparece en todos los tickets de venta de esta sucursal.</div>
                 </div>
 
                 <div class="form-group" style="display:flex;flex-direction:column;justify-content:flex-end;">
-                    <button type="button" class="btn-guardar" onclick="abrirPreviewTicket()" style="background:#9c27b0;margin-bottom:0;">👁️ Vista previa del ticket</button>
+                    <button type="button" class="btn-guardar" onclick="abrirPreviewTicket()" style="background:#9c27b0;margin-bottom:0;"><?= icono('eye') ?> Vista previa del ticket</button>
                 </div>
 
                 <!-- Sección: Terminal y transferencias -->
@@ -337,13 +355,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="form-group">
                             <label>Banco</label>
                             <input type="text" name="banco"
-                                value="<?= htmlspecialchars($_POST['banco'] ?? $editando['banco'] ?? '') ?>"
+                                value="<?= htmlspecialchars(is_scalar($_POST['banco'] ?? null) ? $_POST['banco'] : ($editando['banco'] ?? '')) ?>"
                                 placeholder="Ej. BBVA, Banorte">
                         </div>
                         <div class="form-group">
                             <label>Titular de la cuenta</label>
                             <input type="text" name="titular_cuenta"
-                                value="<?= htmlspecialchars($_POST['titular_cuenta'] ?? $editando['titular_cuenta'] ?? '') ?>"
+                                value="<?= htmlspecialchars(is_scalar($_POST['titular_cuenta'] ?? null) ? $_POST['titular_cuenta'] : ($editando['titular_cuenta'] ?? '')) ?>"
                                 placeholder="Nombre del titular">
                         </div>
                     </div>
@@ -352,7 +370,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="form-group">
                             <label>Número de cuenta</label>
                             <input type="text" name="numero_cuenta"
-                                value="<?= htmlspecialchars($_POST['numero_cuenta'] ?? $editando['numero_cuenta'] ?? '') ?>"
+                                value="<?= htmlspecialchars(is_scalar($_POST['numero_cuenta'] ?? null) ? $_POST['numero_cuenta'] : ($editando['numero_cuenta'] ?? '')) ?>"
                                 placeholder="10 dígitos"
                                 maxlength="10"
                                 inputmode="numeric"
@@ -362,7 +380,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="form-group">
                             <label>CLABE interbancaria</label>
                             <input type="text" name="clabe_interbancaria"
-                                value="<?= htmlspecialchars($_POST['clabe_interbancaria'] ?? $editando['clabe_interbancaria'] ?? '') ?>"
+                                value="<?= htmlspecialchars(is_scalar($_POST['clabe_interbancaria'] ?? null) ? $_POST['clabe_interbancaria'] : ($editando['clabe_interbancaria'] ?? '')) ?>"
                                 placeholder="18 dígitos"
                                 maxlength="18"
                                 oninput="this.value=this.value.replace(/\D/g,'').slice(0,18)"
@@ -374,7 +392,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>Alias / nombre de la tarjeta <span style="font-weight:400;color:#aaa;">(opcional)</span></label>
                         <input type="text" name="alias_tarjeta"
-                            value="<?= htmlspecialchars($_POST['alias_tarjeta'] ?? $editando['alias_tarjeta'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['alias_tarjeta'] ?? null) ? $_POST['alias_tarjeta'] : ($editando['alias_tarjeta'] ?? '')) ?>"
                             placeholder="Ej. Débito Nómina BBVA">
                     </div>
                 </div>
@@ -386,7 +404,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>% Mora por vencimiento</label>
                         <input type="number" name="porcentaje_mora" step="0.01" min="0" max="100"
-                            value="<?= htmlspecialchars($_POST['porcentaje_mora'] ?? $editando['porcentaje_mora'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['porcentaje_mora'] ?? null) ? $_POST['porcentaje_mora'] : ($editando['porcentaje_mora'] ?? '')) ?>"
                             placeholder="Ej. 5 (dejar en 0 para no cobrar mora)">
                         <div class="hint">Se aplica una sola vez sobre el saldo pendiente de cada crédito cuando vence. Dejar en 0 para no cobrar.</div>
                     </div>
@@ -424,7 +442,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="form-group">
                             <label>Tamano de fuente</label>
                             <select name="ticket_font_size" id="ticketFontSize">
-                                <?php $fs = intval($_POST['ticket_font_size'] ?? $editando['ticket_font_size'] ?? 12); ?>
+                                <?php $fs = intval(is_scalar($_POST['ticket_font_size'] ?? null) ? $_POST['ticket_font_size'] : ($editando['ticket_font_size'] ?? 12)); ?>
                                 <option value="10" <?= $fs===10?'selected':'' ?>>Chico (10px)</option>
                                 <option value="12" <?= $fs===12?'selected':'' ?>>Normal (12px)</option>
                                 <option value="14" <?= $fs===14?'selected':'' ?>>Grande (14px)</option>
@@ -433,7 +451,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="form-group">
                             <label>Ancho del papel</label>
                             <select name="ticket_ancho_mm" id="ticketAnchoMm">
-                                <?php $am = intval($_POST['ticket_ancho_mm'] ?? $editando['ticket_ancho_mm'] ?? 58); ?>
+                                <?php $am = intval(is_scalar($_POST['ticket_ancho_mm'] ?? null) ? $_POST['ticket_ancho_mm'] : ($editando['ticket_ancho_mm'] ?? 58)); ?>
                                 <option value="58" <?= $am===58?'selected':'' ?>>58 mm (rollo estrecho)</option>
                                 <option value="80" <?= $am===80?'selected':'' ?>>80 mm (rollo ancho)</option>
                             </select>
@@ -450,25 +468,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                             <div id="ttab-efectivo" class="t-panel">
                                 <input type="text" name="ticket_pie_efectivo"
-                                    value="<?= htmlspecialchars($_POST['ticket_pie_efectivo'] ?? $editando['ticket_pie_efectivo'] ?? '') ?>"
+                                    value="<?= htmlspecialchars(is_scalar($_POST['ticket_pie_efectivo'] ?? null) ? $_POST['ticket_pie_efectivo'] : ($editando['ticket_pie_efectivo'] ?? '')) ?>"
                                     placeholder="Ej. ¡Gracias por su compra!">
                                 <div class="hint">Pie para tickets pagados en efectivo.</div>
                             </div>
                             <div id="ttab-terminal" class="t-panel" style="display:none;">
                                 <input type="text" name="ticket_pie_terminal"
-                                    value="<?= htmlspecialchars($_POST['ticket_pie_terminal'] ?? $editando['ticket_pie_terminal'] ?? '') ?>"
+                                    value="<?= htmlspecialchars(is_scalar($_POST['ticket_pie_terminal'] ?? null) ? $_POST['ticket_pie_terminal'] : ($editando['ticket_pie_terminal'] ?? '')) ?>"
                                     placeholder="Ej. Pago con tarjeta &mdash; ¡Gracias!">
                                 <div class="hint">Pie para tickets pagados con terminal.</div>
                             </div>
                             <div id="ttab-credito" class="t-panel" style="display:none;">
                                 <input type="text" name="ticket_pie_credito"
-                                    value="<?= htmlspecialchars($_POST['ticket_pie_credito'] ?? $editando['ticket_pie_credito'] ?? '') ?>"
+                                    value="<?= htmlspecialchars(is_scalar($_POST['ticket_pie_credito'] ?? null) ? $_POST['ticket_pie_credito'] : ($editando['ticket_pie_credito'] ?? '')) ?>"
                                     placeholder="Ej. Pago en 3 d&iacute;as h&aacute;biles — ¡Gracias!">
                                 <div class="hint">Pie para tickets de venta a cr&eacute;dito.</div>
                                 <label style="display:block;margin-top:14px;font-size:13px;color:#555;font-weight:600;">Texto del pagar&eacute; (firma)</label>
                                 <textarea name="ticket_nota_credito"
                                     style="width:100%;min-height:72px;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;color:#333;font-family:Arial,sans-serif;resize:vertical;margin-top:6px;"
-                                    placeholder="Al firmar acepto cubrir el monto total adeudado en el plazo establecido."><?= htmlspecialchars($_POST['ticket_nota_credito'] ?? $editando['ticket_nota_credito'] ?? '') ?></textarea>
+                                    placeholder="Al firmar acepto cubrir el monto total adeudado en el plazo establecido."><?= htmlspecialchars(is_scalar($_POST['ticket_nota_credito'] ?? null) ? $_POST['ticket_nota_credito'] : ($editando['ticket_nota_credito'] ?? '')) ?></textarea>
                                 <div class="hint">Aparece en el bloque de firma del ticket de cr&eacute;dito.</div>
                             </div>
                         </div>
@@ -478,7 +496,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>Pie de p&aacute;gina general <span style="font-weight:400;color:#aaa;">(fallback)</span></label>
                         <input type="text" name="ticket_pie"
-                            value="<?= htmlspecialchars($_POST['ticket_pie'] ?? $editando['ticket_pie'] ?? '') ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['ticket_pie'] ?? null) ? $_POST['ticket_pie'] : ($editando['ticket_pie'] ?? '')) ?>"
                             placeholder="Ej. Gracias por su compra &middot; Tel: 871-123-4567">
                         <div class="hint">Se muestra cuando el pie por tipo est&aacute; vac&iacute;o. Si tambi&eacute;n est&aacute; vac&iacute;o, se muestra el texto predeterminado.</div>
                     </div>
@@ -512,7 +530,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         <div id="previewTicketContent" style="margin-bottom:16px;"></div>
         <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:16px;">
-            <button type="button" onclick="imprimirPreview()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">🖨️ Imprimir</button>
+            <button type="button" onclick="imprimirPreview()" style="background:#14ace7;color:white;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;"><?= icono('printer') ?> Imprimir</button>
             <button type="button" onclick="cerrarPreviewTicket()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
         </div>
     </div>

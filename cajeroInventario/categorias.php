@@ -1,12 +1,19 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
+// [FIX-UX-PERMISOS] Crear/editar/eliminar categorias es solo Administrador (ya exigido en el
+// backend abajo), pero la vista mostraba los botones y el formulario a cualquier rol: un
+// Inventario/Cajero los veia activos y solo al hacer clic se enteraba de que no podia. Se
+// oculta la UI que de todos modos el backend va a rechazar, en vez de dejar que el usuario
+// lo descubra a la mala.
+$esAdminCategorias = ($_SESSION['rol'] ?? '') === 'Administrador';
 
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
@@ -19,7 +26,7 @@ if (isset($_GET['eliminar'])) {
     }
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'categorias.php');
-    $id = intval($_GET['eliminar']);
+    $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
     // [FIX-ALTO-B-08] (portado de admin/inventario_categorias.php): antes solo se contaban
     // productos activos; una categoria con productos desactivados (pero aun ligados por la
     // FK) tronaba el DELETE con un error SQL crudo (violacion de llave foranea) en vez de
@@ -47,16 +54,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     // [FIX-CSRF-01] Verificar CSRF antes de crear/editar categoria (antes solo ?eliminar= lo tenia)
     requerirCSRF($_POST['_token'] ?? '', 'categorias.php');
-    $nombre = trim($_POST['nombre'] ?? '');
-    $id     = intval($_POST['categoria_id'] ?? 0);
+    $nombre = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    // [FIX-CATEGORIA-ID-DESINCRONIZADO] (portado de admin/inventario_categorias.php): se ancla
+    // al ?editar= de la URL, no al <input hidden name="categoria_id">.
+    $id     = is_scalar($_GET['editar'] ?? null) ? intval($_GET['editar']) : 0;
+
+    // [FIX-CATEGORIA-VACIO] Antes un nombre vacio (tras trim) simplemente no hacia nada -- ni
+    // guardaba, ni mostraba ningun error, el formulario solo se recargaba sin explicar por
+    // que. admin/inventario_categorias.php ya tenia este mismo aviso (msg=vacio); aqui
+    // faltaba.
+    if ($nombre === '') {
+        header('Location: categorias.php?msg=vacio');
+        exit();
+    }
+
+    // [FIX-CATEGORIA-LARGO] categorias.nombre es VARCHAR(100) sin ningun tope en el
+    // servidor (el input tampoco tenia maxlength) -- un nombre mas largo se truncaba en
+    // silencio a 100 caracteres y se guardaba como "creado correctamente", sin ningun
+    // aviso de que el texto capturado no era el que quedo guardado. Mismo patron ya
+    // corregido en formEmpleado.php/unidades.php para sus propios campos de nombre.
+    if (mb_strlen($nombre) > 100) {
+        header('Location: categorias.php?msg=muy_largo');
+        exit();
+    }
 
     if ($nombre) {
         // [AUTOFIX] ERROR-CAT-01 (portado de admin/inventario_categorias.php): capturar
         // PDOException de clave duplicada en lugar de exponer el error PHP crudo.
         try {
             if ($id) {
+                // [FIX-CATEGORIA-EDICION-FANTASMA] Igual que admin/inventario_categorias.php:
+                // antes se reportaba "editado" sin importar si el UPDATE realmente afectó una
+                // fila — un categoria_id borrado por otra sesión mostraba éxito sin que nada
+                // hubiera pasado. rowCount()===0 también puede significar "sin cambios reales"
+                // (mismo nombre), así que se verifica existencia solo en ese caso.
                 $stmt = $pdo->prepare("UPDATE categorias SET nombre = ? WHERE categoria_id = ?");
                 $stmt->execute([$nombre, $id]);
+                if ($stmt->rowCount() === 0) {
+                    $stmtExisteCat = $pdo->prepare("SELECT 1 FROM categorias WHERE categoria_id = ?");
+                    $stmtExisteCat->execute([$id]);
+                    if (!$stmtExisteCat->fetchColumn()) {
+                        header('Location: categorias.php?msg=no_encontrado');
+                        exit();
+                    }
+                }
                 header('Location: categorias.php?msg=editado');
             } else {
                 $stmt = $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)");
@@ -80,7 +121,7 @@ $categorias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $editando = null;
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM categorias WHERE categoria_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 ?>
@@ -111,7 +152,7 @@ if (isset($_GET['editar'])) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -235,7 +276,7 @@ if (isset($_GET['editar'])) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Categorías</h2>
         </div>
         <div class="topbar-right">
@@ -262,6 +303,12 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">No tienes permisos para esta acción. Tu rol no puede crear, editar ni eliminar categorías del catálogo global.</div>
                 <?php elseif ($_GET['msg'] === 'duplicado'): ?>
                     <div class="msg msg-error">Ya existe una categoría con ese nombre.</div>
+                <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
+                    <div class="msg msg-error">El nombre de la categoría no puede tener más de 100 caracteres.</div>
+                <?php elseif ($_GET['msg'] === 'vacio'): ?>
+                    <div class="msg msg-error">El nombre de la categoría es obligatorio.</div>
+                <?php elseif ($_GET['msg'] === 'no_encontrado'): ?>
+                    <div class="msg msg-error">Esa categoría ya no existe (puede que otra sesión la haya eliminado). Recarga la página.</div>
                 <?php endif; ?>
             <?php endif; ?>
 
@@ -290,11 +337,15 @@ if (isset($_GET['editar'])) {
                             <td><strong><?= htmlspecialchars($c['nombre']) ?></strong></td>
                             <td><span class="badge-count"><?= $c['total_productos'] ?> productos</span></td>
                             <td>
+                                <?php if ($esAdminCategorias): ?>
                                 <div class="acciones">
                                     <a class="btn-accion btn-editar" href="categorias.php?editar=<?= $c['categoria_id'] ?>">Editar</a>
                                     <!-- [AUTOFIX] SEC-01: Token CSRF en link destructivo -->
                                     <a class="btn-accion btn-eliminar" href="categorias.php?eliminar=<?= $c['categoria_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('¿Eliminar esta categoría?')">Eliminar</a>
                                 </div>
+                                <?php else: ?>
+                                    <span style="color:#bbb;font-size:12px;">—</span>
+                                <?php endif; ?>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -309,6 +360,7 @@ if (isset($_GET['editar'])) {
 
         <!-- Formulario lateral -->
         <div>
+            <?php if ($esAdminCategorias): ?>
             <div class="card">
                 <h3><?= $editando ? 'Editar categoría' : 'Nueva categoría' ?></h3>
                 <form method="POST">
@@ -317,7 +369,7 @@ if (isset($_GET['editar'])) {
                     <input type="hidden" name="categoria_id" value="<?= $editando['categoria_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>
-                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Ej. Plomería" autofocus>
+                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Ej. Plomería" maxlength="100" autofocus>
                     </div>
                     <button class="btn-guardar" type="submit">
                         <?= $editando ? 'Guardar cambios' : 'Agregar categoría' ?>
@@ -327,6 +379,12 @@ if (isset($_GET['editar'])) {
                     <?php endif; ?>
                 </form>
             </div>
+            <?php else: ?>
+            <div class="card">
+                <h3>Solo lectura</h3>
+                <p style="font-size:13px;color:#888;">Solo el Administrador puede crear, editar o eliminar categorías.</p>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>

@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -16,8 +17,8 @@ if (($_GET['msg'] ?? '') === 'error_token') {
 
 // ── Búsqueda de productos por sucursal (AJAX) ────────────────────────────────
 if (isset($_GET['buscar_prods'])) {
-    $sucursalId = intval($_GET['sucursal_id'] ?? 0);
-    $q          = trim($_GET['q'] ?? '');
+    $sucursalId = intval(is_scalar($_GET['sucursal_id'] ?? null) ? $_GET['sucursal_id'] : 0);
+    $q          = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
     header('Content-Type: application/json');
     if (!$sucursalId) { echo json_encode([]); exit(); }
     $like = '%' . $q . '%';
@@ -38,20 +39,20 @@ if (isset($_GET['buscar_prods'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-CRIT-B-03] CSRF ausente antes en las 4 acciones (crear/desactivar/activar/eliminar).
     requerirCSRF($_POST['_token'] ?? '', 'promociones.php');
-    $accion = $_POST['accion'] ?? '';
+    $accion = is_scalar($_POST['accion'] ?? null) ? $_POST['accion'] : '';
 
     if ($accion === 'crear') {
-        $productoId       = intval($_POST['producto_id'] ?? 0);
+        $productoId       = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
         // [FIX-ALTO-B-09] Antes la sucursal elegida en el formulario solo servia para
         // filtrar la busqueda de productos; la promocion se guardaba sin sucursal_id
         // (columna que ni existia) y quedaba activa en TODAS las sucursales sin que el
         // admin lo supiera, y el listado la mostraba con la sucursal del creador (que
         // para un Administrador es NULL, ocultandola por completo del listado).
-        $sucursalId       = intval($_POST['sucursal_id'] ?? 0);
-        $precioPromo      = floatval($_POST['precio_promocional'] ?? 0);
-        $fechaInicio      = trim($_POST['fecha_inicio'] ?? '');
-        $fechaFin         = trim($_POST['fecha_fin'] ?? '');
-        $descripcion      = trim($_POST['descripcion'] ?? '');
+        $sucursalId       = intval(is_scalar($_POST['sucursal_id'] ?? null) ? $_POST['sucursal_id'] : 0);
+        $precioPromo      = floatval(is_scalar($_POST['precio_promocional'] ?? null) ? $_POST['precio_promocional'] : 0);
+        $fechaInicio      = trim(is_scalar($_POST['fecha_inicio'] ?? null) ? (string)$_POST['fecha_inicio'] : '');
+        $fechaFin         = trim(is_scalar($_POST['fecha_fin'] ?? null) ? (string)$_POST['fecha_fin'] : '');
+        $descripcion      = trim(is_scalar($_POST['descripcion'] ?? null) ? (string)$_POST['descripcion'] : '');
 
         // [FIX-ALTO-B-10] precio_promocional es DECIMAL(10,2): un valor como 0.001 pasaba
         // la validacion "> 0" en PHP pero se guardaba redondeado a $0.00 en la BD,
@@ -118,12 +119,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($accion === 'desactivar') {
-        $id = intval($_POST['promocion_id'] ?? 0);
+        $id = intval(is_scalar($_POST['promocion_id'] ?? null) ? $_POST['promocion_id'] : 0);
         $pdo->prepare("UPDATE promociones SET activo = 0 WHERE promocion_id = ?")->execute([$id]);
         $msg = 'Promoción desactivada.';
 
     } elseif ($accion === 'activar') {
-        $id = intval($_POST['promocion_id'] ?? 0);
+        $id = intval(is_scalar($_POST['promocion_id'] ?? null) ? $_POST['promocion_id'] : 0);
         // [FIX] Reactivar una promoción también puede reintroducir un traslape: si se creó
         // otra promoción del mismo producto mientras esta estaba desactivada, al reactivarla
         // podrían quedar dos vigentes al mismo tiempo. Se aplica la misma validación que al crear.
@@ -152,15 +153,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($accion === 'eliminar') {
-        $id = intval($_POST['promocion_id'] ?? 0);
+        $id = intval(is_scalar($_POST['promocion_id'] ?? null) ? $_POST['promocion_id'] : 0);
         $pdo->prepare("DELETE FROM promociones WHERE promocion_id = ?")->execute([$id]);
         $msg = 'Promoción eliminada.';
     }
 }
 
 // ── Filtros ──────────────────────────────────────────────────────────────────
-$filtroSucursal = intval($_GET['sucursal_f'] ?? 0);
-$filtroEstado   = $_GET['estado_f'] ?? 'todas';
+$filtroSucursal = intval(is_scalar($_GET['sucursal_f'] ?? null) ? $_GET['sucursal_f'] : 0);
+$filtroEstado   = is_scalar($_GET['estado_f'] ?? null) ? $_GET['estado_f'] : 'todas';
 
 $where  = '1=1';
 $params = [];
@@ -224,7 +225,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -290,12 +291,12 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     }
     </style>
 
-<?php renderAdminSidebar('promociones'); ?>
+<?php renderAdminSidebar('inventario_promociones'); ?>
 
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Promociones</h2>
         </div>
         <div class="topbar-right">
@@ -364,7 +365,11 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                             } else {
                                 $estBadge = 'badge-activa'; $estLabel = 'Activa';
                             }
-                            $ahorroPct = $pr['precio_venta'] > 0
+                            // [FIX-PROMO-PRECIO-OBSOLETO] Igual que cajeroInventario/promociones.php:
+                            // si el precio normal se edita despues y queda por debajo del precio ya
+                            // fijado de la promo, esta cuenta se volvia negativa y se mostraba como
+                            // "--14.3%". No hay "ahorro" real que mostrar en ese caso.
+                            $ahorroPct = ($pr['precio_venta'] > 0 && $pr['precio_promocional'] < $pr['precio_venta'])
                                 ? round((1 - $pr['precio_promocional'] / $pr['precio_venta']) * 100, 1)
                                 : 0;
                         ?>
@@ -531,7 +536,7 @@ function buscarProd() {
             const div = document.getElementById('sugProd');
             if (!prods.length) { div.style.display = 'none'; return; }
             div.innerHTML = prods.map(p => `
-                <div class="sug-item" onclick="selProd(${p.producto_id},'${esc(p.nombre_producto)}','${esc(p.codigo)}',${p.precio_venta},'${p.tipo_venta}')">
+                <div class="sug-item" onclick="selProd(${p.producto_id},'${escAtribJs(p.nombre_producto)}','${escAtribJs(p.codigo)}',${p.precio_venta},'${p.tipo_venta}')">
                     <strong>${esc(p.nombre_producto)}</strong>
                     <span style="color:#aaa;font-size:11px;margin-left:6px;">${esc(p.codigo)}</span>
                     <span style="float:right;color:#1565c0;font-size:12px;">$${parseFloat(p.precio_venta).toFixed(2)}</span>
@@ -590,6 +595,14 @@ function validarForm() {
 
 function esc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+}
+// [FIX-C1] Escapa un valor para insertarlo dentro de un string JS de comillas simples
+// que a su vez va dentro de un atributo HTML (onclick="...('...')"). esc() por si solo
+// no basta ahi: el navegador decodifica las entidades HTML del atributo ANTES de
+// ejecutar el JS, asi que un nombre con comilla podia cerrar el string y ejecutar
+// codigo. Mismo criterio que ya usa cajero_nuevaVenta.php.
+function escAtribJs(s) {
+    return esc(String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
 }
 
 document.getElementById('busqProd').addEventListener('blur', function() {

@@ -4,6 +4,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 require_once '../vendor/autoload.php';
@@ -360,6 +361,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     if ($tipo_venta !== 'Suelto' && (floor($stock_actual) != $stock_actual || floor($stock_minimo) != $stock_minimo || floor($stock_maximo) != $stock_maximo)) {
                         throw new Exception('Este producto se maneja por unidad; el stock inicial/mínimo/máximo debe ser un número entero.');
                     }
+                    // [FIX-STOCK-MAX-IMPORT] stock_actual/minimo/maximo son DECIMAL(10,3) (tope
+                    // tecnico 9,999,999.999) sin validador de tope superior — una celda del
+                    // Excel con un error de captura se importaba truncada en silencio al
+                    // maximo de la columna, sin ningun aviso. Mismo tope que ya usa entradas.php.
+                    if ($stock_actual > 999999 || $stock_minimo > 999999 || $stock_maximo > 999999) {
+                        throw new Exception('El stock inicial/mínimo/máximo no puede ser mayor a 999,999.');
+                    }
 
                     // [FIX-UNIDAD-GLOBAL-01] unidades_medida.sucursal_id es NOT NULL — en "Todas
                     // las sucursales" ($sucursalImport === null) este INSERT tronaba con
@@ -448,6 +456,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         if ($sucursalImport !== null) {
                             $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
                                 ->execute([$prodId, $sucursalImport, $stock_actual, $stock_minimo, $stock_maximo]);
+                            // [FIX-IMPORT-SIN-MOVIMIENTO] A diferencia de formProducto.php (que
+                            // registra "Inventario inicial") y de "Agregar del catálogo" (que
+                            // registra "Alta de producto en sucursal"), un producto NUEVO
+                            // importado por Excel con stock inicial nunca dejaba rastro en el
+                            // historial de movimientos — el stock aparecía sin ningún origen
+                            // auditable. Se registra el mismo tipo de movimiento que ya usa el
+                            // formulario manual para el mismo evento de negocio.
+                            if ($stock_actual > 0) {
+                                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,?,'Entrada',?,0,?,'Inventario inicial (importado)')")
+                                    ->execute([$prodId, $_SESSION['usuario_id'], $sucursalImport, $stock_actual, $stock_actual]);
+                            }
                         }
                         $importados++;
                     }
@@ -534,8 +553,8 @@ if (isset($_GET['plantilla'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto'])) {
     // [FIX-CRIT-B-03] CSRF ausente antes.
     requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
-    $id     = intval($_POST['producto_id'] ?? 0);
-    $motivo = trim($_POST['motivo_eliminacion'] ?? '');
+    $id     = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
+    $motivo = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
 
     // [FIX-MEDIO-B-14] En "Todas las sucursales" (sucursalVista === 0) el INNER JOIN de
     // abajo exige ss.sucursal_id = 0, que ninguna fila real cumple nunca — la accion
@@ -579,9 +598,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
 // AJAX: catálogo global — productos que la sucursal seleccionada aún no tiene
 if (isset($_GET['catalogo_disponible'])) {
     header('Content-Type: application/json');
-    $sucursalFiltro = intval($_GET['sucursal'] ?? 0);
+    // [FIX-IDOR-CATALOGO-ADMIN] Mismo criterio que el POST de abajo: usar $sucursalVista
+    // (ya validado contra el rol) en vez de confiar en ?sucursal= del cliente — un
+    // Inventario/Cajero podia consultar que productos le faltan a OTRA sucursal con solo
+    // cambiar el parametro, aunque esta consulta por si sola no escribiera nada.
+    $sucursalFiltro = $sucursalVista;
     if (!$sucursalFiltro) { echo json_encode([]); exit(); }
-    $busq   = trim($_GET['q'] ?? '');
+    $busq   = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
     $where  = "WHERE p.activo = 1 AND (ss.producto_id IS NULL OR ss.activo = 0)";
     $params = [$sucursalFiltro];
     if ($busq) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busq.'%'; $params[] = '%'.$busq.'%'; }
@@ -604,20 +627,119 @@ if (isset($_GET['catalogo_disponible'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admin'])) {
     // [FIX-CRIT-B-03] CSRF ausente antes.
     requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
-    $sucursalDestino = intval($_POST['sucursal_destino'] ?? 0);
+    // [FIX-IDOR-CATALOGO-ADMIN] Igual que inventario_formProducto.php (FIX-CRIT-B-04/H-03):
+    // este endpoint confiaba en $_POST['sucursal_destino'] tal cual, sin validarlo contra el
+    // rol de la sesion — el formulario ya manda $sucursalVista (correcto) en un campo oculto,
+    // pero un POST directo (sin pasar por la pantalla) podia mandar cualquier sucursal_id.
+    // Probado en vivo: un usuario Inventario/Cajero de la sucursal 1 daba de alta stock real
+    // en la sucursal 2 con solo cambiar ese campo, con su propio usuario_id quedando en el
+    // movimiento de "Alta de producto en sucursal" de una sucursal que no le corresponde.
+    // Se usa $sucursalVista (ya calculado por _admin_sucursal_filtro.php respetando el rol)
+    // en vez de confiar en el POST.
+    $sucursalDestino = $sucursalVista;
     $productos_ids   = $_POST['producto_id']   ?? [];
     $stocks_actual   = $_POST['stock_actual']  ?? [];
     $stocks_minimo   = $_POST['stock_minimo']  ?? [];
     $stocks_maximo   = $_POST['stock_maximo']  ?? [];
 
+    // [FIX-STOCK-MAX-CATALOGO] Igual que cajeroInventario/productos.php: stock_actual/minimo/
+    // maximo son DECIMAL(10,3) (tope tecnico 9,999,999.999) sin validador de tope superior —
+    // un valor absurdo no se rechazaba, MySQL en modo no estricto lo trunca en silencio al
+    // maximo de la columna sin ningun aviso. Mismo tope de 999,999 que ya usa entradas.php.
+    $excedeTope = false;
+    if (is_array($productos_ids)) {
+        foreach ($productos_ids as $i => $pid) {
+            if (floatval($stocks_actual[$i] ?? 0) > 999999 || floatval($stocks_minimo[$i] ?? 0) > 999999 || floatval($stocks_maximo[$i] ?? 0) > 999999) {
+                $excedeTope = true;
+                break;
+            }
+        }
+    }
+    if ($excedeTope) {
+        header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=error_stock_max');
+        exit();
+    }
+
+    // [FIX-STOCK-ENTERO-CATALOGO] Igual que formProducto.php (esValorEnteroValido) y el
+    // importador de Excel (FIX-STOCK-ENTERO-01): un producto que NO es "Suelto" se vende por
+    // pieza entera, pero este endpoint nunca revisaba que el stock capturado aquí fuera
+    // entero — probado en vivo: se dio de alta un producto tipo "Unidad" con
+    // stock_actual=1.5/stock_minimo=0.5/stock_maximo=10.5 y se guardó tal cual, una fracción
+    // de pieza física imposible.
+    $tieneDecimalInvalido = false;
+    if (is_array($productos_ids) && !empty($productos_ids)) {
+        $idsNumericos = array_values(array_unique(array_map('intval', $productos_ids)));
+        $placeholdersTV = implode(',', array_fill(0, count($idsNumericos), '?'));
+        $stmtTV = $pdo->prepare("SELECT producto_id, tipo_venta FROM productos WHERE producto_id IN ($placeholdersTV)");
+        $stmtTV->execute($idsNumericos);
+        $tiposVentaCatalogo = [];
+        foreach ($stmtTV->fetchAll(PDO::FETCH_ASSOC) as $rTV) {
+            $tiposVentaCatalogo[intval($rTV['producto_id'])] = $rTV['tipo_venta'];
+        }
+        foreach ($productos_ids as $i => $pid) {
+            $pidChk = intval($pid);
+            if (($tiposVentaCatalogo[$pidChk] ?? null) === 'Suelto') continue;
+            $aChk = floatval($stocks_actual[$i] ?? 0);
+            $mnChk = floatval($stocks_minimo[$i] ?? 0);
+            $mxChk = floatval($stocks_maximo[$i] ?? 0);
+            if (floor($aChk) != $aChk || floor($mnChk) != $mnChk || floor($mxChk) != $mxChk) {
+                $tieneDecimalInvalido = true;
+                break;
+            }
+        }
+    }
+    if ($tieneDecimalInvalido) {
+        header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=error_stock_decimal');
+        exit();
+    }
+
     if ($sucursalDestino && is_array($productos_ids)) {
+        // [FIX-CATALOGO-DUPLICADO] (espejo de cajeroInventario/productos.php) El mismo
+        // producto_id repetido en el array generaba un registro de "Entrada" en
+        // movimientos_inventario por cada aparicion, aunque el upsert de stock solo dejara el
+        // ultimo valor -- el historial de movimientos quedaba inflado por encima del stock
+        // real. Se deduplica por producto_id antes de procesar, quedandose con la ultima
+        // aparicion (mismo criterio que ya aplica el upsert de stock_sucursal).
+        $loteDedup = [];
+        foreach ($productos_ids as $i => $pid) {
+            $pid = intval($pid);
+            if (!$pid) continue;
+            $loteDedup[$pid] = [
+                'actual' => floatval($stocks_actual[$i] ?? 0),
+                'minimo' => floatval($stocks_minimo[$i] ?? 0),
+                'maximo' => floatval($stocks_maximo[$i] ?? 0),
+            ];
+        }
+
         // [FIX-MEDIO-H-07] El lote entero de productos se agregaba fuera de una transaccion:
         // una falla a mitad del foreach (o entre el upsert de stock y su movimiento de
         // "Entrada") dejaba un lote parcial -- algunos productos ya en la sucursal con su
         // entrada registrada, otros con stock pero sin movimiento, y el resto sin agregar --
         // sin ninguna forma de saber cuales quedaron a medias.
+        // [FIX-CATALOGO-RACE] Candado por sucursal: dos peticiones REALMENTE simultaneas para
+        // el mismo producto+sucursal (probado en vivo con dos curl en paralelo) pasaban ambas
+        // por el upsert de abajo y ambas registraban un movimiento de "Entrada 0→stock" — el
+        // stock final quedaba correcto (el upsert es idempotente) pero el historial de
+        // auditoria mostraba DOS altas del mismo producto cuando solo una realmente ocurrio.
+        // Un primer intento de arreglo usando rowCount()===1 del upsert (1=insert nuevo,
+        // 2=update) para distinguir "alta real" de "duplicado por carrera" resultó ser
+        // incorrecto: un producto REACTIVADO (ya tenía fila en stock_sucursal con activo=0,
+        // por ejemplo tras haberse eliminado antes) también da rowCount()=2 aunque sea una
+        // alta legítima y de un solo request — con ese criterio dejaba de registrarse su
+        // movimiento de entrada. Se usa en cambio el mismo patrón de candado (GET_LOCK) que ya
+        // usan nuevaVenta.php/devoluciones.php: mientras el candado está tomado, ninguna otra
+        // petición para esta sucursal puede intercalarse, así que el estado "activo" leído
+        // justo antes del upsert siempre refleja la realidad (incluyendo lo que la petición
+        // ganadora de una carrera ya haya confirmado).
+        $lockCatalogo     = 'catalogo_sucursal_' . $sucursalDestino;
+        $lockCatAdquirido = $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockCatalogo) . ", 10)")->fetchColumn();
+        if (!$lockCatAdquirido) {
+            header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=error_agregar_catalogo');
+            exit();
+        }
         $pdo->beginTransaction();
         try {
+            $stmtEstadoPrevio = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id=? AND sucursal_id=?");
             $stmtUpsert = $pdo->prepare("
                 INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
                 VALUES (?, ?, ?, ?, ?, 1)
@@ -627,18 +749,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admi
                 INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo)
                 VALUES (?, ?, ?, 'Entrada', ?, 0, ?, 'Alta de producto en sucursal')
             ");
-            foreach ($productos_ids as $i => $pid) {
-                $pid    = intval($pid);
-                $actual = floatval($stocks_actual[$i] ?? 0);
-                $minimo = floatval($stocks_minimo[$i] ?? 0);
-                $maximo = floatval($stocks_maximo[$i] ?? 0);
-                if (!$pid) continue;
-                $stmtUpsert->execute([$pid, $sucursalDestino, $actual, $minimo, $maximo]);
-                if ($actual > 0) $stmtMov->execute([$pid, $_SESSION['usuario_id'], $sucursalDestino, $actual, $actual]);
+            foreach ($loteDedup as $pid => $vals) {
+                $actual = $vals['actual'];
+                $stmtEstadoPrevio->execute([$pid, $sucursalDestino]);
+                $yaEstabaActivo = intval($stmtEstadoPrevio->fetchColumn()) === 1;
+
+                $stmtUpsert->execute([$pid, $sucursalDestino, $actual, $vals['minimo'], $vals['maximo']]);
+                if (!$yaEstabaActivo && $actual > 0) {
+                    $stmtMov->execute([$pid, $_SESSION['usuario_id'], $sucursalDestino, $actual, $actual]);
+                }
             }
             $pdo->commit();
+            $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockCatalogo) . ")");
         } catch (\PDOException $e) {
             $pdo->rollBack();
+            $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockCatalogo) . ")");
             header('Location: inventario_productos.php?sucursal='.$sucursalDestino.'&msg=error_agregar_catalogo');
             exit();
         }
@@ -648,8 +773,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admi
 }
 
 // Filtros
-$busqueda    = trim($_GET['buscar'] ?? '');
-$categoria   = intval($_GET['categoria'] ?? 0);
+$busqueda    = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$categoria   = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo  = isset($_GET['stock_bajo']);
 $esAdmin     = $_SESSION['rol'] === 'Administrador';
 $vistaGlobal = $esAdmin && $sucursalVista === 0;
@@ -724,7 +849,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -817,7 +942,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Productos</h2>
         </div>
         <div class="topbar-right">
@@ -840,8 +965,8 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 <a class="btn-plantilla" href="inventario_productos.php?plantilla=1">Descargar plantilla</a>
                 <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
                 <?php endif; ?>
-                <a style="background:#c0392b;color:white;border:none;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;" href="inventario_productos.php?exportar=pdf">⬇ PDF</a>
-                <a class="btn-excel-export" href="inventario_productos.php?exportar=excel">⬇ Excel</a>
+                <a style="background:#c0392b;color:white;border:none;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;" href="inventario_productos.php?exportar=pdf"><?= icono('download') ?> PDF</a>
+                <a class="btn-excel-export" href="inventario_productos.php?exportar=excel"><?= icono('download') ?> Excel</a>
                 <?php if ($vistaGlobal): ?>
                     <a class="btn-agregar" href="inventario_formProducto.php?todas=1">+ Nuevo producto (todas las sucursales)</a>
                 <?php else: ?>
@@ -902,17 +1027,19 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
 
         <?php
         $msgTextos = [
-            'creado'           => '✅ Producto registrado correctamente en el catálogo.',
-            'editado'          => '✅ Producto actualizado correctamente.',
-            'eliminado'        => '✅ Producto eliminado correctamente.',
-            'agregado_catalogo'=> '✅ Producto(s) agregado(s) a la sucursal correctamente.',
-            'error_agregar_catalogo' => '❌ No se pudo completar el alta de productos. No se guardó ningún cambio, intenta de nuevo.',
-            'error_eliminar'   => '❌ No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
-            'error_sin_sucursal' => '❌ Selecciona una sucursal específica no "Todas las sucursales" para eliminar un producto de su stock.',
-            'error_token'      => '❌ La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
-            'no_autorizado_import' => '❌ Tu rol no puede importar productos por Excel. Usa "+ Agregar del catálogo" para activar productos ya existentes en tu sucursal.',
+            'creado'           => icono('circle-check-big') . ' Producto registrado correctamente en el catálogo.',
+            'editado'          => icono('circle-check-big') . ' Producto actualizado correctamente.',
+            'eliminado'        => icono('circle-check-big') . ' Producto eliminado correctamente.',
+            'agregado_catalogo'=> icono('circle-check-big') . ' Producto(s) agregado(s) a la sucursal correctamente.',
+            'error_agregar_catalogo' => icono('circle-x') . ' No se pudo completar el alta de productos. No se guardó ningún cambio, intenta de nuevo.',
+            'error_stock_max' => icono('circle-x') . ' El stock inicial/mínimo/máximo no puede ser mayor a 999,999. Verifica la cantidad capturada.',
+            'error_stock_decimal' => icono('circle-x') . ' Uno de los productos se vende por pieza entera (no "Suelto") — el stock inicial/mínimo/máximo debe ser un número entero.',
+            'error_eliminar'   => icono('circle-x') . ' No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
+            'error_sin_sucursal' => icono('circle-x') . ' Selecciona una sucursal específica no "Todas las sucursales" para eliminar un producto de su stock.',
+            'error_token'      => icono('circle-x') . ' La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
+            'no_autorizado_import' => icono('circle-x') . ' Tu rol no puede importar productos por Excel. Usa "+ Agregar del catálogo" para activar productos ya existentes en tu sucursal.',
         ];
-        $msgActual = $_GET['msg'] ?? '';
+        $msgActual = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : '';
         if (isset($msgTextos[$msgActual])):
             $esMsgError = str_starts_with($msgActual, 'error');
         ?>
@@ -977,7 +1104,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                         <td>
                             <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
                             <?php if ($esStockBajo): ?>
-                                <span style="font-size:11px;color:#c0392b;margin-left:5px;">⚠ Stock bajo</span>
+                                <span style="font-size:11px;color:#c0392b;margin-left:5px;"><?= icono('triangle-alert') ?> Stock bajo</span>
                             <?php endif; ?>
                         </td>
                         <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
@@ -1089,6 +1216,9 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
 </div>
 
 <script>
+const ICONS = <?= json_encode([
+    'checkBig' => icono('circle-check-big', '', 12),
+]) ?>;
 function normalizar(str) {
     return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -1210,7 +1340,7 @@ function cargarCatalogo(q) {
                 const btnStyle = enLista
                     ? 'background:#388e3c;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;'
                     : 'background:#14ace7;color:white;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;';
-                const btnText = enLista ? '✓ En lista' : '+ Seleccionar';
+                const btnText = enLista ? `${ICONS.checkBig} En lista` : '+ Seleccionar';
                 return `<div class="cat-item" data-id="${p.producto_id}" data-nombre="${nombre}" style="display:flex;justify-content:space-between;align-items:center;padding:10px 20px;border-bottom:1px solid #f5f5f5;">
                     <div style="flex:1;">
                         <div style="font-weight:600;font-size:13px;">${nombre}</div>

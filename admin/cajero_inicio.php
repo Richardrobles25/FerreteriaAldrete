@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -99,7 +100,7 @@ if ($cajaActual) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -130,13 +131,16 @@ if ($cajaActual) {
     .tabla { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
     .tabla-header { padding: 14px 18px; border-bottom: 0.5px solid #eee; font-size: 14px; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center; }
     .tabla-header a { font-size: 12px; color: #14ace7; text-decoration: none; font-weight: 400; }
-    .tabla-row { padding: 11px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #555; display: flex; justify-content: space-between; align-items: center; }
+    .tabla-columnas { display: grid; grid-template-columns: 52px minmax(120px,220px) 96px 96px 90px 56px 1fr; gap: 10px; padding: 8px 18px; border-bottom: 0.5px solid #eee; font-size: 10px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 0.4px; }
+    .tabla-row { display: grid; grid-template-columns: 52px minmax(120px,220px) 96px 96px 90px 56px 1fr; gap: 10px; align-items: center; padding: 11px 18px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; color: #555; }
+    .tabla-row.tabla-row-vacia { display: block; }
     .tabla-row:last-child { border-bottom: none; }
     .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
     .badge-efectivo { background: #e8f5e9; color: #2e7d32; }
     .badge-terminal { background: #e3f2fd; color: #1565c0; }
     .badge-mixto { background: #f3e5f5; color: #6a1b9a; }
     .badge-credito { background: #e3f2fd; color: #1565c0; }
+    .badge-transferencia { background: #fff3e0; color: #e65100; }
     .badge-estado-cancelada  { background: #fdecea; color: #c0392b; }
     .badge-estado-pendiente  { background: #e3f2fd; color: #1565c0; }
     .badge-estado-devuelto   { background: #f3e5f5; color: #6a1b9a; }
@@ -166,7 +170,7 @@ if ($cajaActual) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Panel de Cajero</h2>
         </div>
         <div class="topbar-right">
@@ -259,6 +263,15 @@ if ($cajaActual) {
                 <a href="cajero_historialVentas.php">Ver todas</a>
             </div>
             <?php if (count($ultimasVentas) > 0): ?>
+                <div class="tabla-columnas">
+                    <span>Folio</span>
+                    <span>Cliente</span>
+                    <span>Método</span>
+                    <span>Estado</span>
+                    <span style="text-align:right;">Total</span>
+                    <span style="text-align:right;">Hora</span>
+                    <span></span>
+                </div>
                 <?php foreach ($ultimasVentas as $v): ?>
                 <div class="tabla-row<?= $v['estado'] === 'Cancelada' ? ' venta-cancelada' : '' ?>">
                     <span style="color:#aaa;font-size:12px;">#<?= $v['venta_id'] ?></span>
@@ -266,13 +279,15 @@ if ($cajaActual) {
                     <span class="badge badge-<?= strtolower($v['metodo_pago']) ?>"><?= $v['metodo_pago'] ?></span>
                     <?php if (in_array($v['estado'], ['Cancelada', 'Pendiente', 'Devuelto'], true)): ?>
                     <span class="badge badge-estado-<?= strtolower($v['estado']) ?>"><?= $v['estado'] ?></span>
+                    <?php else: ?>
+                    <span></span>
                     <?php endif; ?>
-                    <span style="font-weight:600;">$<?= number_format($v['total'], 2) ?></span>
-                    <span style="color:#aaa;font-size:12px;"><?= date('H:i', strtotime($v['created_at'])) ?></span>
+                    <span style="font-weight:600;text-align:right;">$<?= number_format($v['total'], 2) ?></span>
+                    <span style="color:#aaa;font-size:12px;text-align:right;"><?= date('H:i', strtotime($v['created_at'])) ?></span>
                 </div>
                 <?php endforeach; ?>
             <?php else: ?>
-                <div class="tabla-row"><span style="color:#aaa;">No hay ventas en este turno aún.</span></div>
+                <div class="tabla-row tabla-row-vacia"><span style="color:#aaa;">No hay ventas en este turno aún.</span></div>
             <?php endif; ?>
         </div>
     </div>

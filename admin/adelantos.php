@@ -3,7 +3,9 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
+require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
@@ -13,10 +15,10 @@ require_once '../includes/topbar_info.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])) {
     requerirCSRF($_POST['_token'] ?? '', 'adelantos.php');
 
-    $empleado_id = intval($_POST['empleado_id'] ?? 0);
-    $monto       = floatval($_POST['monto'] ?? 0);
-    $fecha       = $_POST['fecha'] ?? date('Y-m-d');
-    $motivo      = trim($_POST['motivo'] ?? '');
+    $empleado_id = intval(is_scalar($_POST['empleado_id'] ?? null) ? $_POST['empleado_id'] : 0);
+    $monto       = floatval(is_scalar($_POST['monto'] ?? null) ? $_POST['monto'] : 0);
+    $fecha       = is_scalar($_POST['fecha'] ?? null) ? $_POST['fecha'] : date('Y-m-d');
+    $motivo      = trim(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : '');
 
     $errores = [];
     if ($empleado_id <= 0) $errores[] = 'Selecciona un empleado.';
@@ -27,7 +29,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
     if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
 
     // El adelanto es contra el sueldo de la semana en curso (lunes a sabado)
-    $lunesSemana  = date('Y-m-d', strtotime('monday this week'));
+    // [FIX-ADELANTO-LIMITE-SEMANA] Antes usaba strtotime('monday this week'), que en domingo
+    // regresa el lunes de la semana que ACABA de terminar en vez de avanzar a la que empieza
+    // manana -- desincronizado de como semanaLaboral.php interpreta ese mismo domingo (ver
+    // lunesDeLaSemana() en rh_helpers.php). Confirmado con una comparacion dia por dia: los
+    // otros 6 dias ya coincidian, solo domingo daba semanas distintas.
+    $lunesSemana  = lunesDeLaSemana(date('Y-m-d'));
     $sabadoSemana = date('Y-m-d', strtotime($lunesSemana . ' +5 days'));
     if (!$fecha || !strtotime($fecha)) {
         $errores[] = 'La fecha no es valida.';
@@ -48,7 +55,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
         }
     }
 
-    // Tope: los adelantos de la semana no pueden superar el sueldo semanal
+    // Tope: el TOTAL pendiente por descontar (no solo lo tomado esta semana) no puede
+    // superar el sueldo semanal.
+    // [FIX-ADELANTO-TOPE-ACUMULADO] El tope solo sumaba adelantos "fecha BETWEEN lunes Y
+    // sabado" de la semana en curso, ignorando cualquier adelanto de una semana ANTERIOR que
+    // siguiera 'Pendiente' (recuperado solo parcialmente, o de plano no recuperado) -- un
+    // empleado con $3,000 sin liquidar de la semana pasada podia pedir otros $3,000 esta
+    // semana sin ningun aviso, porque "lo de esta semana" seguia en $0. Probado en vivo: se
+    // acumularon $6,000 pendientes contra un sueldo de $3,000 (200%) antes de este fix. La
+    // logica correcta es la misma que ya usa semanaLaboral.php (FIX-ALTO-G-06) para calcular
+    // cuanto descontar: TODO adelanto 'Pendiente' del empleado, sin importar en que semana se
+    // tomo, cuenta contra el limite de una semana de sueldo.
     if ($empleado_id > 0 && $monto > 0 && empty($errores)) {
         $stmtSueldo = $pdo->prepare("SELECT sueldo_semanal FROM empleados WHERE empleado_id = ? AND activo = 1");
         $stmtSueldo->execute([$empleado_id]);
@@ -56,12 +73,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
         if ($sueldoSem <= 0) {
             $errores[] = 'El empleado no es valido o no tiene sueldo registrado.';
         } else {
-            $stmtYa = $pdo->prepare("SELECT COALESCE(SUM(monto),0) FROM adelantos_sueldo WHERE empleado_id = ? AND fecha BETWEEN ? AND ?");
-            $stmtYa->execute([$empleado_id, $lunesSemana, $sabadoSemana]);
+            $stmtYa = $pdo->prepare("SELECT COALESCE(SUM(monto),0) FROM adelantos_sueldo WHERE empleado_id = ? AND estado = 'Pendiente'");
+            $stmtYa->execute([$empleado_id]);
             $yaAdelantado = floatval($stmtYa->fetchColumn());
             if ($yaAdelantado + $monto > $sueldoSem) {
                 $disponible = max(0, $sueldoSem - $yaAdelantado);
-                $errores[] = 'No se puede adelantar mas de una semana de sueldo ($' . number_format($sueldoSem, 2) . '). Ya tiene $' . number_format($yaAdelantado, 2) . ' adelantado esta semana; el maximo disponible es $' . number_format($disponible, 2) . '.';
+                $errores[] = 'No se puede adelantar mas de una semana de sueldo ($' . number_format($sueldoSem, 2) . '). Ya tiene $' . number_format($yaAdelantado, 2) . ' pendiente de descontar (incluye semanas anteriores); el maximo disponible es $' . number_format($disponible, 2) . '.';
             }
         }
     }
@@ -100,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
 // Marcar adelanto como liquidado (ya se le descontó al empleado de su sueldo)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['liquidar_id'])) {
     requerirCSRF($_POST['_token'] ?? '', 'adelantos.php');
-    $aid = intval($_POST['liquidar_id']);
+    $aid = intval(is_scalar($_POST['liquidar_id'] ?? null) ? $_POST['liquidar_id'] : 0);
     $pdo->prepare("UPDATE adelantos_sueldo SET estado = 'Liquidado' WHERE adelanto_id = ?")->execute([$aid]);
     header('Location: adelantos.php?msg=liquidado');
     exit();
@@ -162,7 +179,7 @@ $totalLiquidadoGlobal  = array_sum(array_map(
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -204,7 +221,7 @@ $totalLiquidadoGlobal  = array_sum(array_map(
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Adelantos de sueldo</h2>
         </div>
         <div class="topbar-right">
@@ -345,10 +362,17 @@ $totalLiquidadoGlobal  = array_sum(array_map(
 
                 <label for="fecha">Fecha <span style="font-weight:400;color:#aaa;">(dentro de la semana en curso)</span></label>
                 <?php
-                    $lunesForm  = date('Y-m-d', strtotime('monday this week'));
+                    // [FIX-ADELANTO-LIMITE-SEMANA] Mismo criterio que arriba. Ademas, el default
+                    // de "value" ya no puede ser simplemente "hoy": si hoy es domingo, hoy mismo
+                    // cae FUERA del rango lunes-sabado (min/max) que se calcula abajo -- un campo
+                    // date con su propio value fuera de su propio min/max. Se usa el sabado (el
+                    // ultimo dia valido de la semana que ya cerro) como default en ese caso.
+                    $lunesForm  = lunesDeLaSemana(date('Y-m-d'));
                     $sabadoForm = date('Y-m-d', strtotime($lunesForm . ' +5 days'));
+                    $hoyForm    = date('Y-m-d');
+                    $valorForm  = ($hoyForm >= $lunesForm && $hoyForm <= $sabadoForm) ? $hoyForm : $sabadoForm;
                 ?>
-                <input type="date" name="fecha" id="fecha" value="<?= date('Y-m-d') ?>" min="<?= $lunesForm ?>" max="<?= $sabadoForm ?>" required>
+                <input type="date" name="fecha" id="fecha" value="<?= $valorForm ?>" min="<?= $lunesForm ?>" max="<?= $sabadoForm ?>" required>
 
                 <label for="motivo">Motivo (opcional)</label>
                 <textarea name="motivo" id="motivo" rows="3" maxlength="255" placeholder="Ej. Emergencia familiar"></textarea>

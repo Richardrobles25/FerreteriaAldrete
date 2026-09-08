@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -52,9 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
     if ($sucursalVista === 0) {
         $erroresApertura[] = 'Selecciona una sucursal específica para abrir una caja. "Todas las sucursales" es solo de consulta.';
     } else {
-        $monto_apertura_raw = $_POST['monto_apertura'] ?? '';
+        $monto_apertura_raw = is_scalar($_POST['monto_apertura'] ?? null) ? $_POST['monto_apertura'] : '';
         $monto_apertura     = floatval($monto_apertura_raw);
-        $observaciones      = trim($_POST['observaciones'] ?? '');
+        $observaciones      = trim(is_scalar($_POST['observaciones'] ?? null) ? (string)$_POST['observaciones'] : '');
 
         if ($monto_apertura_raw === '' || $monto_apertura < 0) {
             $erroresApertura[] = 'El monto de apertura es obligatorio y no puede ser negativo.';
@@ -137,7 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -184,7 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Abrir Caja<?= $sucursalVista !== 0 ? ' — ' . htmlspecialchars($nombreSucursalVista) : '' ?></h2>
         </div>
         <div class="topbar-right">
@@ -203,14 +204,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
         <div class="form-card">
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'sinCaja'): ?>
                 <div class="alerta-box" style="background:#fff3e0;border-color:#ffb74d;color:#e65100;">
-                    ⚠ Necesitas abrir una caja en esta sucursal para acceder a ese módulo.
+                    <?= icono('triangle-alert') ?> Necesitas abrir una caja en esta sucursal para acceder a ese módulo.
                 </div>
             <?php endif; ?>
             <?php // [FIX-MEDIO-D3-08] requerirCSRF() redirige con "?msg=error_token" si el token es
                   // invalido/expirado, pero esta pagina no mostraba ningun aviso para ese caso. ?>
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_token'): ?>
                 <div class="alerta-box">
-                    ⚠ Tu sesión expiró o la página estuvo abierta demasiado tiempo. Recarga la página e intenta abrir la caja de nuevo.
+                    <?= icono('triangle-alert') ?> Tu sesión expiró o la página estuvo abierta demasiado tiempo. Recarga la página e intenta abrir la caja de nuevo.
                 </div>
             <?php endif; ?>
 
@@ -246,7 +247,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     <div class="form-group">
                         <label>Monto inicial en caja *</label>
                         <input type="number" name="monto_apertura" placeholder="0.00" step="0.01" min="0.01" max="50000" required autofocus
-                               value="<?= isset($_POST['monto_apertura']) ? htmlspecialchars($_POST['monto_apertura']) : '' ?>">
+                               value="<?= is_scalar($_POST['monto_apertura'] ?? null) ? htmlspecialchars($_POST['monto_apertura']) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>Observaciones (opcional)</label>

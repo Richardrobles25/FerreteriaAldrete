@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
@@ -13,26 +14,46 @@ require_once '../includes/topbar_info.php';
 // Eliminar vacacion
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     requerirCSRF($_POST['_token'] ?? '', 'vacaciones.php');
-    $pdo->prepare("DELETE FROM vacaciones WHERE vacacion_id = ?")->execute([intval($_POST['eliminar_id'])]);
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en varios archivos de admin/) intval()
+    // sobre un array no truena, se coacciona en silencio a 1/0 en vez de fallar.
+    $pdo->prepare("DELETE FROM vacaciones WHERE vacacion_id = ?")->execute([intval(is_scalar($_POST['eliminar_id'] ?? null) ? $_POST['eliminar_id'] : 0)]);
     header('Location: vacaciones.php?msg=eliminado');
     exit();
 }
 
 // Cambiar estado
+// [FIX-VACACION-ESTADO-SIN-GUARDA] Antes esta accion aceptaba CUALQUIER transicion entre los 3
+// estados sin importar el estado actual -- la UI solo ofrece el boton "Resolver" para registros
+// 'Solicitado' (ver mas abajo), pero el backend no exigia lo mismo. Un POST directo podia
+// re-aprobar un registro ya 'Rechazado' (o rechazar uno ya 'Aprobado') sin volver a validar
+// saldo/traslape en absoluto -- esas validaciones solo existen en formVacacion.php, al crear o
+// editar. Probado en vivo: alternando Aprobado<->Rechazado en un periodo mientras se creaban
+// otros de por medio, se llegaron a tener 14 dias simultaneamente 'Aprobado' para un empleado
+// con tope real de 12. Ahora solo se permite la transicion si el registro sigue 'Solicitado'
+// (que es exactamente lo unico que la transicion Solicitado->Aprobado/Rechazado necesita: esos
+// dias ya se validaron contra el saldo al crearse, y no cambian aqui). Cualquier otro intento
+// (ej. un Aprobado o Rechazado ya resuelto) se ignora sin error 500, solo no aplica el cambio.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado'])) {
     requerirCSRF($_POST['_token'] ?? '', 'vacaciones.php');
-    $vid    = intval($_POST['vacacion_id']);
+    // [FIX-TIPO-ARRAY-ID] intval() sobre un array no truena, se coacciona en silencio a
+    // 1/0 -- sin este guard, "vacacion_id[]=x" cambiaria siempre el estado del registro
+    // real vacacion_id=1 sin importar que id se haya mandado. "nuevo_estado" no necesita
+    // el mismo guard: in_array() de mas abajo simplemente no encuentra coincidencia si
+    // llega como array, sin tronar.
+    $vid    = intval(is_scalar($_POST['vacacion_id'] ?? null) ? $_POST['vacacion_id'] : 0);
     $estado = $_POST['nuevo_estado'];
-    $estadosVal = ['Solicitado','Aprobado','Rechazado'];
+    $estadosVal = ['Aprobado','Rechazado'];
     if (in_array($estado, $estadosVal)) {
-        $pdo->prepare("UPDATE vacaciones SET estado=? WHERE vacacion_id=?")->execute([$estado, $vid]);
+        $pdo->prepare("UPDATE vacaciones SET estado=? WHERE vacacion_id=? AND estado='Solicitado'")->execute([$estado, $vid]);
     }
     header('Location: vacaciones.php?msg=actualizado');
     exit();
 }
 
-$empleadoFiltro = intval($_GET['empleado'] ?? 0);
-$anioFiltro     = intval($_GET['anio']     ?? date('Y'));
+// [FIX-TIPO-ARRAY-ID] intval() sobre un array no truena aqui, pero se deja el mismo guard
+// consistente con el resto del archivo.
+$empleadoFiltro = intval(is_scalar($_GET['empleado'] ?? null) ? $_GET['empleado'] : 0);
+$anioFiltro     = intval(is_scalar($_GET['anio'] ?? null) ? $_GET['anio'] : date('Y'));
 
 $where  = "WHERE 1=1";
 $params = [];
@@ -113,7 +134,7 @@ rsort($aniosList);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -186,7 +207,7 @@ rsort($aniosList);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Vacaciones</h2>
         </div>
         <div class="topbar-right">

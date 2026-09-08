@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -12,7 +13,11 @@ require_once '../includes/topbar_info.php';
 // Eliminar registro
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     requerirCSRF($_POST['_token'] ?? '', 'asistencia.php');
-    $idElim = intval($_POST['eliminar_id']);
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php y
+    // admin/empleados.php) intval() sobre un array no truena, se coacciona en silencio a
+    // 1/0 en vez de fallar -- sin este guard, "eliminar_id[]=x" borraria siempre el
+    // registro real asistencia_id=1 sin importar que id se haya mandado.
+    $idElim = intval(is_scalar($_POST['eliminar_id'] ?? null) ? $_POST['eliminar_id'] : 0);
     $sep = strpos($_SERVER['REQUEST_URI'], '?') !== false ? '&' : '?';
 
     // [FIX-ALTO-G-10] Antes se podia borrar cualquier registro de asistencia sin importar
@@ -41,10 +46,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
 }
 
 // Filtros
-$empleadoFiltro = intval($_GET['empleado']   ?? 0);
-$tipoFiltro     = trim($_GET['tipo']         ?? '');
-$fechaInicio    = $_GET['fecha_inicio']      ?? date('Y-m-d', strtotime('monday this week'));
-$fechaFin       = $_GET['fecha_fin']         ?? date('Y-m-d', strtotime('saturday this week'));
+// [FIX-TIPO-ARRAY-ID] Ver nota completa en admin/gastos.php: "?empleado[]=x"/"?tipo[]=x"
+// llegan como array y crashean htmlspecialchars()/trim() mas abajo con la ruta del
+// servidor expuesta, disparable con solo abrir un enlace (sin POST ni CSRF).
+$empleadoFiltro = intval(is_scalar($_GET['empleado'] ?? null) ? $_GET['empleado'] : 0);
+$tipoFiltro     = trim(is_scalar($_GET['tipo'] ?? null) ? (string)$_GET['tipo'] : '');
+$fechaInicio    = is_scalar($_GET['fecha_inicio'] ?? null) ? $_GET['fecha_inicio'] : date('Y-m-d', strtotime('monday this week'));
+$fechaFin       = is_scalar($_GET['fecha_fin']    ?? null) ? $_GET['fecha_fin']    : date('Y-m-d', strtotime('saturday this week'));
 
 $where  = "WHERE a.fecha BETWEEN ? AND ?";
 $params = [$fechaInicio, $fechaFin];
@@ -112,7 +120,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -178,7 +186,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Bitacora de Asistencia</h2>
         </div>
         <div class="topbar-right">
@@ -266,7 +274,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
                     $tfs = $tiemposFuera[$reg['asistencia_id']] ?? [];
                 ?>
                 <tr>
-                    <td style="white-space:nowrap;"><?= date('d/m/Y', strtotime($reg['fecha'])) ?><br><span style="font-size:10px;color:#aaa;"><?= ['1'=>'Lun','2'=>'Mar','3'=>'Mie','4'=>'Jue','5'=>'Vie','6'=>'Sab'][date('N', strtotime($reg['fecha']))] ?? '' ?></span></td>
+                    <td style="white-space:nowrap;"><?= date('d/m/Y', strtotime($reg['fecha'])) ?><br><span style="font-size:10px;color:#aaa;"><?= ['1'=>'Lun','2'=>'Mar','3'=>'Mie','4'=>'Jue','5'=>'Vie','6'=>'Sab','7'=>'Dom'][date('N', strtotime($reg['fecha']))] ?? '' ?></span></td>
                     <td style="font-weight:600;"><?= htmlspecialchars($reg['nombre_empleado']) ?></td>
                     <td><span class="badge-tipo <?= $reg['tipo'] === 'Asistencia normal' ? 'normal' : '' ?>"><?= htmlspecialchars($reg['tipo']) ?></span></td>
                     <td style="white-space:nowrap;">

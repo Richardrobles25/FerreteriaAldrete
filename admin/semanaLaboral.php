@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
@@ -11,17 +12,19 @@ verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
 // Semana activa: lunes a sabado
-$semanaParam = trim($_GET['semana'] ?? '');
+// [FIX-TIPO-ARRAY-ID] "?semana[]=x" llega como array y crashea trim() con la ruta del
+// servidor expuesta, disparable con solo abrir un enlace (sin POST ni CSRF).
+$semanaParam = trim(is_scalar($_GET['semana'] ?? null) ? (string)$_GET['semana'] : '');
 if ($semanaParam && strtotime($semanaParam)) {
     $dtLunes = new DateTime($semanaParam);
     // Asegurar que sea lunes
     $dow = (int)$dtLunes->format('N');
     if ($dow !== 1) $dtLunes->modify('last monday');
 } else {
-    $dtLunes = new DateTime();
-    $dow = (int)$dtLunes->format('N');
-    if ($dow === 7) $dtLunes->modify('+1 day');
-    elseif ($dow !== 1) $dtLunes->modify('last monday');
+    // [FIX-ADELANTO-LIMITE-SEMANA] Se centraliza en lunesDeLaSemana() (rh_helpers.php) para
+    // que adelantos.php use exactamente este mismo criterio al determinar "la semana en
+    // curso" -- antes cada uno lo calculaba por su cuenta y en domingo daban semanas distintas.
+    $dtLunes = new DateTime(lunesDeLaSemana(date('Y-m-d')));
 }
 $dtSabado = (clone $dtLunes)->modify('+5 days');
 
@@ -67,6 +70,12 @@ $stmtEmp = $pdo->prepare("
 $stmtEmp->execute([$lunes, $fechaCorte, $lunes]);
 $empleados = $stmtEmp->fetchAll(PDO::FETCH_ASSOC);
 
+// [FIX-HORARIO-PERSONALIZADO] horasEsperadasDia() ahora requiere el horas_por_dia de CADA
+// empleado (ya no es un valor unico del sistema) -- se arma un mapa empleado_id -> horas_por_dia
+// a partir de $empleados (que ya trae la columna via "SELECT DISTINCT e.*") para usarlo en la
+// agregacion de asistencia de abajo, sin volver a consultar la BD por cada renglon.
+$horasPorDiaMap = array_column($empleados, 'horas_por_dia', 'empleado_id');
+
 // [FIX-MEDIO-G-25] Antes la regla de "horas esperadas por dia" estaba repetida aqui como un
 // CASE SQL propio (y, por venir de DAYOFWEEK(), en realidad trataba domingo igual que un dia
 // entre semana -- 9h -- en vez de las 0h que ya establecio el fix G-05 en formAsistencia.php).
@@ -87,17 +96,29 @@ foreach ($stmtA->fetchAll(PDO::FETCH_ASSOC) as $row) {
             'total_extra'            => 0.0,
             'total_registros'        => 0,
             'total_horas_trabajadas' => 0.0,
+            'total_esperadas'        => 0.0,
             'dias_normales'          => 0,
             'dias_falta'             => 0,
         ];
     }
     $hnt = floatval($row['horas_no_trabajadas']);
     $he  = floatval($row['horas_extra']);
+    $horasPorDiaEid = floatval($horasPorDiaMap[$eid] ?? 9);
+    $esperadaDia    = horasEsperadasDia($row['fecha'], $horasPorDiaEid);
     $asistenciaMap[$eid]['total_no_trabajadas'] += $hnt;
     $asistenciaMap[$eid]['total_extra']         += $he;
     $asistenciaMap[$eid]['total_registros']++;
+    // total_esperadas se acumula para TODOS los registros (incluyendo Falta): es la suma de
+    // "lo que se esperaba trabajar" en cada dia que ya tiene registro, y es el punto de
+    // comparacion real para saber si el empleado ya supero o no su jornada -- NO
+    // horas_esperadas_semana, que solo sirve como divisor para la tarifa por hora (ver
+    // tarifa mas abajo). Un empleado sin ningun incidente (todo "Asistencia normal") siempre
+    // cierra con total_horas_trabajadas === total_esperadas, sin importar que tan distinto
+    // sea horas_esperadas_semana de horas_por_dia*6 -- por eso pagoFinal = sueldo exacto en
+    // una semana sin incidentes pase lo que pase con esos dos campos.
+    $asistenciaMap[$eid]['total_esperadas'] += $esperadaDia;
     if ($row['tipo'] !== 'Falta') {
-        $asistenciaMap[$eid]['total_horas_trabajadas'] += horasEsperadasDia($row['fecha']) - $hnt + $he;
+        $asistenciaMap[$eid]['total_horas_trabajadas'] += $esperadaDia - $hnt + $he;
     }
     if ($row['tipo'] === 'Asistencia normal') $asistenciaMap[$eid]['dias_normales']++;
     if ($row['tipo'] === 'Falta')             $asistenciaMap[$eid]['dias_falta']++;
@@ -113,11 +134,17 @@ $totalFinal = 0;
 foreach ($empleados as $emp) {
     $eid    = $emp['empleado_id'];
     $sueldo = floatval($emp['sueldo_semanal']);
-    $tarifa = $sueldo / 51;
+    // [FIX-HORARIO-PERSONALIZADO] Antes /51 asumia la misma jornada semanal para TODOS los
+    // empleados. Ahora la tarifa por hora (y por lo tanto el umbral de 1.5x) se calcula sobre
+    // las horas esperadas semanales propias de este empleado. Guardia contra division entre 0
+    // por si el valor llegara nulo/invalido directo en la BD (el formulario ya bloquea <= 0).
+    $horasEsperadasSemana = floatval($emp['horas_esperadas_semana']);
+    $tarifa = $horasEsperadasSemana > 0 ? $sueldo / $horasEsperadasSemana : 0.0;
 
     $horasNT         = floatval($asistenciaMap[$eid]['total_no_trabajadas']  ?? 0);
     $horasExtra      = floatval($asistenciaMap[$eid]['total_extra']          ?? 0);
     $horasTrabajadas = floatval($asistenciaMap[$eid]['total_horas_trabajadas'] ?? 0);
+    $horasEsperadasAcum = floatval($asistenciaMap[$eid]['total_esperadas']   ?? 0);
     $diasNormales    = intval($asistenciaMap[$eid]['dias_normales']          ?? 0);
     $diasFalta       = intval($asistenciaMap[$eid]['dias_falta']             ?? 0);
     $totalReg        = intval($asistenciaMap[$eid]['total_registros']        ?? 0);
@@ -139,6 +166,17 @@ foreach ($empleados as $emp) {
     $bono       = round($horasExtraNeta   * $tarifa * 1.5, 2);
     $pagoFinal  = round($sueldo - $deduccion + $bono,      2);
 
+    // [FIX-ASISTENCIA-FALTANTE] Si un dia no tiene NINGUN registro (ni siquiera "Asistencia
+    // normal"), antes no se restaba nada por el -- el default era pagar como si el dia se
+    // hubiera trabajado perfecto. Confirmado con el usuario: todo dia laboral debe tener un
+    // registro (aunque sea normal); un dia sin nada es sospechoso, no "todo bien por default".
+    // Probado en vivo: dos empleados con CERO registros en toda una semana ya cerrada salian
+    // con "Ajuste: —" y "Pago final" su sueldo completo, sin ningun aviso. Se cuentan los dias
+    // que ya debieron tener registro (para una semana en curso, solo hasta hoy; para una
+    // cerrada, los 6) contra cuantos registros realmente existen -- si faltan, se bloquea el
+    // pago mas abajo en vez de asumir que esos dias estuvieron bien.
+    $diasFaltantes = max(0, $diasTranscurridos - $totalReg);
+
     $totalSueldos     += $sueldo;
     $totalDeducciones += $deduccion;
     $totalBonos       += $bono;
@@ -149,6 +187,8 @@ foreach ($empleados as $emp) {
         'empleado'         => $emp['nombre'],
         'activo'           => intval($emp['activo']),
         'sueldo'           => $sueldo,
+        'horas_esperadas_semana' => $horasEsperadasSemana,
+        'horas_esperadas_acum' => round($horasEsperadasAcum, 2),
         'horas_trabajadas' => round($horasTrabajadas, 2),
         'dias_normales'    => $diasNormales,
         'dias_falta'       => $diasFalta,
@@ -162,6 +202,7 @@ foreach ($empleados as $emp) {
         'deduccion'        => $deduccion,
         'bono'             => $bono,
         'pago_final'       => $pagoFinal,
+        'dias_faltantes'   => $diasFaltantes,
     ];
 }
 
@@ -189,13 +230,19 @@ foreach ($stmtVac->fetchAll(PDO::FETCH_ASSOC) as $vr) {
 // TODO adelanto todavia 'Pendiente' del empleado (sin importar en que semana se tomo), asi
 // que un saldo no cubierto sigue apareciendo — y descontandose — en las semanas
 // siguientes hasta quedar liquidado por completo.
+// [FIX-ADELANTO-FECHA-FUTURA] "TODO adelanto Pendiente" no filtraba por fecha en absoluto: un
+// adelanto tomado HOY aparecia igual al ver una semana de hace un mes, antes de que ese
+// prestamo existiera -- cronologicamente imposible (no se le puede descontar de un sueldo que
+// ya se calculo/reviso antes de que se le prestara el dinero). Se agrega "fecha <= sabado de
+// la semana que se esta viendo": un adelanto solo cuenta para una semana si ya existia para
+// cuando esa semana termino.
 $stmtAdel = $pdo->prepare("
     SELECT empleado_id, SUM(monto) AS total
     FROM adelantos_sueldo
-    WHERE estado = 'Pendiente'
+    WHERE estado = 'Pendiente' AND fecha <= ?
     GROUP BY empleado_id
 ");
-$stmtAdel->execute();
+$stmtAdel->execute([$sabado]);
 $adelantosMap = [];
 foreach ($stmtAdel->fetchAll(PDO::FETCH_ASSOC) as $ar) {
     $adelantosMap[$ar['empleado_id']] = floatval($ar['total']);
@@ -204,11 +251,38 @@ foreach ($stmtAdel->fetchAll(PDO::FETCH_ASSOC) as $ar) {
 // Registrar pago de nomina (se coloca aqui porque necesita $filas y $adelantosMap ya calculados)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pagar_empleado'])) {
     requerirCSRF($_POST['_token'] ?? '', 'semanaLaboral.php');
-    $eidPago = intval($_POST['empleado_id']);
+    // [FIX-TIPO-ARRAY-ID] intval() sobre un array no truena, se coacciona en silencio a
+    // 1/0 -- sin este guard, "empleado_id[]=x" pagaria siempre nomina al empleado real
+    // empleado_id=1 sin importar que id se haya mandado.
+    $eidPago = intval(is_scalar($_POST['empleado_id'] ?? null) ? $_POST['empleado_id'] : 0);
+
+    // [FIX-PAGO-MITAD-SEMANA] Pagar antes de que la semana termine ($semanaCompleta=false)
+    // prorateaba el sueldo asumiendo que los dias restantes (jueves/viernes/sabado, en el
+    // caso de pagar en miercoles) nunca se iban a trabajar -- pero formAsistencia.php bloquea
+    // CUALQUIER asistencia nueva de una semana en cuanto existe un pago para ese empleado, sin
+    // distinguir un pago parcial de uno final. Si el empleado si trabajaba esos dias, nunca
+    // habia forma de registrar esa asistencia ni de pagarle lo que faltaba -- el candado
+    // (UNIQUE empleado+semana) que evita pagar dos veces tambien bloqueaba un pago legitimo
+    // de la parte restante. Probado en vivo: pagar en miercoles bloqueaba registrar hasta la
+    // asistencia del propio miercoles. El usuario confirmo que su necesidad real (dar dinero a
+    // cuenta antes de que termine la semana) ya la cubre adelantos.php -- ese flujo no se toca
+    // aqui, sigue igual. Se restringe "Pagar" a solo la semana ya completa (sabado).
+    if (!$semanaCompleta) {
+        header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=semana_incompleta');
+        exit();
+    }
 
     $filaPago = null;
     foreach ($filas as $f) {
         if ($f['empleado_id'] === $eidPago) { $filaPago = $f; break; }
+    }
+
+    // [FIX-ASISTENCIA-FALTANTE] No se paga si faltan dias de la semana sin ningun registro de
+    // asistencia (ver calculo de $diasFaltantes mas arriba) -- pagar sueldo completo sin saber
+    // si esos dias se trabajaron es exactamente el bug que se corrige aqui.
+    if ($filaPago && $filaPago['dias_faltantes'] > 0) {
+        header('Location: semanaLaboral.php?semana=' . $lunes . '&msg=dias_faltantes');
+        exit();
     }
 
     if ($filaPago) {
@@ -313,7 +387,7 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -381,7 +455,7 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Semana Laboral</h2>
         </div>
         <div class="topbar-right">
@@ -397,6 +471,10 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
             <div class="msg" style="background:#fff9e6;color:#b7860b;border-left:3px solid #f0b429;">Este empleado ya tiene un pago registrado para esta semana.</div>
         <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'error_pago'): ?>
             <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">No se pudo registrar el pago por un error del sistema. NO quedó guardado — intenta de nuevo antes de dar por pagado a este empleado.</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'semana_incompleta'): ?>
+            <div class="msg" style="background:#fff9e6;color:#b7860b;border-left:3px solid #f0b429;">No se puede pagar una semana que aún está en curso — espera a que termine el sábado. Si necesitas darle dinero antes, usa "Adelantos de sueldo".</div>
+        <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'dias_faltantes'): ?>
+            <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">No se puede pagar: a este empleado le faltan días sin registrar en Asistencia. Captura todos los días de la semana (aunque sea "Asistencia normal") antes de pagarle.</div>
         <?php endif; ?>
 
         <!-- Navegacion de semana -->
@@ -476,6 +554,7 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                     <td>
                         <?php if ($f['total_reg'] > 0): ?>
                             <span style="font-weight:700;color:#222;"><?= number_format($f['horas_trabajadas'], 2) ?> h</span>
+                            <span style="font-size:10px;color:#999;" title="Suma de las horas esperadas (segun horas/dia del empleado) de los dias ya registrados esta semana"> / <?= number_format($f['horas_esperadas_acum'], 2) ?> h esperadas</span>
                             <div style="font-size:10px;color:#aaa;margin-top:2px;">
                                 <?= $f['total_reg'] ?> d&iacute;a<?= $f['total_reg'] != 1 ? 's' : '' ?> registrados
                                 <?= $f['dias_falta'] > 0 ? ' · <span style="color:#c0392b;">' . $f['dias_falta'] . ' falta' . ($f['dias_falta'] > 1 ? 's' : '') . '</span>' : '' ?>
@@ -532,9 +611,24 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                         <?php if ($pagoReg): ?>
                             <div class="pagado-chip">&#10003; Pagado $<?= number_format($pagoReg['monto_pagado'], 2) ?></div>
                             <div class="pagado-fecha"><?= date('d/m/Y H:i', strtotime($pagoReg['pagado_en'])) ?></div>
+                        <?php elseif (!$semanaCompleta): ?>
+                            <!-- [FIX-PAGO-MITAD-SEMANA] Ya no se ofrece pagar una semana en curso: una
+                                 vez pagada (aunque fuera parcial), formAsistencia.php bloqueaba
+                                 cualquier asistencia nueva de esa semana para este empleado, sin
+                                 forma de registrar ni cobrarle los dias que faltaban si si los
+                                 trabajaba. Quien necesite darle dinero antes de que cierre la semana
+                                 ya tiene "Adelantos de sueldo" para eso, sin este problema. -->
+                            <span style="font-size:11px;color:#aaa;" title="Podras pagarle hasta que la semana termine el sabado. Si necesita dinero antes, usa Adelantos de sueldo.">Semana en curso</span>
+                        <?php elseif ($f['dias_faltantes'] > 0): ?>
+                            <!-- [FIX-ASISTENCIA-FALTANTE] Sin este bloqueo, un empleado sin ningun
+                                 registro de asistencia se pagaba completo por default (el sistema
+                                 asumia "sin registros = todo normal" en vez de "sin registros =
+                                 nadie lo confirmo"). Confirmado con el usuario: todo dia laboral debe
+                                 tener su registro, aunque sea "Asistencia normal". -->
+                            <span style="font-size:11px;color:#c0392b;font-weight:600;" title="Captura la asistencia de los dias que faltan (aunque sea Asistencia normal) antes de poder pagarle.">Faltan <?= $f['dias_faltantes'] ?> día<?= $f['dias_faltantes'] != 1 ? 's' : '' ?> por registrar</span>
                         <?php else: ?>
                             <form method="POST" style="display:inline;"
-                                  onsubmit="return confirm('¿Registrar pago de $<?= number_format($aPagar, 2) ?> a <?= htmlspecialchars(addslashes($f['empleado']), ENT_QUOTES) ?> por la semana <?= $etiquetaSemana ?>?<?= $adelantoRecuperadoFila > 0.001 ? ' Se descuenta $' . number_format($adelantoRecuperadoFila, 2) . ' de adelanto' . ($adelantoRestanteFila > 0.001 ? ' (quedan $' . number_format($adelantoRestanteFila, 2) . ' pendientes para la siguiente semana).' : ' y quedara liquidado.') : '' ?><?= !$semanaCompleta ? ' OJO: la semana aun esta en curso, el calculo es parcial.' : '' ?>')">
+                                  onsubmit="return confirm('¿Registrar pago de $<?= number_format($aPagar, 2) ?> a <?= htmlspecialchars(addslashes($f['empleado']), ENT_QUOTES) ?> por la semana <?= $etiquetaSemana ?>?<?= $adelantoRecuperadoFila > 0.001 ? ' Se descuenta $' . number_format($adelantoRecuperadoFila, 2) . ' de adelanto' . ($adelantoRestanteFila > 0.001 ? ' (quedan $' . number_format($adelantoRestanteFila, 2) . ' pendientes para la siguiente semana).' : ' y quedara liquidado.') : '' ?>')">
                                 <input type="hidden" name="pagar_empleado" value="1">
                                 <input type="hidden" name="empleado_id" value="<?= $f['empleado_id'] ?>">
                                 <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
@@ -560,7 +654,7 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
         </div>
 
         <div style="margin-top:12px;font-size:11px;color:#aaa;padding:0 4px;">
-            * Semana de lunes a sabado (51 hrs). El ajuste se calcula asi: las horas extra primero recuperan las horas debidas (compensadas); si aun debe horas se descuentan (sueldo/51 por hora) y si le sobran extras se pagan a 1.5x.
+            * Semana de lunes a sabado. Cada empleado tiene su propia meta de horas semanales (columna "Horas esperadas" en su ficha) que define su tarifa por hora. El ajuste se calcula asi: las horas extra primero recuperan las horas debidas (compensadas); si aun debe horas se descuentan (sueldo &divide; horas esperadas semanales del empleado) y si le sobran extras sobre su meta se pagan a 1.5x esa tarifa.
         </div>
     </div>
 </div>

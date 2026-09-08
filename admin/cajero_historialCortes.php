@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -97,7 +98,7 @@ $totalVentas  = array_sum(array_column($cortes, 'total_ventas'));
 $totalCobrado = array_sum(array_column($cortes, 'total_cobrado'));
 
 // Corte seleccionado para ver detalle
-$verCorte   = intval($_GET['ver'] ?? 0);
+$verCorte   = intval(is_scalar($_GET['ver'] ?? null) ? $_GET['ver'] : 0);
 $detalleCorte = null;
 $detalleVentas = [];
 
@@ -159,7 +160,7 @@ if ($verCorte) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -172,8 +173,8 @@ if ($verCorte) {
     .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 13px; margin-bottom: 13px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
     .filtro-group { display: flex; flex-direction: column; gap: 4px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
-    .filtro-group input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
-    .filtro-group input:focus { outline: none; border-color: #14ace7; }
+    .filtro-group input, .filtro-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+    .filtro-group input:focus, .filtro-group select:focus { outline: none; border-color: #14ace7; }
     .btn-filtrar { background: #14ace7; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
     .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
     .corte-item { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 16px; margin-bottom: 10px; cursor: pointer; transition: border-color 0.15s; }
@@ -238,7 +239,7 @@ if ($verCorte) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Historial de cortes</h2>
         </div>
         <div class="topbar-right">
@@ -265,8 +266,8 @@ if ($verCorte) {
                     </div>
                     <button class="btn-filtrar" type="submit">Filtrar</button>
                     <?php if ($fecha): ?><a class="btn-limpiar" href="cajero_historialCortes.php">Limpiar</a><?php endif; ?>
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                    <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:9px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
                 </div>
             </form>
 
@@ -344,7 +345,7 @@ if ($verCorte) {
                     <?php if ($detalleCorte['estado'] === 'Cerrada' && $detalleCorte['diferencia'] === null): ?>
                     <div class="det-seccion">
                         <h4>Resultado del corte</h4>
-                        <div class="dif-box faltante">⚠ Cierre automático — no se registró un conteo de efectivo para este turno.</div>
+                        <div class="dif-box faltante"><?= icono('triangle-alert') ?> Cierre automático — no se registró un conteo de efectivo para este turno.</div>
                     </div>
                     <?php elseif ($detalleCorte['estado'] === 'Cerrada'): ?>
                     <div class="det-seccion">
@@ -354,7 +355,7 @@ if ($verCorte) {
                         <?php
                             $dif = floatval($detalleCorte['diferencia']??0);
                             $difBoxClass = $dif==0?'cuadrado':($dif<0?'faltante':'sobrante');
-                            $difBoxLabel = $dif==0?'✅ Caja cuadrada':($dif<0?'⚠ Faltante: $'.number_format(abs($dif),2):'📌 Sobrante: $'.number_format($dif,2));
+                            $difBoxLabel = $dif==0?icono('circle-check-big').' Caja cuadrada':($dif<0?icono('triangle-alert').' Faltante: $'.number_format(abs($dif),2):icono('pin').' Sobrante: $'.number_format($dif,2));
                         ?>
                         <div class="dif-box <?= $difBoxClass ?>"><?= $difBoxLabel ?></div>
                     </div>

@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -85,11 +86,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requerirCSRF($_POST['_token'] ?? '', 'cajero_corteCaja.php');
     // Verificar que el campo no esté vacío antes de convertir a float.
     // floatval('') = 0.0, lo que permitía cerrar sin escribir nada.
-    $monto_cierre_raw = $_POST['monto_cierre'] ?? '';
+    $monto_cierre_raw = is_scalar($_POST['monto_cierre'] ?? null) ? $_POST['monto_cierre'] : '';
     // [FIX-MEDIO-D3-09] Antes se guardaba en la MISMA columna "observaciones" que ya
     // tenia las notas de apertura, borrandolas sin dejar rastro. Ahora las de cierre van
     // a su propia columna (observaciones_cierre) y las de apertura ya no se tocan.
-    $observaciones_cierre = trim($_POST['observaciones'] ?? '');
+    $observaciones_cierre = trim(is_scalar($_POST['observaciones'] ?? null) ? (string)$_POST['observaciones'] : '');
 
     if ($monto_cierre_raw === '') {
         $errores[] = 'El monto contado es obligatorio. Escribe la cantidad que encontraste en caja.';
@@ -164,7 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -220,7 +221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Corte de Caja — <?= htmlspecialchars($nombreSucursalVista) ?></h2>
         </div>
         <div class="topbar-right">
@@ -242,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <?php if ($ventasPendientes > 0): ?>
                 <div class="alerta-pend">
-                    ⚠ Tienes <strong><?= $ventasPendientes ?></strong> venta(s) pendiente(s) sin liquidar.
+                    <?= icono('triangle-alert') ?> Tienes <strong><?= $ventasPendientes ?></strong> venta(s) pendiente(s) sin liquidar.
                     <a href="cajero_ventasPendientes.php" style="color:#1565c0;font-weight:700;margin-left:6px;">Ver</a>
                 </div>
                 <?php endif; ?>
@@ -341,7 +342,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msgsCorte = [
                     'error_token' => 'Tu sesión expiró o la página estuvo abierta demasiado tiempo. Recarga la página e intenta cerrar la caja de nuevo.',
                 ];
-                $msgCorte = $_GET['msg'] ?? '';
+                $msgCorte = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : '';
                 ?>
                 <?php if (isset($msgsCorte[$msgCorte])): ?>
                     <div class="errores"><?= htmlspecialchars($msgsCorte[$msgCorte]) ?></div>

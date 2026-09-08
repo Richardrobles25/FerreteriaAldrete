@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -10,10 +11,10 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-if ($sucursalVista === 0) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
-    exit();
-}
+// [FIX-CAJA-REDIRECT-AJAX] El redirect por sucursalVista===0 (vista "Todas las sucursales",
+// donde no puede haber una caja especifica que operar) ya NO vive aqui arriba — se aplica mas
+// abajo, junto con el redirect por falta de caja abierta, DESPUES de los bloques AJAX. Ver el
+// comentario junto a ese redirect para el detalle completo del bug que esto corrige.
 
 // [FIX-QUINCENA-FIJA] Los cortes de credito NO son "15 dias despues de hoy" (rodante) sino
 // fechas fijas de calendario: el dia 15 y el ultimo dia de cada mes, iguales para todos los
@@ -81,6 +82,19 @@ try {
         // pudo haber liquidado el credito, mientras esta esperaba.
         if (!$credLock || $credLock['estado'] !== 'Vencido') continue;
 
+        // [FIX-MORA-SALDO-CERO] (espejo de admin/creditos.php) Un credito puede quedar en
+        // estado='Vencido' con saldo_pendiente ya en 0 (ej. un abono que salda el total sin
+        // cambiar el estado a la vez). Sin este guardia, el while de abajo seguia iterando en
+        // cada carga de pagina calculando mora=round(0*pct,2)=0.00 e insertando una fila de
+        // movimientos_mora por cada quincena vencida -- pero como "$ultimaMora > 0" nunca se
+        // cumple, el UPDATE que avanza fecha_limite jamas se ejecutaba, asi que las MISMAS
+        // quincenas se volvian a procesar (e insertar) en cada visita, para siempre.
+        if (floatval($credLock['saldo_pendiente']) <= 0) {
+            $pdo->prepare("UPDATE creditos SET estado = 'Liquidado' WHERE credito_id = ?")
+                ->execute([$cm['credito_id']]);
+            continue;
+        }
+
         $pct               = floatval($cm['porcentaje_mora']);
         $saldoActual       = round(floatval($credLock['saldo_pendiente']), 2);
         $fechaLimiteActual = $credLock['fecha_limite'];
@@ -110,19 +124,19 @@ try {
     error_log('[Ferreteria/creditos] Error al aplicar mora: ' . $e->getMessage());
 }
 
-// Caja abierta del usuario actual EN LA SUCURSAL ELEGIDA — si no hay, redirigir a abrirCaja
+// Caja abierta del usuario actual EN LA SUCURSAL ELEGIDA (se usa mas abajo en la pagina; el
+// redirect por falta de caja se aplica DESPUES de los bloques AJAX — ver [FIX-CAJA-REDIRECT-AJAX]
+// junto al include de _admin_sucursal_filtro.php arriba). Con sucursalVista=0 ("Todas las
+// sucursales") esta consulta nunca encuentra caja (sucursal_id=0 no existe), asi que el mismo
+// redirect de abajo cubre tambien ese caso sin necesitar un chequeo aparte.
 $stmtCajaCheck = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
 $stmtCajaCheck->execute([$_SESSION['usuario_id'], $sucursalVista]);
 $cajaAbiertaId = $stmtCajaCheck->fetchColumn() ?: null;
-if (!$cajaAbiertaId) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
-    exit();
-}
 
 // AJAX: historial de pagos de un cliente (todos sus créditos)
 if (isset($_GET['get_abonos_cliente'])) {
     header('Content-Type: application/json');
-    $cliente_id = intval($_GET['get_abonos_cliente']);
+    $cliente_id = intval(is_scalar($_GET['get_abonos_cliente'] ?? null) ? $_GET['get_abonos_cliente'] : 0);
     // [AUTOFIX] BUG-05: Validar que el ID sea positivo antes de consultar
     if ($cliente_id <= 0) { echo json_encode([]); exit(); }
     $stmt = $pdo->prepare("
@@ -145,8 +159,16 @@ if (isset($_GET['get_abonos_cliente'])) {
 // AJAX: registrar pago (distribuye automáticamente a créditos del más antiguo al más reciente)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'registrar_abono') {
     header('Content-Type: application/json');
-    // [AUTOFIX] BUG-01: Verificar token CSRF antes de procesar el pago
-    requerirCSRF($_POST['_token'] ?? '', 'cajero_creditos.php');
+    // [FIX-CSRF-AJAX-CREDITOS] Este formulario SIEMPRE se envia por fetch() (submitAbono()
+    // hace e.preventDefault(), nunca navega). requerirCSRF() hace un redirect Location: en
+    // vez de responder JSON -- el fetch().then(r=>r.json()) del cliente truena al intentar
+    // parsear el 302 como JSON y cae en el .catch() generico ("Error de conexion"), sin
+    // decirle al cajero que su token expiro y debe recargar. Mismo patron ya corregido en
+    // cajero_nuevaVenta.php (FIX-A1): usar verificarCSRF() y responder JSON directamente.
+    if (!verificarCSRF($_POST['_token'] ?? '')) {
+        echo json_encode(['ok' => false, 'error' => 'Token de seguridad inválido. Recarga la página e intenta de nuevo.']);
+        exit();
+    }
     try {
         // Caja abierta obligatoria, en la sucursal que se esta viendo/operando
         if ($sucursalVista === 0) throw new Exception('Selecciona una sucursal específica para registrar un pago.');
@@ -155,13 +177,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         $cajaIdAb = $stmtCajaAb->fetchColumn();
         if (!$cajaIdAb) throw new Exception('No hay caja abierta. Abre la caja antes de registrar un pago.');
 
-        $cliente_id = intval($_POST['cliente_id'] ?? 0);
-        $monto      = floatval($_POST['monto'] ?? 0);
-        $metodo     = $_POST['metodo_pago'] ?? '';
-        $notas      = trim($_POST['notas'] ?? '');
-        $referencia = trim($_POST['referencia'] ?? '');
-        $monto_ef   = floatval($_POST['monto_efectivo'] ?? 0);
-        $monto_term = floatval($_POST['monto_terminal'] ?? 0);
+        // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php) un campo
+        // mandado como array truena trim()/htmlspecialchars() o se coacciona en silencio.
+        $cliente_id = intval(is_scalar($_POST['cliente_id'] ?? null) ? $_POST['cliente_id'] : 0);
+        $monto      = floatval(is_scalar($_POST['monto'] ?? null) ? $_POST['monto'] : 0);
+        $metodo     = is_scalar($_POST['metodo_pago'] ?? null) ? $_POST['metodo_pago'] : '';
+        $notas      = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+        $referencia = trim(is_scalar($_POST['referencia'] ?? null) ? (string)$_POST['referencia'] : '');
+        $monto_ef   = floatval(is_scalar($_POST['monto_efectivo'] ?? null) ? $_POST['monto_efectivo'] : 0);
+        $monto_term = floatval(is_scalar($_POST['monto_terminal'] ?? null) ? $_POST['monto_terminal'] : 0);
 
         if ($monto <= 0) throw new Exception('El monto debe ser mayor a 0.');
         if (!in_array($metodo, ['Efectivo','Terminal','Transferencia','Mixto'])) throw new Exception('Selecciona el método de pago.');
@@ -225,24 +249,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
 
         // Aplicar FIFO: liquidar créditos del más antiguo al más reciente
         // [FIX-MORA-QUINCENAL] Un abono parcial ya NO regresa el crédito a "Activo" ni le
-        // toca fecha_limite/mora_acumulada — el crédito fiado sigue viéndose "Vencido" (si ya
-        // lo estaba) hasta liquidarse por completo. La fecha_limite es ahora exclusivamente
-        // el reloj de la mora quincenal (ver bloque de arriba), independiente de los abonos.
-        $restante = $monto;
+        // toca fecha_limite — el crédito fiado sigue viéndose "Vencido" (si ya lo estaba)
+        // hasta liquidarse por completo. La fecha_limite es ahora exclusivamente el reloj de
+        // la mora quincenal (ver bloque de arriba), independiente de los abonos.
+        // [FIX-MORA-BADGE-ABONO] mora_acumulada SI se limpia con cada abono (a diferencia de
+        // fecha_limite): es solo un campo de despliegue ("la ultima mora que se cobro"), no un
+        // saldo aparte — el saldo real ya vive completo en saldo_pendiente. Sin este reset, el
+        // badge "Mora actual: +$X" en el modal se quedaba mostrando la mora vieja despues de
+        // pagar, aunque el saldo ya bajara correctamente, dando la impresion de que el abono no
+        // toco nada de la mora. El historial completo de mora (tabla movimientos_mora, ver abajo)
+        // no se toca -- sigue intacto para consulta.
+        $restante        = $monto;
+        // [FIX-COMISION-REDONDEO] (espejo de cajeroInventario/creditos.php): round() por
+        // separado en cada credito perdia centavos frente al comisionTotal realmente cobrado
+        // (movimientos_caja). Se acumula lo ya asignado y al ULTIMO credito de este abono se le
+        // da el resto exacto en vez de su propio round().
+        $comisionAsignada = 0.0;
         foreach ($creditsRows as $cr) {
             if ($restante <= 0.001) break;
             $pagoEste    = min($restante, floatval($cr['saldo_pendiente']));
             $nuevoSaldo  = max(0, floatval($cr['saldo_pendiente']) - $pagoEste);
             $seLiquida   = $nuevoSaldo <= 0.001;
-            $comisionEste = ($monto > 0 && $comisionTotal > 0) ? round($comisionTotal * $pagoEste / $monto, 2) : 0;
+            $esUltimoPago = ($restante - $pagoEste) <= 0.001;
+            if ($monto <= 0 || $comisionTotal <= 0) {
+                $comisionEste = 0;
+            } elseif ($esUltimoPago) {
+                $comisionEste = round($comisionTotal - $comisionAsignada, 2);
+            } else {
+                $comisionEste = round($comisionTotal * $pagoEste / $monto, 2);
+            }
+            $comisionAsignada += $comisionEste;
 
             $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
                 ->execute([$cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $comisionEste, $metodo, $notas]);
             if ($seLiquida) {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado', mora_acumulada = 0 WHERE credito_id = ?")
                     ->execute([$cr['credito_id']]);
             } else {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ? WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, mora_acumulada = 0 WHERE credito_id = ?")
                     ->execute([$nuevoSaldo, $cr['credito_id']]);
             }
 
@@ -286,9 +330,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
 if (isset($_GET['get_creditos_cliente'])) {
     header('Content-Type: application/json');
     // [AUTOFIX] BUG-05: Validar que el ID sea positivo antes de consultar
-    if (intval($_GET['get_creditos_cliente']) <= 0) { echo json_encode([]); exit(); }
+    $getCreditosClienteRaw = is_scalar($_GET['get_creditos_cliente'] ?? null) ? $_GET['get_creditos_cliente'] : 0;
+    if (intval($getCreditosClienteRaw) <= 0) { echo json_encode([]); exit(); }
     try {
-        $cliente_id = intval($_GET['get_creditos_cliente']);
+        $cliente_id = intval($getCreditosClienteRaw);
         $stmt = $pdo->prepare("
             SELECT cr.credito_id, cr.monto_total, cr.saldo_pendiente, cr.mora_acumulada, cr.estado,
                    cr.created_at, cr.fecha_limite,
@@ -355,6 +400,21 @@ if (isset($_GET['get_creditos_cliente'])) {
     exit();
 }
 
+// [FIX-CAJA-REDIRECT-AJAX] El redirect por sucursalVista=0 o por falta de caja abierta vive
+// aqui (despues de los 3 bloques AJAX de arriba), no antes — un redirect ahi arriba se
+// ejecutaba ANTES de que get_abonos_cliente/registrar_abono/get_creditos_cliente pudieran
+// correr, rompiendo su contrato JSON (el fetch().then(r=>r.json()) del cliente intentaba
+// parsear el HTML de cajero_abrirCaja.php y caia en el .catch() generico). Reproducido en
+// vivo: un usuario sin caja abierta (o un Administrador viendo "Todas las sucursales")
+// llamando estos endpoints directo recibia 302 en vez de JSON. registrar_abono ya tiene su
+// propio chequeo de sucursalVista/caja que SI responde JSON (mas abajo, dentro de su
+// try/catch) — nunca se alcanzaba porque este redirect corria primero. Mismo patron ya
+// corregido para CSRF en FIX-CSRF-AJAX-CREDITOS, y espejado en cajeroInventario/creditos.php.
+if (!$cajaAbiertaId) {
+    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    exit();
+}
+
 // Clientes con deuda activa (globales — un cliente puede tener créditos en varias sucursales)
 $stmt = $pdo->prepare("
     SELECT c.cliente_id, c.nombre_completo, c.telefono, c.activo,
@@ -413,7 +473,7 @@ $totales = $pdo->query("
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -560,7 +620,7 @@ $totales = $pdo->query("
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Créditos de clientes (global) — operando en <?= htmlspecialchars($nombreSucursalVista) ?></h2>
         </div>
         <div class="topbar-right">
@@ -798,7 +858,7 @@ $totales = $pdo->query("
 
                 <!-- Terminal -->
                 <div class="ab-panel ab-panel-terminal ab-campos-pago" id="abCamposTerminal">
-                    <h4>💳 Comisión de terminal</h4>
+                    <h4><?= icono('credit-card') ?> Comisión de terminal</h4>
                     <?php if ($comisionPct > 0): ?>
                         <div class="ab-dato"><span>Porcentaje</span><span style="color:#1565c0;"><?= number_format($comisionPct,2) ?>%</span></div>
                         <div class="ab-dato"><span>Comisión (cargo extra)</span><span id="abComisionMonto" style="color:#c0392b;">$0.00</span></div>
@@ -813,7 +873,7 @@ $totales = $pdo->query("
                 <!-- Transferencia -->
                 <div class="ab-campos-pago" id="abCamposTransferencia">
                     <div class="ab-panel-trans" style="border-radius:8px;padding:11px 14px;margin-bottom:10px;">
-                        <h4>📋 Datos para transferencia</h4>
+                        <h4><?= icono('clipboard-list') ?> Datos para transferencia</h4>
                         <?php if (!empty($datosBanco['banco'])): ?>
                             <div class="ab-dato"><span>Banco</span><span><?= htmlspecialchars($datosBanco['banco']) ?></span></div>
                         <?php endif; ?>
@@ -876,6 +936,10 @@ $totales = $pdo->query("
 
 <script>
 // [AUTOFIX] BUG-01: Funciones de escape/sanitización para prevenir XSS en template literals con innerHTML
+const ICONS = <?= json_encode([
+    'checkBig' => icono('circle-check-big', '', 12),
+    'warning'  => icono('triangle-alert', '', 12),
+]) ?>;
 function esc(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function intval(n) { return parseInt(n, 10) || 0; }
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
@@ -958,8 +1022,8 @@ function abrirDetalles(clienteId, nombre) {
                 const abonado = parseFloat(cr.total_abonado || 0);
                 html += `<div class="credito-det-footer">
                     <span style="font-size:12px;color:#888;">Monto original: $${parseFloat(cr.monto_total).toFixed(2)}</span>
-                    ${abonado > 0 ? `<span style="font-size:12px;color:#2e7d32;font-weight:600;">✓ Abonado: $${abonado.toFixed(2)}</span>` : ''}
-                    ${mora > 0 ? `<span style="font-size:12px;color:#e67e22;font-weight:600;">⚠ Mora actual: +$${mora.toFixed(2)}</span>` : ''}
+                    ${abonado > 0 ? `<span style="font-size:12px;color:#2e7d32;font-weight:600;">${ICONS.checkBig} Abonado: $${abonado.toFixed(2)}</span>` : ''}
+                    ${mora > 0 ? `<span style="font-size:12px;color:#e67e22;font-weight:600;">${ICONS.warning} Mora actual: +$${mora.toFixed(2)}</span>` : ''}
                     ${saldo <= 0 ? '<span style="font-size:12px;color:#2e7d32;font-weight:600;">Liquidado</span>' : ''}
                 </div>
                 ${moraHistHtml}
@@ -1040,7 +1104,7 @@ function abrirAbonar() {
         }
         const abonadoAb = parseFloat(cr.total_abonado || 0);
         if (abonadoAb > 0) {
-            listHtml += `<div style="padding:2px 0 6px;font-size:12px;color:#2e7d32;font-weight:600;">✓ Abonado hasta ahora: $${abonadoAb.toFixed(2)}</div>`;
+            listHtml += `<div style="padding:2px 0 6px;font-size:12px;color:#2e7d32;font-weight:600;">${ICONS.checkBig} Abonado hasta ahora: $${abonadoAb.toFixed(2)}</div>`;
         }
         listHtml += '</div>';
     });

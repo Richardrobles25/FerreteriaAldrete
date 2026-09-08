@@ -66,7 +66,8 @@ function exportarPDF(
     array  $filas,
     array  $resumen      = [],
     string $orientacion  = 'L',   // L = landscape, P = portrait
-    string $nombreArchivo = ''
+    string $nombreArchivo = '',
+    array  $anchosColumnas = []   // opcional: % de ancho por columna (ej. [20,12,24,...]), deben sumar ~100
 ): void {
     if (!$nombreArchivo) {
         $nombreArchivo = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $titulo)) . '_' . date('Y-m-d') . '.pdf';
@@ -133,7 +134,7 @@ function exportarPDF(
         table  { width:100%; border-collapse:collapse; margin-top:4px; }
         thead tr { background-color:#14ace7; color:white; }
         th { padding:7px 8px; font-size:9px; text-align:left; font-weight:bold; }
-        td { padding:6px 8px; font-size:9px; border-bottom:1px solid #f0f0f0; }
+        td { padding:6px 8px; font-size:9px; border-bottom:1px solid #f0f0f0; word-wrap:break-word; }
         tr.alt td { background-color:#f5fbff; }
         tr:last-child td { border-bottom:none; }
         .total-row td { font-weight:bold; background:#eef8ff; border-top:2px solid #14ace7; }
@@ -173,9 +174,14 @@ function exportarPDF(
     }
 
     // Tabla de datos
-    $html .= "<table><thead><tr>";
-    foreach ($columnas as $col) {
-        $html .= "<th>" . htmlspecialchars(limpiarBOM($col)) . "</th>";
+    // [FIX] mPDF no soporta <colgroup>/<col> (no existe en su parser). El ancho de columna
+    // solo lo respeta si se pone como atributo/estilo "width" en las celdas <th>, y usa esa
+    // fila como referencia para todo el ancho de la tabla.
+    $html .= "<table>";
+    $html .= "<thead><tr>";
+    foreach ($columnas as $i => $col) {
+        $anchoAttr = isset($anchosColumnas[$i]) ? " width='" . (float)$anchosColumnas[$i] . "%'" : '';
+        $html .= "<th$anchoAttr>" . htmlspecialchars(limpiarBOM($col)) . "</th>";
     }
     $html .= "</tr></thead><tbody>";
 

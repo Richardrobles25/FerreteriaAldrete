@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -50,7 +51,7 @@ if ($esEdicion) {
         INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         WHERE p.producto_id = ?
     ");
-    $stmt->execute([$_SESSION['sucursal_id'], intval($_GET['id'])]);
+    $stmt->execute([$_SESSION['sucursal_id'], intval(is_scalar($_GET['id'] ?? null) ? $_GET['id'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$editando) { header('Location: productos.php'); exit(); }
 
@@ -68,23 +69,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-NC3] Verificar CSRF: este formulario no tenia ninguna validacion de token,
     // a diferencia de proveedores.php/categorias.php/unidades.php que ya la tienen.
     requerirCSRF($_POST['_token'] ?? '', 'formProducto.php');
-    $codigo           = strtoupper(trim($_POST['codigo'] ?? ''));
-    $nombre_producto  = trim($_POST['nombre_producto'] ?? '');
-    $descripcion      = trim($_POST['descripcion'] ?? '');
-    $categoria_id     = intval($_POST['categoria_id'] ?? 0) ?: null;
-    $precio_compra    = floatval(normalizarNumeroFormulario($_POST['precio_compra'] ?? 0));
-    $precio_venta     = floatval(normalizarNumeroFormulario($_POST['precio_venta'] ?? 0));
-    $precio_mayoreo   = floatval(normalizarNumeroFormulario($_POST['precio_mayoreo'] ?? 0));
-    $stock_minimo_raw = $_POST['stock_minimo'] ?? 0;
-    $stock_maximo_raw = $_POST['stock_maximo'] ?? 0;
+    $codigo           = strtoupper(trim(is_scalar($_POST['codigo'] ?? null) ? (string)$_POST['codigo'] : ''));
+    $nombre_producto  = trim(is_scalar($_POST['nombre_producto'] ?? null) ? (string)$_POST['nombre_producto'] : '');
+    $descripcion      = trim(is_scalar($_POST['descripcion'] ?? null) ? (string)$_POST['descripcion'] : '');
+    $categoria_id     = intval(is_scalar($_POST['categoria_id'] ?? null) ? $_POST['categoria_id'] : 0) ?: null;
+    $precio_compra    = floatval(normalizarNumeroFormulario(is_scalar($_POST['precio_compra'] ?? null) ? $_POST['precio_compra'] : 0));
+    $precio_venta     = floatval(normalizarNumeroFormulario(is_scalar($_POST['precio_venta'] ?? null) ? $_POST['precio_venta'] : 0));
+    $precio_mayoreo   = floatval(normalizarNumeroFormulario(is_scalar($_POST['precio_mayoreo'] ?? null) ? $_POST['precio_mayoreo'] : 0));
+    $stock_minimo_raw = is_scalar($_POST['stock_minimo'] ?? null) ? $_POST['stock_minimo'] : 0;
+    $stock_maximo_raw = is_scalar($_POST['stock_maximo'] ?? null) ? $_POST['stock_maximo'] : 0;
     $stock_minimo     = floatval(normalizarNumeroFormulario($stock_minimo_raw));
     $stock_maximo     = floatval(normalizarNumeroFormulario($stock_maximo_raw));
-    $tipo_venta       = $_POST['tipo_venta'] ?? 'Unidad';
-    $unidad_medida    = trim($_POST['unidad_medida'] ?? '');
-    $cantidad_inicial_raw = $_POST['cantidad_inicial'] ?? 0;
+    $tipo_venta       = is_scalar($_POST['tipo_venta'] ?? null) ? $_POST['tipo_venta'] : 'Unidad';
+    $unidad_medida    = trim(is_scalar($_POST['unidad_medida'] ?? null) ? (string)$_POST['unidad_medida'] : '');
+    $cantidad_inicial_raw = is_scalar($_POST['cantidad_inicial'] ?? null) ? $_POST['cantidad_inicial'] : 0;
     $cantidad_inicial = floatval(normalizarNumeroFormulario($cantidad_inicial_raw));
-    $proveedores_sel  = $_POST['proveedores'] ?? [];
-    $codigos_prov     = $_POST['codigos_prov'] ?? [];
+    $proveedores_sel  = is_array($_POST['proveedores'] ?? null) ? $_POST['proveedores'] : [];
+    $codigos_prov     = is_array($_POST['codigos_prov'] ?? null) ? $_POST['codigos_prov'] : [];
     // [FIX-CRIT] Este archivo es EDIT-ONLY (ver bloque de arriba: sin ?id= redirige de
     // inmediato) — solo el Administrador puede dar de alta productos nuevos, y esa
     // restriccion se hacia cumplir unicamente en el GET. El POST seguia confiando en
@@ -102,6 +103,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$codigo)           $errores[] = 'El código es obligatorio.';
     if (!$nombre_producto)  $errores[] = 'El nombre del producto es obligatorio.';
+    // [FIX-PRODUCTO-LARGO] productos.codigo es VARCHAR(50) y nombre_producto VARCHAR(150) sin
+    // ningun tope en el servidor (tampoco maxlength en el HTML) — un valor mas largo se
+    // truncaba en silencio y se guardaba como "editado correctamente", sin ningun aviso.
+    // Probado en vivo contra un producto real: el codigo/nombre guardado no coincidia con lo
+    // capturado. Mismo patron ya corregido en categorias.php/unidades.php/formEmpleado.php.
+    if (mb_strlen($codigo) > 50) $errores[] = 'El código no puede tener más de 50 caracteres.';
+    if (mb_strlen($nombre_producto) > 150) $errores[] = 'El nombre del producto no puede tener más de 150 caracteres.';
     if ($precio_venta <= 0) $errores[] = 'El precio de venta debe ser mayor a 0.';
     // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope tecnico
     // 99,999,999.99), pero ningun producto real de una ferreteria cuesta eso — un tope de
@@ -117,6 +125,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$producto_id && !esValorEnteroValido($cantidad_inicial_raw)) {
             $errores[] = 'La cantidad inicial solo acepta valores enteros cuando el tipo de venta es por unidad.';
         }
+    }
+    // [FIX-STOCK-MAX-FORMPRODUCTO] stock_minimo/stock_maximo son DECIMAL(10,3) (tope tecnico
+    // 9,999,999.999) sin ningun validador de tope superior — un error de dedo se guardaba
+    // truncado en silencio al maximo de la columna. Mismo tope de 999,999 que ya usa
+    // entradas.php/compras.php para el mismo campo.
+    if ($stock_minimo > 999999 || $stock_maximo > 999999) {
+        $errores[] = 'El stock mínimo/máximo no puede ser mayor a 999,999.';
     }
 
     if ($codigo) {
@@ -152,12 +167,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                          $tipo_venta,$unidad_medida ?: null,$producto_id]);
 
             // Actualizar proveedores
-            $pdo->prepare("DELETE FROM producto_proveedor WHERE producto_id = ?")->execute([$producto_id]);
+            // [FIX-PROVEEDOR-DUPLICADO] producto_proveedor no tiene restriccion UNIQUE sobre
+            // (producto_id, proveedor_id) -- elegir el mismo proveedor dos veces (autocomplete
+            // + "Agregar otro proveedor") insertaba dos filas para el mismo proveedor con
+            // distinto codigo_proveedor cada vez que se guardaba. Probado en vivo. Se
+            // deduplica por proveedor_id antes de insertar, quedandose con la ULTIMA
+            // aparicion (mismo criterio ya usado para el lote de "agregar del catalogo").
+            $proveedoresDedup = [];
             foreach ($proveedores_sel as $idx => $prov_id) {
+                $prov_id = intval($prov_id);
                 if (!$prov_id) continue;
-                $cod = $codigos_prov[$idx] ?? '';
+                $proveedoresDedup[$prov_id] = $codigos_prov[$idx] ?? '';
+            }
+            $pdo->prepare("DELETE FROM producto_proveedor WHERE producto_id = ?")->execute([$producto_id]);
+            foreach ($proveedoresDedup as $prov_id => $cod) {
                 $pdo->prepare("INSERT INTO producto_proveedor (producto_id,proveedor_id,codigo_proveedor) VALUES (?,?,?)")
-                    ->execute([$producto_id, intval($prov_id), $cod]);
+                    ->execute([$producto_id, $prov_id, $cod]);
             }
             // Actualizar stock de esta sucursal
             $pdo->prepare("
@@ -221,7 +246,7 @@ if ($editando && $editando['categoria_id']) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -377,7 +402,7 @@ if ($editando && $editando['categoria_id']) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2><?= $editando?'Editar producto':'Nuevo producto' ?></h2>
         </div>
         <div class="topbar-right">
@@ -410,9 +435,10 @@ if ($editando && $editando['categoria_id']) {
                         <div class="form-group">
                             <label>Código *</label>
                             <input type="text" name="codigo"
-                                value="<?= htmlspecialchars($_POST['codigo'] ?? $editando['codigo'] ?? '') ?>"
+                                value="<?= htmlspecialchars(is_scalar($_POST['codigo'] ?? null) ? $_POST['codigo'] : ($editando['codigo'] ?? '')) ?>"
                                 placeholder="Ej. TUBO-3/4-PVC"
                                 oninput="this.value=this.value.toUpperCase()"
+                                maxlength="50"
                                 autocomplete="off">
                             <div class="hint">Único en el catálogo. Puede ser código de barras.</div>
                         </div>
@@ -443,13 +469,13 @@ if ($editando && $editando['categoria_id']) {
                     <div class="form-group">
                         <label>Nombre del producto *</label>
                         <input type="text" name="nombre_producto"
-                            value="<?= htmlspecialchars($_POST['nombre_producto'] ?? $editando['nombre_producto'] ?? '') ?>"
-                            placeholder="Nombre completo del producto">
+                            value="<?= htmlspecialchars(is_scalar($_POST['nombre_producto'] ?? null) ? $_POST['nombre_producto'] : ($editando['nombre_producto'] ?? '')) ?>"
+                            placeholder="Nombre completo del producto" maxlength="150">
                     </div>
 
                     <div class="form-group">
                         <label>Descripción</label>
-                        <textarea name="descripcion" placeholder="Descripción, especificaciones técnicas..."><?= htmlspecialchars($_POST['descripcion'] ?? $editando['descripcion'] ?? '') ?></textarea>
+                        <textarea name="descripcion" placeholder="Descripción, especificaciones técnicas..."><?= htmlspecialchars(is_scalar($_POST['descripcion'] ?? null) ? $_POST['descripcion'] : ($editando['descripcion'] ?? '')) ?></textarea>
                     </div>
                 </div>
 
@@ -645,6 +671,15 @@ function toggleSidebar() { document.getElementById('sidebar').classList.toggle('
 function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// [FIX-C1] Escapa un valor para insertarlo dentro de un string JS de comillas simples
+// que a su vez va dentro de un atributo HTML (onclick="...('...')"). esc() por si solo
+// no basta ahi: el navegador decodifica las entidades HTML del atributo ANTES de
+// ejecutar el JS, asi que un nombre con comilla podia cerrar el string y ejecutar
+// codigo. Se escapan primero las comillas para el string JS y luego se aplica esc()
+// para el atributo — mismo criterio que ya usa nuevaVenta.php.
+function escAtribJs(str) {
+    return esc(String(str||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
+}
 
 function resaltarCoincidencia(texto, busqueda) {
     if (!busqueda) return esc(texto);
@@ -667,7 +702,7 @@ function filtrarAc(tipo, valor) {
         drop.innerHTML = `<div class="ac-empty">Sin coincidencias</div>`;
     } else {
         drop.innerHTML = lista.map(c => `
-            <div class="ac-item" onclick="seleccionarCategoria(${c.id}, '${esc(c.nombre)}')">
+            <div class="ac-item" onclick="seleccionarCategoria(${c.id}, '${escAtribJs(c.nombre)}')">
                 ${resaltarCoincidencia(c.nombre, valor)}
             </div>`).join('');
     }
@@ -709,7 +744,7 @@ function filtrarAcProv(idx, valor) {
         drop.innerHTML = `<div class="ac-empty">Sin coincidencias</div>`;
     } else {
         drop.innerHTML = lista.map(p => `
-            <div class="ac-item" onclick="seleccionarProv(${idx}, ${p.id}, '${esc(p.nombre)}')">
+            <div class="ac-item" onclick="seleccionarProv(${idx}, ${p.id}, '${escAtribJs(p.nombre)}')">
                 ${resaltarCoincidencia(p.nombre, valor)}
             </div>`).join('');
     }

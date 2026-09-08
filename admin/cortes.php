@@ -1,18 +1,19 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
-$fechaInicio = $_GET['fecha_inicio'] ?? date('Y-m-d');
-$fechaFin    = $_GET['fecha_fin']    ?? date('Y-m-d');
-$sucursal    = intval($_GET['sucursal'] ?? 0);
-$usuario     = intval($_GET['usuario']  ?? 0);
+$fechaInicio = is_scalar($_GET['fecha_inicio'] ?? null) ? $_GET['fecha_inicio'] : date('Y-m-d');
+$fechaFin    = is_scalar($_GET['fecha_fin'] ?? null) ? $_GET['fecha_fin'] : date('Y-m-d');
+$sucursal    = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
+$usuario     = intval(is_scalar($_GET['usuario'] ?? null) ? $_GET['usuario'] : 0);
 
 $where  = "WHERE 1=1";
 $params = [];
@@ -36,38 +37,47 @@ if ($fechaInicio && $fechaFin) {
     $params[] = $fechaFin; $params[] = $fechaFin;
 }
 
+// [FIX-CORTES-FANOUT] La version anterior unia "cajas" con "ventas" Y "movimientos_caja" en
+// LA MISMA consulta (dos LEFT JOIN de tablas hijas independientes) con un solo GROUP BY -- un
+// fan-out clasico: por cada caja con N ventas y M movimientos_caja, el JOIN produce N*M filas
+// antes de agrupar, asi que SUM(v.total) queda multiplicado por M (una vez por cada movimiento)
+// y SUM(mc.monto) queda multiplicado por N (una vez por cada venta). Probado en vivo con datos
+// reales: caja_id=130 (8 ventas, 14 movimientos) mostraba Cobrado=$38,165.12 cuando el real es
+// $2,726.08 (2726.08 x 14 = 38165.12, exacto); caja_id=132 (11 ventas, 5 movimientos) mostraba
+// $4,133.70 contra un real de $826.74 (826.74 x 5 = 4133.70). No es un caso raro: CUALQUIER
+// caja con 2+ ventas normalmente ya tiene 2+ movimientos_caja (cada venta escribe al menos uno),
+// asi que la mayoria de las filas de este reporte financiero estaban infladas. Se reescribe
+// usando subconsultas correlacionadas (una por columna, cada una escaneando solo su propia
+// tabla hija por caja_id) en vez de JOIN+GROUP BY -- ya no hay fan-out posible porque ninguna
+// subconsulta ve a la otra tabla. El comentario [FIX-MEDIO-F-12] de mas abajo ya usaba este
+// mismo diagnostico para separar los TOTALES agregados en dos consultas; aqui se aplica el
+// mismo principio a las filas individuales, que se habian quedado con el JOIN original.
+$estadosVenta = "'Completada','Modificado','Devuelto'";
+$excluirSufijo = "mc.nota NOT REGEXP '\\\\[(Terminal|Transferencia)\\\\]\$'";
 $stmt = $pdo->prepare("
     SELECT c.*,
         u.nombre_completo,
         s.nombre AS nombre_sucursal,
-        COUNT(v.venta_id) AS total_ventas,
-        COALESCE(SUM(v.total),0) AS total_cobrado,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo' THEN v.total ELSE 0 END),0) AS ef,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal' THEN v.total ELSE 0 END),0) AS term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Credito' THEN v.total ELSE 0 END),0) AS cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) AS mixto_ef,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_terminal ELSE 0 END),0) AS mixto_term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) AS transf,
+        (SELECT COUNT(*) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS total_ventas,
+        (SELECT COALESCE(SUM(v.total),0) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS total_cobrado,
+        (SELECT COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo' THEN v.total ELSE 0 END),0) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS ef,
+        (SELECT COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal' THEN v.total ELSE 0 END),0) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS term,
+        (SELECT COALESCE(SUM(CASE WHEN v.metodo_pago='Credito' THEN v.total ELSE 0 END),0) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS cred,
+        (SELECT COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_efectivo ELSE 0 END),0) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS mixto_ef,
+        (SELECT COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto' THEN v.monto_terminal ELSE 0 END),0) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS mixto_term,
+        (SELECT COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia' THEN v.total ELSE 0 END),0) FROM ventas v WHERE v.caja_id = c.caja_id AND v.estado IN ($estadosVenta)) AS transf,
         -- [FIX-MEDIO-F-13] Para una caja todavia Abierta, monto_esperado es NULL (esa columna
         -- solo se llena al cerrar, en cajero_corteCaja.php) -- la columna Esperado mostraba
         -- $0.00 para cualquier turno en curso, aunque ya tuviera ventas y movimientos reales.
         -- Se agregan aqui los mismos ingresos/retiros EN EFECTIVO (excluyendo el sufijo legado
         -- Terminal/Transferencia, igual que cajero_corteCaja.php) para poder calcular un
         -- esperado en tiempo real para las cajas abiertas en el PHP de abajo.
-        COALESCE(SUM(CASE WHEN mc.tipo='Ingreso' AND mc.nota NOT REGEXP '\\\\[(Terminal|Transferencia)\\\\]$' THEN mc.monto ELSE 0 END),0) AS ingresos_cash,
-        COALESCE(SUM(CASE WHEN mc.tipo='Retiro'  AND mc.nota NOT REGEXP '\\\\[(Terminal|Transferencia)\\\\]$' THEN mc.monto ELSE 0 END),0) AS retiros_cash
+        (SELECT COALESCE(SUM(CASE WHEN mc.tipo='Ingreso' AND $excluirSufijo THEN mc.monto ELSE 0 END),0) FROM movimientos_caja mc WHERE mc.caja_id = c.caja_id) AS ingresos_cash,
+        (SELECT COALESCE(SUM(CASE WHEN mc.tipo='Retiro'  AND $excluirSufijo THEN mc.monto ELSE 0 END),0) FROM movimientos_caja mc WHERE mc.caja_id = c.caja_id) AS retiros_cash
     FROM cajas c
     JOIN usuarios u ON c.usuario_id = u.usuario_id
     JOIN sucursales s ON c.sucursal_id = s.sucursal_id
-    -- [FIX-CRIT-F-01] Tras una devolucion parcial la venta pasa a Modificado (sigue
-    -- siendo dinero real cobrado); con Devuelto el total ya queda en 0, asi que
-    -- incluirlo es inocuo. cajero_corteCaja.php y cajero_historialCortes.php ya usan
-    -- este mismo criterio -- antes esta pantalla se quedo con el viejo y mostraba
-    -- 0 ventas en cajas que si tuvieron ventas reales.
-    LEFT JOIN ventas v ON c.caja_id = v.caja_id AND v.estado IN ('Completada','Modificado','Devuelto')
-    LEFT JOIN movimientos_caja mc ON c.caja_id = mc.caja_id
     $where
-    GROUP BY c.caja_id
     ORDER BY c.abierta_en DESC
     LIMIT 200
 ");
@@ -149,7 +159,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -204,7 +214,7 @@ $usuarios   = $pdo->query("SELECT usuario_id, nombre_completo FROM usuarios WHER
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Cortes de Caja</h2>
         </div>
         <div class="topbar-right">

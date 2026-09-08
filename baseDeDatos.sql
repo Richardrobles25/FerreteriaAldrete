@@ -393,7 +393,8 @@ CREATE TABLE stock_sucursal (
 CREATE TABLE categorias_gastos (
     categoria_gasto_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     nombre             VARCHAR(100) NOT NULL,
-    activo             TINYINT(1)  NOT NULL DEFAULT 1
+    activo             TINYINT(1)  NOT NULL DEFAULT 1,
+    UNIQUE KEY uk_categorias_gastos_nombre (nombre)
 );
 
 
@@ -432,13 +433,33 @@ CREATE TABLE movimientos_mora (
 ALTER TABLE sucursales ADD COLUMN porcentaje_mora DECIMAL(5,2) NOT NULL DEFAULT 0;
 ALTER TABLE creditos   ADD COLUMN mora_acumulada  DECIMAL(10,2) NOT NULL DEFAULT 0;
 
+-- Marca al Administrador "dueño" del sistema: solo esta cuenta puede desactivar a OTROS
+-- Administradores (ver admin/usuarios.php). Se marca a mano, nunca desde el formulario de
+-- alta/edición de usuarios.
+ALTER TABLE usuarios ADD COLUMN es_principal BOOLEAN NOT NULL DEFAULT 0;
+-- UPDATE usuarios SET es_principal = 1 WHERE usuario_id = <id del administrador dueño>;
+
+-- Horario esperado personalizado por empleado (antes era un valor fijo del sistema para
+-- todos: 9h entre semana, 6h sabado, 0h domingo, y una tarifa por hora = sueldo/51). Los
+-- defaults (51 y 9) reproducen exactamente el comportamiento anterior, asi que un empleado
+-- existente sin cambios no ve ninguna diferencia hasta que se le personalice.
+-- horas_esperadas_semana: total semanal usado para la tarifa por hora (sueldo/horas_esperadas_semana)
+--   y para saber cuando empieza a pagarse al 1.5x (una vez que las horas trabajadas reales de
+--   la semana superan este total).
+-- horas_por_dia: se usa SOLO como relleno automatico cuando se captura "Asistencia normal" sin
+--   horario explicito en Asistencia -- no tiene que sumar horas_esperadas_semana/6, son
+--   independientes a proposito (un empleado puede trabajar dias irregulares).
+ALTER TABLE empleados ADD COLUMN horas_esperadas_semana DECIMAL(5,2) NOT NULL DEFAULT 51.00;
+ALTER TABLE empleados ADD COLUMN horas_por_dia          DECIMAL(4,2) NOT NULL DEFAULT 9.00;
+
 CREATE TABLE IF NOT EXISTS empleados (
     empleado_id    INT AUTO_INCREMENT PRIMARY KEY,
     nombre         VARCHAR(100) NOT NULL,
     fecha_ingreso  DATE NOT NULL,
     sueldo_semanal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     activo         TINYINT(1) DEFAULT 1,
-    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_empleados_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS asistencia (

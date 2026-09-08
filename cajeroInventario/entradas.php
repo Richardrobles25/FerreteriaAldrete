@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -16,7 +17,7 @@ if (isset($_GET['producto_id'])) {
         INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         WHERE p.producto_id = ?
     ");
-    $stmt->execute([$_SESSION['sucursal_id'], intval($_GET['producto_id'])]);
+    $stmt->execute([$_SESSION['sucursal_id'], intval(is_scalar($_GET['producto_id'] ?? null) ? $_GET['producto_id'] : 0)]);
     $productoPreseleccionado = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
@@ -27,12 +28,21 @@ $errores = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-A1] Verificar CSRF antes de procesar la entrada
     requerirCSRF($_POST['_token'] ?? '', 'entradas.php');
-    $producto_id       = intval($_POST['producto_id'] ?? 0);
-    $cantidad_raw      = $_POST['cantidad'] ?? '';
-    $motivo            = trim($_POST['motivo'] ?? 'Entrada manual');
-    $proveedor_entrada = intval($_POST['proveedor_id_entrada'] ?? 0) ?: null;
+    $producto_id       = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
+    $cantidad_raw      = is_scalar($_POST['cantidad'] ?? null) ? $_POST['cantidad'] : '';
+    // [FIX-MOTIVO-VACIO] "?? 'Entrada manual'" solo aplica si la llave no viene en el POST —
+    // un formulario real siempre manda "motivo" (aunque el usuario lo deje vacio), asi que el
+    // fallback nunca se activaba de verdad: se guardaba un motivo vacio en el historial en vez
+    // del texto por defecto que el propio input ya sugiere como placeholder.
+    $motivo            = trim(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : '') ?: 'Entrada manual';
+    $proveedor_entrada = intval(is_scalar($_POST['proveedor_id_entrada'] ?? null) ? $_POST['proveedor_id_entrada'] : 0) ?: null;
 
     if (!$producto_id) $errores[] = 'Selecciona un producto.';
+    // [FIX-MOTIVO-LARGO] movimientos_inventario.motivo es VARCHAR(255) sin ningun tope en el
+    // servidor — probado en vivo: un motivo de 256 caracteres se truncaba en silencio a 255 y
+    // se guardaba como "entrada registrada", sin ningun aviso de que el texto capturado no
+    // era el que quedo en el historial.
+    if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
 
     if (empty($errores)) {
         // [FIX] Consultar tipo_venta ANTES de validar la cantidad: los productos tipo
@@ -54,7 +64,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errores[] = 'Producto no encontrado.';
         } else {
             $esSuelto = ($prod['tipo_venta'] === 'Suelto');
-            $cantidad = $esSuelto ? round(floatval($cantidad_raw), 3) : intval($cantidad_raw);
+            // [FIX-ENTRADA-DECIMAL-TRUNCADO] (espejo de admin/inventario_entradas.php) Antes,
+            // para un producto que NO es "Suelto", se usaba intval($cantidad_raw) — un valor
+            // como "2.5" se truncaba en silencio a 2 sin ningún aviso, a diferencia de
+            // salidas.php/compras.php, que siempre rechazan una cantidad fraccionaria aquí.
+            $cantidadFloat = round(floatval($cantidad_raw), 3);
+            if (!$esSuelto && floor($cantidadFloat) != $cantidadFloat) {
+                $errores[] = 'Este producto se maneja por unidad; la cantidad debe ser un número entero.';
+            }
+            $cantidad = $esSuelto ? $cantidadFloat : intval($cantidadFloat);
             $cantidadMin = $esSuelto ? 0.001 : 1;
             if ($cantidad < $cantidadMin) {
                 $errores[] = $esSuelto ? 'La cantidad debe ser mayor a 0.' : 'La cantidad debe ser al menos 1.';
@@ -152,7 +170,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -275,7 +293,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Entradas de productos</h2>
         </div>
         <div class="topbar-right">
@@ -292,7 +310,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
 
                 <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito'): ?>
                     <div class="msg msg-exito">
-                        Entrada registrada: <strong><?= htmlspecialchars($_GET['prod'] ?? '') ?></strong>
+                        Entrada registrada: <strong><?= htmlspecialchars(is_scalar($_GET['prod'] ?? null) ? (string)$_GET['prod'] : '') ?></strong>
                     </div>
                 <?php endif; ?>
                 <?php if (!empty($errores)): ?>
@@ -316,7 +334,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                         </div>
                         <div class="prod-chip" id="productoChip">
                             <span id="productoChipNombre"><?= $productoPreseleccionado ? htmlspecialchars($productoPreseleccionado['nombre_producto']) : '' ?></span>
-                            <button type="button" onclick="limpiarProducto()">✕ Quitar</button>
+                            <button type="button" onclick="limpiarProducto()"><?= icono('x') ?> Quitar</button>
                         </div>
                     </div>
 
@@ -339,7 +357,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                         </div>
                         <div class="prod-chip" id="proveedorChip" style="display:none;">
                             <span id="proveedorChipNombre"></span>
-                            <button type="button" onclick="limpiarProveedor()">✕ Cambiar</button>
+                            <button type="button" onclick="limpiarProveedor()"><?= icono('x') ?> Cambiar</button>
                         </div>
                     </div>
 
@@ -351,7 +369,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                              inyectar HTML/JS. -->
                         <input type="number" name="cantidad" id="inputCantidad"
                             placeholder="0" step="1" min="1"
-                            value="<?= htmlspecialchars($_POST['cantidad'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
+                            value="<?= htmlspecialchars(is_scalar($_POST['cantidad'] ?? null) ? (string)$_POST['cantidad'] : '', ENT_QUOTES, 'UTF-8') ?>">
                     </div>
 
                     <div class="form-group">
@@ -363,8 +381,8 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                             <button type="button" class="motivo-chip" onclick="setMotivo('Inventario inicial')">Inventario inicial</button>
                         </div>
                         <input type="text" name="motivo" id="inputMotivo"
-                            value="<?= htmlspecialchars($_POST['motivo'] ?? 'Entrada manual') ?>"
-                            placeholder="Describe el origen de esta entrada">
+                            value="<?= htmlspecialchars(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : 'Entrada manual') ?>"
+                            placeholder="Describe el origen de esta entrada" maxlength="255">
                     </div>
 
                     <button class="btn-guardar" type="submit">Registrar entrada</button>
@@ -413,6 +431,14 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
 <script>
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
+// [FIX-XSS-NOMBRE] nombre_producto/nombre/codigo vienen del catalogo (lo captura
+// Administrador/Inventario) y se insertaban tal cual en innerHTML — un nombre con
+// "<img src=x onerror=...>" ejecutaba JS con solo escribirlo en el buscador, sin
+// necesidad de dar clic. Mismo criterio que ya usa nuevaVenta.php.
+function esc(str) {
+    return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 // ── Datos precargados ────────────────────────────────────────────────────────
 const productosData   = <?= json_encode(array_values($productos)) ?>;
 const proveedoresData = <?= json_encode(array_values($proveedores)) ?>;
@@ -435,7 +461,7 @@ function filtrarProductos(q) {
         drop.innerHTML = matches.map(function(p) {
             const stockOk = parseFloat(p.stock_actual) > parseFloat(p.stock_minimo);
             return '<div class="prod-drop-item" onclick="seleccionarProducto(' + p.producto_id + ')">'
-                + '<div><strong>' + p.nombre_producto + '</strong><span style="color:#aaa;font-size:11px;"> · ' + p.codigo + '</span></div>'
+                + '<div><strong>' + esc(p.nombre_producto) + '</strong><span style="color:#aaa;font-size:11px;"> · ' + esc(p.codigo) + '</span></div>'
                 + '<span style="font-size:12px;font-weight:600;color:' + (stockOk ? '#2e7d32' : '#c0392b') + ';">Stock: ' + parseFloat(p.stock_actual).toFixed(2) + '</span>'
                 + '</div>';
         }).join('');
@@ -508,7 +534,7 @@ function filtrarProveedores(q) {
     } else {
         drop.innerHTML = matches.map(function(p) {
             return '<div class="prod-drop-item" onclick="seleccionarProveedor(' + p.proveedor_id + ')">'
-                + '<strong>' + p.nombre + '</strong>'
+                + '<strong>' + esc(p.nombre) + '</strong>'
                 + '</div>';
         }).join('');
     }

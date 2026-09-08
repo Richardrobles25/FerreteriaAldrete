@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -19,8 +20,13 @@ $errores  = [];
 // Guardar (crear o editar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar'])) {
     requerirCSRF($_POST['_token'] ?? '', 'gastos_categorias.php');
-    $nombre = trim($_POST['nombre'] ?? '');
-    $id     = intval($_POST['categoria_gasto_id'] ?? 0);
+    // [FIX-TIPO-ARRAY-ID] "nombre[]=x" via trim() lanza un TypeError sin capturar (ruta
+    // del servidor y stack trace expuestos, probado en vivo); "categoria_gasto_id[]=x"
+    // via intval() no truena, se coacciona en silencio a 1 -- editaria/renombraria de
+    // verdad la categoria real #1 en vez de fallar (mismo patron confirmado en vivo mas
+    // abajo con toggle_id, que SI llego a modificar una categoria real).
+    $nombre = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    $id     = intval(is_scalar($_POST['categoria_gasto_id'] ?? null) ? $_POST['categoria_gasto_id'] : 0);
 
     if ($nombre === '') {
         $errores[] = 'El nombre es obligatorio.';
@@ -58,7 +64,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar'])) {
 // destruiria el historial de gastos ya registrados con esa categoria)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
     requerirCSRF($_POST['_token'] ?? '', 'gastos_categorias.php');
-    $id = intval($_POST['toggle_id']);
+    // [FIX-TIPO-ARRAY-ID] Bug real confirmado en vivo: POST "toggle_id[]=99999" (un id
+    // que ni existe) desactivo de verdad categoria_gasto_id=1 ("Vehiculos", una categoria
+    // real) en vez de fallar -- intval() sobre un array no vacio se coacciona a 1, sin
+    // importar que valores traiga el array. Restaurada manualmente tras la prueba.
+    $id = intval(is_scalar($_POST['toggle_id'] ?? null) ? $_POST['toggle_id'] : 0);
     $pdo->prepare("UPDATE categorias_gastos SET activo = NOT activo WHERE categoria_gasto_id = ?")->execute([$id]);
     header('Location: gastos_categorias.php?msg=actualizado');
     exit();
@@ -66,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
 
 if (isset($_GET['editar']) && !$editando) {
     $stmt = $pdo->prepare("SELECT * FROM categorias_gastos WHERE categoria_gasto_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar']) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
@@ -104,7 +114,7 @@ $categorias = $pdo->query("
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -165,7 +175,7 @@ $categorias = $pdo->query("
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Categorias de gasto</h2>
         </div>
         <div class="topbar-right">
@@ -182,6 +192,13 @@ $categorias = $pdo->query("
                 <div class="msg msg-exito">Categoría actualizada correctamente.</div>
             <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'actualizado'): ?>
                 <div class="msg msg-exito">Categoría actualizada correctamente.</div>
+            <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'error_token'): ?>
+                <!-- [FIX-MSG-ERROR-TOKEN] requerirCSRF() ya redirigia aqui con ?msg=error_token
+                     ante un token invalido/expirado, pero esta pantalla nunca tuvo un mensaje
+                     para ese caso (a diferencia de usuarios.php/sucursales.php, que si lo
+                     muestran) -- el usuario solo veia la pagina recargarse sin ninguna
+                     indicacion de que su envio fue rechazado. -->
+                <div class="errores">La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.</div>
             <?php endif; ?>
 
             <div class="card" style="padding:0;">

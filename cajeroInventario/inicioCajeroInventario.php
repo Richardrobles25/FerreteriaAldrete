@@ -1,10 +1,11 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
+require_once '../includes/icons.php';
 verificarSesion();
 verificarRol(['Inventario/Cajero']);
 
@@ -135,7 +136,7 @@ if ($cajaActual) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -164,12 +165,13 @@ if ($cajaActual) {
     .acceso-card { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 16px; text-decoration: none; display: flex; align-items: center; gap: 12px; transition: border-color 0.15s; }
     .acceso-card:hover { border-color: #14ace7; }
     .acceso-icon { width: 38px; height: 38px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
-    .icon-venta { background: #e3f2fd; }
-    .icon-inv { background: #e8f5e9; }
-    .icon-clientes { background: #e3f2fd; }
-    .icon-creditos { background: #f3e5f5; }
-    .icon-productos { background: #e8f5e9; }
-    .icon-entradas { background: #e3f2fd; }
+    .icon-venta { background: #e3f2fd; color: #1565c0; }
+    .icon-inv { background: #e8f5e9; color: #2e7d32; }
+    .icon-clientes { background: #e3f2fd; color: #1565c0; }
+    .icon-creditos { background: #f3e5f5; color: #7b1fa2; }
+    .icon-productos { background: #e8f5e9; color: #2e7d32; }
+    .icon-entradas { background: #e3f2fd; color: #1565c0; }
+    .icon-svg { vertical-align: -3px; flex-shrink: 0; }
     .acceso-info h4 { font-size: 13px; font-weight: 600; color: #333; margin: 0 0 2px; }
     .acceso-info p { font-size: 11px; color: #aaa; margin: 0; }
     .tabla { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; overflow: hidden; }
@@ -276,7 +278,7 @@ if ($cajaActual) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Panel Cajero / Inventario</h2>
         </div>
         <div class="topbar-right">
@@ -327,7 +329,7 @@ if ($cajaActual) {
         <?php if ($transfParaAprobar > 0): ?>
         <div class="notif-transf">
             <div>
-                <div>&#128230; <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
+                <div><?= icono('package') ?> <strong><?= $transfParaAprobar ?></strong> solicitud(es) de productos esperando tu aprobacion:</div>
                 <?php foreach ($solicitudesPendientes as $sp): ?>
                 <div style="font-size:12px;margin-top:5px;padding-left:6px;">
                     &bull; <strong><?= htmlspecialchars($sp['nombre_producto']) ?></strong>
@@ -342,20 +344,20 @@ if ($cajaActual) {
         <?php endif; ?>
         <?php if ($transfParaEnviar > 0): ?>
         <div class="notif-transf-enviar">
-            <span>&#9989; Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
+            <span><?= icono('circle-check-big') ?> Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
             <a href="transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
         <?php if ($transfParaRecibir > 0): ?>
         <div class="notif-transf-recibir">
-            <span>&#128666; Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepcion.</span>
+            <span><?= icono('truck') ?> Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepcion.</span>
             <a href="transferencias.php">Ver transferencias</a>
         </div>
         <?php endif; ?>
         <?php if ($transfParaConfirmar > 0): ?>
         <div class="notif-transf-modificada">
             <div>
-                <div>&#9997; <strong><?= $transfParaConfirmar ?></strong> transferencia(s) con cantidad modificada esperan tu confirmacion:</div>
+                <div><?= icono('pencil') ?> <strong><?= $transfParaConfirmar ?></strong> transferencia(s) con cantidad modificada esperan tu confirmacion:</div>
                 <?php foreach ($transfModificadas as $tm): ?>
                 <div style="font-size:12px;margin-top:5px;padding-left:6px;">
                     &bull; <strong><?= htmlspecialchars($tm['nombre_producto']) ?></strong>
@@ -371,7 +373,7 @@ if ($cajaActual) {
         <!-- Alerta stock bajo -->
         <?php if ($stockBajo > 0): ?>
             <div class="alerta-stock">
-                <span>⚠ Hay <strong><?= $stockBajo ?></strong> producto(s) con stock bajo en tu sucursal.</span>
+                <span><?= icono('triangle-alert') ?> Hay <strong><?= $stockBajo ?></strong> producto(s) con stock bajo en tu sucursal.</span>
                 <a href="productos.php?stock_bajo=1">Ver productos</a>
             </div>
         <?php endif; ?>
@@ -408,27 +410,27 @@ if ($cajaActual) {
         <!-- Accesos rápidos -->
         <div class="accesos">
             <a class="acceso-card" href="nuevaVenta.php">
-                <div class="acceso-icon icon-venta">🛒</div>
+                <div class="acceso-icon icon-venta"><?= icono('shopping-cart', '', 20) ?></div>
                 <div class="acceso-info"><h4>Nueva venta</h4><p>Registrar cobro</p></div>
             </a>
             <a class="acceso-card" href="entradas.php">
-                <div class="acceso-icon icon-entradas">📦</div>
+                <div class="acceso-icon icon-entradas"><?= icono('package', '', 20) ?></div>
                 <div class="acceso-info"><h4>Entrada de productos</h4><p>Registrar mercancía</p></div>
             </a>
             <a class="acceso-card" href="clientes.php">
-                <div class="acceso-icon icon-clientes">👤</div>
+                <div class="acceso-icon icon-clientes"><?= icono('user', '', 20) ?></div>
                 <div class="acceso-info"><h4>Clientes</h4><p>Buscar o registrar</p></div>
             </a>
             <a class="acceso-card" href="productos.php">
-                <div class="acceso-icon icon-productos">🔧</div>
+                <div class="acceso-icon icon-productos"><?= icono('wrench', '', 20) ?></div>
                 <div class="acceso-info"><h4>Inventario</h4><p>Ver productos y stock</p></div>
             </a>
             <a class="acceso-card" href="creditos.php">
-                <div class="acceso-icon icon-creditos">💳</div>
+                <div class="acceso-icon icon-creditos"><?= icono('credit-card', '', 20) ?></div>
                 <div class="acceso-info"><h4>Créditos</h4><p>Ver saldos pendientes</p></div>
             </a>
             <a class="acceso-card" href="transferencias.php">
-                <div class="acceso-icon icon-inv">&#128260;</div>
+                <div class="acceso-icon icon-inv"><?= icono('repeat', '', 20) ?></div>
                 <div class="acceso-info"><h4>Transferencias</h4><p><?= $totalTransfAlertas>0?$totalTransfAlertas.' pendiente(s)':'Stock entre sucursales' ?></p></div>
             </a>
         </div>

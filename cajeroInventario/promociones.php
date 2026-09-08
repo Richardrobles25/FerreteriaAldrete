@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -59,7 +60,7 @@ $promociones = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -170,7 +171,7 @@ $promociones = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Promociones activas — <?= htmlspecialchars($nombreSucursal) ?></h2>
         </div>
         <div class="topbar-right">
@@ -212,17 +213,23 @@ $promociones = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             $esActiva = true;
                             $diasRestan = (new DateTime($hoy))->diff(new DateTime($fin))->days;
                         }
-                        $ahorroPct = $pr['precio_venta'] > 0
+                        // [FIX-PROMO-PRECIO-OBSOLETO] Al crear la promoción se exige precio_promocional
+                        // < precio_venta, pero si el precio normal del producto se edita DESPUÉS (en
+                        // formProducto.php) y queda por debajo del precio ya fijado de la promo, esta
+                        // cuenta se volvía negativa y se mostraba como "--14.3%" y "$-10.00 menos" —
+                        // probado en vivo bajando precio_venta de $145 a $70 con una promo ya activa a
+                        // $80. No hay "ahorro" real que mostrar en ese caso, así que se muestra 0.
+                        $ahorroPct = ($pr['precio_venta'] > 0 && $pr['precio_promocional'] < $pr['precio_venta'])
                             ? round((1 - $pr['precio_promocional'] / $pr['precio_venta']) * 100, 1)
                             : 0;
-                        $ahorroAbs = $pr['precio_venta'] - $pr['precio_promocional'];
+                        $ahorroAbs = max(0, $pr['precio_venta'] - $pr['precio_promocional']);
                     ?>
                     <tr <?= $esActiva ? 'class="promo-activa-row"' : '' ?>>
                         <td>
                             <strong><?= htmlspecialchars($pr['nombre_producto']) ?></strong>
                             <div style="font-size:10px;color:#aaa;"><?= htmlspecialchars($pr['codigo']) ?></div>
                             <?php if ($pr['descripcion']): ?>
-                            <div style="font-size:11px;color:#888;margin-top:2px;">🏷 <?= htmlspecialchars($pr['descripcion']) ?></div>
+                            <div style="font-size:11px;color:#888;margin-top:2px;"><?= icono('tag') ?> <?= htmlspecialchars($pr['descripcion']) ?></div>
                             <?php endif; ?>
                         </td>
                         <td class="precio-normal">$<?= number_format($pr['precio_venta'], 2) ?></td>

@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -19,18 +20,28 @@ $esAdmin = $_SESSION['rol'] === 'Administrador';
 if (isset($_GET['eliminar'])) {
     // [FIX-CRIT-B-03] CSRF ausente antes.
     requerirCSRF($_GET['_token'] ?? '', 'inventario_unidades.php');
-    $id = intval($_GET['eliminar']);
+    $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
     $u = $pdo->prepare("SELECT nombre, sucursal_id FROM unidades_medida WHERE unidad_id = ?");
     $u->execute([$id]);
     $unidadRow = $u->fetch(PDO::FETCH_ASSOC);
     if ($unidadRow) {
-        // [FIX-MEDIO-B-20] Antes solo contaba productos con stock ACTIVO en la MISMA
-        // sucursal de la unidad — un producto que usara ese nombre de unidad pero sin
-        // stock ahi (u otra sucursal, ya que productos.unidad_medida es global) pasaba la
-        // guarda sin problema y quedaba con una unidad que ya no existe en ningun catalogo.
-        // Se cuenta cualquier producto activo que use ese nombre, sin importar su stock.
-        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND activo = 1");
-        $check->execute([$unidadRow['nombre']]);
+        // [FIX-MEDIO-B-20 REVERTIDO 2026-09-03 / FIX-UNIDAD-CRUZADA] El conteo global de
+        // FIX-MEDIO-B-20 evitaba dejar productos "huerfanos" (usando un nombre de unidad que
+        // ya no existe en ningun catalogo), pero probado en vivo genero un bug real distinto y
+        // mas grave: la sucursal 2 no podia borrar SU PROPIA unidad sin uso porque la
+        // sucursal 1 tenia -- sin ninguna relacion -- un producto usando el mismo texto de
+        // unidad. Bloquear el borrado de "algo que no es mio, por culpa de datos de otra
+        // sucursal que ni siquiera puedo ver" es peor experiencia que el riesgo cosmetico de
+        // un producto quedando con un texto de unidad que ya no esta en ningun catalogo (se
+        // resuelve solo la proxima vez que se edite ese producto, cayendo en "escribir otra").
+        // Se limita el conteo a productos que ESTA sucursal (la dueña de la unidad) realmente
+        // tiene en stock.
+        $check = $pdo->prepare("
+            SELECT COUNT(*) FROM productos p
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            WHERE p.unidad_medida = ? AND p.activo = 1 AND ss.activo = 1
+        ");
+        $check->execute([$unidadRow['sucursal_id'], $unidadRow['nombre']]);
         if ($check->fetchColumn() > 0) {
             header('Location: inventario_unidades.php?msg=error_productos');
             exit();
@@ -45,9 +56,11 @@ if (isset($_GET['eliminar'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-CRIT-B-03] CSRF ausente antes.
     requerirCSRF($_POST['_token'] ?? '', 'inventario_unidades.php');
-    $nombre     = trim($_POST['nombre'] ?? '');
-    $id         = intval($_POST['unidad_id'] ?? 0);
-    $sucursalId = $esAdmin ? intval($_POST['sucursal_id'] ?? $sucursalVista) : intval($_SESSION['sucursal_id']);
+    $nombre     = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    // [FIX-UNIDAD-ID-DESINCRONIZADO] (mismo patron que categorias.php): se ancla al ?editar=
+    // de la URL, no al <input hidden name="unidad_id">.
+    $id         = is_scalar($_GET['editar'] ?? null) ? intval($_GET['editar']) : 0;
+    $sucursalId = $esAdmin ? intval(is_scalar($_POST['sucursal_id'] ?? null) ? $_POST['sucursal_id'] : $sucursalVista) : intval($_SESSION['sucursal_id']);
     if ($sucursalId === 0 && !$esAdmin) $sucursalId = intval($_SESSION['sucursal_id']);
 
     // [AUTOFIX] VALIDACION-3B-2: Validar nombre en blanco antes de tocar la BD
@@ -71,9 +84,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // usaban (productos.unidad_medida es una copia de texto, no una FK): quedaban
             // con un nombre de unidad que ya no existe en el catalogo. Se propaga el
             // renombre a los productos que tenian el nombre viejo exacto.
-            $stmtNombreViejo = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ?");
+            $stmtNombreViejo = $pdo->prepare("SELECT nombre, sucursal_id FROM unidades_medida WHERE unidad_id = ?");
             $stmtNombreViejo->execute([$id]);
-            $nombreViejo = $stmtNombreViejo->fetchColumn();
+            $filaVieja       = $stmtNombreViejo->fetch(PDO::FETCH_ASSOC);
+
+            // [FIX-UNIDAD-EDICION-FANTASMA] Antes, si $id no correspondía a ninguna unidad real
+            // (borrada por otra sesión, o un POST directo con un id inventado), el UPDATE de
+            // abajo afectaba 0 filas en silencio y aun así se reportaba "Unidad actualizada
+            // correctamente" — probado en vivo con unidad_id=999999.
+            if (!$filaVieja) {
+                header('Location: inventario_unidades.php?msg=no_encontrado');
+                exit();
+            }
+            $nombreViejo     = $filaVieja['nombre'];
+            $sucursalIdVieja = intval($filaVieja['sucursal_id']);
 
             // [FIX-MEDIO-H-07] El renombre de la unidad y su propagacion en cascada a
             // productos.unidad_medida eran dos UPDATE sueltos: si el segundo fallaba, el
@@ -84,9 +108,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("UPDATE unidades_medida SET nombre = ?, sucursal_id = ? WHERE unidad_id = ?")
                 ->execute([$nombre, $sucursalId, $id]);
 
+            // [FIX-UNIDAD-CRUZADA] Antes este UPDATE era global: renombrar una unidad de UNA
+            // sucursal cambiaba en silencio el texto que ven TODAS las sucursales en
+            // cualquier producto que coincidiera, aunque no tuvieran ninguna relacion con
+            // quien pidio el renombre. Probado en vivo. Se limita a los productos que la
+            // sucursal DUEÑA de esta unidad (antes del renombre) realmente tiene en stock.
             if ($nombreViejo !== false && $nombreViejo !== $nombre) {
-                $pdo->prepare("UPDATE productos SET unidad_medida = ? WHERE unidad_medida = ?")
-                    ->execute([$nombre, $nombreViejo]);
+                $pdo->prepare("
+                    UPDATE productos p
+                    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+                    SET p.unidad_medida = ?
+                    WHERE p.unidad_medida = ? AND ss.activo = 1
+                ")->execute([$sucursalIdVieja, $nombre, $nombreViejo]);
             }
             $pdo->commit();
             header('Location: inventario_unidades.php?msg=editado');
@@ -107,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 
 // Cargar unidades según rol y filtro de sucursal
 if ($esAdmin && $sucursalVista === 0) {
@@ -172,7 +205,7 @@ $unidades = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $editando = null;
 if (isset($_GET['editar'])) {
     $stmt2 = $pdo->prepare("SELECT * FROM unidades_medida WHERE unidad_id = ?");
-    $stmt2->execute([intval($_GET['editar'])]);
+    $stmt2->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt2->fetch(PDO::FETCH_ASSOC);
 }
 
@@ -207,7 +240,7 @@ $todasSucursales = $esAdmin
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -273,7 +306,7 @@ $todasSucursales = $esAdmin
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Unidades de medida</h2>
         </div>
         <div class="topbar-right">
@@ -304,6 +337,8 @@ $todasSucursales = $esAdmin
                     <div class="msg msg-error">El nombre de la unidad de medida es obligatorio.</div>
                 <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
                     <div class="msg msg-error">El nombre de la unidad no puede tener más de 30 caracteres.</div>
+                <?php elseif ($_GET['msg'] === 'no_encontrado'): ?>
+                    <div class="msg msg-error">Esa unidad ya no existe (puede que otra sesión la haya eliminado). Recarga la página.</div>
                 <?php elseif ($_GET['msg'] === 'error_token'): ?>
                     <div class="msg msg-error">La sesión expiró o el enlace no es válido. Intenta de nuevo.</div>
                 <?php endif; ?>

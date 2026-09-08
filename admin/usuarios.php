@@ -1,13 +1,36 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
+
+// [FIX-ADMIN-PRINCIPAL] Se consulta fresco (no desde $_SESSION) por la misma razon que en
+// el handler de toggle: no confiar en un valor cacheado si el flag cambia en caliente.
+// [FIX-ADMIN-PRINCIPAL-FALLBACK] Si NADIE tiene es_principal=1 (instalacion nueva recien
+// entregada, o alguien borro todos los usuarios de prueba dejando solo uno), el Administrador
+// activo mas antiguo (MIN(usuario_id)) actua como principal por default -- sin este fallback,
+// una base de datos limpia sin el UPDATE manual dejaria a TODOS los administradores sin poder
+// desactivarse entre si, incluyendo el dueño real del sistema. Un es_principal=1 explicito
+// siempre gana sobre este default.
+$sqlEsPrincipal = "
+    SELECT (
+        u.es_principal = 1
+        OR (
+            NOT EXISTS (SELECT 1 FROM usuarios u2 WHERE u2.rol = 'Administrador' AND u2.es_principal = 1)
+            AND u.usuario_id = (SELECT MIN(usuario_id) FROM usuarios WHERE rol = 'Administrador' AND activo = 1)
+        )
+    ) AS es_principal_efectivo
+    FROM usuarios u WHERE u.usuario_id = ?
+";
+$stmtEsPrincipal = $pdo->prepare($sqlEsPrincipal);
+$stmtEsPrincipal->execute([intval($_SESSION['usuario_id'])]);
+$esPrincipal = (bool) $stmtEsPrincipal->fetchColumn();
 
 // Toggle activo
 if (isset($_GET['toggle'])) {
@@ -18,7 +41,7 @@ if (isset($_GET['toggle'])) {
     // (a) que alguien se desactive a sí mismo, y (b) que se desactive al último
     // Administrador activo del sistema.
     requerirCSRF($_GET['_token'] ?? '', 'usuarios.php');
-    $targetId = intval($_GET['toggle']);
+    $targetId = intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0);
 
     if ($targetId === intval($_SESSION['usuario_id'])) {
         header('Location: usuarios.php?msg=error_auto'); exit();
@@ -29,10 +52,20 @@ if (isset($_GET['toggle'])) {
     $target = $stmtTarget->fetch(PDO::FETCH_ASSOC);
 
     if ($target) {
-        if ($target['rol'] === 'Administrador' && intval($target['activo']) === 1) {
-            $stmtAdmins = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE rol = 'Administrador' AND activo = 1");
-            if (intval($stmtAdmins->fetchColumn()) <= 1) {
-                header('Location: usuarios.php?msg=error_ultimo_admin'); exit();
+        if ($target['rol'] === 'Administrador') {
+            // [FIX-ADMIN-PRINCIPAL] Solo la cuenta principal (ver $esPrincipal arriba, ya
+            // incluye el fallback del admin mas antiguo) puede activar/desactivar a OTROS
+            // Administradores. Se revalida aqui en el servidor (no solo ocultando el boton en
+            // la UI) porque el toggle es un GET directo -- cualquier Administrador podia armar
+            // la URL a mano y saltarse un candado que solo viviera en el HTML.
+            if (!$esPrincipal) {
+                header('Location: usuarios.php?msg=error_no_principal'); exit();
+            }
+            if (intval($target['activo']) === 1) {
+                $stmtAdmins = $pdo->query("SELECT COUNT(*) FROM usuarios WHERE rol = 'Administrador' AND activo = 1");
+                if (intval($stmtAdmins->fetchColumn()) <= 1) {
+                    header('Location: usuarios.php?msg=error_ultimo_admin'); exit();
+                }
             }
         }
         $pdo->prepare("UPDATE usuarios SET activo = NOT activo WHERE usuario_id = ?")->execute([$targetId]);
@@ -40,9 +73,9 @@ if (isset($_GET['toggle'])) {
     header('Location: usuarios.php'); exit();
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
-$filtroRol = $_GET['rol'] ?? '';
-$filtroSuc = intval($_GET['sucursal'] ?? 0);
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$filtroRol = is_scalar($_GET['rol'] ?? null) ? $_GET['rol'] : '';
+$filtroSuc = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
 $mostrarInactivos = isset($_GET['inactivos']);
 
 $where  = "WHERE 1=1";
@@ -132,7 +165,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -198,7 +231,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Usuarios</h2>
         </div>
         <div class="topbar-right">
@@ -213,19 +246,21 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                 'error_token'        => 'La sesión expiró o el enlace no es válido. Recarga la página e intenta de nuevo.',
                 'error_auto'         => 'No puedes activar o desactivar tu propia cuenta.',
                 'error_ultimo_admin' => 'No puedes desactivar al único Administrador activo del sistema.',
+                'error_no_principal' => 'Solo el Administrador principal puede activar o desactivar a otros Administradores.',
             ];
         ?>
-        <?php if (isset($_GET['msg']) && isset($usrMsgs[$_GET['msg']])): ?>
+        <?php $msgKeyUsr = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
+        <?php if (isset($usrMsgs[$msgKeyUsr])): ?>
             <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #c0392b;">
-                <?= htmlspecialchars($usrMsgs[$_GET['msg']]) ?>
+                <?= htmlspecialchars($usrMsgs[$msgKeyUsr]) ?>
             </div>
         <?php endif; ?>
 
         <div class="content-header">
             <h1>Gestión de usuarios</h1>
             <div style="display:flex;gap:8px;">
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
                 <a class="btn-nuevo" href="formUsuario.php">+ Nuevo usuario</a>
             </div>
         </div>
@@ -304,12 +339,14 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
                         <td>
                             <div class="acciones">
                                 <a class="btn-accion btn-editar" href="formUsuario.php?id=<?= $u['usuario_id'] ?>">Editar</a>
-                                <?php if ($u['rol'] !== 'Administrador'): ?>
+                                <?php if ($u['rol'] !== 'Administrador' || $esPrincipal): ?>
+                                <?php if (intval($u['usuario_id']) !== intval($_SESSION['usuario_id'])): ?>
                                 <a class="btn-accion <?= $u['activo']?'btn-desactivar':'btn-activar' ?>"
                                    href="usuarios.php?toggle=<?= $u['usuario_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
                                    onclick="return confirm('¿Cambiar estado del usuario?')">
                                     <?= $u['activo']?'Desactivar':'Activar' ?>
                                 </a>
+                                <?php endif; ?>
                                 <?php endif; ?>
                             </div>
                         </td>

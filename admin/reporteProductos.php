@@ -1,18 +1,19 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
-$periodo = $_GET['periodo'] ?? 'mes';
-$sucursal = intval($_GET['sucursal'] ?? 0);
-$categoria = intval($_GET['categoria'] ?? 0);
-$busqueda = trim($_GET['buscar'] ?? '');
+$periodo = is_scalar($_GET['periodo'] ?? null) ? $_GET['periodo'] : 'mes';
+$sucursal = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
+$categoria = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 
 $fechaDesde = match ($periodo) {
     'hoy' => date('Y-m-d'),
@@ -206,7 +207,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -263,7 +264,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Productos mas vendidos</h2>
         </div>
         <div class="topbar-right">
@@ -276,8 +277,8 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         <div class="content-header">
             <h1>Reporte de productos mas vendidos</h1>
             <div style="display:flex;gap:8px;">
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
             </div>
         </div>
         <form method="GET">
@@ -296,11 +297,11 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 <div class="campo-personalizado <?= $periodo === 'personalizado' ? 'visible' : '' ?>" id="campoPers">
                     <div class="filtro-group">
                         <label>Desde</label>
-                        <input type="date" name="desde" value="<?= htmlspecialchars($_GET['desde'] ?? $fechaDesde) ?>">
+                        <input type="date" name="desde" value="<?= htmlspecialchars(is_scalar($_GET['desde'] ?? null) ? $_GET['desde'] : $fechaDesde) ?>">
                     </div>
                     <div class="filtro-group">
                         <label>Hasta</label>
-                        <input type="date" name="hasta" value="<?= htmlspecialchars($_GET['hasta'] ?? $fechaHasta) ?>">
+                        <input type="date" name="hasta" value="<?= htmlspecialchars(is_scalar($_GET['hasta'] ?? null) ? $_GET['hasta'] : $fechaHasta) ?>">
                     </div>
                 </div>
                 <div class="filtro-group">
@@ -369,6 +370,12 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 <?php endif; ?>
             </div>
         </div>
+
+        <?php if (intval($resumen['productos_vendidos'] ?? 0) > count($productos)): ?>
+        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#8d6e00;">
+            Mostrando los <?= count($productos) ?> productos con mas ventas de <?= intval($resumen['productos_vendidos']) ?> que coinciden con este filtro (las tarjetas de arriba si reflejan el total real). Usa Exportar para el listado completo.
+        </div>
+        <?php endif; ?>
 
         <div class="card">
             <div class="card-header">Ranking de productos</div>

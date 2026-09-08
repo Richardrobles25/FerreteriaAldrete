@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -12,7 +13,8 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 if (isset($_GET['eliminar'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
-    $id = intval($_GET['eliminar']);
+    // [FIX-TIPO-ARRAY-ID] intval() sobre un array se coacciona a 1/0 en vez de fallar.
+    $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
 
     // Nota: si el cliente debe un crédito, el frontend ya advirtió el monto antes de llegar aquí.
     // No se bloquea la eliminación ni se toca la tabla creditos — la deuda queda registrada igual.
@@ -44,7 +46,7 @@ if (isset($_GET['eliminar'])) {
 if (isset($_GET['toggle'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'clientes.php');
-    $id = intval($_GET['toggle']);
+    $id = intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0);
 
     // [FIX-ALTO-E-08] (portado de admin/cajero_clientes.php): mismo candado que en
     // eliminar — el toggle no pasaba por ninguna validacion y podia desactivar a un
@@ -71,7 +73,7 @@ $esEdicion = isset($_GET['editar']);
 
 if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM clientes WHERE cliente_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     // [AUTOFIX] BUG-05: Si el ID no existe redirigir con error en lugar de mostrar form vacío
     if ($editando === false) {
@@ -83,17 +85,38 @@ if ($esEdicion) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [AUTOFIX] BUG-01: Verificar CSRF token en formulario de crear/editar cliente
     requerirCSRF($_POST['_token'] ?? '', 'clientes.php');
-    $nombre_completo    = trim($_POST['nombre_completo'] ?? '');
-    $telefono           = trim($_POST['telefono'] ?? '');
-    $direccion          = trim($_POST['direccion'] ?? '');
-    $correo             = trim($_POST['correo'] ?? '');
-    $descuento_fijo     = floatval($_POST['descuento_fijo'] ?? 0);
-    $notas              = trim($_POST['notas'] ?? '');
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/clientes.php) un campo
+    // mandado como array truena trim()/htmlspecialchars() con un TypeError sin capturar.
+    $nombre_completo    = trim(is_scalar($_POST['nombre_completo'] ?? null) ? (string)$_POST['nombre_completo'] : '');
+    $telefono           = trim(is_scalar($_POST['telefono'] ?? null) ? (string)$_POST['telefono'] : '');
+    $direccion          = trim(is_scalar($_POST['direccion'] ?? null) ? (string)$_POST['direccion'] : '');
+    $correo             = trim(is_scalar($_POST['correo'] ?? null) ? (string)$_POST['correo'] : '');
+    $descuento_fijo     = floatval(is_scalar($_POST['descuento_fijo'] ?? null) ? $_POST['descuento_fijo'] : 0);
+    $notas              = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
     $credito_autorizado = isset($_POST['credito_autorizado']) ? 1 : 0;
-    $limite_credito     = floatval($_POST['limite_credito'] ?? 0);
-    $cliente_id         = intval($_POST['cliente_id'] ?? 0);
+    $limite_credito     = floatval(is_scalar($_POST['limite_credito'] ?? null) ? $_POST['limite_credito'] : 0);
+    // [FIX-LIMITE-FANTASMA] Si el credito no esta autorizado, limite_credito no debia
+    // guardarse tal cual llegara del POST — probado en vivo: con la casilla sin marcar,
+    // un limite_credito=9999 igual se guardaba en la base, quedando un valor "fantasma"
+    // listo para reaparecer si alguien reactiva el credito despues sin volver a capturarlo.
+    // admin/clientes.php ya hacia este reset; aqui y en admin/cajero_clientes.php faltaba.
+    if (!$credito_autorizado) $limite_credito = 0;
+    // [FIX-CLIENTE-ID-DESINCRONIZADO] (mismo patron ya corregido en admin/clientes.php y
+    // admin/cajero_clientes.php) Antes $cliente_id salia directo del campo oculto del
+    // POST, sin relacion con el "?editar=" de la URL -- un POST manipulado podia editar
+    // CUALQUIER otro cliente real. Se ancla al cliente_id de $editando.
+    $cliente_id         = ($esEdicion && $editando) ? intval($editando['cliente_id']) : 0;
 
     if (!$nombre_completo) $errores[] = 'El nombre es obligatorio.';
+    // [FIX-CLIENTE-LARGO] nombre_completo (VARCHAR 100), direccion (255), correo (100) y
+    // notas (255) no tenian tope de longitud en el servidor — probado en vivo: un nombre de
+    // 101 caracteres, direccion de 256, correo de 101 (le cortaba el dominio dejando un
+    // correo invalido guardado) y notas de 256 se truncaban en silencio y se guardaban como
+    // "creado correctamente". Mismo patron ya corregido en proveedores.php.
+    if (mb_strlen($nombre_completo) > 100) $errores[] = 'El nombre no puede tener más de 100 caracteres.';
+    if (mb_strlen($direccion) > 255)       $errores[] = 'La dirección no puede tener más de 255 caracteres.';
+    if (mb_strlen($correo) > 100)          $errores[] = 'El correo no puede tener más de 100 caracteres.';
+    if (mb_strlen($notas) > 255)           $errores[] = 'Las notas no pueden tener más de 255 caracteres.';
     if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     // [AUTOFIX] V-01: Validar formato de email en backend
     if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
@@ -109,6 +132,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // llamarse igual), pero el teléfono sí debería serlo — es lo que realmente distingue a un
     // cliente de otro en el buscador de Nueva Venta. Sin esto, un cajero podía crear un cliente
     // duplicado por error y luego un pago/crédito se registraba en el registro equivocado.
+    // [FIX-TELEFONO-RACE] clientes no tiene UNIQUE en telefono -- el check-then-insert de abajo
+    // es una condicion de carrera clasica. Mismo candado GET_LOCK ya aplicado en admin/clientes.php.
+    $lockTelefono     = null;
+    $lockTelAdquirido = true;
+    if ($telefono !== '') {
+        $lockTelefono     = 'cliente_telefono_' . $telefono;
+        $lockTelAdquirido = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockTelefono) . ", 5)")->fetchColumn();
+        if (!$lockTelAdquirido) {
+            $errores[] = 'Otro usuario está guardando un cliente con este mismo teléfono en este momento. Intenta de nuevo.';
+        }
+    }
+
     if (empty($errores) && $telefono !== '') {
         $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ?");
         $stmtDupTel->execute([$telefono, $cliente_id]);
@@ -120,16 +155,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         if ($cliente_id) {
-            $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=? WHERE cliente_id=?")
-                ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cliente_id]);
+            // [FIX-CLIENTE-EDITAR-FANTASMA] Antes redirigia siempre a "msg=editado" (exito) sin
+            // comprobar si el cliente_id todavia existe — uno que ya no existe (borrado por otra
+            // sesion, o un link/formulario viejo) mostraba "Cliente actualizado" sin que nada
+            // hubiera cambiado. Mismo patron ya corregido en transferencias.php (Ronda 2).
+            // OJO: PDO/MySQL por defecto reporta rowCount() = filas REALMENTE MODIFICADAS, no
+            // filas encontradas — guardar sin cambiar ningun campo tambien da rowCount()=0 y NO
+            // debe tratarse como "no encontrado". Por eso se verifica existencia por separado en
+            // vez de confiar en rowCount().
+            $stmtUpdCliente = $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=? WHERE cliente_id=?");
+            $stmtUpdCliente->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cliente_id]);
+            if ($stmtUpdCliente->rowCount() === 0) {
+                $stmtExisteCliente = $pdo->prepare("SELECT 1 FROM clientes WHERE cliente_id = ?");
+                $stmtExisteCliente->execute([$cliente_id]);
+                if (!$stmtExisteCliente->fetchColumn()) {
+                    if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
+                    header('Location: clientes.php?msg=no_encontrado');
+                    exit();
+                }
+            }
             header('Location: clientes.php?msg=editado');
         } else {
             $pdo->prepare("INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, activo) VALUES (?,?,?,?,?,?,?,?,1)")
                 ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito]);
             header('Location: clientes.php?msg=creado');
         }
+        if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
         exit();
     }
+    if ($lockTelefono && $lockTelAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
 }
 
 // Búsqueda en tiempo real: se carga toda la lista y el JS filtra mientras se escribe
@@ -172,7 +226,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -301,7 +355,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Clientes</h2>
         </div>
         <div class="topbar-right">
@@ -318,9 +372,12 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <?php if (isset($_GET['msg'])): ?>
                 <?php
                 // [AUTOFIX] BUG-03/BUG-05: Agregar mensajes de error para bloqueos y cliente no encontrado
-                $msgsExito = ['creado' => 'Cliente registrado.', 'editado' => 'Cliente actualizado.', 'eliminado' => 'Cliente eliminado.', 'no_encontrado' => 'Cliente no encontrado.'];
-                $msgsError = ['error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.', 'error_credito_pendiente' => 'No se puede desactivar este cliente porque tiene un crédito pendiente de pago.'];
-                $msgKey = $_GET['msg'];
+                $msgsExito = ['creado' => 'Cliente registrado.', 'editado' => 'Cliente actualizado.', 'eliminado' => 'Cliente eliminado.'];
+                // [FIX-CLIENTE-EDITAR-FANTASMA] "no_encontrado" es una condicion de error (el
+                // cliente ya no existe) — antes vivia en $msgsExito y se pintaba en verde como si
+                // fuera un exito, tanto aqui como al editar un cliente_id inexistente por GET.
+                $msgsError = ['error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.', 'error_credito_pendiente' => 'No se puede desactivar este cliente porque tiene un crédito pendiente de pago.', 'no_encontrado' => 'Cliente no encontrado.'];
+                $msgKey = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : '';
                 if (isset($msgsExito[$msgKey])):
                 ?>
                     <div class="msg msg-exito"><?= $msgsExito[$msgKey] ?></div>
@@ -410,6 +467,19 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>
 
+                <?php
+                    // [FIX-TIPO-ARRAY-ID] Repoblar el formulario tras un error releyendo
+                    // $_POST crudo tenia el mismo hueco ya corregido en admin/formGasto.php.
+                    $esPostCliInv = $_SERVER['REQUEST_METHOD'] === 'POST';
+                    $vNombreCI    = $esPostCliInv ? $nombre_completo    : ($editando['nombre_completo'] ?? '');
+                    $vTelefonoCI  = $esPostCliInv ? $telefono           : ($editando['telefono']        ?? '');
+                    $vDireccionCI = $esPostCliInv ? $direccion          : ($editando['direccion']       ?? '');
+                    $vCorreoCI    = $esPostCliInv ? $correo             : ($editando['correo']          ?? '');
+                    $vDescuentoCI = $esPostCliInv ? $descuento_fijo     : ($editando['descuento_fijo']  ?? '');
+                    $vNotasCI     = $esPostCliInv ? $notas              : ($editando['notas']           ?? '');
+                    $vCredAutCI   = $esPostCliInv ? $credito_autorizado : ($editando['credito_autorizado'] ?? 0);
+                    $vLimiteCI    = $esPostCliInv ? $limite_credito     : ($editando['limite_credito']  ?? '');
+                ?>
                 <form method="POST">
                     <!-- [AUTOFIX] BUG-01: Token CSRF para proteger el form de crear/editar -->
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
@@ -418,48 +488,48 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-group">
                         <label>Nombre completo *</label>
                         <!-- [AUTOFIX] BUG-07: Agregar required para validación inmediata en el navegador -->
-                        <input type="text" name="nombre_completo" required value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan García">
+                        <input type="text" name="nombre_completo" required maxlength="100" value="<?= htmlspecialchars($vNombreCI) ?>" placeholder="Ej. Juan García">
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
                             <label>Teléfono</label>
-                            <input type="tel" name="telefono" value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)">
+                            <input type="tel" name="telefono" value="<?= htmlspecialchars($vTelefonoCI) ?>" placeholder="10 dígitos" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)">
                         </div>
                         <div class="form-group">
                             <label>Descuento fijo (%)</label>
                             <!-- [AUTOFIX] BUG-02: Agregar htmlspecialchars() para prevenir XSS en el value -->
-                            <input type="number" name="descuento_fijo" value="<?= htmlspecialchars($_POST['descuento_fijo'] ?? $editando['descuento_fijo'] ?? '') ?>" step="0.01" min="0" max="100" placeholder="0">
+                            <input type="number" name="descuento_fijo" value="<?= htmlspecialchars($vDescuentoCI) ?>" step="0.01" min="0" max="100" placeholder="0">
                         </div>
                     </div>
 
                     <div class="form-group">
                         <label>Dirección</label>
-                        <input type="text" name="direccion" value="<?= htmlspecialchars($_POST['direccion'] ?? $editando['direccion'] ?? '') ?>" placeholder="Calle, número, colonia">
+                        <input type="text" name="direccion" maxlength="255" value="<?= htmlspecialchars($vDireccionCI) ?>" placeholder="Calle, número, colonia">
                     </div>
 
                     <div class="form-group">
                         <label>Correo</label>
-                        <input type="email" name="correo" value="<?= htmlspecialchars($_POST['correo'] ?? $editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com">
+                        <input type="email" name="correo" maxlength="100" value="<?= htmlspecialchars($vCorreoCI) ?>" placeholder="correo@ejemplo.com">
                     </div>
 
                     <div class="form-group">
                         <label>Notas</label>
-                        <input type="text" name="notas" value="<?= htmlspecialchars($_POST['notas'] ?? $editando['notas'] ?? '') ?>" placeholder="Observaciones del cliente">
+                        <input type="text" name="notas" maxlength="255" value="<?= htmlspecialchars($vNotasCI) ?>" placeholder="Observaciones del cliente">
                     </div>
 
                     <div class="check-row">
                         <input type="checkbox" name="credito_autorizado" id="chkCredito"
-                            <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'checked' : '' ?>
+                            <?= $vCredAutCI ? 'checked' : '' ?>
                             onchange="toggleCredito(this.checked)">
                         <label for="chkCredito">Autorizar crédito a este cliente</label>
                     </div>
 
-                    <div class="credito-campos <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '' ?>" id="creditoCampos">
+                    <div class="credito-campos <?= $vCredAutCI ? 'visible' : '' ?>" id="creditoCampos">
                         <div class="form-group">
                             <label>Límite de crédito</label>
                             <!-- [AUTOFIX] BUG-02: Agregar htmlspecialchars() para prevenir XSS en el value -->
-                            <input type="number" name="limite_credito" value="<?= htmlspecialchars($_POST['limite_credito'] ?? $editando['limite_credito'] ?? '') ?>" step="0.01" min="0" placeholder="0.00">
+                            <input type="number" name="limite_credito" value="<?= htmlspecialchars($vLimiteCI) ?>" step="0.01" min="0" placeholder="0.00">
                         </div>
                     </div>
 

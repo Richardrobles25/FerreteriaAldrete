@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
@@ -13,7 +14,11 @@ require_once '../includes/topbar_info.php';
 // Toggle activo
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
     requerirCSRF($_POST['_token'] ?? '', 'empleados.php');
-    $eid = intval($_POST['toggle_id']);
+    // [FIX-TIPO-ARRAY-ID] Bug real confirmado en vivo: POST "toggle_id[]=99999" (un id que
+    // ni existe) desactivo de verdad a Fernando Perez (empleado_id=1, un empleado real) en
+    // vez de fallar -- intval() sobre un array no vacio se coacciona a 1, sin importar que
+    // valores traiga el array. Restaurado manualmente tras la prueba.
+    $eid = intval(is_scalar($_POST['toggle_id'] ?? null) ? $_POST['toggle_id'] : 0);
     $pdo->prepare("UPDATE empleados SET activo = NOT activo WHERE empleado_id = ?")->execute([$eid]);
     header('Location: empleados.php?msg=actualizado');
     exit();
@@ -70,7 +75,7 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -121,7 +126,7 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Empleados</h2>
         </div>
         <div class="topbar-right">
@@ -162,6 +167,7 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                         <th>Fecha ingreso</th>
                         <th>Antigüedad</th>
                         <th>Sueldo semanal</th>
+                        <th>Horas</th>
                         <th>Vacaciones (saldo)</th>
                         <th>Estado</th>
                         <th>Acciones</th>
@@ -178,6 +184,21 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                     <td style="font-size:12px;"><?= date('d/m/Y', strtotime($emp['fecha_ingreso'])) ?></td>
                     <td style="font-size:12px;"><?= calcAntiguedad($emp['fecha_ingreso']) ?></td>
                     <td style="font-weight:700;">$<?= number_format($emp['sueldo_semanal'], 2) ?></td>
+                    <td style="font-size:12px;color:#666;white-space:nowrap;">
+                        <?php
+                            // [FIX-HORAS-REDONDEO-DISPLAY] Redondear a 0 decimales aqui ocultaba
+                            // valores fraccionarios reales (el formulario permite pasos de 0.5,
+                            // ej. 7.5h/dia) -- un admin viendo "8h/dia" en esta lista para un
+                            // empleado guardado con 7.5 podia pensar que su valor no se guardo
+                            // como lo capturo. Se muestra sin decimales solo cuando el valor es
+                            // un entero exacto, y con 1 decimal cuando no lo es.
+                            $hSem = floatval($emp['horas_esperadas_semana']);
+                            $hDia = floatval($emp['horas_por_dia']);
+                        ?>
+                        <?= number_format($hSem, ($hSem == floor($hSem)) ? 0 : 1) ?>h/sem
+                        <span style="color:#bbb;"> · </span>
+                        <?= number_format($hDia, ($hDia == floor($hDia)) ? 0 : 1) ?>h/dia
+                    </td>
                     <td>
                         <?php if ($tieneDerecho): ?>
                         <div class="vacaciones-bar">

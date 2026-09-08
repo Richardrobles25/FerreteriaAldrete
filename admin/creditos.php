@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -69,6 +70,21 @@ try {
         $credLock = $stmtLockCred->fetch(PDO::FETCH_ASSOC);
         if (!$credLock || $credLock['estado'] !== 'Vencido') continue;
 
+        // [FIX-MORA-SALDO-CERO] Un credito puede quedar en estado='Vencido' con saldo_pendiente
+        // ya en 0 (ej. un abono que salda el total sin cambiar el estado a la vez). Sin este
+        // guardia, el while de abajo seguia iterando en cada carga de pagina calculando
+        // mora=round(0*pct,2)=0.00 e insertando una fila de movimientos_mora por cada quincena
+        // vencida -- pero como "$ultimaMora > 0" nunca se cumple, el UPDATE que avanza
+        // fecha_limite jamas se ejecutaba, asi que las MISMAS quincenas se volvian a procesar
+        // (e insertar) en cada visita a esta pagina, para siempre. Probado en vivo: credito con
+        // saldo=0 fecha_limite=2026-08-15, cada carga de la pagina agregaba 2 filas nuevas de
+        // $0.00 sin parar. Se autocorrige aqui: un credito sin saldo no deberia seguir "Vencido".
+        if (floatval($credLock['saldo_pendiente']) <= 0) {
+            $pdo->prepare("UPDATE creditos SET estado = 'Liquidado' WHERE credito_id = ?")
+                ->execute([$cm['credito_id']]);
+            continue;
+        }
+
         $pct               = floatval($cm['porcentaje_mora']);
         $saldoActual       = round(floatval($credLock['saldo_pendiente']), 2);
         $fechaLimiteActual = $credLock['fecha_limite'];
@@ -98,10 +114,10 @@ try {
     error_log('[Ferreteria/creditos] Error al aplicar mora: ' . $e->getMessage());
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
-$estado = $_GET['estado'] ?? '';
-$sucursal = intval($_GET['sucursal'] ?? 0);
-$vencimiento = $_GET['vencimiento'] ?? '';
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$estado = is_scalar($_GET['estado'] ?? null) ? $_GET['estado'] : '';
+$sucursal = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
+$vencimiento = is_scalar($_GET['vencimiento'] ?? null) ? $_GET['vencimiento'] : '';
 
 $where = "WHERE 1=1";
 $params = [];
@@ -255,7 +271,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -311,7 +327,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
 <div class="main">
     <div class="topbar">
-        <div class="topbar-left"><button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button><h2>Creditos de clientes</h2></div>
+        <div class="topbar-left"><button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button><h2>Creditos de clientes</h2></div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">- <?= htmlspecialchars($nombreSucursal) ?></span></span>
             <form method="POST" action="/logout.php"><button class="logout-btn" type="submit">Cerrar sesion</button></form>
@@ -322,8 +338,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         <div class="content-header">
             <h1>Control de creditos</h1>
             <div style="display:flex;gap:8px;">
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ PDF</a>
-                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;">⬇ Excel</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'pdf'])) ?>" style="background:#c0392b;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> PDF</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['exportar'=>'excel'])) ?>" style="background:#1b5e20;color:white;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;"><?= icono('download') ?> Excel</a>
             </div>
         </div>
 

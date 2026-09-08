@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -16,7 +17,11 @@ if (isset($_GET['eliminar'])) {
     // visitara con su sesion abierta. Ahora exige el mismo token CSRF que ya usa el
     // resto del sistema.
     requerirCSRF($_GET['_token'] ?? '', 'sucursales.php');
-    $sid = intval($_GET['eliminar']);
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php,
+    // admin/empleados.php, etc.) intval() sobre un array no truena, se coacciona en
+    // silencio a 1/0 -- sin este guard, "?eliminar[]=x" intentaria borrar siempre la
+    // sucursal real sucursal_id=1 sin importar que id se haya mandado.
+    $sid = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
 
     // [FIX-ALTO-A-05] Antes esta guarda solo contaba usuarios/stock ACTIVOS, pero el
     // DELETE de abajo borra TODAS las filas de esas tablas sin importar su estado —
@@ -37,6 +42,15 @@ if (isset($_GET['eliminar'])) {
         header('Location: sucursales.php?error=con_stock'); exit();
     }
 
+    // [FIX-LOGO-HUERFANO] El logo subido para esta sucursal (ver formSucursal.php) vive en
+    // uploads/logos/ como archivo suelto, fuera de cualquier tabla que el DELETE de abajo
+    // toque -- sin esto, el archivo se queda huerfano en disco para siempre cada vez que se
+    // elimina una sucursal que tenia logo. Se obtiene antes de borrar y se limpia solo si la
+    // transaccion de verdad se confirma (para no perder el archivo si el DELETE fallara).
+    $ticketLogoAEliminar = $pdo->prepare("SELECT ticket_logo FROM sucursales WHERE sucursal_id = ?");
+    $ticketLogoAEliminar->execute([$sid]);
+    $logoParaBorrar = $ticketLogoAEliminar->fetchColumn();
+
     try {
         $pdo->beginTransaction();
         // abonos → creditos → ventas → cajas
@@ -56,6 +70,10 @@ if (isset($_GET['eliminar'])) {
         $pdo->prepare("DELETE FROM usuarios WHERE sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE FROM sucursales WHERE sucursal_id = ?")->execute([$sid]);
         $pdo->commit();
+        if ($logoParaBorrar) {
+            $logoPath = __DIR__ . '/../' . $logoParaBorrar;
+            if (file_exists($logoPath)) @unlink($logoPath);
+        }
         header('Location: sucursales.php?msg=eliminado'); exit();
     } catch (\PDOException $e) {
         $pdo->rollBack();
@@ -107,7 +125,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -161,7 +179,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Sucursales</h2>
         </div>
         <div class="topbar-right">
@@ -186,8 +204,9 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
         <?php elseif (isset($_GET['msg'])): ?>
             <?php $msgs = ['creado' => 'Sucursal creada.', 'editado' => 'Sucursal actualizada.', 'eliminado' => 'Sucursal eliminada correctamente.']; ?>
+            <?php $msgKeySuc = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
             <div style="background:#e8f5e9;color:#2e7d32;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #2e7d32;">
-                <?= htmlspecialchars($msgs[$_GET['msg']] ?? '') ?>
+                <?= htmlspecialchars($msgs[$msgKeySuc] ?? '') ?>
             </div>
         <?php endif; ?>
         <?php
@@ -197,10 +216,11 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 'con_registros'=> 'Ocurrió un error al eliminar la sucursal. Intenta de nuevo.',
             ];
         ?>
-        <?php if (isset($_GET['error']) && isset($errMsgs[$_GET['error']])): ?>
+        <?php $errKeySuc = is_scalar($_GET['error'] ?? null) ? $_GET['error'] : ''; ?>
+        <?php if (isset($errMsgs[$errKeySuc])): ?>
             <div style="background:#fdecea;color:#c0392b;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #c0392b;">
-                <?= $errMsgs[$_GET['error']] ?>
-                <?php if (isset($_GET['detail'])): ?>
+                <?= $errMsgs[$errKeySuc] ?>
+                <?php if (isset($_GET['detail']) && is_scalar($_GET['detail'])): ?>
                     <div style="margin-top:6px;font-size:11px;opacity:.8;font-family:monospace;"><?= htmlspecialchars($_GET['detail']) ?></div>
                 <?php endif; ?>
             </div>

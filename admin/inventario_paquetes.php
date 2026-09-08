@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -11,13 +12,13 @@ verificarRol(['Administrador', 'Inventario']);
 require_once '../includes/topbar_info.php';
 if (isset($_GET['toggle'])) {
     requerirCSRF($_GET['_token'] ?? '', 'inventario_paquetes.php');
-    $pdo->prepare("UPDATE paquetes SET activo = NOT activo WHERE paquete_id = ?")->execute([intval($_GET['toggle'])]);
+    $pdo->prepare("UPDATE paquetes SET activo = NOT activo WHERE paquete_id = ?")->execute([intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0)]);
     header('Location: inventario_paquetes.php'); exit();
 }
 
 if (isset($_GET['eliminar'])) {
     requerirCSRF($_GET['_token'] ?? '', 'inventario_paquetes.php');
-    $id = intval($_GET['eliminar']);
+    $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
     $pdo->prepare("DELETE FROM paquete_productos WHERE paquete_id = ?")->execute([$id]);
     $pdo->prepare("DELETE FROM paquetes WHERE paquete_id = ?")->execute([$id]);
     header('Location: inventario_paquetes.php?msg=eliminado'); exit();
@@ -29,7 +30,7 @@ $prodsPaquete = [];
 
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM paquetes WHERE paquete_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($editando) {
         $stmtPP = $pdo->prepare("
@@ -51,12 +52,30 @@ $codigoSugerido = 'PAQ'.str_pad($siguienteId, 4, '0', STR_PAD_LEFT);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requerirCSRF($_POST['_token'] ?? '', 'inventario_paquetes.php');
-    $nombre         = trim($_POST['nombre'] ?? '');
-    $codigo         = strtoupper(trim($_POST['codigo'] ?? ''));
-    $descripcion    = trim($_POST['descripcion'] ?? '');
-    $precio_paquete = floatval($_POST['precio_paquete'] ?? 0);
-    $items          = json_decode($_POST['items_paquete'] ?? '[]', true);
-    $paquete_id     = intval($_POST['paquete_id'] ?? 0);
+    $nombre         = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    $codigo         = strtoupper(trim(is_scalar($_POST['codigo'] ?? null) ? (string)$_POST['codigo'] : ''));
+    $descripcion    = trim(is_scalar($_POST['descripcion'] ?? null) ? (string)$_POST['descripcion'] : '');
+    $precio_paquete = floatval(is_scalar($_POST['precio_paquete'] ?? null) ? $_POST['precio_paquete'] : 0);
+    $itemsRaw       = is_scalar($_POST['items_paquete'] ?? null) ? $_POST['items_paquete'] : '[]';
+    $items          = json_decode($itemsRaw ?? '[]', true);
+    // [FIX-PAQUETE-ID-DESINCRONIZADO] Se ancla al paquete ya cargado via ?editar= (arriba),
+    // no al <input hidden name="paquete_id"> del POST.
+    $paquete_id     = $editando ? intval($editando['paquete_id']) : 0;
+
+    // [FIX-PAQUETE-EDICION-FANTASMA] Antes, si $paquete_id no correspondía a ningún paquete
+    // real (borrado por otra sesión, o un POST directo con un id inventado), el UPDATE/DELETE
+    // de más abajo afectaban 0 filas en silencio y el siguiente INSERT de paquete_productos
+    // tronaba con un error 500 crudo (violación de llave foránea, con ruta de archivo y
+    // nombre de restricción de la BD expuestos) porque paquete_id ya no existía. Probado en
+    // vivo con paquete_id=99999. Se valida su existencia aquí, junto con las demás
+    // validaciones, en vez de descubrirlo hasta la mitad de la transacción.
+    if ($paquete_id) {
+        $stmtExistePaq = $pdo->prepare("SELECT 1 FROM paquetes WHERE paquete_id = ?");
+        $stmtExistePaq->execute([$paquete_id]);
+        if (!$stmtExistePaq->fetchColumn()) {
+            $errores[] = 'El paquete que intentas editar ya no existe (puede que otra sesión lo haya eliminado). Recarga la página.';
+        }
+    }
 
     if (!$nombre)             $errores[] = 'El nombre es obligatorio.';
     if (!$codigo)             $errores[] = 'El código es obligatorio.';
@@ -96,6 +115,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $idsVistos[] = $productoItem;
         }
+
+        // [FIX-PAQUETE-PISO-TECHO] El piso "no vender bajo el costo" y el techo "no cobrar
+        // mas que comprando los productos por separado" SOLO existian en JS
+        // (actualizarHintAhorro()/prepararPaquete()) -- un POST directo (curl, o cualquier
+        // cliente que no sea el navegador) los saltaba por completo. Probado en vivo: se creo
+        // un paquete real con precio_paquete=$1 para un producto con costo=$40 (perdida
+        // garantizada de $39 en cada venta), y otro con precio_paquete=$9999 para un producto
+        // de venta $100 (paquete mas caro que comprar suelto, contradice el proposito mismo
+        // de un paquete). Mismo patron ya usado en formProducto.php/compras.php para el piso
+        // de precio de productos sueltos -- aqui se recalculan costo/precio individual desde
+        // la BD (nunca desde lo que mando el cliente) para no poder mentir sobre el costo real.
+        if (empty($errores) && !empty($idsVistos)) {
+            $placeholders = implode(',', array_fill(0, count($idsVistos), '?'));
+            $stmtPrecios  = $pdo->prepare("SELECT producto_id, precio_compra, precio_venta FROM productos WHERE producto_id IN ($placeholders)");
+            $stmtPrecios->execute($idsVistos);
+            $preciosPorId = [];
+            foreach ($stmtPrecios->fetchAll(PDO::FETCH_ASSOC) as $pp) { $preciosPorId[$pp['producto_id']] = $pp; }
+
+            $totalCostoServer    = 0.0;
+            $totalSeparadoServer = 0.0;
+            foreach ($items as $item) {
+                $pid = intval($item['producto_id'] ?? 0);
+                $cnt = floatval($item['cantidad'] ?? 0);
+                if (!isset($preciosPorId[$pid])) continue;
+                $totalCostoServer    += $cnt * floatval($preciosPorId[$pid]['precio_compra']);
+                $totalSeparadoServer += $cnt * floatval($preciosPorId[$pid]['precio_venta']);
+            }
+            if ($totalCostoServer > 0 && $precio_paquete < $totalCostoServer) {
+                $errores[] = 'El precio del paquete ($'.number_format($precio_paquete,2).') es menor al costo de los productos ($'.number_format($totalCostoServer,2).'). Ajusta el precio.';
+            } elseif ($totalSeparadoServer > 0 && $precio_paquete > $totalSeparadoServer) {
+                $errores[] = 'El precio del paquete ($'.number_format($precio_paquete,2).') supera el precio individual de los productos ($'.number_format($totalSeparadoServer,2).'). El paquete debe ser más barato que comprar por separado.';
+            }
+        }
     }
 
     if ($codigo) {
@@ -124,12 +176,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$paquete_id, intval($item['producto_id']), floatval($item['cantidad'])]);
             }
             $pdo->commit();
-        } catch (Exception $e) {
+            header('Location: inventario_paquetes.php?msg='.($paquete_id&&$_POST['paquete_id']?'editado':'creado'));
+            exit();
+        } catch (\Throwable $e) {
+            // [FIX-PAQUETE-EDICION-FANTASMA] Antes: "throw $e;" relanzaba la excepción sin
+            // manejarla, y como no hay ningún try/catch más arriba en el script, terminaba en
+            // un error 500 crudo (stack trace con rutas de archivo y detalles de la BD
+            // visibles para cualquier Administrador/Inventario). El rollback ya deja la BD sin
+            // cambios a medias; aquí solo falta mostrar un mensaje claro en vez de tronar.
             $pdo->rollBack();
-            throw $e;
+            $errores[] = 'No se pudo guardar el paquete. Intenta de nuevo.';
         }
-        header('Location: inventario_paquetes.php?msg='.($paquete_id&&$_POST['paquete_id']?'editado':'creado'));
-        exit();
     }
 }
 
@@ -172,7 +229,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -263,7 +320,7 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Paquetes de productos</h2>
         </div>
         <div class="topbar-right">
@@ -277,7 +334,8 @@ $productos = $stmtProds->fetchAll(PDO::FETCH_ASSOC);
         <div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs=['creado'=>'Paquete creado.','editado'=>'Paquete actualizado.','eliminado'=>'Paquete eliminado.']; ?>
-                <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?? '' ?></div>
+                <?php $msgKeyPaq = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
+                <div class="msg msg-exito"><?= $msgs[$msgKeyPaq] ?? '' ?></div>
             <?php endif; ?>
 
             <?php if (count($paquetes) > 0): ?>

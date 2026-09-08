@@ -1,15 +1,16 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
-$fecha    = $_GET['fecha'] ?? date('Y-m-d');
-$tipo     = $_GET['tipo'] ?? '';
-$busqueda = trim($_GET['buscar'] ?? '');
+$fecha    = is_scalar($_GET['fecha'] ?? null) ? $_GET['fecha'] : date('Y-m-d');
+$tipo     = is_scalar($_GET['tipo'] ?? null) ? $_GET['tipo'] : '';
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 
 $where  = "WHERE m.sucursal_id = ?";
 $params = [$_SESSION['sucursal_id']];
@@ -33,12 +34,25 @@ $stmt->execute($params);
 $movimientos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Resumen
+// [FIX-HISTORIAL-TOPE-200] total_movimientos agregado para detectar cuando la tabla de abajo
+// (LIMIT 200) se queda corta -- si se limpia el campo fecha, el filtro de fecha se salta por
+// completo (linea 18: "if ($fecha)") y se busca en TODO el historico de la sucursal sin avisar
+// que solo se muestran los 200 mas recientes. Probado en vivo: sucursal con 295 movimientos
+// reales mostraba 200 sin ningun indicio de que faltaban 95.
+// [FIX-HISTORIAL-TRANSF-SUMA] La primera pasada de este fix (misma sesion) solo agrego
+// 'Ajuste' a la formula, copiando el patron de admin/inventario_masVendidos.php sin revisar
+// que admin/historial.php (el reporte global, mas maduro) YA incluia 'Transferencia' tambien
+// -- una transferencia entre sucursales SI mueve stock real (confirmado con datos reales:
+// stock_anterior != stock_nuevo en las filas tipo=Transferencia). Probado en vivo: mismo
+// filtro (fecha 2026-04-30, sucursal 1) daba Entradas=123.00 aqui contra 134.00 en
+// admin/historial.php -- 11 de diferencia, exactos a las transferencias de ese dia.
 $stmtRes = $pdo->prepare("
     SELECT
-        SUM(CASE WHEN m.tipo='Entrada' OR (m.tipo='Ajuste' AND m.stock_nuevo > m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_entradas,
-        SUM(CASE WHEN m.tipo='Salida' OR (m.tipo='Ajuste' AND m.stock_nuevo < m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_salidas,
+        SUM(CASE WHEN m.tipo='Entrada' OR (m.tipo IN ('Ajuste','Transferencia') AND m.stock_nuevo > m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_entradas,
+        SUM(CASE WHEN m.tipo='Salida' OR (m.tipo IN ('Ajuste','Transferencia') AND m.stock_nuevo < m.stock_anterior) THEN m.cantidad ELSE 0 END) as total_salidas,
         COUNT(CASE WHEN m.tipo='Ajuste' THEN 1 END) as total_ajustes,
-        COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias
+        COUNT(CASE WHEN m.tipo='Transferencia' THEN 1 END) as total_transferencias,
+        COUNT(*) as total_movimientos
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     $where
@@ -73,7 +87,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -193,7 +207,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Historial de Movimientos</h2>
         </div>
         <div class="topbar-right">
@@ -242,6 +256,12 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
             <div class="stat"><p>Ajustes</p><h3><?= $resumen['total_ajustes'] ?></h3></div>
             <div class="stat"><p>Transferencias</p><h3><?= $resumen['total_transferencias'] ?></h3></div>
         </div>
+
+        <?php if (intval($resumen['total_movimientos']) > 200): ?>
+        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#8d6e00;">
+            Mostrando los 200 movimientos más recientes de <?= number_format(intval($resumen['total_movimientos'])) ?> que coinciden con este filtro. Agrega una fecha o una búsqueda más específica para ver los demás.
+        </div>
+        <?php endif; ?>
 
         <div class="tabla-wrapper">
             <?php if (count($movimientos) > 0): ?>

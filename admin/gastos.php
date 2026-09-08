@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -14,7 +15,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     // [FIX-CRIT-G-01] CSRF ausente antes — permitía crear, reescribir o borrar la
     // bitácora de gastos completa con un POST desde cualquier página.
     requerirCSRF($_POST['_token'] ?? '', 'gastos.php');
-    $pdo->prepare("DELETE FROM gastos WHERE gasto_id = ?")->execute([intval($_POST['eliminar_id'])]);
+    // [FIX-TIPO-ARRAY-ID] intval() sobre un array no truena: lo coacciona a 1 (array no
+    // vacio) o 0 (vacio). Probado en vivo el mismo patron en gastos_categorias.php
+    // ("toggle_id[]=99999" desactivo de verdad categoria_gasto_id=1, "Vehiculos", en vez
+    // de fallar) -- aqui el mismo truco borraria SIEMPRE gasto_id=1 sin importar que id
+    // se haya mandado, si "eliminar_id" llega como array.
+    $pdo->prepare("DELETE FROM gastos WHERE gasto_id = ?")->execute([intval(is_scalar($_POST['eliminar_id'] ?? null) ? $_POST['eliminar_id'] : 0)]);
     header('Location: gastos.php?' . http_build_query(array_filter([
         'fecha_inicio'       => $_POST['fi'] ?? '',
         'fecha_fin'          => $_POST['ff'] ?? '',
@@ -24,10 +30,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     exit();
 }
 
-$fechaInicio = $_GET['fecha_inicio']       ?? date('Y-m-01');
-$fechaFin    = $_GET['fecha_fin']          ?? date('Y-m-d');
-$sucursal    = intval($_GET['sucursal']    ?? 0);
-$categoria   = intval($_GET['categoria_gasto_id'] ?? 0);
+// [FIX-TIPO-ARRAY-ID] "?fecha_inicio[]=x" llega como array y NO dispara el "?? date(...)"
+// (el operador solo cae al default si la llave esta ausente/null, no si es un array) --
+// probado en vivo: crashea con "Uncaught TypeError: htmlspecialchars(): ...array given"
+// (ruta del servidor y stack trace expuestos, disparable con solo abrir un enlace, sin
+// necesitar POST ni CSRF), ademas de varios "Warning: Array to string conversion" antes
+// de llegar ahi. Se valida is_scalar() para tratar un array igual que si la llave no
+// viniera (usa el default).
+$fechaInicio = is_scalar($_GET['fecha_inicio'] ?? null) ? $_GET['fecha_inicio'] : date('Y-m-01');
+$fechaFin    = is_scalar($_GET['fecha_fin']    ?? null) ? $_GET['fecha_fin']    : date('Y-m-d');
+$sucursal    = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
+$categoria   = intval(is_scalar($_GET['categoria_gasto_id'] ?? null) ? $_GET['categoria_gasto_id'] : 0);
 
 $where  = "WHERE 1=1";
 $params = [];
@@ -52,6 +65,26 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute($params);
 $gastos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// [FIX-GASTOS-LIMIT500-SIN-AVISO] La tabla de abajo siempre se corta en 500 filas (LIMIT 500
+// arriba) sin decir nada — con un rango de fechas amplio (o sin filtro) es facil que una
+// sucursal con mucho movimiento tenga mas de 500 gastos y el admin vea la lista como
+// "completa" sin saber que faltan filas (mismo patron ya corregido en cortes.php,
+// admin/historial.php y admin/inventario_historial.php). Probado en vivo: 501 gastos
+// insertados en un mismo dia -> "Total gastos (periodo)" ya mostraba el monto real completo
+// ($5,010.00, via el SUM sin LIMIT de abajo) pero "Registros" se quedaba en 500 sin ningun
+// aviso de que faltaba 1. Se cuenta el total real (mismo $where, sin LIMIT) para mostrar un
+// aviso cuando la tabla se trunca, igual que en los otros archivos.
+$stmtCount = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM gastos g
+    JOIN sucursales s         ON g.sucursal_id = s.sucursal_id
+    JOIN usuarios u           ON g.usuario_id = u.usuario_id
+    JOIN categorias_gastos cg ON g.categoria_gasto_id = cg.categoria_gasto_id
+    $where
+");
+$stmtCount->execute($params);
+$totalGastosReal = intval($stmtCount->fetchColumn());
 
 // [FIX-ALTO-G-09] Antes el total y el desglose por categoria se calculaban en PHP a
 // partir de $gastos, que trae como maximo 500 filas (LIMIT 500 de la consulta de arriba,
@@ -95,7 +128,17 @@ $sucursales  = $pdo->query("
     WHERE activo = 1 OR sucursal_id IN (SELECT DISTINCT sucursal_id FROM gastos)
     ORDER BY activo DESC, nombre
 ")->fetchAll(PDO::FETCH_ASSOC);
-$categorias  = $pdo->query("SELECT categoria_gasto_id, nombre FROM categorias_gastos WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
+// [FIX-CATEGORIA-INACTIVA-FILTRO] (mismo patron que FIX-MEDIO-G-21 arriba, aplicado aqui a
+// categoria_gasto_id) El filtro de categoria solo listaba "activo=1" — un gasto ya registrado
+// con una categoria que despues se desactivo seguia contando en "Todas", pero ya no habia
+// forma de filtrar/aislar especificamente esa categoria para revisarlo (la opcion
+// desaparecia del combo). Se incluyen tambien las categorias inactivas que SI tienen gastos
+// registrados, para que su historial siga siendo consultable.
+$categorias  = $pdo->query("
+    SELECT categoria_gasto_id, nombre, activo FROM categorias_gastos
+    WHERE activo = 1 OR categoria_gasto_id IN (SELECT DISTINCT categoria_gasto_id FROM gastos)
+    ORDER BY activo DESC, nombre
+")->fetchAll(PDO::FETCH_ASSOC);
 
 $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) || ($fechaFin !== date('Y-m-d'));
 ?>
@@ -125,7 +168,7 @@ $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) |
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -192,7 +235,7 @@ $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) |
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Bitacora de Gastos</h2>
         </div>
         <div class="topbar-right">
@@ -226,7 +269,7 @@ $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) |
                     <select name="categoria_gasto_id">
                         <option value="0">Todas</option>
                         <?php foreach ($categorias as $cat): ?>
-                            <option value="<?= $cat['categoria_gasto_id'] ?>" <?= $categoria === intval($cat['categoria_gasto_id']) ? 'selected' : '' ?>><?= htmlspecialchars($cat['nombre']) ?></option>
+                            <option value="<?= $cat['categoria_gasto_id'] ?>" <?= $categoria === intval($cat['categoria_gasto_id']) ? 'selected' : '' ?>><?= htmlspecialchars($cat['nombre']) ?><?= !$cat['activo'] ? ' (inactiva)' : '' ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -243,7 +286,7 @@ $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) |
             </div>
             <div class="stat">
                 <p>Registros</p>
-                <h3><?= count($gastos) ?></h3>
+                <h3><?= $totalGastosReal ?></h3>
             </div>
             <?php if (count($porCategoria) > 0): ?>
             <div class="stat">
@@ -265,6 +308,12 @@ $filtrosActivos = $sucursal || $categoria || ($fechaInicio !== date('Y-m-01')) |
                 <span>$<?= number_format($monto, 2) ?></span>
             </div>
             <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($totalGastosReal > count($gastos)): ?>
+        <div style="background:#fff8e1;color:#8a6d00;border-left:3px solid #f9a825;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:12px;">
+            Mostrando los <?= count($gastos) ?> gastos más recientes de <?= $totalGastosReal ?> que coinciden con estos filtros (las tarjetas de arriba sí reflejan el total real).
         </div>
         <?php endif; ?>
 

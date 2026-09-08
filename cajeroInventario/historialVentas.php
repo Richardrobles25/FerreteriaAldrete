@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -10,7 +11,7 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
 // ── AJAX: detalle de venta + productos ──────────────────────────────────────
 if (isset($_GET['detalle_venta'])) {
-    $venta_id = intval($_GET['detalle_venta']);
+    $venta_id = intval(is_scalar($_GET['detalle_venta'] ?? null) ? $_GET['detalle_venta'] : 0);
     $stmtV = $pdo->prepare("
         SELECT v.*, c.nombre_completo AS cliente, c.telefono AS tel_cliente,
                u.nombre_completo AS cajero
@@ -124,11 +125,11 @@ if (isset($_GET['detalle_venta'])) {
 
 // ── Filtros ──────────────────────────────────────────────────────────────────
 // Tomar valores crudos (pueden venir vacíos si el usuario borró el campo)
-$fechaDesde = trim($_GET['desde'] ?? date('Y-m-d'));
-$fechaHasta = trim($_GET['hasta'] ?? date('Y-m-d'));
-$metodo     = $_GET['metodo'] ?? '';
-$estado     = $_GET['estado'] ?? '';
-$buscar     = trim($_GET['buscar'] ?? '');
+$fechaDesde = trim(is_scalar($_GET['desde'] ?? null) ? (string)$_GET['desde'] : date('Y-m-d'));
+$fechaHasta = trim(is_scalar($_GET['hasta'] ?? null) ? (string)$_GET['hasta'] : date('Y-m-d'));
+$metodo     = is_scalar($_GET['metodo'] ?? null) ? $_GET['metodo'] : '';
+$estado     = is_scalar($_GET['estado'] ?? null) ? $_GET['estado'] : '';
+$buscar     = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 
 // Validar que las fechas tengan formato correcto; si no, ignorarlas
 $dDesde = $fechaDesde ? DateTime::createFromFormat('Y-m-d', $fechaDesde) : false;
@@ -372,7 +373,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -441,7 +442,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     .abono-stat { background: #f9f9f9; border-radius: 6px; padding: 8px 14px; border: 0.5px solid #eee; min-width: 110px; }
     .abono-stat span { display: block; font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
     .abono-stat strong { font-size: 14px; font-weight: 700; }
-    .btn-accion { border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .btn-accion { border: none; padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
     .btn-detalle { background: #e3f2fd; color: #1565c0; }
     .btn-detalle:hover { background: #bbdefb; }
     .btn-ticket { background: #e8f5e9; color: #2e7d32; }
@@ -601,7 +602,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Historial de Ventas</h2>
         </div>
         <div class="topbar-right">
@@ -776,7 +777,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
                                 </button>
                                 <button class="btn-accion btn-ticket"
                                     onclick="reimprimirTicket(<?= $v['venta_id'] ?>)">
-                                    🖨 Ticket
+                                    <?= icono('printer') ?> Ticket
                                 </button>
                             </div>
                         </td>
@@ -1047,13 +1048,19 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
         <div class="modal-footer">
             <button class="btn-cerrar-modal" onclick="cerrarDetalle()">Cerrar</button>
             <button class="btn-reimprimir" id="btnReimprimir" onclick="reimprimirDesdeModal()">
-                🖨 Reimprimir ticket
+                <?= icono('printer') ?> Reimprimir ticket
             </button>
         </div>
     </div>
 </div>
 
 <script>
+const ICONS = <?= json_encode([
+    'package'   => icono('package', '', 14),
+    'warning'   => icono('triangle-alert', '', 12),
+    'clipboard' => icono('clipboard-list', '', 14),
+    'calendar'  => icono('calendar', '', 12),
+]) ?>;
 // ── Config datos sucursal para ticket ────────────────────────────────────────
 const datosTicket = <?= json_encode([
     'nombre'           => $sucursalTicket['nombre']           ?? 'Ferretería Aldrete',
@@ -1149,7 +1156,7 @@ function renderDetalle(v) {
         const ltStyle   = todoDev ? 'text-decoration:line-through;color:#aaa;' : '';
         rowsHTML += `
         <tr style="${rowStyle}">
-            <td style="color:#e65100;font-size:13px;padding-left:6px;">📦</td>
+            <td style="color:#e65100;font-size:13px;padding-left:6px;">${ICONS.package}</td>
             <td>
                 <span style="font-weight:600;${ltStyle}">${esc(pq.nombre)}</span>
                 ${todoDev    ? '<span style="background:#fdecea;color:#c0392b;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Devuelto</span>' : ''}
@@ -1191,7 +1198,7 @@ function renderDetalle(v) {
                 <span style="${tdLineThru}">${esc(p.nombre_producto)}</span>
                 ${todoDev    ? '<span style="background:#fdecea;color:#c0392b;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Devuelto</span>' : ''}
                 ${parcialDev ? `<span style="background:#fff3e0;color:#e65100;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Dev. parcial (${devuelta % 1 === 0 ? devuelta : devuelta.toFixed(2)})</span>` : ''}
-                ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">⚠ Ajuste por daño: ${esc(p.nota_ajuste)}</div>` : ''}
+                ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">${ICONS.warning} Ajuste por daño: ${esc(p.nota_ajuste)}</div>` : ''}
                 ${tienePromo  ? `<div style="font-size:11px;color:#2e7d32;margin-top:2px;">Precio de promoción</div>` : ''}
             </td>
             <td style="text-align:right;${tdLineThru}">${parseFloat(p.cantidad).toFixed(2)}</td>
@@ -1241,7 +1248,7 @@ function renderDetalle(v) {
     else {
         const tieneDiff = v.original_total !== undefined && Math.abs(parseFloat(v.original_total) - parseFloat(v.total)) > 0.001;
         let dHtml = `<div class="dev-hist-bloque">
-            <div class="dev-hist-titulo">&#128203; Historial de devoluciones</div>`;
+            <div class="dev-hist-titulo">${ICONS.clipboard} Historial de devoluciones</div>`;
 
         // Valores originales (antes de todas las devoluciones)
         if (tieneDiff) {
@@ -1273,11 +1280,11 @@ function renderDetalle(v) {
 
             dHtml += `<div class="dev-card">
                 <div class="dev-card-header">
-                    <span class="dev-card-fecha">&#128197; ${esc(fecha)}</span>
+                    <span class="dev-card-fecha">${ICONS.calendar} ${esc(fecha)}</span>
                     <span class="dev-card-monto">$${fmt(neto)} regresados al cliente en efectivo</span>
                 </div>
                 <ul class="dev-card-prods">${prodsHtml}</ul>
-                ${comDev > 0.001 ? `<div style="font-size:11px;color:#888;margin-top:4px;">&#9888; Comisión de terminal ($${fmt(comDev)}) no reembolsable — la absorbe el negocio</div>` : ''}
+                ${comDev > 0.001 ? `<div style="font-size:11px;color:#888;margin-top:4px;">${ICONS.warning} Comisión de terminal ($${fmt(comDev)}) no reembolsable — la absorbe el negocio</div>` : ''}
             </div>`;
         });
 
@@ -1411,7 +1418,7 @@ function generarTicketHTML(venta) {
         const combosStr = combos + (combos === 1 ? ' combo' : ' combos');
         const todoDev   = pq.cant_devuelta >= pq.cant_total - 0.001 && pq.cant_total > 0;
         const ltStyle   = todoDev ? 'text-decoration:line-through;color:#aaa;' : '';
-        html += `<div style="${ltStyle}">📦 ${esc(pq.nombre)}${todoDev ? ' [DEVUELTO]' : ''}</div>`;
+        html += `<div style="${ltStyle}">${ICONS.package} ${esc(pq.nombre)}${todoDev ? ' [DEVUELTO]' : ''}</div>`;
         html += `<div class="t-fila" style="${ltStyle}"><span>${combosStr}</span><span>$${fmt(pq.subtotal)}</span></div>`;
     });
 

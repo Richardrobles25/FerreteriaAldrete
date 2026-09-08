@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -12,7 +13,8 @@ require_once '../includes/topbar_info.php';
 // Eliminar cliente
 if (isset($_GET['eliminar'])) {
     requerirCSRF($_GET['_token'] ?? '', 'cajero_clientes.php');
-    $id = intval($_GET['eliminar']);
+    // [FIX-TIPO-ARRAY-ID] intval() sobre un array se coacciona a 1/0 en vez de fallar.
+    $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
 
     // Verificar que el cliente no tenga ventas pendientes antes de eliminar
     $stmtPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
@@ -41,7 +43,7 @@ if (isset($_GET['eliminar'])) {
 // Toggle activo
 if (isset($_GET['toggle'])) {
     requerirCSRF($_GET['_token'] ?? '', 'cajero_clientes.php');
-    $id = intval($_GET['toggle']);
+    $id = intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0);
 
     // [FIX-ALTO-E-08] Mismo candado que arriba: el toggle no pasaba por ninguna
     // validación y podía desactivar a un cliente con deuda viva en un solo clic.
@@ -67,7 +69,7 @@ $esEdicion = isset($_GET['editar']);
 
 if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM clientes WHERE cliente_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
     // [FIX-CONSISTENCIA] (portado de cajeroInventario/clientes.php): si el ID no existe,
     // redirigir con error en lugar de mostrar el formulario vacío como si fuera "crear".
@@ -79,17 +81,33 @@ if ($esEdicion) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requerirCSRF($_POST['_token'] ?? '', 'cajero_clientes.php');
-    $nombre_completo    = trim($_POST['nombre_completo'] ?? '');
-    $telefono           = trim($_POST['telefono'] ?? '');
-    $direccion          = trim($_POST['direccion'] ?? '');
-    $correo             = trim($_POST['correo'] ?? '');
-    $descuento_fijo     = floatval($_POST['descuento_fijo'] ?? 0);
-    $notas              = trim($_POST['notas'] ?? '');
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php,
+    // admin/clientes.php) un campo mandado como array truena trim()/htmlspecialchars()
+    // con un TypeError sin capturar.
+    $nombre_completo    = trim(is_scalar($_POST['nombre_completo'] ?? null) ? (string)$_POST['nombre_completo'] : '');
+    $telefono           = trim(is_scalar($_POST['telefono'] ?? null) ? (string)$_POST['telefono'] : '');
+    $direccion          = trim(is_scalar($_POST['direccion'] ?? null) ? (string)$_POST['direccion'] : '');
+    $correo             = trim(is_scalar($_POST['correo'] ?? null) ? (string)$_POST['correo'] : '');
+    $descuento_fijo     = floatval(is_scalar($_POST['descuento_fijo'] ?? null) ? $_POST['descuento_fijo'] : 0);
+    $notas              = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
     $credito_autorizado = isset($_POST['credito_autorizado']) ? 1 : 0;
-    $limite_credito     = floatval($_POST['limite_credito'] ?? 0);
-    $cliente_id         = intval($_POST['cliente_id'] ?? 0);
+    $limite_credito     = floatval(is_scalar($_POST['limite_credito'] ?? null) ? $_POST['limite_credito'] : 0);
+    // [FIX-LIMITE-FANTASMA] (espejo de cajeroInventario/clientes.php): admin/clientes.php ya
+    // reseteaba limite_credito a 0 cuando el credito no esta autorizado; aqui faltaba.
+    if (!$credito_autorizado) $limite_credito = 0;
+    // [FIX-CLIENTE-ID-DESINCRONIZADO] (mismo patron ya corregido en admin/clientes.php)
+    // Antes $cliente_id salia directo del campo oculto del POST, sin relacion con el
+    // "?editar=" de la URL -- un POST manipulado podia editar/sobreescribir CUALQUIER
+    // otro cliente real. Se ancla al cliente_id de $editando (ya resuelto contra la URL).
+    $cliente_id         = ($esEdicion && $editando) ? intval($editando['cliente_id']) : 0;
 
     if (!$nombre_completo) $errores[] = 'El nombre es obligatorio.';
+    // [FIX-CLIENTE-LARGO] (espejo de cajeroInventario/clientes.php): nombre_completo (100),
+    // direccion (255), correo (100) y notas (255) sin tope de longitud en el servidor.
+    if (mb_strlen($nombre_completo) > 100) $errores[] = 'El nombre no puede tener más de 100 caracteres.';
+    if (mb_strlen($direccion) > 255)       $errores[] = 'La dirección no puede tener más de 255 caracteres.';
+    if (mb_strlen($correo) > 100)          $errores[] = 'El correo no puede tener más de 100 caracteres.';
+    if (mb_strlen($notas) > 255)           $errores[] = 'Las notas no pueden tener más de 255 caracteres.';
     // [FIX-CONSISTENCIA] admin/clientes.php ya validaba esto; aqui faltaba — el input solo
     // tenia min/max en HTML (trivial de saltar con un POST directo), y esta pantalla la
     // puede usar el rol Cajero. Un descuento_fijo fuera de 0-100 permitiria despues, en
@@ -109,6 +127,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // llamarse igual), pero el teléfono sí debería serlo — es lo que realmente distingue a un
     // cliente de otro en el buscador de Nueva Venta. Mismo fix aplicado en
     // cajeroInventario/clientes.php y admin/clientes.php.
+    // [FIX-TELEFONO-RACE] clientes no tiene UNIQUE en telefono -- el check-then-insert de abajo
+    // es una condicion de carrera clasica. Mismo candado GET_LOCK ya aplicado en admin/clientes.php.
+    $lockTelefono     = null;
+    $lockTelAdquirido = true;
+    if ($telefono !== '') {
+        $lockTelefono     = 'cliente_telefono_' . $telefono;
+        $lockTelAdquirido = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockTelefono) . ", 5)")->fetchColumn();
+        if (!$lockTelAdquirido) {
+            $errores[] = 'Otro usuario está guardando un cliente con este mismo teléfono en este momento. Intenta de nuevo.';
+        }
+    }
+
     if (empty($errores) && $telefono !== '') {
         $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ?");
         $stmtDupTel->execute([$telefono, $cliente_id]);
@@ -120,19 +150,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         if ($cliente_id) {
-            $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=? WHERE cliente_id=?")
-                ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cliente_id]);
+            // [FIX-CLIENTE-EDITAR-FANTASMA] (espejo de cajeroInventario/clientes.php): antes
+            // redirigia siempre a "msg=editado" sin comprobar si el cliente_id todavia existe.
+            // rowCount() por si solo no basta (PDO/MySQL reporta filas MODIFICADAS, no
+            // encontradas — guardar sin cambios tambien da 0), asi que se verifica existencia
+            // por separado en vez de confiar en rowCount().
+            $stmtUpdCliente = $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=? WHERE cliente_id=?");
+            $stmtUpdCliente->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cliente_id]);
+            if ($stmtUpdCliente->rowCount() === 0) {
+                $stmtExisteCliente = $pdo->prepare("SELECT 1 FROM clientes WHERE cliente_id = ?");
+                $stmtExisteCliente->execute([$cliente_id]);
+                if (!$stmtExisteCliente->fetchColumn()) {
+                    if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
+                    header('Location: cajero_clientes.php?msg=no_encontrado');
+                    exit();
+                }
+            }
             header('Location: cajero_clientes.php?msg=editado');
         } else {
             $pdo->prepare("INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, activo) VALUES (?,?,?,?,?,?,?,?,1)")
                 ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito]);
             header('Location: cajero_clientes.php?msg=creado');
         }
+        if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
         exit();
     }
+    if ($lockTelefono && $lockTelAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
 }
 
-$busqueda     = trim($_GET['buscar'] ?? '');
+$busqueda     = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 $verInactivos = isset($_GET['ver_inactivos']) && $_GET['ver_inactivos'] === '1';
 $filtroActivo = $verInactivos ? '' : 'AND activo = 1';
 $deudaSelect  = "COALESCE((SELECT SUM(saldo_pendiente) FROM creditos WHERE cliente_id = c.cliente_id AND estado IN ('Activo','Vencido')), 0) AS deuda_total";
@@ -171,7 +217,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -237,7 +283,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Clientes</h2>
         </div>
         <div class="topbar-right">
@@ -339,52 +385,66 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>
 
+                <?php
+                    // [FIX-TIPO-ARRAY-ID] Repoblar el formulario tras un error releyendo
+                    // $_POST crudo tenia el mismo hueco ya corregido en admin/formGasto.php.
+                    // Se usan las variables YA saneadas del manejador de POST.
+                    $esPostCliCajero = $_SERVER['REQUEST_METHOD'] === 'POST';
+                    $vNombreCC    = $esPostCliCajero ? $nombre_completo    : ($editando['nombre_completo'] ?? '');
+                    $vTelefonoCC  = $esPostCliCajero ? $telefono           : ($editando['telefono']        ?? '');
+                    $vDireccionCC = $esPostCliCajero ? $direccion          : ($editando['direccion']       ?? '');
+                    $vCorreoCC    = $esPostCliCajero ? $correo             : ($editando['correo']          ?? '');
+                    $vDescuentoCC = $esPostCliCajero ? $descuento_fijo     : ($editando['descuento_fijo']  ?? 0);
+                    $vNotasCC     = $esPostCliCajero ? $notas              : ($editando['notas']           ?? '');
+                    $vCredAutCC   = $esPostCliCajero ? $credito_autorizado : ($editando['credito_autorizado'] ?? 0);
+                    $vLimiteCC    = $esPostCliCajero ? $limite_credito     : ($editando['limite_credito']  ?? 0);
+                ?>
                 <form method="POST">
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="cliente_id" value="<?= $editando['cliente_id'] ?? 0 ?>">
 
                     <div class="form-group">
                         <label>Nombre completo *</label>
-                        <input type="text" name="nombre_completo" value="<?= htmlspecialchars($_POST['nombre_completo'] ?? $editando['nombre_completo'] ?? '') ?>" placeholder="Ej. Juan García">
+                        <input type="text" name="nombre_completo" maxlength="100" value="<?= htmlspecialchars($vNombreCC) ?>" placeholder="Ej. Juan García">
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
                             <label>Teléfono</label>
-                            <input type="text" name="telefono" value="<?= htmlspecialchars($_POST['telefono'] ?? $editando['telefono'] ?? '') ?>" placeholder="10 dígitos">
+                            <input type="text" name="telefono" value="<?= htmlspecialchars($vTelefonoCC) ?>" placeholder="10 dígitos">
                         </div>
                         <div class="form-group">
                             <label>Descuento fijo (%)</label>
-                            <input type="number" name="descuento_fijo" value="<?= $_POST['descuento_fijo'] ?? $editando['descuento_fijo'] ?? 0 ?>" step="0.01" min="0" max="100" placeholder="0">
+                            <input type="number" name="descuento_fijo" value="<?= htmlspecialchars($vDescuentoCC) ?>" step="0.01" min="0" max="100" placeholder="0">
                         </div>
                     </div>
 
                     <div class="form-group">
                         <label>Dirección</label>
-                        <input type="text" name="direccion" value="<?= htmlspecialchars($_POST['direccion'] ?? $editando['direccion'] ?? '') ?>" placeholder="Calle, número, colonia">
+                        <input type="text" name="direccion" maxlength="255" value="<?= htmlspecialchars($vDireccionCC) ?>" placeholder="Calle, número, colonia">
                     </div>
 
                     <div class="form-group">
                         <label>Correo</label>
-                        <input type="email" name="correo" value="<?= htmlspecialchars($_POST['correo'] ?? $editando['correo'] ?? '') ?>" placeholder="correo@ejemplo.com">
+                        <input type="email" name="correo" maxlength="100" value="<?= htmlspecialchars($vCorreoCC) ?>" placeholder="correo@ejemplo.com">
                     </div>
 
                     <div class="form-group">
                         <label>Notas</label>
-                        <input type="text" name="notas" value="<?= htmlspecialchars($_POST['notas'] ?? $editando['notas'] ?? '') ?>" placeholder="Observaciones del cliente">
+                        <input type="text" name="notas" maxlength="255" value="<?= htmlspecialchars($vNotasCC) ?>" placeholder="Observaciones del cliente">
                     </div>
 
                     <div class="check-row">
                         <input type="checkbox" name="credito_autorizado" id="chkCredito"
-                            <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'checked' : '' ?>
+                            <?= $vCredAutCC ? 'checked' : '' ?>
                             onchange="toggleCredito(this.checked)">
                         <label for="chkCredito">Autorizar crédito a este cliente</label>
                     </div>
 
-                    <div class="credito-campos <?= ($_POST['credito_autorizado'] ?? $editando['credito_autorizado'] ?? 0) ? 'visible' : '' ?>" id="creditoCampos">
+                    <div class="credito-campos <?= $vCredAutCC ? 'visible' : '' ?>" id="creditoCampos">
                         <div class="form-group">
                             <label>Límite de crédito</label>
-                            <input type="number" name="limite_credito" value="<?= $_POST['limite_credito'] ?? $editando['limite_credito'] ?? 0 ?>" step="0.01" min="0" placeholder="0.00">
+                            <input type="number" name="limite_credito" value="<?= htmlspecialchars($vLimiteCC) ?>" step="0.01" min="0" placeholder="0.00">
                         </div>
                     </div>
 

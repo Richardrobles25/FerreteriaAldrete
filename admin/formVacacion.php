@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
@@ -16,26 +17,50 @@ $esEdicion = isset($_GET['id']);
 
 if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM vacaciones WHERE vacacion_id = ?");
-    $stmt->execute([intval($_GET['id'])]);
+    $stmt->execute([intval(is_scalar($_GET['id'] ?? null) ? $_GET['id'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$editando) { header('Location: vacaciones.php'); exit(); }
+    // [FIX-VACACION-EDITAR-FANTASMA] (mismo patron ya corregido en admin/formGasto.php y
+    // admin/formAsistencia.php) redirigir aqui SIEMPRE (sin importar el metodo) descartaba
+    // en silencio un POST de edicion real si otra sesion borraba el registro entre que el
+    // formulario se cargaba y se enviaba -- redirigia a la lista sin ningun aviso. En un
+    // GET (enlace viejo o id invalido) si tiene sentido redirigir de inmediato.
+    if (!$editando && $_SERVER['REQUEST_METHOD'] !== 'POST') { header('Location: vacaciones.php'); exit(); }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requerirCSRF($_POST['_token'] ?? '', 'formVacacion.php');
+    if ($esEdicion && !$editando) {
+        $errores[] = 'Este registro ya no existe (probablemente fue eliminado por otra sesión). No se guardaron los cambios.';
+    }
 
-    $empleado_id  = intval($_POST['empleado_id']  ?? 0);
-    $fecha_inicio = trim($_POST['fecha_inicio']   ?? '');
-    $fecha_fin    = trim($_POST['fecha_fin']       ?? '');
-    $estado       = trim($_POST['estado']          ?? 'Solicitado');
-    $notas        = trim($_POST['notas']           ?? '');
-    $vacacion_id  = intval($_POST['vacacion_id']   ?? 0);
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php,
+    // admin/formEmpleado.php y admin/formAsistencia.php) un campo mandado como array
+    // truena trim()/htmlspecialchars() con un TypeError sin capturar.
+    $empleado_id  = intval(is_scalar($_POST['empleado_id'] ?? null) ? $_POST['empleado_id'] : 0);
+    $fecha_inicio = trim(is_scalar($_POST['fecha_inicio'] ?? null) ? (string)$_POST['fecha_inicio'] : '');
+    $fecha_fin    = trim(is_scalar($_POST['fecha_fin'] ?? null) ? (string)$_POST['fecha_fin'] : '');
+    $estado       = trim(is_scalar($_POST['estado'] ?? null) ? (string)$_POST['estado'] : 'Solicitado');
+    $notas        = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+    // [FIX-VACACION-ID-DESINCRONIZADO] (mismo patron ya corregido en admin/formGasto.php,
+    // admin/formEmpleado.php y admin/formAsistencia.php) $vacacion_id salia del campo
+    // oculto del POST, mientras $editando (usado para excluirse a si mismo del check de
+    // saldo/traslape) sale del ?id= de la URL -- se ancla al de $editando para que el
+    // UPDATE y las exclusiones de saldo/traslape siempre apunten al mismo registro.
+    $vacacion_id  = ($esEdicion && $editando) ? intval($editando['vacacion_id']) : 0;
     $estadosVal   = ['Solicitado','Aprobado','Rechazado'];
 
     if (!$empleado_id)                                    $errores[] = 'Selecciona un empleado.';
-    if (!$fecha_inicio || !strtotime($fecha_inicio))      $errores[] = 'La fecha de inicio no es valida.';
-    if (!$fecha_fin    || !strtotime($fecha_fin))         $errores[] = 'La fecha de fin no es valida.';
-    if ($fecha_inicio && $fecha_fin && $fecha_fin < $fecha_inicio)
+    // [FIX-FECHA-CALENDARIO-INVALIDA] (mismo patron ya corregido en formEmpleado.php y
+    // admin/formGasto.php/formAsistencia.php) "!strtotime($fecha)" no rechaza fechas de
+    // calendario imposibles -- probado en vivo: fecha_inicio='2026-02-30' se guardo
+    // localmente como '0000-00-00' para una vacacion real de un empleado real (Fernando
+    // Perez), con dias_tomados calculado sobre esa fecha basura. Se exige formato Y-m-d
+    // exacto y se valida con checkdate().
+    $fechaInicioValida = $fecha_inicio && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fecha_inicio, $mFI) && checkdate((int)$mFI[2], (int)$mFI[3], (int)$mFI[1]);
+    $fechaFinValida    = $fecha_fin    && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fecha_fin,    $mFF) && checkdate((int)$mFF[2], (int)$mFF[3], (int)$mFF[1]);
+    if (!$fechaInicioValida)                              $errores[] = 'La fecha de inicio no es valida.';
+    if (!$fechaFinValida)                                 $errores[] = 'La fecha de fin no es valida.';
+    if ($fechaInicioValida && $fechaFinValida && $fecha_fin < $fecha_inicio)
                                                           $errores[] = 'La fecha de fin debe ser igual o posterior a la de inicio.';
     if (!in_array($estado, $estadosVal))                  $errores[] = 'Estado no valido.';
 
@@ -48,6 +73,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // invisible/imborrable desde la interfaz. Ahora el año siempre se deriva en el
     // servidor a partir de fecha_inicio, nunca del valor que mande el cliente.
     $anio = ($fecha_inicio && strtotime($fecha_inicio)) ? (int)date('Y', strtotime($fecha_inicio)) : intval(date('Y'));
+
+    // [FIX-VACACION-RACE] El saldo disponible y el traslape (mas abajo) son un check-then-
+    // insert clasico sin ningun candado: dos solicitudes casi simultaneas para el mismo
+    // empleado podian leer el mismo saldo/traslape "libre" antes de que cualquiera insertara,
+    // y ambas pasar la validacion aunque juntas excedan el saldo real o se encimen entre si.
+    // Mismo patron ya usado (GET_LOCK) para el telefono duplicado de clientes y el nombre
+    // duplicado de empleados.
+    $lockVacacion     = null;
+    $lockVacAdquirido = true;
+    if ($empleado_id > 0) {
+        $lockVacacion     = 'vacacion_empleado_' . $empleado_id;
+        $lockVacAdquirido = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockVacacion) . ", 5)")->fetchColumn();
+        if (!$lockVacAdquirido) {
+            $errores[] = 'Otro usuario está registrando vacaciones para este empleado en este momento. Intenta de nuevo.';
+        }
+    }
 
     $diasTomados = 0;
     if ($fecha_inicio && $fecha_fin && !$errores) {
@@ -77,16 +118,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // semanaLaboral.php mas alla de los dias reales de la semana (G-23) al sumar ambos
         // periodos. Se rechaza cualquier periodo (Solicitado o Aprobado, un Rechazado no
         // cuenta) que se traslape con otro ya existente del mismo empleado.
+        // [FIX-VACACION-TRASLAPE-DOMINGO] El check de traslape comparaba rangos de fecha
+        // "en bruto" (fecha_inicio <= fin_otro AND fecha_fin >= inicio_otro), sin excluir
+        // domingo -- pero dias_tomados SI excluye domingo (contarDiasVacacion). Dos periodos
+        // consecutivos que comparten unicamente la fecha de un domingo en su frontera (ej.
+        // lunes-a-domingo seguido de domingo-a-sabado) se rechazaban como "traslapados" aunque
+        // ningun dia habil real estuviera duplicado y la suma de ambos cupiera perfecto en el
+        // saldo disponible. Probado en vivo: 6 dias habiles (lun-dom) + 6 dias habiles
+        // (dom-sab) = 12 dias reales sin duplicar ninguno, y el segundo se rechazaba igual. Se
+        // calcula la interseccion real de fechas y solo se cuenta como traslape autentico si
+        // esa interseccion contiene al menos un dia habil (contarDiasVacacion > 0).
         if (empty($errores)) {
             $stmtSolape = $pdo->prepare("
-                SELECT vacacion_id FROM vacaciones
+                SELECT vacacion_id, fecha_inicio, fecha_fin FROM vacaciones
                 WHERE empleado_id = ? AND estado != 'Rechazado' AND vacacion_id != ?
                   AND fecha_inicio <= ? AND fecha_fin >= ?
-                LIMIT 1
             ");
             $stmtSolape->execute([$empleado_id, $vacacion_id, $fecha_fin, $fecha_inicio]);
-            if ($stmtSolape->fetchColumn()) {
-                $errores[] = 'Este empleado ya tiene otro periodo de vacaciones registrado que se traslapa con estas fechas.';
+            foreach ($stmtSolape->fetchAll(PDO::FETCH_ASSOC) as $existente) {
+                $desde = max($fecha_inicio, $existente['fecha_inicio']);
+                $hasta = min($fecha_fin, $existente['fecha_fin']);
+                if ($desde <= $hasta && contarDiasVacacion($desde, $hasta) > 0) {
+                    $errores[] = 'Este empleado ya tiene otro periodo de vacaciones registrado que se traslapa con estas fechas.';
+                    break;
+                }
             }
         }
     }
@@ -108,11 +163,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null]);
                 header('Location: vacaciones.php?msg=registrado');
             }
+            if ($lockVacacion) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockVacacion) . ")");
             exit();
         } catch (PDOException $e) {
             $errores[] = 'No se pudo guardar la vacación. Verifica que el empleado siga existiendo e intenta de nuevo.';
         }
     }
+    if ($lockVacacion && $lockVacAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockVacacion) . ")");
 }
 
 $empleados = $pdo->query("
@@ -123,13 +180,44 @@ $empleados = $pdo->query("
     ORDER BY e.nombre
 ")->fetchAll(PDO::FETCH_ASSOC);
 
+// [FIX-VACACION-EMPLEADO-INACTIVO] Si se edita un registro de un empleado que desde entonces
+// se desactivo, el <select> de arriba (solo activo=1) no traía ninguna opcion para el, asi
+// que se veia "-- Seleccionar --" sin nada marcado -- igual que si nadie estuviera elegido.
+// Probado en vivo: al guardar esa edicion (por ejemplo solo para agregar una nota) sin fijarse
+// en elegir de nuevo un empleado, el formulario aceptaba CUALQUIER empleado activo del
+// dropdown y REASIGNABA en silencio esos dias de vacacion a una persona totalmente distinta,
+// inflando su saldo de vacaciones tomadas sin que el ni el admin hicieran nada raro a
+// proposito. Mismo patron ya usado en formAsistencia.php para un "tipo" retirado: si se esta
+// editando y el empleado del registro ya no esta en la lista de activos, se agrega igual,
+// marcado como inactivo para que sea obvio en el dropdown.
+if ($esEdicion && $editando) {
+    $yaEnLista = false;
+    foreach ($empleados as $e) {
+        if ($e['empleado_id'] == $editando['empleado_id']) { $yaEnLista = true; break; }
+    }
+    if (!$yaEnLista) {
+        $stmtEmpInactivo = $pdo->prepare("SELECT empleado_id, nombre, fecha_ingreso FROM empleados WHERE empleado_id = ?");
+        $stmtEmpInactivo->execute([$editando['empleado_id']]);
+        $empInactivo = $stmtEmpInactivo->fetch(PDO::FETCH_ASSOC);
+        if ($empInactivo) {
+            $empInactivo['nombre'] .= ' (inactivo)';
+            $empleados[] = $empInactivo;
+        }
+    }
+}
+
+// [FIX-TIPO-ARRAY-ID] Repoblar el formulario tras un error releyendo $_POST crudo tenia el
+// mismo hueco ya corregido en admin/formGasto.php: si algun campo llegaba como array, el
+// saneo de arriba no aplicaba aqui. Se usan las variables YA saneadas del manejador de
+// POST (siempre escalares).
+$esPost = $_SERVER['REQUEST_METHOD'] === 'POST';
 $v = [
-    'empleado_id'  => $_POST['empleado_id']  ?? $editando['empleado_id']  ?? '',
-    'fecha_inicio' => $_POST['fecha_inicio'] ?? $editando['fecha_inicio'] ?? '',
-    'fecha_fin'    => $_POST['fecha_fin']    ?? $editando['fecha_fin']    ?? '',
-    'anio'         => $_POST['anio']         ?? $editando['anio']         ?? date('Y'),
-    'estado'       => $_POST['estado']       ?? $editando['estado']       ?? 'Solicitado',
-    'notas'        => $_POST['notas']        ?? $editando['notas']        ?? '',
+    'empleado_id'  => $esPost ? $empleado_id  : ($editando['empleado_id']  ?? ''),
+    'fecha_inicio' => $esPost ? $fecha_inicio : ($editando['fecha_inicio'] ?? ''),
+    'fecha_fin'    => $esPost ? $fecha_fin    : ($editando['fecha_fin']    ?? ''),
+    'anio'         => $esPost ? $anio         : ($editando['anio']         ?? date('Y')),
+    'estado'       => $esPost ? $estado       : ($editando['estado']       ?? 'Solicitado'),
+    'notas'        => $esPost ? $notas        : ($editando['notas']        ?? ''),
 ];
 $estadosVal = ['Solicitado','Aprobado','Rechazado'];
 ?>
@@ -159,7 +247,7 @@ $estadosVal = ['Solicitado','Aprobado','Rechazado'];
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -198,7 +286,7 @@ $estadosVal = ['Solicitado','Aprobado','Rechazado'];
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2><?= $esEdicion ? 'Editar Vacaciones' : 'Registrar Vacaciones' ?></h2>
         </div>
         <div class="topbar-right">
@@ -220,7 +308,7 @@ $estadosVal = ['Solicitado','Aprobado','Rechazado'];
             <form method="POST" id="mainForm">
                 <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <?php if ($esEdicion): ?>
-                    <input type="hidden" name="vacacion_id" value="<?= $editando['vacacion_id'] ?>">
+                    <input type="hidden" name="vacacion_id" value="<?= $editando['vacacion_id'] ?? ($_POST['vacacion_id'] ?? '') ?>">
                 <?php endif; ?>
 
                 <div class="form-group">

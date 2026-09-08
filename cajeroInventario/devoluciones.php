@@ -1,8 +1,9 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -16,6 +17,11 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 // cajero en turno) de donde sacar el reembolso. Para Administrador se acepta CUALQUIER caja
 // abierta de su sucursal; para Cajero e Inventario/Cajero se mantiene la misma restriccion
 // de antes (solo la suya).
+// [FIX-CAJA-REDIRECT-AJAX] (portado de admin/cajero_devoluciones.php) El redirect por falta
+// de caja ya NO es incondicional aqui arriba — "buscar_venta" (mas abajo) responde JSON y no
+// depende de $cajaId, asi que un redirect aqui rompia su fetch().then(r=>r.json()). El guard
+// vive junto a cada consumidor real de $cajaId ("cancelar_dev" y el POST de procesar
+// devolucion, ambos redirect-based) y, como respaldo final, justo antes del HTML.
 if ($_SESSION['rol'] === 'Administrador') {
     $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
     $_stmtCajaGuard->execute([$_SESSION['sucursal_id']]);
@@ -23,12 +29,7 @@ if ($_SESSION['rol'] === 'Administrador') {
     $_stmtCajaGuard = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND estado = 'Abierta' LIMIT 1");
     $_stmtCajaGuard->execute([$_SESSION['usuario_id']]);
 }
-$_cajaGuardId = $_stmtCajaGuard->fetchColumn();
-if (!$_cajaGuardId) {
-    header('Location: abrirCaja.php?msg=sinCaja');
-    exit();
-}
-$cajaId = intval($_cajaGuardId); // [AUTOFIX] Guardado para registrar retiro de caja en devoluciones
+$cajaId = intval($_stmtCajaGuard->fetchColumn() ?: 0); // [AUTOFIX] Guardado para registrar retiro de caja en devoluciones
 
 $errores = [];
 $exito   = false;
@@ -99,9 +100,9 @@ function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
 if (isset($_GET['buscar_venta'])) {
     header('Content-Type: application/json');
     try {
-        $folio_num = intval($_GET['buscar_venta']);
-        $mes       = intval($_GET['mes']  ?? date('m'));
-        $anio      = intval($_GET['anio'] ?? date('Y'));
+        $folio_num = intval(is_scalar($_GET['buscar_venta'] ?? null) ? $_GET['buscar_venta'] : 0);
+        $mes       = intval(is_scalar($_GET['mes'] ?? null) ? $_GET['mes'] : date('m'));
+        $anio      = intval(is_scalar($_GET['anio'] ?? null) ? $_GET['anio'] : date('Y'));
 
         // Compatible con folio nuevo "NNNN" y folio viejo "NNNN-MM-YYYY"
         // [AUTOFIX] D-01: Filtrar por sucursal — un cajero solo puede devolver ventas de su propia sucursal
@@ -165,10 +166,16 @@ if (isset($_GET['buscar_venta'])) {
 
 // Cancelar devolución (máx 24h)
 if (isset($_GET['cancelar_dev'])) {
+    // [FIX-CAJA-REDIRECT-AJAX] Este handler SI necesita una caja abierta (registra el
+    // ingreso de efectivo al cancelar) y responde por redirect, no JSON.
+    if (!$cajaId) {
+        header('Location: abrirCaja.php?msg=sinCaja');
+        exit();
+    }
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'devoluciones.php');
-    $devolucion_id = intval($_GET['cancelar_dev']);
-    $nota_cancel   = trim($_GET['nota'] ?? '');
+    $devolucion_id = intval(is_scalar($_GET['cancelar_dev'] ?? null) ? $_GET['cancelar_dev'] : 0);
+    $nota_cancel   = trim(is_scalar($_GET['nota'] ?? null) ? (string)$_GET['nota'] : '');
 
     // [AUTOFIX] BUG-03: Agregar filtro de sucursal para que un cajero no pueda cancelar
     // devoluciones de otra sucursal. Sin este check, un atacante que conozca el devolucion_id
@@ -315,17 +322,34 @@ if (isset($_GET['cancelar_dev'])) {
 
 // Procesar devolución
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // [FIX-CAJA-REDIRECT-AJAX] Este handler SI necesita una caja abierta (registra el
+    // retiro de efectivo del reembolso) y responde por redirect, no JSON.
+    if (!$cajaId) {
+        header('Location: abrirCaja.php?msg=sinCaja');
+        exit();
+    }
     // [FIX-A1] Verificar CSRF antes de procesar la devolución
     requerirCSRF($_POST['_token'] ?? '', 'devoluciones.php');
-    $venta_id      = intval($_POST['venta_id'] ?? 0);
-    $productos_dev = json_decode($_POST['productos_devolver'] ?? '[]', true);
-    $motivo        = trim($_POST['motivo'] ?? '');
+    $venta_id      = intval(is_scalar($_POST['venta_id'] ?? null) ? $_POST['venta_id'] : 0);
+    $productosDevRaw = is_scalar($_POST['productos_devolver'] ?? null) ? $_POST['productos_devolver'] : '[]';
+    $productos_dev = json_decode($productosDevRaw ?? '[]', true);
+    $motivo        = trim(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : '');
 
     if (!$venta_id)              $errores[] = 'Selecciona una venta.';
     if (empty($productos_dev))   $errores[] = 'Selecciona al menos un producto a devolver.';
     if (!$motivo)                $errores[] = 'El motivo es obligatorio.';
 
     if (empty($errores)) {
+        // [FIX-RACE-DEVOLUCION] Candado por venta_id: "cuanto ya se devolvio" (mas abajo) se
+        // valida ANTES de abrir la transaccion, sin ningun lock — dos devoluciones realmente
+        // simultaneas sobre la MISMA venta podian leer ambas "0 ya devuelto" y procesarse las
+        // dos, duplicando el reembolso en efectivo y la reposicion de stock. Mismo patron de
+        // candado que ya usan nuevaVenta.php/ventasPendientes.php para el folio.
+        $lockDevolucion    = 'devolucion_venta_' . $venta_id;
+        $lockDevAdquirido  = $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockDevolucion) . ", 10)")->fetchColumn();
+        if (!$lockDevAdquirido) {
+            $errores[] = 'Ya se está procesando una devolución para esta venta. Intenta de nuevo en unos segundos.';
+        }
         // [AUTOFIX] D-02: Verificar que la venta pertenezca a la sucursal del cajero antes de procesar
         // [AUTOFIX] Se agregan subtotal y descuento para calcular el factor neto proporcional al devolver
         // [FIX-CONSISTENCIA] Igual que admin/cajero_devoluciones.php (FIX-CRIT-D2-02): esta
@@ -752,7 +776,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         // un pago — si el crédito ya estaba Vencido, sigue Vencido mientras no
                         // quede en $0 (mismo criterio que los abonos: solo Liquidado sale de mora).
                         $nuevoEstadoCred   = $nuevoSaldo <= 0.001 ? 'Liquidado' : $cred['estado'];
-                        $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ? WHERE credito_id = ?")
+                        // [FIX-MORA-BADGE-ABONO] Igual que en creditos.php: mora_acumulada es
+                        // solo un campo de despliegue ("ultima mora cobrada"), no un saldo aparte.
+                        // Sin resetearlo aqui, el badge "Mora actual: +$X" del modal se quedaba
+                        // mostrando la mora vieja aunque la devolucion ya hubiera bajado el saldo.
+                        $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, estado = ?, mora_acumulada = 0 WHERE credito_id = ?")
                             ->execute([$nuevoSaldo, $nuevoEstadoCred, $cred['credito_id']]);
 
                         $reembolsoExcedenteCredito = max(0.0, round($totalDevuelto - $saldoAntesCredito, 2));
@@ -787,6 +815,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $pdo->commit();
                 $exito = true;
+                if ($lockDevAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockDevolucion) . ")");
                 header('Location: devoluciones.php?msg=exito');
                 exit();
             } catch (\Throwable $e) {
@@ -796,6 +825,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errores[] = 'Error al procesar la devolución. Intenta de nuevo.';
             }
         }
+        // [FIX-RACE-DEVOLUCION] Liberar el candado para cualquier salida que no haya pasado por
+        // el exit() de exito de arriba (error de validacion en cualquier punto de este bloque, o
+        // excepcion capturada justo arriba).
+        if ($lockDevAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockDevolucion) . ")");
     }
 }
 
@@ -832,6 +865,13 @@ $stmtHV = $pdo->prepare("
 ");
 $stmtHV->execute([$_SESSION['sucursal_id']]);
 $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
+
+// [FIX-CAJA-REDIRECT-AJAX] Redirect por falta de caja, aplicado unicamente aqui — justo antes
+// de renderizar la pagina completa — para no romper el contrato JSON de "buscar_venta".
+if (!$cajaId) {
+    header('Location: abrirCaja.php?msg=sinCaja');
+    exit();
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -860,7 +900,7 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -993,7 +1033,7 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Devoluciones</h2>
         </div>
         <div class="topbar-right">
@@ -1013,7 +1053,8 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
                 'ya_cancelada'  => ['err', 'Esta devolución ya fue cancelada anteriormente.'],
                 'error_cancelar'=> ['err', 'Error al cancelar la devolución. Intenta de nuevo.'],
             ];
-            if (isset($_GET['msg']) && isset($msgMap[$_GET['msg']])): [$tipo,$texto] = $msgMap[$_GET['msg']]; ?>
+            $msgKeyDev = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : '';
+            if (isset($msgMap[$msgKeyDev])): [$tipo,$texto] = $msgMap[$msgKeyDev]; ?>
                 <div class="msg <?= $tipo === 'ok' ? 'msg-exito' : 'errores' ?>"><?= htmlspecialchars($texto) ?></div>
             <?php endif; ?>
             <?php if (!empty($errores)): ?>
@@ -1152,6 +1193,19 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+const ICONS = <?= json_encode([
+    'package'   => icono('package', '', 14),
+    'warning'   => icono('triangle-alert', '', 12),
+    'clipboard' => icono('clipboard-list', '', 14),
+    'banknote'  => icono('banknote', '', 14),
+]) ?>;
+// [FIX-XSS-NOMBRE] nombre_producto/paq.nombre vienen del catalogo (lo captura
+// Administrador/Inventario) y se insertaban tal cual en innerHTML — un nombre con
+// "<img src=x onerror=...>" ejecutaba JS con solo abrir esta pantalla, sin dar clic.
+// Mismo criterio que ya usa nuevaVenta.php.
+function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 // [AUTOFIX] SEC-01: Token CSRF disponible en JS para links GET destructivos
 const CSRF_TOKEN = '<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>';
 
@@ -1236,7 +1290,7 @@ function buscarVenta() {
                         precioHtml = `<div style="font-size:11px;margin-top:2px;">
                             <span style="text-decoration:line-through;color:#bbb;">$${precioOrig.toFixed(2)}</span>
                             <span style="color:#e67e22;font-weight:700;margin-left:4px;">$${precioFinal.toFixed(2)}</span>
-                            <span style="background:#fff3e0;color:#e67e22;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px;">&#9888; Ajuste por da&#241;o: ${p.nota_ajuste}</span>
+                            <span style="background:#fff3e0;color:#e67e22;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px;">${ICONS.warning} Ajuste por da&#241;o: ${p.nota_ajuste}</span>
                         </div>`;
                     } else if (tienePromo) {
                         precioHtml = `<div style="font-size:11px;margin-top:2px;">
@@ -1250,7 +1304,7 @@ function buscarVenta() {
 
                     html += `<div class="prod-dev-row" style="align-items:flex-start;padding-top:10px;padding-bottom:10px;">
                         <span style="flex:1;">
-                            <span style="font-size:13px;">${p.nombre_producto}</span>
+                            <span style="font-size:13px;">${esc(p.nombre_producto)}</span>
                             ${precioHtml}
                         </span>
                         <span style="color:#aaa;font-size:11px;padding-top:2px;white-space:nowrap;">Restante: ${esDecimal ? restante.toFixed(2).replace(/\.?0+$/, '') : restante.toFixed(0)}</span>
@@ -1267,7 +1321,7 @@ function buscarVenta() {
                     if (combosRestantes <= 0) return;
                     html += `<div class="paquete-dev-group">
                         <div class="prod-dev-row" style="background:#fffde7;border-radius:8px;padding:10px 12px;">
-                            <span style="flex:1;">📦 <strong>${paq.nombre}</strong></span>
+                            <span style="flex:1;">${ICONS.package} <strong>${esc(paq.nombre)}</strong></span>
                             <span style="color:#aaa;font-size:11px;">Restante: ${combosRestantes} combo${combosRestantes !== 1 ? 's' : ''}</span>
                             <input type="number" data-paquete-id="${paqId}" data-restante="${combosRestantes}"
                                 placeholder="0" step="1" min="0" max="${combosRestantes}" value=""
@@ -1393,12 +1447,12 @@ function actualizarResumen() {
     // Crédito es la única excepción: se descuenta del saldo pendiente
     const esCredito = (metodo === 'Crédito' || metodo === 'Credito');
     const metodoHtml = esCredito
-        ? `<div class="resumen-dev-metodo">&#128203; Descuenta del <strong>saldo del crédito</strong></div>`
-        : `<div class="resumen-dev-metodo">&#128181; El cliente recibirá el reembolso en <strong>efectivo</strong></div>`;
+        ? `<div class="resumen-dev-metodo">${ICONS.clipboard} Descuenta del <strong>saldo del crédito</strong></div>`
+        : `<div class="resumen-dev-metodo">${ICONS.banknote} El cliente recibirá el reembolso en <strong>efectivo</strong></div>`;
 
     // Aviso de comisión (solo Terminal / Mixto)
     const comisionHtml = comisionProp > 0
-        ? `<div class="resumen-dev-comision">&#9888; La comisión de terminal (~$${comisionProp.toFixed(2)}) <strong>no se reembolsa</strong> — es cobrada por el banco y la absorbe el negocio.</div>`
+        ? `<div class="resumen-dev-comision">${ICONS.warning} La comisión de terminal (~$${comisionProp.toFixed(2)}) <strong>no se reembolsa</strong> — es cobrada por el banco y la absorbe el negocio.</div>`
         : '';
 
     resumen.innerHTML = `

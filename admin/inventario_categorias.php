@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -17,7 +18,7 @@ if (isset($_GET['eliminar'])) {
     // [FIX-CRIT-B-03] Sin CSRF antes — cualquier página visitada con la sesión del
     // Administrador abierta podía borrar categorías del catálogo global.
     requerirCSRF($_GET['_token'] ?? '', 'inventario_categorias.php');
-    $id = intval($_GET['eliminar']);
+    $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
     // [FIX-ALTO-B-08] Antes solo se contaban productos activos: una categoria con
     // productos desactivados (pero aun ligados por la FK) tronaba el DELETE con un
     // error SQL crudo (violacion de llave foranea) en lugar de un mensaje claro.
@@ -37,20 +38,46 @@ if (isset($_GET['eliminar'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-CRIT-B-03] CSRF ausente antes.
     requerirCSRF($_POST['_token'] ?? '', 'inventario_categorias.php');
-    $nombre = trim($_POST['nombre'] ?? '');
-    $id     = intval($_POST['categoria_id'] ?? 0);
+    $nombre = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    // [FIX-CATEGORIA-ID-DESINCRONIZADO] El <form> no declara action, así que un submit
+    // conserva el ?editar= de la URL actual — se ancla ahí en vez de confiar en el <input
+    // hidden name="categoria_id">, que se puede alterar para renombrar OTRA categoría
+    // distinta a la que la pantalla muestra como "editando".
+    $id     = is_scalar($_GET['editar'] ?? null) ? intval($_GET['editar']) : 0;
 
     // [AUTOFIX] VALIDACION-3A-2: Validar nombre en blanco antes de tocar la BD
     if ($nombre === '') {
         header('Location: inventario_categorias.php?msg=vacio');
         exit();
     }
+    // [FIX-CATEGORIA-LARGO] (espejo de cajeroInventario/categorias.php) categorias.nombre es
+    // VARCHAR(100) sin ningun tope en el servidor -- un nombre mas largo se truncaba en
+    // silencio a 100 caracteres y se guardaba como "creado correctamente", sin ningun aviso.
+    if (mb_strlen($nombre) > 100) {
+        header('Location: inventario_categorias.php?msg=muy_largo');
+        exit();
+    }
 
     // [AUTOFIX] ERROR-CAT-01: Capturar PDOException de clave duplicada en lugar de exponer el error PHP
     try {
         if ($id) {
+            // [FIX-CATEGORIA-EDICION-FANTASMA] Antes se reportaba "editado" sin importar si el
+            // UPDATE realmente afectó una fila — un categoria_id borrado por otra sesión (o un
+            // POST directo con un id inventado) mostraba "Categoría actualizada correctamente"
+            // sin que nada hubiera pasado. rowCount()===0 también puede significar "ya tenía
+            // ese mismo nombre, sin cambios reales" (no un error), así que se verifica la
+            // existencia por separado solo en ese caso, igual que el mismo fix ya aplicado en
+            // clientes.php.
             $stmt = $pdo->prepare("UPDATE categorias SET nombre = ? WHERE categoria_id = ?");
             $stmt->execute([$nombre, $id]);
+            if ($stmt->rowCount() === 0) {
+                $stmtExisteCat = $pdo->prepare("SELECT 1 FROM categorias WHERE categoria_id = ?");
+                $stmtExisteCat->execute([$id]);
+                if (!$stmtExisteCat->fetchColumn()) {
+                    header('Location: inventario_categorias.php?msg=no_encontrado');
+                    exit();
+                }
+            }
             header('Location: inventario_categorias.php?msg=editado');
         } else {
             $stmt = $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)");
@@ -68,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$busqueda = trim($_GET['buscar'] ?? '');
+$busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 if ($busqueda) {
     $stmt = $pdo->prepare("SELECT c.*, COUNT(p.producto_id) as total_productos FROM categorias c LEFT JOIN productos p ON c.categoria_id = p.categoria_id AND p.activo = 1 WHERE c.nombre LIKE ? GROUP BY c.categoria_id ORDER BY c.categoria_id ASC");
     $stmt->execute(['%' . $busqueda . '%']);
@@ -81,7 +108,7 @@ $categorias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $editando = null;
 if (isset($_GET['editar'])) {
     $stmt = $pdo->prepare("SELECT * FROM categorias WHERE categoria_id = ?");
-    $stmt->execute([intval($_GET['editar'])]);
+    $stmt->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
 }
 ?>
@@ -111,7 +138,7 @@ if (isset($_GET['editar'])) {
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -179,7 +206,7 @@ if (isset($_GET['editar'])) {
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Categorías</h2>
         </div>
         <div class="topbar-right">
@@ -207,6 +234,10 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">Ya existe una categoría con ese nombre. Elige un nombre diferente.</div>
                 <?php elseif ($_GET['msg'] === 'vacio'): ?>
                     <div class="msg msg-error">El nombre de la categoría es obligatorio.</div>
+                <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
+                    <div class="msg msg-error">El nombre de la categoría no puede tener más de 100 caracteres.</div>
+                <?php elseif ($_GET['msg'] === 'no_encontrado'): ?>
+                    <div class="msg msg-error">Esa categoría ya no existe (puede que otra sesión la haya eliminado). Recarga la página.</div>
                 <?php elseif ($_GET['msg'] === 'error_token'): ?>
                     <div class="msg msg-error">La sesión expiró o el enlace no es válido. Intenta de nuevo.</div>
                 <?php endif; ?>
@@ -264,7 +295,7 @@ if (isset($_GET['editar'])) {
                     <input type="hidden" name="categoria_id" value="<?= $editando['categoria_id'] ?? 0 ?>">
                     <div class="form-group">
                         <label>Nombre *</label>
-                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Ej. Plomería" autofocus>
+                        <input type="text" name="nombre" value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>" placeholder="Ej. Plomería" maxlength="100" autofocus>
                     </div>
                     <button class="btn-guardar" type="submit">
                         <?= $editando ? 'Guardar cambios' : 'Agregar categoría' ?>

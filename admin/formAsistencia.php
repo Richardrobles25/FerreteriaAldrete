@@ -3,6 +3,7 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
@@ -17,13 +18,22 @@ $tfExistentes = [];
 
 if ($esEdicion) {
     $stmt = $pdo->prepare("SELECT * FROM asistencia WHERE asistencia_id = ?");
-    $stmt->execute([intval($_GET['id'])]);
+    $stmt->execute([intval(is_scalar($_GET['id'] ?? null) ? $_GET['id'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$editando) { header('Location: asistencia.php'); exit(); }
+    // [FIX-ASISTENCIA-EDITAR-FANTASMA] (mismo patron ya corregido en admin/formGasto.php)
+    // Antes se redirigia aqui SIEMPRE que el registro ya no existiera, sin importar el
+    // metodo -- si otra sesion lo borraba entre que este formulario se cargaba (GET) y se
+    // enviaba (POST, al mismo ?id=X), el POST con los cambios reales del admin se
+    // descartaba en silencio aqui mismo, antes de llegar al manejador de POST: redirigia a
+    // la lista sin ningun aviso, dando la impresion de que su edicion se guardo. Probado en
+    // vivo. En un GET (enlace viejo o id invalido) si tiene sentido redirigir de inmediato.
+    if (!$editando && $_SERVER['REQUEST_METHOD'] !== 'POST') { header('Location: asistencia.php'); exit(); }
 
-    $tfStmt = $pdo->prepare("SELECT * FROM asistencia_tiempos_fuera WHERE asistencia_id = ? ORDER BY hora_salida");
-    $tfStmt->execute([$editando['asistencia_id']]);
-    $tfExistentes = $tfStmt->fetchAll(PDO::FETCH_ASSOC);
+    if ($editando) {
+        $tfStmt = $pdo->prepare("SELECT * FROM asistencia_tiempos_fuera WHERE asistencia_id = ? ORDER BY hora_salida");
+        $tfStmt->execute([$editando['asistencia_id']]);
+        $tfExistentes = $tfStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
 }
 
 function timeToMinutes(string $t): int {
@@ -32,21 +42,48 @@ function timeToMinutes(string $t): int {
     return intval($h) * 60 + intval($m);
 }
 
+// [FIX-HORA-FORMATO-INVALIDO] timeToMinutes() nunca valida el formato: acepta cualquier
+// string con un ":" adentro sin comprobar que las horas/minutos sean reales. El
+// <input type="time"> del navegador ya restringe esto en el flujo normal, pero un POST
+// directo no. Probado en vivo: hora_salida="25:99" (imposible) se acepto sin ningun
+// error, produjo un calculo de "9.65 horas extra" sin sentido (timeToMinutes hace su
+// propia aritmetica sobre el string crudo antes de guardarlo), y la columna TIME de
+// MySQL guardo esa misma hora invalida truncada en silencio a "00:00:00" -- un valor
+// totalmente distinto al que el calculo de horas extra ya habia usado. Se valida que
+// cada hora capturada tenga el formato HH:MM real (0-23 / 0-59) antes de aceptarla.
+function horaValida(string $t): bool {
+    if ($t === '') return true; // opcional en varios campos; la obligatoriedad ya se valida aparte
+    if (!preg_match('/^([01]?\d|2[0-3]):([0-5]\d)$/', $t)) return false;
+    return true;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requerirCSRF($_POST['_token'] ?? '', 'formAsistencia.php');
+    if ($esEdicion && !$editando) {
+        $errores[] = 'Este registro ya no existe (probablemente fue eliminado por otra sesión). No se guardaron los cambios.';
+    }
 
-    $empleado_id   = intval($_POST['empleado_id']  ?? 0);
-    $fecha         = trim($_POST['fecha']          ?? '');
-    $tipo          = trim($_POST['tipo']           ?? '');
-    $hora_entrada  = trim($_POST['hora_entrada']   ?? '');
-    $hora_salida   = trim($_POST['hora_salida']    ?? '');
-    $razon         = trim($_POST['razon']          ?? '');
-    $resolucion    = trim($_POST['resolucion']     ?? 'Pendiente');
-    $notas         = trim($_POST['notas']          ?? '');
-    $asistencia_id = intval($_POST['asistencia_id'] ?? 0);
+    // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php y
+    // admin/formEmpleado.php) un campo mandado como array (ej. "fecha[]=x") truena
+    // trim()/htmlspecialchars() con un TypeError sin capturar, o hace que intval() se
+    // coaccione en silencio a 1/0 en vez de fallar.
+    $empleado_id   = intval(is_scalar($_POST['empleado_id'] ?? null) ? $_POST['empleado_id'] : 0);
+    $fecha         = trim(is_scalar($_POST['fecha'] ?? null) ? (string)$_POST['fecha'] : '');
+    $tipo          = trim(is_scalar($_POST['tipo'] ?? null) ? (string)$_POST['tipo'] : '');
+    $hora_entrada  = trim(is_scalar($_POST['hora_entrada'] ?? null) ? (string)$_POST['hora_entrada'] : '');
+    $hora_salida   = trim(is_scalar($_POST['hora_salida'] ?? null) ? (string)$_POST['hora_salida'] : '');
+    $razon         = trim(is_scalar($_POST['razon'] ?? null) ? (string)$_POST['razon'] : '');
+    $resolucion    = trim(is_scalar($_POST['resolucion'] ?? null) ? (string)$_POST['resolucion'] : 'Pendiente');
+    $notas         = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+    // [FIX-ASISTENCIA-ID-DESINCRONIZADO] (mismo patron ya corregido en admin/formGasto.php
+    // y admin/formEmpleado.php) $asistencia_id salia del campo oculto del POST, mientras
+    // $editando (usado para el check de duplicado por fecha y para saber que fila existe)
+    // sale del ?id= de la URL -- se ancla al de $editando para que el UPDATE siempre
+    // apunte al mismo registro que se valido, nunca a uno distinto que el POST elija.
+    $asistencia_id = ($esEdicion && $editando) ? intval($editando['asistencia_id']) : 0;
 
-    $tfSalidas   = $_POST['tf_salida']  ?? [];
-    $tfRegresos  = $_POST['tf_regreso'] ?? [];
+    $tfSalidas   = is_array($_POST['tf_salida']  ?? null) ? $_POST['tf_salida']  : [];
+    $tfRegresos  = is_array($_POST['tf_regreso'] ?? null) ? $_POST['tf_regreso'] : [];
 
     // Tardanza y Salida temprana ya no se ofrecen (las cubre Tiempo fuera),
     // pero siguen siendo validas para poder editar registros antiguos
@@ -54,7 +91,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $resolucionesVal  = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
 
     if (!$empleado_id)                          $errores[] = 'Selecciona un empleado.';
-    if (!$fecha || !strtotime($fecha))          $errores[] = 'La fecha no es valida.';
+    // [FIX-FECHA-CALENDARIO-INVALIDA] "!strtotime($fecha)" no rechaza fechas de calendario
+    // imposibles -- strtotime('2026-02-30') no da false, "normaliza" corriendo el mes (da
+    // el 2 de marzo), pero el string LITERAL guardado sigue siendo el original. Probado en
+    // vivo: se registro una "Falta" real para un empleado real (Uriel Jimenez) con
+    // fecha='2026-02-30', guardada localmente como '0000-00-00' sin ningun error -- un
+    // registro huerfano, invisible para cualquier filtro de fecha normal. Mismo patron ya
+    // corregido en formEmpleado.php (fecha_ingreso) y admin/formGasto.php: exigir formato
+    // Y-m-d exacto y validar con checkdate() que la fecha exista realmente.
+    if (!$fecha || !preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fecha, $mFecha) || !checkdate((int)$mFecha[2], (int)$mFecha[3], (int)$mFecha[1])) {
+        $errores[] = 'La fecha no es valida.';
+    }
     // [FIX-MEDIO-G-16] No habia ningun tope contra fechas futuras: se podia registrar una
     // falta o un dia de asistencia de "mañana" (o de dentro de un año), corrompiendo el
     // calculo de nomina de una semana que ni siquiera ha ocurrido todavia.
@@ -71,10 +118,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!in_array($tipo, $tiposValidos))        $errores[] = 'El tipo no es valido.';
     if (!in_array($resolucion, $resolucionesVal)) $errores[] = 'La resolucion no es valida.';
 
+    if (!horaValida($hora_entrada)) $errores[] = 'La hora de entrada no es valida.';
+    if (!horaValida($hora_salida))  $errores[] = 'La hora de salida no es valida.';
+
     if ($tipo !== 'Falta' && $tipo !== 'Asistencia normal') {
         if (!$hora_entrada) $errores[] = 'La hora de entrada es obligatoria.';
         if (!$hora_salida)  $errores[] = 'La hora de salida es obligatoria.';
-        if ($hora_entrada && $hora_salida && timeToMinutes($hora_salida) <= timeToMinutes($hora_entrada))
+        if ($hora_entrada && $hora_salida && horaValida($hora_entrada) && horaValida($hora_salida)
+            && timeToMinutes($hora_salida) <= timeToMinutes($hora_entrada))
             $errores[] = 'La hora de salida debe ser mayor a la de entrada.';
     }
 
@@ -88,7 +139,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // empleado — en un caso extremo, hasta dejar horas trabajadas negativas.
     $intervalosLimpios = [];
     foreach ($tfSalidas as $i => $tfs) {
-        $tfr = $tfRegresos[$i] ?? '';
+        // [FIX-TIPO-ARRAY-ID] Cada elemento de tf_salida[]/tf_regreso[] deberia ser un
+        // string simple ("14:30"); un POST manipulado podria anidar otro array en un
+        // indice especifico (ej. "tf_salida[0][]=x"), y timeToMinutes(string $t) truena
+        // con un TypeError sobre un array. Se descarta cualquier elemento no-escalar
+        // como si viniera vacio.
+        $tfs = is_scalar($tfs) ? (string)$tfs : '';
+        $tfr = is_scalar($tfRegresos[$i] ?? null) ? (string)$tfRegresos[$i] : '';
+        // [FIX-HORA-FORMATO-INVALIDO] Mismo saneo que hora_entrada/hora_salida: un
+        // intervalo con formato imposible (ej. "25:99") producia un calculo de horas
+        // sin sentido y una hora invalida truncada en silencio por la columna TIME.
+        if ($tfs && !horaValida($tfs)) { $errores[] = 'En tiempo fuera fila ' . ($i + 1) . ': hora de salida no valida.'; $tfs = ''; }
+        if ($tfr && !horaValida($tfr)) { $errores[] = 'En tiempo fuera fila ' . ($i + 1) . ': hora de regreso no valida.'; $tfr = ''; }
         if ($tfs && $tfr) {
             $tfsMin = timeToMinutes($tfs);
             $tfrMin = timeToMinutes($tfr);
@@ -134,7 +196,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // semanaLaboral.php ya modela la semana de paga como lunes-sabado (51 hrs), sin
         // domingo: domingo pasa a 0 horas esperadas, asi que una Falta ahi no descuenta
         // nada y cualquier hora trabajada cuenta entera como horas extra.
-        $horasEsperadas = horasEsperadasDia($fecha);
+        // [FIX-HORARIO-PERSONALIZADO] horasEsperadasDia() ya no usa un valor fijo del sistema
+        // -- necesita el horas_por_dia de ESTE empleado. Se consulta fresco en la BD (no
+        // desde el <select>, que un cliente podria alterar) para no confiar en un valor que
+        // el navegador mande.
+        $stmtHorasEmp = $pdo->prepare("SELECT horas_por_dia FROM empleados WHERE empleado_id = ?");
+        $stmtHorasEmp->execute([$empleado_id]);
+        $horasPorDiaEmp = floatval($stmtHorasEmp->fetchColumn() ?: 9);
+        $horasEsperadas = horasEsperadasDia($fecha, $horasPorDiaEmp);
 
         if ($tipo === 'Falta') {
             $horasNoTrabajadas = $horasEsperadas;
@@ -176,18 +245,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->beginTransaction();
         try {
             if ($asistencia_id) {
-                $pdo->prepare("
+                $stmtUpdAsis = $pdo->prepare("
                     UPDATE asistencia
                     SET empleado_id=?, fecha=?, tipo=?, hora_entrada=?, hora_salida=?,
                         horas_no_trabajadas=?, horas_extra=?, razon=?, resolucion=?, notas=?
                     WHERE asistencia_id=?
-                ")->execute([
+                ");
+                $stmtUpdAsis->execute([
                     $empleado_id, $fecha, $tipo, $horaEntradaDB, $horaSalidaDB,
                     $horasNoTrabajadas, $horasExtra,
                     $razon ?: null, $resolucion, $notas ?: null,
                     $asistencia_id
                 ]);
-                $pdo->prepare("DELETE FROM asistencia_tiempos_fuera WHERE asistencia_id=?")->execute([$asistencia_id]);
+                // [FIX-ASISTENCIA-EDITAR-FANTASMA] Defensa adicional (mismo patron ya usado
+                // en admin/formGasto.php): el chequeo de "ya no existe" de mas arriba usa el
+                // $editando fijado al INICIO del script -- si otra sesion borra el registro
+                // DESPUES de ese fetch pero ANTES de este UPDATE (esta funcion hace varias
+                // consultas de por medio: duplicado por fecha, candado de semana pagada),
+                // ese chequeo inicial no lo detecta y este UPDATE afectaria 0 filas en
+                // silencio, reportando "guardado" sin haber cambiado nada. No se logro forzar
+                // esta ventana especifica con concurrencia real en las pruebas (8 intentos,
+                // ambos ordenes posibles resueltos de forma segura por el chequeo inicial),
+                // pero se agrega igual como ultima linea de defensa.
+                if ($stmtUpdAsis->rowCount() === 0) {
+                    $stmtExisteAsis = $pdo->prepare("SELECT 1 FROM asistencia WHERE asistencia_id = ?");
+                    $stmtExisteAsis->execute([$asistencia_id]);
+                    if (!$stmtExisteAsis->fetchColumn()) {
+                        $pdo->rollBack();
+                        $errores[] = 'Este registro ya no existe (probablemente fue eliminado por otra sesión). No se guardaron los cambios.';
+                    }
+                }
+                if (empty($errores)) {
+                    $pdo->prepare("DELETE FROM asistencia_tiempos_fuera WHERE asistencia_id=?")->execute([$asistencia_id]);
+                }
             } else {
                 $pdo->prepare("
                     INSERT INTO asistencia (empleado_id, fecha, tipo, hora_entrada, hora_salida,
@@ -202,16 +292,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Insert time intervals
-            if ($intervalosLimpios) {
+            if (empty($errores) && $intervalosLimpios) {
                 $stmtTF = $pdo->prepare("INSERT INTO asistencia_tiempos_fuera (asistencia_id, hora_salida, hora_regreso) VALUES (?,?,?)");
                 foreach ($intervalosLimpios as $intv) {
                     $stmtTF->execute([$asistencia_id, $intv['salida'], $intv['regreso']]);
                 }
             }
 
-            $pdo->commit();
-            header('Location: asistencia.php?msg=registrado');
-            exit();
+            if (empty($errores)) {
+                $pdo->commit();
+                header('Location: asistencia.php?msg=registrado');
+                exit();
+            }
         } catch (PDOException $e) {
             $pdo->rollBack();
             // [FIX-MEDIO-G-27] La comprobacion de duplicado de arriba (linea ~60) es a nivel
@@ -229,30 +321,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$empleados   = $pdo->query("SELECT empleado_id, nombre FROM empleados WHERE activo=1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
+$empleados   = $pdo->query("SELECT empleado_id, nombre, horas_por_dia FROM empleados WHERE activo=1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
 $tipos       = ['Asistencia normal','Falta','Tiempo fuera','Horas extra'];
 // Si se edita un registro antiguo con un tipo retirado, mantenerlo en el combo
 if ($editando && !in_array($editando['tipo'], $tipos)) $tipos[] = $editando['tipo'];
 $resoluciones = ['Pendiente','Deducido','Compensado','Justificado','Pagado integro'];
 
+// [FIX-TIPO-ARRAY-ID] Repoblar el formulario tras un error releyendo $_POST crudo tenia el
+// mismo hueco ya corregido en admin/formGasto.php: si algun campo llegaba como array, el
+// saneo de arriba no aplicaba aqui y el htmlspecialchars() de mas abajo volvia a tronar.
+// Se usan las variables YA saneadas del manejador de POST (siempre escalares).
+$esPost = $_SERVER['REQUEST_METHOD'] === 'POST';
 $v = [
-    'empleado_id'  => $_POST['empleado_id']  ?? $editando['empleado_id']  ?? '',
-    'fecha'        => $_POST['fecha']        ?? $editando['fecha']        ?? date('Y-m-d'),
-    'tipo'         => $_POST['tipo']         ?? $editando['tipo']         ?? 'Asistencia normal',
-    'hora_entrada' => $_POST['hora_entrada'] ?? ($editando && $editando['hora_entrada'] ? substr($editando['hora_entrada'], 0, 5) : ''),
-    'hora_salida'  => $_POST['hora_salida']  ?? ($editando && $editando['hora_salida']  ? substr($editando['hora_salida'],  0, 5) : ''),
-    'razon'        => $_POST['razon']        ?? $editando['razon']        ?? '',
-    'resolucion'   => $_POST['resolucion']   ?? $editando['resolucion']   ?? 'Pendiente',
-    'notas'        => $_POST['notas']        ?? $editando['notas']        ?? '',
+    'empleado_id'  => $esPost ? $empleado_id  : ($editando['empleado_id']  ?? ''),
+    'fecha'        => $esPost ? $fecha        : ($editando['fecha']        ?? date('Y-m-d')),
+    'tipo'         => $esPost ? $tipo         : ($editando['tipo']         ?? 'Asistencia normal'),
+    'hora_entrada' => $esPost ? $hora_entrada : ($editando && $editando['hora_entrada'] ? substr($editando['hora_entrada'], 0, 5) : ''),
+    'hora_salida'  => $esPost ? $hora_salida  : ($editando && $editando['hora_salida']  ? substr($editando['hora_salida'],  0, 5) : ''),
+    'razon'        => $esPost ? $razon        : ($editando['razon']        ?? ''),
+    'resolucion'   => $esPost ? $resolucion   : ($editando['resolucion']   ?? 'Pendiente'),
+    'notas'        => $esPost ? $notas        : ($editando['notas']        ?? ''),
 ];
 
 // Rebuild intervals from POST on error, or from DB on edit
 $intervalosForm = [];
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $tfS = $_POST['tf_salida']  ?? [];
-    $tfR = $_POST['tf_regreso'] ?? [];
-    foreach ($tfS as $i => $s) {
-        $r = $tfR[$i] ?? '';
+if ($esPost) {
+    foreach ($tfSalidas as $i => $s) {
+        // [FIX-TIPO-ARRAY-ID] Mismo saneo por elemento que ya se aplica en la validacion
+        // de mas arriba -- sin esto, un elemento no-escalar (ej. "tf_salida[0][]=x")
+        // volveria a tronar aqui en el htmlspecialchars() de mas abajo.
+        $s = is_scalar($s) ? $s : '';
+        $r = is_scalar($tfRegresos[$i] ?? null) ? $tfRegresos[$i] : '';
         if ($s || $r) $intervalosForm[] = ['salida' => $s, 'regreso' => $r];
     }
 } elseif ($tfExistentes) {
@@ -302,7 +401,7 @@ foreach ($pdo->query("SELECT empleado_id, fecha, asistencia_id FROM asistencia")
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -352,7 +451,7 @@ foreach ($pdo->query("SELECT empleado_id, fecha, asistencia_id FROM asistencia")
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2><?= $esEdicion ? 'Editar Registro' : 'Registrar Incidente' ?></h2>
         </div>
         <div class="topbar-right">
@@ -372,13 +471,13 @@ foreach ($pdo->query("SELECT empleado_id, fecha, asistencia_id FROM asistencia")
             <form method="POST" id="mainForm">
                 <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <?php if ($esEdicion): ?>
-                    <input type="hidden" name="asistencia_id" value="<?= $editando['asistencia_id'] ?>">
+                    <input type="hidden" name="asistencia_id" value="<?= $editando['asistencia_id'] ?? ($_POST['asistencia_id'] ?? '') ?>">
                 <?php endif; ?>
 
                 <div class="form-row">
                     <div class="form-group">
                         <label>Empleado</label>
-                        <select name="empleado_id" id="selEmpleado" required onchange="verificarVacacion(); verificarFechaOcupada();">
+                        <select name="empleado_id" id="selEmpleado" required onchange="verificarVacacion(); verificarFechaOcupada(); actualizarVista();">
                             <option value="">-- Seleccionar --</option>
                             <?php foreach ($empleados as $emp): ?>
                                 <option value="<?= $emp['empleado_id'] ?>" <?= $v['empleado_id'] == $emp['empleado_id'] ? 'selected' : '' ?>><?= htmlspecialchars($emp['nombre']) ?></option>
@@ -504,7 +603,7 @@ var tipoConfig = {
         entrada: '',                       salida: '',
         razon: 'Notas del dia',           razonPh: 'Ej. Sin novedad (opcional)',
         infoColor: { bg:'#f0fff0', border:'#b7dfb8', text:'#1e8449' },
-        info: 'Dia completo sin incidente: se registran las horas esperadas completas (9 hrs entre semana, 6 hrs sabado).'
+        info: function() { return 'Dia completo sin incidente: se registran las ' + horasEmpleadoActual() + ' hrs esperadas de este empleado (0 hrs domingo).'; }
     },
     'Tardanza': {
         tiempos: true,  intervalos: false, required: true,
@@ -518,7 +617,7 @@ var tipoConfig = {
         entrada: '',                       salida: '',
         razon: 'Motivo de la falta',      razonPh: 'Ej. Enfermedad, permiso sin goce...',
         infoColor: { bg:'#fff0f0', border:'#fdd', text:'#c0392b' },
-        info: 'Se contara el dia completo como no trabajado (9 hrs entre semana, 6 hrs sabado).'
+        info: function() { return 'Se contara el dia completo como no trabajado (' + horasEmpleadoActual() + ' hrs esperadas de este empleado; 0 hrs domingo).'; }
     },
     'Salida temprana': {
         tiempos: true,  intervalos: false, required: true,
@@ -580,7 +679,7 @@ function actualizarVista() {
 
     // Cuadro informativo contextual
     var box = document.getElementById('infoContextual');
-    box.textContent         = cfg.info;
+    box.textContent         = typeof cfg.info === 'function' ? cfg.info() : cfg.info;
     box.style.display       = 'block';
     box.style.background    = cfg.infoColor.bg;
     box.style.border        = '1px solid ' + cfg.infoColor.border;
@@ -595,10 +694,17 @@ function timeToMin(t) {
     return parseInt(parts[0]) * 60 + parseInt(parts[1]);
 }
 
-// [FIX-MEDIO-G-25] Antes esta regla (9h/6h/0h) estaba hardcodeada aqui por separado del PHP
-// del servidor -- ahora se lee de jornadaConfig() (includes/rh_helpers.php), la misma fuente
-// de verdad que usan formAsistencia.php (PHP) y semanaLaboral.php.
-var JORNADA = <?= json_encode(jornadaConfig()) ?>;
+// [FIX-HORARIO-PERSONALIZADO] Antes esta regla (9h/6h/0h) era un unico valor fijo para todos
+// los empleados, leido de jornadaConfig() (ya eliminada de includes/rh_helpers.php). Ahora
+// cada empleado tiene su propio horas_por_dia (mismo valor lunes-sabado); se embebe aqui como
+// mapa empleado_id -> horas_por_dia para que el JS calcule con el mismo criterio que
+// horasEsperadasDia() en PHP (domingo = 0 para todos, fijo).
+var HORAS_POR_DIA = <?= json_encode(array_column($empleados, 'horas_por_dia', 'empleado_id')) ?>;
+
+function horasEmpleadoActual() {
+    var empId = document.getElementById('selEmpleado').value;
+    return HORAS_POR_DIA[empId] !== undefined ? parseFloat(HORAS_POR_DIA[empId]) : 9;
+}
 
 function calcular() {
     var tipo    = document.getElementById('selectTipo').value;
@@ -606,13 +712,12 @@ function calcular() {
     var entrada = document.getElementById('horaEntrada').value;
     var salida  = document.getElementById('horaSalida').value;
 
-    // Determine expected hours from day of week
-    var esperadas = JORNADA.normal;
+    // Determine expected hours: horas_por_dia del empleado seleccionado, 0 en domingo
+    var esperadas = horasEmpleadoActual();
     if (fecha) {
         var d = new Date(fecha + 'T12:00:00');
-        var dow = d.getDay(); // 0=Sun, 6=Sat
-        if (dow === 6) esperadas = JORNADA.sabado;
-        else if (dow === 0) esperadas = JORNADA.domingo;
+        var dow = d.getDay(); // 0=Sun ... 6=Sat
+        if (dow === 0) esperadas = 0;
     }
 
     document.getElementById('calcEsperadas').textContent = esperadas + ' h';

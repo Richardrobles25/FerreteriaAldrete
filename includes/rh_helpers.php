@@ -59,24 +59,40 @@ function calcSaldoVacaciones(PDO $pdo, int $empleadoId, string $fechaIngreso, ?s
 }
 
 // Cuenta los dias del periodo excluyendo domingos (no son dia laboral)
-// [FIX-MEDIO-G-25] La regla de "cuantas horas se esperan segun el dia de la semana" (9h
-// entre semana, 6h sabado, 0h domingo) estaba repetida por separado en formAsistencia.php
-// (PHP del servidor), formAsistencia.php (JS del navegador) y semanaLaboral.php (CASE SQL) —
-// tres copias independientes que un cambio futuro (ej. jornada de sabado a 5h) tendria que
-// actualizar a mano en las tres, con alto riesgo de dejarlas desincronizadas otra vez. Se deja
-// UNA sola fuente de verdad en PHP: formAsistencia.php y semanaLaboral.php la consumen
-// directamente, y se le pasa al navegador via json_encode() para que el JS de formAsistencia.php
-// tambien la lea en vez de tener su propia copia hardcodeada.
-function jornadaConfig(): array {
-    return ['normal' => 9.0, 'sabado' => 6.0, 'domingo' => 0.0];
+// [FIX-MEDIO-G-25] La regla de "cuantas horas se esperan segun el dia de la semana" estaba
+// repetida por separado en formAsistencia.php (PHP del servidor), formAsistencia.php (JS del
+// navegador) y semanaLaboral.php (CASE SQL) — tres copias independientes que un cambio futuro
+// tendria que actualizar a mano en las tres, con alto riesgo de dejarlas desincronizadas otra
+// vez. Se deja UNA sola fuente de verdad en PHP: formAsistencia.php y semanaLaboral.php la
+// consumen directamente, y se le pasa al navegador via json_encode() para que el JS de
+// formAsistencia.php tambien la lea en vez de tener su propia copia hardcodeada.
+// [FIX-HORARIO-PERSONALIZADO] Antes esta jornada era UN SOLO valor fijo para TODOS los
+// empleados (9h entre semana, 6h sabado). Ahora cada empleado tiene su propio "horas_por_dia"
+// (columna en empleados) que aplica igual de lunes a sabado -- si alguien trabaja un horario
+// distinto entre semana vs sabado, se captura ese dia en particular con horario explicito en
+// vez de depender del relleno automatico. Domingo se queda en 0 para todos, fijo: es una regla
+// de negocio confirmada (nadie trabaja domingo), no algo que dependa del empleado.
+function horasEsperadasDia(string $fecha, float $horasPorDia): float {
+    $diaSemana = intval(date('N', strtotime($fecha))); // 1=Lun ... 6=Sab, 7=Dom
+    if ($diaSemana === 7) return 0.0;
+    return $horasPorDia;
 }
 
-function horasEsperadasDia(string $fecha): float {
-    $cfg = jornadaConfig();
-    $diaSemana = intval(date('N', strtotime($fecha))); // 1=Lun ... 6=Sab, 7=Dom
-    if ($diaSemana === 7) return $cfg['domingo'];
-    if ($diaSemana === 6) return $cfg['sabado'];
-    return $cfg['normal'];
+// [FIX-ADELANTO-LIMITE-SEMANA] Devuelve el lunes de la semana de nomina (lunes-sabado) a la
+// que pertenece $fecha. Domingo no es parte de ningun ciclo lunes-sabado, asi que se adelanta
+// al lunes SIGUIENTE (igual que semanaLaboral.php ya hacia para su vista por defecto). Antes
+// adelantos.php calculaba esto por separado con strtotime('monday this week'), que en domingo
+// regresa el lunes de la semana que ACABA de terminar en vez de avanzar -- un adelanto
+// registrado en domingo se etiquetaba (y su tope de "una semana de sueldo" se evaluaba) contra
+// la semana vieja en vez de la que empieza al dia siguiente, desincronizado de como
+// semanaLaboral.php interpreta ese mismo domingo. Se centraliza aqui para que ambos archivos
+// usen exactamente el mismo criterio, sin volver a poder desincronizarse.
+function lunesDeLaSemana(string $fecha): string {
+    $dt  = new DateTime($fecha);
+    $dow = (int)$dt->format('N');
+    if ($dow === 7) $dt->modify('+1 day');
+    elseif ($dow !== 1) $dt->modify('last monday');
+    return $dt->format('Y-m-d');
 }
 
 function contarDiasVacacion(string $fechaInicio, string $fechaFin): int {

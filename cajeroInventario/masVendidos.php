@@ -1,21 +1,22 @@
-﻿<?php
+<?php
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
+require_once '../includes/icons.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
-$periodo    = $_GET['periodo'] ?? 'mes';
+$periodo    = is_scalar($_GET['periodo'] ?? null) ? $_GET['periodo'] : 'mes';
 // [FIX-CONSISTENCIA] Igual que admin/inventario_masVendidos.php (FIX-ALTO-C-02): un usuario
 // Inventario/Inventario-Cajero (limitado a su propia sucursal) podia editar ?sucursal= (o el
 // <select> de abajo, que lista TODAS las sucursales sin filtrar por rol) para ver las ventas
 // e ingresos de OTRA sucursal. Solo Administrador puede elegir sucursal libremente.
 $esAdmin  = ($_SESSION['rol'] ?? '') === 'Administrador';
-$sucursal = $esAdmin ? intval($_GET['sucursal'] ?? $_SESSION['sucursal_id']) : intval($_SESSION['sucursal_id']);
-$limite     = intval($_GET['limite'] ?? 20);
+$sucursal = $esAdmin ? intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : $_SESSION['sucursal_id']) : intval($_SESSION['sucursal_id']);
+$limite     = intval(is_scalar($_GET['limite'] ?? null) ? $_GET['limite'] : 20);
 if (!in_array($limite, [10, 20, 50], true)) $limite = 20;
 
 $fechaDesde = match($periodo) {
@@ -67,6 +68,14 @@ $stmt = $pdo->prepare("
     WHERE v.estado IN ('Completada','Modificado','Devuelto')
       AND DATE(v.created_at) >= ?
     GROUP BY p.producto_id, p.codigo, p.nombre_producto, c.nombre, ss.stock_actual, p.precio_venta
+    -- [FIX-MASVENDIDOS-DIVISION-CERO] Un producto vendido y luego devuelto POR COMPLETO en el
+    -- mismo periodo (cantidad efectiva = 0 tras restar la devolución) seguía apareciendo aquí
+    -- con total_vendido=0 -- no es mas vendido, es una venta que termino en $0 neto. Cuando
+    -- ese era el UNICO movimiento del periodo, totalUnidades (abajo) tambien daba 0 y la
+    -- pagina tronaba con Division by zero al calcular el porcentaje de participacion.
+    -- Probado en vivo: vender y devolver el mismo dia un producto sin ninguna otra venta ese
+    -- dia reproducia el error 500 exacto en periodo=hoy.
+    HAVING total_vendido > 0
     ORDER BY total_vendido DESC
     LIMIT $limite
 ");
@@ -85,7 +94,12 @@ $stmtTotal = $pdo->prepare("
     WHERE v.estado IN ('Completada','Modificado','Devuelto') AND DATE(v.created_at) >= ?
 ");
 $stmtTotal->execute([$sucursal, $fechaDesde]);
-$totalUnidades = $stmtTotal->fetchColumn() ?: 1;
+// [FIX-MASVENDIDOS-DIVISION-CERO] "?: 1" no atrapaba este caso: fetchColumn() devuelve el
+// STRING "0.000" (por el COALESCE+SUM), y en PHP solo el string exacto "0" es falsy — "0.000"
+// se evalúa como verdadero, así que el fallback nunca se activaba y $totalUnidades se quedaba
+// en "0.000", produciendo la misma división entre cero de arriba.
+$totalUnidades = floatval($stmtTotal->fetchColumn());
+if ($totalUnidades <= 0) $totalUnidades = 1;
 
 $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -116,7 +130,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     .topbar { background: #14ace7; color: white; padding: 0 20px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .topbar h2 { font-size: 15px; font-weight: 600; }
-    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; }
+    .toggle-btn { background: none; border: none; color: white; cursor: pointer; font-size: 20px; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
     .toggle-btn:hover { background: rgba(255,255,255,0.2); }
     .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; }
     .logout-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 5px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
@@ -231,7 +245,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 <div class="main">
     <div class="topbar">
         <div class="topbar-left">
-            <button class="toggle-btn" onclick="toggleSidebar()">&#9776;</button>
+            <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
             <h2>Productos más vendidos</h2>
         </div>
         <div class="topbar-right">

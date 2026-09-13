@@ -9,9 +9,49 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
+// [FEATURE-PAQUETES-DISPONIBILIDAD-SUCURSAL] Un paquete global podia contener un producto que
+// esta sucursal ni siquiera distribuye (sin fila activa de stock_sucursal) y aun asi aparecia
+// en el listado como si se pudiera vender completo desde aqui. Reportado en vivo por el
+// usuario. Ahora se filtra automaticamente a los paquetes que ESTA sucursal SI puede vender
+// completos (todos sus productos activos con stock_sucursal activo aqui), con la opcion de
+// consultar la disponibilidad de otra sucursal via ?sucursal=.
+$sucursalesActivas = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
+$idsSucursalesActivas = array_map('intval', array_column($sucursalesActivas, 'sucursal_id'));
+$sucursalConsulta = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : $_SESSION['sucursal_id']);
+if (!in_array($sucursalConsulta, $idsSucursalesActivas, true)) {
+    $sucursalConsulta = intval($_SESSION['sucursal_id']);
+}
+$esMiSucursal = $sucursalConsulta === intval($_SESSION['sucursal_id']);
+$nombreSucursalConsulta = '';
+foreach ($sucursalesActivas as $s) {
+    if ((int)$s['sucursal_id'] === $sucursalConsulta) { $nombreSucursalConsulta = $s['nombre']; break; }
+}
+
 // Listar paquetes globales
 $stmt     = $pdo->query("SELECT * FROM paquetes ORDER BY activo DESC, nombre ASC");
-$paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$paquetesTodos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$paquetes = [];
+$ocultosPorSucursal = 0;
+foreach ($paquetesTodos as $paq) {
+    $stmtProdsPaq = $pdo->prepare("SELECT pp.producto_id FROM paquete_productos pp JOIN productos p ON p.producto_id = pp.producto_id AND p.activo = 1 WHERE pp.paquete_id = ?");
+    $stmtProdsPaq->execute([$paq['paquete_id']]);
+    $idsProdsPaq = $stmtProdsPaq->fetchAll(PDO::FETCH_COLUMN);
+
+    $disponibleAqui = true;
+    if (!empty($idsProdsPaq)) {
+        $placeholders = implode(',', array_fill(0, count($idsProdsPaq), '?'));
+        $stmtDisp = $pdo->prepare("SELECT COUNT(*) FROM stock_sucursal WHERE sucursal_id = ? AND activo = 1 AND producto_id IN ($placeholders)");
+        $stmtDisp->execute(array_merge([$sucursalConsulta], $idsProdsPaq));
+        $disponibleAqui = ((int)$stmtDisp->fetchColumn() === count($idsProdsPaq));
+    }
+
+    if ($disponibleAqui) {
+        $paquetes[] = $paq;
+    } else {
+        $ocultosPorSucursal++;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -59,6 +99,9 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .prod-tag { background: #f5f5f5; font-size: 11px; padding: 3px 10px; border-radius: 99px; color: #555; }
     .badge-inactivo { background: #f0f0f0; color: #999; font-size: 11px; padding: 2px 8px; border-radius: 99px; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
+    .filtro-sucursal { display: flex; align-items: center; gap: 10px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 12px 16px; margin-bottom: 14px; font-size: 13px; color: #555; flex-wrap: wrap; }
+    .filtro-sucursal select { padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; color: #333; }
+    .filtro-sucursal .nota-ocultos { color: #aaa; font-size: 12px; }
     @media (max-width: 768px) {
         body { overflow-x: hidden; }
         .sidebar { position: fixed; top: 0; left: 0; height: 100%; z-index: 300; width: 0; transition: width 0.3s; }
@@ -155,6 +198,21 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <div class="content">
+        <div class="filtro-sucursal">
+            <span>Mostrando paquetes que se pueden vender completos en:</span>
+            <select onchange="location.href='paquetes.php?sucursal='+this.value">
+                <?php foreach ($sucursalesActivas as $s): ?>
+                    <option value="<?= $s['sucursal_id'] ?>" <?= (int)$s['sucursal_id'] === $sucursalConsulta ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($s['nombre']) ?><?= (int)$s['sucursal_id'] === intval($_SESSION['sucursal_id']) ? ' (tu sucursal)' : '' ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <?php if ($ocultosPorSucursal > 0): ?>
+                <span class="nota-ocultos">
+                    <?= $ocultosPorSucursal ?> paquete<?= $ocultosPorSucursal === 1 ? '' : 's' ?> oculto<?= $ocultosPorSucursal === 1 ? '' : 's' ?> porque <?= $esMiSucursal ? 'tu sucursal' : htmlspecialchars($nombreSucursalConsulta) ?> no distribuye alguno de sus productos.
+                </span>
+            <?php endif; ?>
+        </div>
         <?php if (count($paquetes) > 0): ?>
             <?php foreach ($paquetes as $paq):
                 $stmtPP = $pdo->prepare("
@@ -206,7 +264,11 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
             <?php endforeach; ?>
         <?php else: ?>
-            <div class="sin-resultados">No hay paquetes registrados.</div>
+            <div class="sin-resultados">
+                <?= $ocultosPorSucursal > 0
+                    ? 'Ningún paquete se puede vender completo en ' . ($esMiSucursal ? 'tu sucursal' : htmlspecialchars($nombreSucursalConsulta)) . ' — todos requieren al menos un producto que no distribuye.'
+                    : 'No hay paquetes registrados.' ?>
+            </div>
         <?php endif; ?>
     </div>
 </div>

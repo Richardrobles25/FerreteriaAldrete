@@ -526,6 +526,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div style="display:flex;gap:6px;margin-bottom:14px;">
             <button type="button" id="btnPrevEfectivo" onclick="renderPreview('Efectivo')" style="flex:1;padding:6px;border:2px solid #14ace7;background:#eef8ff;color:#14ace7;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Efectivo</button>
             <button type="button" id="btnPrevTerminal" onclick="renderPreview('Terminal')" style="flex:1;padding:6px;border:2px solid #ddd;background:white;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Terminal</button>
+            <button type="button" id="btnPrevMixto"    onclick="renderPreview('Mixto')"    style="flex:1;padding:6px;border:2px solid #ddd;background:white;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Mixto</button>
             <button type="button" id="btnPrevCredito"  onclick="renderPreview('Credito')"  style="flex:1;padding:6px;border:2px solid #ddd;background:white;color:#666;border-radius:6px;cursor:pointer;font-size:12px;">Crédito</button>
         </div>
         <div id="previewTicketContent" style="margin-bottom:16px;"></div>
@@ -567,7 +568,11 @@ function switchTTab(tab, btn) {
 /* Obtiene el pie de página correcto según método de pago */
 function getPieTicket(metodo) {
     let pie = '';
-    if (metodo === 'Efectivo')  pie = document.querySelector('input[name="ticket_pie_efectivo"]')?.value || '';
+    // [FEATURE-PREVIEW-MIXTO] Mixto usa el mismo pie que Efectivo en el ticket real (ver
+    // cajero_nuevaVenta.php: el "else" del switch de _pie cae en ticket_pie_efectivo para
+    // cualquier método que no sea Credito/Terminal) -- antes esta vista previa no tenía rama
+    // para Mixto y caía al pie genérico, mostrando algo distinto a lo que en verdad se imprime.
+    if (metodo === 'Efectivo' || metodo === 'Mixto') pie = document.querySelector('input[name="ticket_pie_efectivo"]')?.value || '';
     else if (metodo === 'Terminal') pie = document.querySelector('input[name="ticket_pie_terminal"]')?.value || '';
     else if (metodo === 'Credito')  pie = document.querySelector('input[name="ticket_pie_credito"]')?.value || '';
     return pie || document.querySelector('input[name="ticket_pie"]').value || '¡Gracias por su compra!';
@@ -589,7 +594,7 @@ document.getElementById('ticketLogoFile').addEventListener('change', function() 
 
 /* Modal de vista previa del ticket */
 function renderPreview(metodo) {
-    ['Efectivo','Terminal','Credito'].forEach(m => {
+    ['Efectivo','Terminal','Mixto','Credito'].forEach(m => {
         const btn = document.getElementById('btnPrev'+m);
         if (!btn) return;
         btn.style.border     = m===metodo ? '2px solid #14ace7' : '2px solid #ddd';
@@ -651,7 +656,12 @@ function renderPreview(metodo) {
     html += L;
 
     const subtotal = 77.00;
-    const comision = metodo === 'Terminal' ? parseFloat((subtotal * comPct / 100).toFixed(2)) : 0;
+    // [FEATURE-PREVIEW-MIXTO] Mock de un pago Mixto: $50 en efectivo, el resto ($27) va a
+    // terminal + su comisión -- misma fórmula que calcularMixto() usa en cajero_nuevaVenta.php.
+    const efectivoMixto = 50.00;
+    let comision = 0;
+    if (metodo === 'Terminal') comision = parseFloat((subtotal * comPct / 100).toFixed(2));
+    else if (metodo === 'Mixto') comision = parseFloat(((subtotal - efectivoMixto) * comPct / 100).toFixed(2));
     const total    = subtotal + comision;
     if (comision > 0) {
         html += F('Subtotal', `$${subtotal.toFixed(2)}`);
@@ -666,6 +676,13 @@ function renderPreview(metodo) {
         html += F('Cambio', `$${(100 - total).toFixed(2)}`);
     } else if (metodo === 'Terminal') {
         html += F('Pago con terminal', `$${total.toFixed(2)}`);
+    } else if (metodo === 'Mixto') {
+        const terminalMixto = (subtotal - efectivoMixto) + comision;
+        const recibidoMixto = 60.00;
+        html += F('Efectivo', `$${efectivoMixto.toFixed(2)}`);
+        html += F('Terminal', `$${terminalMixto.toFixed(2)}`);
+        html += F('Recibido', `$${recibidoMixto.toFixed(2)}`);
+        html += F('Cambio', `$${(recibidoMixto - efectivoMixto).toFixed(2)}`);
     } else if (metodo === 'Credito') {
         const notaCred = document.querySelector('textarea[name="ticket_nota_credito"]')?.value?.trim() || 'Al firmar acepto cubrir el monto total adeudado';
         html += `<div style="text-align:center;font-weight:bold;margin-top:6px;">*** VENTA A CRÉDITO ***</div>`;

@@ -527,6 +527,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     .errores { background: #fdecea; color: #c0392b; padding: 12px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; border-left: 3px solid #c0392b; }
     .errores ul { margin: 6px 0 0 16px; }
+    .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 14px; border-radius: 6px; font-size: 13px; text-decoration: none; display: inline-block; }
     .filtros { background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; padding: 14px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
     .filtro-group { display: flex; flex-direction: column; gap: 5px; }
     .filtro-group label { font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; }
@@ -687,7 +688,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                         </select>
                     </div>
                     <button type="submit" style="background:#14ace7;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Filtrar</button>
-                    <a href="inventario_transferencias.php" style="font-size:12px;color:#aaa;align-self:center;text-decoration:none;">Limpiar</a>
+                    <a class="btn-limpiar" href="inventario_transferencias.php">Limpiar</a>
                 </form>
             </div>
 
@@ -856,7 +857,14 @@ const prodsBySucursal = <?= json_encode($prodsBySucursal) ?>;
     }
 })();
 let itemsTransf = (function() {
+    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] (mismo hueco de cajero_nuevaVenta.php) el
+    // Administrador puede cambiar su sucursal (origen de la transferencia) a medio armado de
+    // un borrador -- sin este candado, restauraba cantidades/stock de referencia de la
+    // sucursal VIEJA como si fueran de la nueva.
     try {
+        const miSuc = <?= intval($sucursalVista) ?>;
+        const sucGuardada = parseInt(localStorage.getItem('itemsTransfDraft_sucursal_id'));
+        if (sucGuardada !== miSuc) return [];
         const guardado = JSON.parse(localStorage.getItem('itemsTransfDraft'));
         return Array.isArray(guardado) ? guardado : [];
     } catch (e) {
@@ -1020,6 +1028,7 @@ function agregarItem() {
 function renderItems() {
     // [FIX-BORRADOR-TRANSF] Persistir la lista en cada render, igual que nuevaVenta.php.
     localStorage.setItem('itemsTransfDraft', JSON.stringify(itemsTransf));
+    localStorage.setItem('itemsTransfDraft_sucursal_id', String(<?= intval($sucursalVista) ?>));
     const div = document.getElementById('listaItems');
     if (!itemsTransf.length) {
         div.innerHTML = '<div class="items-vacio">Sin productos agregados</div>';

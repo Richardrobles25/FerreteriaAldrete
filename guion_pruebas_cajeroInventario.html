@@ -1,0 +1,699 @@
+<title>Guion Inventario/Cajero</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --bg:#f2ece0; --surface:#fffdf8; --surface-2:#ece2cc; --surface-3:#e4d7b8;
+  --ink:#2b2620; --muted:#736b58; --line:#ddd0ac;
+  --accent:#c9490c; --accent-2:#a83c09; --accent-ink:#fff8f0;
+  --good:#2f7a4f; --good-bg:#e3efe2; --good-line:#bfd9bd;
+  --warn:#8a5a00; --warn-bg:#faf1d6; --warn-line:#e6cf8f;
+  --credit:#2b5b8a; --credit-bg:#e3edf5; --credit-line:#bcd4e8;
+  --bad:#a5301f; --bad-bg:#f7e3df; --bad-line:#e3b6a9;
+  --shadow: 0 1px 2px rgba(43,38,32,.06), 0 6px 16px -8px rgba(43,38,32,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1b1712; --surface:#231e17; --surface-2:#2b2419; --surface-3:#352c1d;
+    --ink:#efe6d4; --muted:#a99a80; --line:#3d3323;
+    --accent:#ff8a3d; --accent-2:#ffa565; --accent-ink:#1b1712;
+    --good:#6fc78f; --good-bg:#1f2f21; --good-line:#365239;
+    --warn:#e3b954; --warn-bg:#332a12; --warn-line:#5c4a1e;
+    --credit:#7db3e0; --credit-bg:#1c2b38; --credit-line:#33495c;
+    --bad:#e8836f; --bad-bg:#3a221c; --bad-line:#5c3428;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px -8px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1b1712; --surface:#231e17; --surface-2:#2b2419; --surface-3:#352c1d;
+  --ink:#efe6d4; --muted:#a99a80; --line:#3d3323;
+  --accent:#ff8a3d; --accent-2:#ffa565; --accent-ink:#1b1712;
+  --good:#6fc78f; --good-bg:#1f2f21; --good-line:#365239;
+  --warn:#e3b954; --warn-bg:#332a12; --warn-line:#5c4a1e;
+  --credit:#7db3e0; --credit-bg:#1c2b38; --credit-line:#33495c;
+  --bad:#e8836f; --bad-bg:#3a221c; --bad-line:#5c3428;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px -8px rgba(0,0,0,.5);
+}
+
+*{box-sizing:border-box;}
+body{background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;line-height:1.5;}
+.wrap{max-width:880px;margin:0 auto;padding:28px 20px 80px;}
+.num{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+
+/* ---------- Masthead ---------- */
+.masthead{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:26px 28px;position:relative;overflow:hidden;}
+.masthead::before{content:"";position:absolute;top:0;left:0;bottom:0;width:8px;background:repeating-linear-gradient(135deg,var(--accent) 0 6px,var(--accent-2) 6px 12px);}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:600;}
+h1{font-family:'Big Shoulders Display',sans-serif;font-weight:800;font-size:clamp(30px,5vw,42px);letter-spacing:.01em;text-transform:uppercase;margin:4px 0 6px;text-wrap:balance;line-height:.98;}
+.masthead p.lead{color:var(--muted);font-size:14.5px;max-width:64ch;margin:0 0 18px;}
+.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:3px;overflow:hidden;}
+.meta-cell{background:var(--surface);padding:10px 14px;}
+.meta-cell .k{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600;}
+.meta-cell .v{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;margin-top:2px;}
+
+/* ---------- Nav ---------- */
+.tocbar{display:flex;gap:6px;flex-wrap:wrap;margin:22px 0 22px;position:sticky;top:10px;z-index:5;}
+.tocbar a{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--ink);background:var(--surface);
+  border:1px solid var(--line);padding:7px 12px;border-radius:20px;text-decoration:none;box-shadow:var(--shadow);white-space:nowrap;}
+.tocbar a:hover{border-color:var(--accent);color:var(--accent);}
+
+/* ---------- Callouts ---------- */
+.callout{border-radius:4px;padding:14px 16px;font-size:13.5px;margin:0 0 22px;border:1px solid;}
+.callout.warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--ink);}
+.callout.warn b{color:var(--warn);}
+.callout.bad{background:var(--bad-bg);border-color:var(--bad-line);color:var(--ink);}
+.callout.bad b{color:var(--bad);}
+.callout p{margin:0 0 6px;}
+.callout p:last-child{margin-bottom:0;}
+.callout ul{margin:6px 0 0;padding-left:20px;}
+.callout li{margin-bottom:4px;}
+
+/* ---------- Ronda sections ---------- */
+.ronda{margin-bottom:44px;scroll-margin-top:70px;}
+.ronda-head{display:flex;align-items:baseline;gap:14px;border-bottom:2px solid var(--ink);padding-bottom:10px;margin-bottom:18px;}
+.ronda-badge{font-family:'Big Shoulders Display',sans-serif;font-weight:800;font-size:34px;color:var(--accent);line-height:1;flex-shrink:0;}
+.ronda-titles h2{font-family:'Big Shoulders Display',sans-serif;font-weight:700;font-size:24px;text-transform:uppercase;letter-spacing:.01em;margin:0;}
+.ronda-titles .files{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--muted);margin-top:2px;}
+
+.step{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:16px 18px;margin-bottom:14px;display:flex;gap:14px;}
+.step.done{opacity:.72;}
+.step input[type=checkbox]{width:19px;height:19px;flex-shrink:0;margin-top:2px;accent-color:var(--accent);cursor:pointer;}
+.step-body{flex:1;min-width:0;}
+.step-title{font-weight:600;font-size:14.5px;margin:0 0 4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.step-title .tag{font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;color:var(--accent);letter-spacing:.04em;}
+.step-desc{font-size:13.5px;color:var(--ink);margin:0 0 10px;}
+.step-desc code, .step-desc .code{font-family:'IBM Plex Mono',monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:12.5px;}
+.badge-done{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--good);background:var(--good-bg);border:1px solid var(--good-line);padding:2px 8px;border-radius:20px;}
+.badge-only{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);padding:2px 8px;border-radius:20px;}
+
+.expect{background:var(--good-bg);border:1px solid var(--good-line);border-radius:4px;padding:10px 14px;}
+.expect .exp-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--good);font-weight:700;margin-bottom:6px;}
+.expect .row{display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:2px 0;}
+.expect .row .l{color:var(--muted);}
+.expect .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.expect .row.total{border-top:1px dashed var(--good-line);margin-top:6px;padding-top:7px;font-weight:700;}
+.expect .row.total .v{font-size:15px;}
+
+.expect.credit{background:var(--credit-bg);border-color:var(--credit-line);}
+.expect.credit .exp-label{color:var(--credit);}
+.expect.confirmed{background:var(--surface-2);border-color:var(--line);}
+.expect.confirmed .exp-label{color:var(--muted);}
+
+/* ---------- data table ---------- */
+.dtable{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0 2px;}
+.dtable th,.dtable td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;}
+.dtable th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;}
+.dtable td.num, .dtable th.num{text-align:right;font-family:'IBM Plex Mono',monospace;}
+.tablewrap{overflow-x:auto;}
+
+/* ---------- ticket (summary) ---------- */
+.ticket{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:0;max-width:420px;margin:0 auto;overflow:hidden;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px);
+  background-size: 100% 27px;}
+.ticket-head{background:var(--ink);color:var(--bg);text-align:center;padding:16px;font-family:'Big Shoulders Display',sans-serif;
+  font-size:20px;letter-spacing:.03em;text-transform:uppercase;background-image:none;}
+.ticket-body{padding:14px 22px 20px;}
+.ticket .row{display:flex;justify-content:space-between;font-size:13.5px;height:27px;align-items:center;}
+.ticket .row.sep{border-top:1px dashed var(--muted);margin-top:6px;padding-top:8px;height:33px;}
+.ticket .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.ticket .row.grand{font-weight:800;font-size:16px;}
+.ticket .row.grand .v{color:var(--accent);}
+
+/* ---------- misc ---------- */
+.divider-note{font-size:12px;color:var(--muted);font-style:italic;margin:-6px 0 16px 2px;}
+footer{text-align:center;color:var(--muted);font-size:12px;margin-top:50px;font-family:'IBM Plex Mono',monospace;}
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow">Ferretería Aldrete &middot; Certificación de sistema &middot; v2, corregida</div>
+    <h1>Guion de pruebas<br>Inventario / Cajero</h1>
+    <p class="lead">Segunda versión de este guion. La primera tenía 3 pasos que no correspondían a lo que tu sistema realmente permite hacer desde este rol — se corrigieron después de leer completo cada uno de los 22 archivos del rol, no solo por encima.</p>
+    <div class="meta-grid">
+      <div class="meta-cell"><div class="k">Fecha del guion</div><div class="v">10-sep-2026, 22:35</div></div>
+      <div class="meta-cell"><div class="k">Usuario</div><div class="v">inventarioCajero2</div></div>
+      <div class="meta-cell"><div class="k">Sucursal</div><div class="v">Barrio de los Indios</div></div>
+      <div class="meta-cell"><div class="k">Caja / turno</div><div class="v">#2 &middot; turno 1</div></div>
+    </div>
+  </div>
+
+  <div class="tocbar">
+    <a href="#r1">① Catálogo</a>
+    <a href="#r2">② Stock y proveedores</a>
+    <a href="#r3">③ Clientes y créditos</a>
+    <a href="#r4a">④ Caja (abierta)</a>
+    <a href="#r5">⑤ Ventas</a>
+    <a href="#r4b">④ Caja (cierre)</a>
+    <a href="#r6">⑥ Reportes</a>
+  </div>
+
+  <div class="callout bad">
+    <p><b>Qué estaba mal en la primera versión, y por qué:</b></p>
+    <ul>
+      <li><b>"Crear un paquete" (Ronda 1)</b> — <span class="code">paquetes.php</span> en tu rol es de solo lectura. No hay botón ni formulario de crear/editar/borrar; leí el archivo completo y no existe esa función aquí (sí existe para Administrador, en otro archivo). Se quitó del guion.</li>
+      <li><b>"Crear una promoción" (Ronda 6)</b> — mismo caso: <span class="code">promociones.php</span> en tu rol solo muestra la lista. El propio archivo dice "Solo el administrador puede crearlas o modificarlas." Se corrigió a solo verificar la lista.</li>
+      <li><b>"Abonar a un crédito específico" (Ronda 3)</b> — tu sistema no deja elegir a cuál de los créditos de un cliente aplicar el pago. Metes un monto total y el sistema lo reparte automático empezando por el crédito más antiguo (FIFO). Con los 2 créditos reales de Mario González, un abono de $200 no cae completo donde decía el guion viejo — se recalculó abajo con el reparto real.</li>
+      <li><b>La compra a proveedor (Ronda 2.3)</b> — tu sistema solo deja comprar productos que ya están ligados a ese proveedor específico en el catálogo. El proveedor y producto que te había puesto no tenían esa relación (te habría bloqueado el buscador). Se cambió a una pareja real: sí ligada.</li>
+    </ul>
+  </div>
+
+  <div class="callout warn">
+    <p><b>Lo que ya hiciste — confirmado directo en tu base de datos, no hace falta repetirlo:</b> entrada de Cinta aislante negra (2.1), salida de Codo PVC 90° (2.2), y la transferencia completa de Bisagra de 3" hacia Pinar (2.4). Los 3 quedan marcados abajo como <span class="badge-done">✓ ya hecho</span> con el resultado real que dejaste.</p>
+    <p><b>También encontré y corregí:</b> Brocha 3 pulgadas se había quedado en $39.00 (paso 1.2 de la guía vieja, nunca revertido) y había un "Paquete prueba" de $90.00 en tu catálogo real (de cuando intentaste el paso de crear paquete). Ya restauré el precio a $38.00 y borré ese paquete — no eran datos tuyos de negocio, eran residuo de la guía anterior mal hecha.</p>
+  </div>
+
+  <div class="callout warn">
+    <p><b>Antes de seguir:</b> tu caja actual (#2, turno 1) sigue en $3,000.00 sin ninguna venta — sigue siendo un punto de partida limpio para el corte final.</p>
+    <p><b>Ojo con "hoy":</b> en tu sucursal ya hay 8 ventas de pruebas anteriores registradas hoy (folios 1–17). Eso no afecta al corte de caja (es por turno), pero sí afecta a los <b>totales del día</b> del panel principal y "Más vendidos" — anota el número ANTES de la Ronda 5 y compara "antes + lo que dice este guion", no un total absoluto.</p>
+  </div>
+
+  <!-- ============ RONDA 1 ============ -->
+  <div class="ronda" id="r1">
+    <div class="ronda-head">
+      <div class="ronda-badge">01</div>
+      <div class="ronda-titles">
+        <h2>Catálogo</h2>
+        <div class="files">productos.php · formProducto.php · categorias.php · unidades.php · paquetes.php</div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">1.1</span>Verificar catálogo real (solo lectura) <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">Busca estos productos en <span class="code">productos.php</span> y confirma precio y stock actual:</p>
+        <div class="tablewrap"><table class="dtable">
+          <tr><th>Producto</th><th class="num">Precio venta</th><th class="num">Stock actual</th></tr>
+          <tr><td>Cemento gris 50kg</td><td class="num">$185.00</td><td class="num">80.000</td></tr>
+          <tr><td>Cal hidratada 20kg</td><td class="num">$78.00</td><td class="num">40.000</td></tr>
+          <tr><td>Casco de seguridad blanco</td><td class="num">$150.00</td><td class="num">25.000</td></tr>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">1.2</span>Editar un producto existente (permitido para tu rol) <span class="badge-done">✓ confirmado</span></p>
+        <p class="step-desc">En <span class="code">formProducto.php</span>, cambia el precio de venta de <b>Brocha 3 pulgadas</b> de $38.00 a <b>$39.00</b>, guarda, y confirma que se actualizó en la lista. Después <b>vuélvelo a dejar en $38.00 exacto</b>.</p>
+        <div class="expect confirmed">
+          <div class="exp-label">Confirmado en tu base de datos ahora mismo</div>
+          <div class="row total"><span class="l">Precio actual de Brocha 3 pulgadas</span><span class="v">$38.00 ✓</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">1.3</span>Categorías y unidades: solo lectura para tu rol <span class="badge-only">por diseño</span> <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">Entra a <span class="code">categorias.php</span> y <span class="code">unidades.php</span>. Debes poder <b>ver</b> la lista completa, pero <b>no</b> debe haber botón de crear/editar/eliminar — el propio sistema te lo dice: "Solo el Administrador puede crear, editar o eliminar categorías/unidades de medida."</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Categorías visibles</span><span class="v">11</span></div>
+          <div class="row"><span class="l">Unidades visibles</span><span class="v">7 (pieza, kg, saco, metro, m3, rollo, par)</span></div>
+          <div class="row total"><span class="l">Controles de crear/editar</span><span class="v">ausentes</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">1.4</span>Paquetes: también es solo lectura aquí <span class="badge-only">corregido</span> <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">Entra a <span class="code">paquetes.php</span>. Aquí solo puedes <b>ver</b> los paquetes que existen y cuánto ahorran — no hay forma de crear, editar ni borrar uno desde tu rol (eso es exclusivo de Administrador). Verifica que veas exactamente estos 2 paquetes reales y cómo reparte el precio entre sus productos:</p>
+        <div class="tablewrap"><table class="dtable">
+          <tr><th>Paquete</th><th>Producto</th><th class="num">Cantidad</th><th class="num">Precio/u. repartido</th></tr>
+          <tr><td rowspan="2">Cementos + Alambre ($450.00)</td><td>Cemento gris 50kg</td><td class="num">2</td><td class="num">$100.00</td></tr>
+          <tr><td>Alambre recocido cal. 18</td><td class="num">2.5</td><td class="num">$100.00</td></tr>
+          <tr><td rowspan="2">Tubos Paquete ($1,000.00)</td><td>Tubo PVC sanitario 4"</td><td class="num">4</td><td class="num">$200.00</td></tr>
+          <tr><td>Tubo PVC hidráulico 2"</td><td class="num">1</td><td class="num">$200.00</td></tr>
+        </table></div>
+        <p class="step-desc" style="margin-top:8px;">El paquete "Cementos + Alambre" lo vas a <b>vender</b> en la Ronda 5 (V4) — ahí se confirma este reparto con dinero real de por medio.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RONDA 2 ============ -->
+  <div class="ronda" id="r2">
+    <div class="ronda-head">
+      <div class="ronda-badge">02</div>
+      <div class="ronda-titles">
+        <h2>Stock y proveedores</h2>
+        <div class="files">proveedores.php · entradas.php · salidas.php · compras.php · transferencias.php</div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">2.1</span>Entrada de stock <span class="badge-done">✓ ya hecho</span></p>
+        <p class="step-desc">Entrada de <b>30 unidades</b> de <b>Cinta aislante negra</b> en <span class="code">entradas.php</span>.</p>
+        <div class="expect confirmed">
+          <div class="exp-label">Confirmado en tu base de datos ahora mismo</div>
+          <div class="row"><span class="l">Stock antes</span><span class="v">100.000</span></div>
+          <div class="row total"><span class="l">Stock actual</span><span class="v">130.000 ✓</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">2.2</span>Salida de stock (merma) <span class="badge-done">✓ ya hecho</span></p>
+        <p class="step-desc">Salida de <b>15 unidades</b> de <b>Codo PVC 90° 2"</b> en <span class="code">salidas.php</span>.</p>
+        <div class="expect confirmed">
+          <div class="exp-label">Confirmado en tu base de datos ahora mismo</div>
+          <div class="row"><span class="l">Stock antes</span><span class="v">90.000</span></div>
+          <div class="row total"><span class="l">Stock actual</span><span class="v">75.000 ✓</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">2.3</span>Compra a proveedor <span class="badge-only">pareja corregida</span> <span class="badge-done">✓ ya hecho</span></p>
+        <p class="step-desc">Compra a <b>"Plomería y Suministros Nayarit"</b> de <b>Cinta teflón 19mm</b> (precio de compra $5.00), cantidad <b>80</b>.</p>
+        <div class="expect confirmed">
+          <div class="exp-label">Confirmado en tu base de datos ahora mismo</div>
+          <div class="row"><span class="l">Stock antes</span><span class="v">150.000</span></div>
+          <div class="row total"><span class="l">Stock actual</span><span class="v">230.000 ✓</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">2.4</span>Transferencia entre sucursales <span class="badge-done">✓ ya hecho</span></p>
+        <p class="step-desc">Envío de <b>10 unidades</b> de <b>Bisagra de 3 pulgadas</b> de Barrio de los Indios hacia Pinar, ya enviada y recibida por completo.</p>
+        <div class="expect confirmed">
+          <div class="exp-label">Confirmado en tu base de datos ahora mismo</div>
+          <div class="row"><span class="l">Barrio de los Indios (antes 145.000)</span><span class="v">135.000 ✓</span></div>
+          <div class="row total"><span class="l">Pinar (antes 80.000)</span><span class="v">90.000 ✓</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RONDA 3 ============ -->
+  <div class="ronda" id="r3">
+    <div class="ronda-head">
+      <div class="ronda-badge">03</div>
+      <div class="ronda-titles">
+        <h2>Clientes y créditos</h2>
+        <div class="files">clientes.php · creditos.php</div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">3.1</span>Verificar cliente real <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">Busca a <b>Mario González</b> en <span class="code">clientes.php</span>. Los créditos son globales entre sucursales, así que verás su deuda completa aunque haya comprado en otra tienda. Tiene 2 créditos reales activos.</p>
+        <div class="expect credit">
+          <div class="exp-label">Datos reales de Mario González</div>
+          <div class="row"><span class="l">Descuento fijo</span><span class="v">5.00%</span></div>
+          <div class="row"><span class="l">Límite de crédito</span><span class="v">$3,000.00</span></div>
+          <div class="row"><span class="l">Crédito #2 (el más antiguo)</span><span class="v">$27.68</span></div>
+          <div class="row"><span class="l">Crédito #3</span><span class="v">$684.00</span></div>
+          <div class="row"><span class="l">Deuda total</span><span class="v">$711.68</span></div>
+          <div class="row total"><span class="l">Crédito disponible</span><span class="v">$2,288.32</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">3.2</span>Registrar un abono <span class="badge-only">corregido: reparto automático</span> <span class="badge-done">✓ confirmado</span></p>
+        <p class="step-desc">Abono de <b>$200.00</b> a Mario González, método <b>Transferencia</b> — repartido FIFO por el sistema.</p>
+        <div class="expect confirmed">
+          <div class="exp-label">Confirmado en tu base de datos ahora mismo</div>
+          <div class="row"><span class="l">Crédito #2</span><span class="v">$0.00 (Liquidado) ✓</span></div>
+          <div class="row total"><span class="l">Crédito #3</span><span class="v">$511.68 ✓</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RONDA 4A ============ -->
+  <div class="ronda" id="r4a">
+    <div class="ronda-head">
+      <div class="ronda-badge">04</div>
+      <div class="ronda-titles">
+        <h2>Caja — antes de vender</h2>
+        <div class="files">abrirCaja.php · corteCaja.php</div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">4.1</span>Confirmar el turno abierto <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">Entra a <span class="code">corteCaja.php</span> antes de vender nada — solo para confirmar el punto de partida.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Estado</span><span class="v">Abierta &middot; turno 1</span></div>
+          <div class="row"><span class="l">Monto de apertura</span><span class="v">$3,000.00</span></div>
+          <div class="row total"><span class="l">Ventas registradas</span><span class="v">0</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RONDA 5 ============ -->
+  <div class="ronda" id="r5">
+    <div class="ronda-head">
+      <div class="ronda-badge">05</div>
+      <div class="ronda-titles">
+        <h2>Ventas</h2>
+        <div class="files">nuevaVenta.php · ventasPendientes.php · devoluciones.php · historialVentas.php</div>
+      </div>
+    </div>
+    <p class="divider-note">Registra las 9 operaciones EN ESTE ORDEN. Cada venta usa productos distintos a las demás, así que un error en una no arrastra a las otras.</p>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V1</span>Venta en efectivo, sin cliente <span class="badge-done">✓ folio 0013</span></p>
+        <p class="step-desc">3× Contacto dúplex polarizado ($32.00) + 2× Brocha 3 pulgadas ($38.00 — asegúrate de haber completado el paso 1.2 antes de esto). Pago <b>Efectivo</b>, recibes $200.00.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Subtotal</span><span class="v">$172.00</span></div>
+          <div class="row"><span class="l">Recibido / cambio</span><span class="v">$200.00 / $28.00</span></div>
+          <div class="row total"><span class="l">Total cobrado</span><span class="v">$172.00</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V2</span>Venta con cliente (descuento) por Terminal <span class="badge-done">✓ folio 0014</span></p>
+        <p class="step-desc">Cliente <b>Mario González</b>. 1× Casco de seguridad blanco ($150.00). Pago <b>Terminal</b> (comisión 4.60%).</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Subtotal</span><span class="v">$150.00</span></div>
+          <div class="row"><span class="l">Descuento cliente (5%)</span><span class="v">−$7.50</span></div>
+          <div class="row"><span class="l">Base a cobrar</span><span class="v">$142.50</span></div>
+          <div class="row"><span class="l">Comisión terminal (4.60%)</span><span class="v">+$6.56</span></div>
+          <div class="row total"><span class="l">Total cobrado</span><span class="v">$149.06</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V3</span>Venta con pago Mixto <span class="badge-done">✓ folio 0015</span></p>
+        <p class="step-desc">Sin cliente. 5× Block hueco 15x20x40cm ($13.00). Pago <b>Mixto</b>: $40.00 en efectivo, el resto en terminal.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Subtotal</span><span class="v">$65.00</span></div>
+          <div class="row"><span class="l">Comisión terminal (solo sobre el resto)</span><span class="v">+$1.15</span></div>
+          <div class="row"><span class="l">Parte efectivo / parte terminal</span><span class="v">$40.00 / $26.15</span></div>
+          <div class="row total"><span class="l">Total cobrado</span><span class="v">$66.15</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V4</span>Venta de un paquete <span class="badge-done">✓ folio 0016</span></p>
+        <p class="step-desc">1× paquete <b>"Cementos + Alambre"</b> ($450.00). Pago <b>Efectivo</b> exacto.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Cemento gris 50kg (stock)</span><span class="v">80.000 → 78.000</span></div>
+          <div class="row"><span class="l">Alambre recocido cal. 18 (stock)</span><span class="v">32.500 → 30.000</span></div>
+          <div class="row total"><span class="l">Total cobrado</span><span class="v">$450.00</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V5</span>Venta a crédito <span class="badge-done">✓ folio 0017</span></p>
+        <p class="step-desc">Cliente <b>Mario González</b>. 2× Cal hidratada 20kg ($78.00). Pago <b>Crédito</b>. Esto crea un cargo NUEVO — no toca los 2 créditos de la Ronda 3.</p>
+        <div class="expect credit">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Subtotal</span><span class="v">$156.00</span></div>
+          <div class="row"><span class="l">Descuento cliente (5%)</span><span class="v">−$7.80</span></div>
+          <div class="row total"><span class="l">Total a crédito (nuevo cargo)</span><span class="v">$148.20</span></div>
+          <div class="row" style="margin-top:6px;"><span class="l">Deuda total de Mario tras esta venta</span><span class="v">$659.88</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V6</span>Venta pendiente → liquidar <span class="badge-only">secuencia corregida</span> <span class="badge-done">✓ folio 0018</span></p>
+        <p class="step-desc">En <span class="code">ventasPendientes.php</span>, el método de pago y el efectivo se capturan al <b>REGISTRAR</b> el pendiente, no al liquidar — "Liquidar" después es solo confirmar, no vuelve a pedir el pago. Registra: 2× Cinta métrica 5 metros ($75.00), pago <b>Efectivo</b> exacto ($150.00). El stock se descuenta desde este momento, no al liquidar. Luego dale <b>Liquidar</b>.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Stock al registrar el pendiente</span><span class="v">35.000 → 33.000</span></div>
+          <div class="row total"><span class="l">Total (ya capturado al crearla)</span><span class="v">$150.00</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V7</span>Devolución parcial (sin comisión de por medio) <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">En <span class="code">devoluciones.php</span>, busca el folio de <b>V1</b> y devuelve <b>1 unidad de Contacto dúplex polarizado</b> (no las Brochas). El reembolso siempre sale en efectivo.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Reembolsado al cliente</span><span class="v">$32.00</span></div>
+          <div class="row"><span class="l">Total de V1 antes / después</span><span class="v">$172.00 / $140.00</span></div>
+          <div class="row total"><span class="l">Estado de V1</span><span class="v">Modificado</span></div>
+        </div>
+        <p class="step-desc" style="margin-top:8px;"><b>No debe aparecer un "Retiro" en movimientos de caja para esta.</b> Como V1 es Efectivo y sigue en el turno actual, el corte de caja calcula el efectivo sumando el total YA reducido de la venta ($140.00) — el $32 del reembolso ya quedó descontado ahí. Si además se registrara un retiro, se restaría dos veces el mismo dinero.</p>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V8</span>Devolución parcial de una venta con comisión <span class="badge-only">nuevo — prueba la lógica, no solo el número</span> <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">Esta es la prueba que de verdad importa: V7 fue de una venta en Efectivo, que nunca tuvo comisión — no probaba nada sobre eso. Ahora busca el folio de <b>V3</b> (la del pago Mixto, que sí generó $1.15 de comisión) y devuelve <b>2 de las 5 unidades</b> de Block hueco.</p>
+        <p class="step-desc"><b>Por qué debe salir así:</b> cuando cobraste con terminal, el banco ya se quedó con su comisión — ese dinero ya no está en tu bolsillo para devolverlo. El reembolso al cliente es solo lo que él pagó por el producto, nunca la comisión.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Reembolsado al cliente (solo producto, 2×$13.00)</span><span class="v">$26.00</span></div>
+          <div class="row"><span class="l">Total de V3 antes / después</span><span class="v">$66.15 / $40.15</span></div>
+          <div class="row"><span class="l">Comisión de V3 (no debe moverse)</span><span class="v">sigue en $1.15</span></div>
+          <div class="row"><span class="l">Verificación: 3 Block hueco ($39.00) + comisión ($1.15)</span><span class="v">= $40.15 ✓</span></div>
+          <div class="row total"><span class="l">Retiro de caja registrado</span><span class="v">$26.00</span></div>
+        </div>
+        <p class="step-desc" style="margin-top:8px;">A diferencia de V1, esta SÍ debe generar un "Retiro" en movimientos de caja. V3 es Mixto — su parte en efectivo ($40.00) nunca cambia con la devolución, así que el único modo de que el efectivo que sacaste del cajón se refleje en el corte es con este retiro explícito.</p>
+      </div>
+    </div>
+
+    <div class="step done">
+      <input type="checkbox" checked>
+      <div class="step-body">
+        <p class="step-title"><span class="tag">V9</span>Devolución COMPLETA de una venta con comisión <span class="badge-only">nuevo — el caso exacto que ya falló una vez</span> <span class="badge-done">✓ hecho</span></p>
+        <p class="step-desc">Busca el folio de <b>V2</b> (Terminal, con descuento de cliente) y devuelve la <b>única unidad</b> del Casco de seguridad — o sea, la venta completa.</p>
+        <p class="step-desc"><b>Por qué debe salir así:</b> el cliente pagó $142.50 de su bolsillo (ya con su descuento aplicado) y eso es lo único que se le regresa. La comisión de $6.56 que ya le pagaste a la terminal no desaparece ni se te regresa a ti — por eso la venta NO debe quedar en $0.00 después de la devolución, debe quedar exactamente en lo que costó esa comisión que ya pagaste y no vas a recuperar.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Reembolsado al cliente ($150.00 − $7.50 de su descuento)</span><span class="v">$142.50</span></div>
+          <div class="row"><span class="l">Total de V2 antes / después</span><span class="v">$149.06 / $6.56</span></div>
+          <div class="row"><span class="l">Estado de V2</span><span class="v">Devuelto</span></div>
+          <div class="row"><span class="l">¿Por qué $6.56 y no $0.00?</span><span class="v">es la comisión, nunca se regresa</span></div>
+          <div class="row total"><span class="l">Retiro de caja registrado</span><span class="v">$142.50</span></div>
+        </div>
+        <p class="step-desc" style="margin-top:8px;">Igual que V8: V2 es Terminal, esa venta nunca formó parte del "efectivo" del corte — así que el reembolso solo se refleja si hay un retiro explícito.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RONDA 4B ============ -->
+  <div class="ronda" id="r4b">
+    <div class="ronda-head">
+      <div class="ronda-badge">04</div>
+      <div class="ronda-titles">
+        <h2>Caja — cierre y reapertura</h2>
+        <div class="files">corteCaja.php · abrirCaja.php · historialCortes.php</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <input type="checkbox">
+      <div class="step-body">
+        <p class="step-title"><span class="tag">4.2</span>Cerrar el turno 1</p>
+        <p class="step-desc">Con las 9 operaciones de la Ronda 5 ya hechas (V1–V9), entra a <span class="code">corteCaja.php</span> y compara el desglose contra esta tabla antes de cerrar.</p>
+        <div class="tablewrap"><table class="dtable">
+          <tr><th>Concepto</th><th class="num">Monto</th></tr>
+          <tr><td>Apertura</td><td class="num">$3,000.00</td></tr>
+          <tr><td>+ Ventas en efectivo (V1 YA con devolución, V4, V6)</td><td class="num">$740.00</td></tr>
+          <tr><td>+ Mixto, parte efectivo (V3 — no cambia con su devolución)</td><td class="num">$40.00</td></tr>
+          <tr><td>− Retiros de caja (solo V8 $26 + V9 $142.50 — V7 NO genera retiro)</td><td class="num">−$168.50</td></tr>
+        </table></div>
+        <div class="callout warn" style="margin:12px 0;">
+          <p><b>Por qué V7 no lleva retiro pero V8 y V9 sí:</b> V1 (la venta de V7) es Efectivo y sigue en este mismo turno — su total YA bajó a $140.00, y ese descuento ya cuenta dentro de los "$740.00 en efectivo" de arriba. Un retiro aparte restaría el mismo dinero dos veces. V2 y V3 (Terminal y Mixto) nunca fueron parte del bloque de "efectivo" del corte — la única forma de que ese dinero que sacaste del cajón se refleje es con un retiro explícito. Por eso solo 2 de las 3 devoluciones generan retiro.</p>
+        </div>
+        <div class="expect" style="margin-top:10px;">
+          <div class="exp-label">Efectivo esperado en caja</div>
+          <div class="row total"><span class="l">Debe mostrar exactamente</span><span class="v">$3,611.50</span></div>
+        </div>
+        <p class="step-desc" style="margin-top:12px;">Cuenta tu cajón y captura <b>$3,611.50</b> como monto contado, para cerrar con diferencia $0.00.</p>
+        <div class="expect" style="margin-top:8px;">
+          <div class="exp-label">Resumen completo que debe mostrar el corte</div>
+          <div class="row"><span class="l">Ventas totales</span><span class="v">6</span></div>
+          <div class="row"><span class="l">Total cobrado (todos los métodos, ya con las 3 devoluciones)</span><span class="v">$934.91</span></div>
+          <div class="row"><span class="l">Efectivo</span><span class="v">$740.00</span></div>
+          <div class="row"><span class="l">Terminal (V2 quedó casi en cero — solo la comisión)</span><span class="v">$6.56</span></div>
+          <div class="row"><span class="l">Mixto (ef. / term. — sin cambio por la devolución)</span><span class="v">$40.00 / $26.15</span></div>
+          <div class="row"><span class="l">Crédito</span><span class="v">$148.20</span></div>
+          <div class="row"><span class="l">Comisiones cobradas (nunca bajan por devolución)</span><span class="v">$7.70 – $7.71*</span></div>
+          <div class="row"><span class="l">Retiros (solo V8 + V9)</span><span class="v">$168.50</span></div>
+          <div class="row total"><span class="l">Diferencia al cerrar con $3,611.50</span><span class="v">$0.00</span></div>
+        </div>
+        <p class="divider-note">*Puede verse $7.70 en vez de $7.71 por redondeo de centavo entre V2 y V3 — diferencia de $0.01, sin impacto real.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <input type="checkbox">
+      <div class="step-body">
+        <p class="step-title"><span class="tag">4.3</span>Abrir un nuevo turno</p>
+        <p class="step-desc">En <span class="code">abrirCaja.php</span>, abre un nuevo turno con <b>$1,000.00</b> de apertura. El número de turno lo asigna el sistema solo (cuenta cuántas cajas se abrieron HOY en tu sucursal) — no importa si dice "Turno 1" o "Turno 2", lo que importa es el monto.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row total"><span class="l">Nuevo turno</span><span class="v">Abierta · $1,000.00</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <input type="checkbox">
+      <div class="step-body">
+        <p class="step-title"><span class="tag">4.4</span>Revisar el historial de cortes</p>
+        <p class="step-desc">En <span class="code">historialCortes.php</span>, busca el turno que acabas de cerrar (el de $3,000.00 de apertura).</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Apertura / Cierre</span><span class="v">$3,000.00 / $3,611.50</span></div>
+          <div class="row"><span class="l">Esperado</span><span class="v">$3,611.50</span></div>
+          <div class="row total"><span class="l">Diferencia</span><span class="v">$0.00</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RONDA 6 ============ -->
+  <div class="ronda" id="r6">
+    <div class="ronda-head">
+      <div class="ronda-badge">06</div>
+      <div class="ronda-titles">
+        <h2>Dashboard y reportes</h2>
+        <div class="files">inicioCajeroInventario.php · historial.php · masVendidos.php · promociones.php</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <input type="checkbox">
+      <div class="step-body">
+        <p class="step-title"><span class="tag">6.1</span>Historial de ventas — verificación 1:1</p>
+        <p class="step-desc">En <span class="code">historialVentas.php</span>, filtra por hoy. Los folios 18 al 23 (los siguientes al último que ya tenías, folio 17) deben coincidir exactos con esta lista — ya con las 3 devoluciones aplicadas. Si algo más se registró mientras tanto, busca por los totales en vez de por número exacto de folio.</p>
+        <div class="tablewrap"><table class="dtable">
+          <tr><th>Venta</th><th>Método</th><th>Estado</th><th class="num">Total</th></tr>
+          <tr><td>V1</td><td>Efectivo</td><td>Modificado</td><td class="num">$140.00</td></tr>
+          <tr><td>V2</td><td>Terminal</td><td>Devuelto</td><td class="num">$6.56</td></tr>
+          <tr><td>V3</td><td>Mixto</td><td>Modificado</td><td class="num">$40.15</td></tr>
+          <tr><td>V4</td><td>Efectivo</td><td>Completada</td><td class="num">$450.00</td></tr>
+          <tr><td>V5</td><td>Crédito</td><td>Completada</td><td class="num">$148.20</td></tr>
+          <tr><td>V6</td><td>Efectivo</td><td>Completada</td><td class="num">$150.00</td></tr>
+        </table></div>
+        <div class="expect" style="margin-top:8px;">
+          <div class="row total"><span class="l">Suma de las 6</span><span class="v">$934.91</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <input type="checkbox">
+      <div class="step-body">
+        <p class="step-title"><span class="tag">6.2</span>Panel principal — comparación antes/después</p>
+        <p class="step-desc">Antes de la Ronda 5 anotaste "Ventas del turno" y "Total cobrado" en <span class="code">inicioCajeroInventario.php</span>. Estos dos SÍ son por turno (no por día completo), así que en el turno nuevo que abriste en 4.3 deben verse en ceros — la comparación real es contra lo que viste en la Ronda 4A.</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row total"><span class="l">Turno anterior (antes de cerrarlo) — Ventas / Total</span><span class="v">6 / $934.91</span></div>
+          <div class="row total"><span class="l">Turno nuevo (recién abierto) — Ventas / Total</span><span class="v">0 / $0.00</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <input type="checkbox">
+      <div class="step-body">
+        <p class="step-title"><span class="tag">6.3</span>Más vendidos — productos de esta guía</p>
+        <p class="step-desc">En <span class="code">masVendidos.php</span> (rango: hoy), estos productos deben mostrar exactamente esta cantidad/ingreso <b>como parte</b> de su total del día (súmalos a lo que ya tenían de antes de esta guía, si acaso).</p>
+        <div class="tablewrap"><table class="dtable">
+          <tr><th>Producto</th><th class="num">Cant. añadida hoy</th><th class="num">Ingreso añadido</th></tr>
+          <tr><td>Contacto dúplex polarizado</td><td class="num">2 (3 vendidas − 1 devuelta)</td><td class="num">$64.00</td></tr>
+          <tr><td>Brocha 3 pulgadas</td><td class="num">2</td><td class="num">$76.00</td></tr>
+          <tr><td>Block hueco 15x20x40cm</td><td class="num">3 (5 vendidas − 2 devueltas)</td><td class="num">$39.00</td></tr>
+          <tr><td>Cemento gris 50kg (vía paquete)</td><td class="num">2</td><td class="num">$200.00</td></tr>
+          <tr><td>Alambre recocido cal. 18 (vía paquete)</td><td class="num">2.5</td><td class="num">$250.00</td></tr>
+          <tr><td>Cal hidratada 20kg</td><td class="num">2</td><td class="num">$156.00</td></tr>
+          <tr><td>Cinta métrica 5 metros</td><td class="num">2</td><td class="num">$150.00</td></tr>
+        </table></div>
+        <div class="expect" style="margin-top:8px;">
+          <div class="exp-label">Ojo con este caso especial</div>
+          <div class="row total"><span class="l">Casco de seguridad blanco</span><span class="v">NO debe aparecer en la lista</span></div>
+        </div>
+        <p class="step-desc" style="margin-top:8px;">Vendiste 1 y devolviste esa misma 1 (V9) — quedó en <b>0 unidades netas</b>. Un producto en cero no es "más vendido", así que el sistema debe excluirlo del todo de este ranking, no mostrarlo con un 0.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <input type="checkbox">
+      <div class="step-body">
+        <p class="step-title"><span class="tag">6.4</span>Promociones: solo lectura aquí <span class="badge-only">corregido</span></p>
+        <p class="step-desc">Entra a <span class="code">promociones.php</span>. Ahora mismo tu sucursal no tiene ninguna promoción activa, así que verás la lista vacía — eso es correcto, no es un error. Confirma que no hay ningún botón de crear/editar: el mismo pie de página del sistema dice "Solo el administrador puede crearlas o modificarlas."</p>
+        <div class="expect">
+          <div class="exp-label">Resultado esperado</div>
+          <div class="row"><span class="l">Promociones listadas</span><span class="v">0 (ninguna activa)</span></div>
+          <div class="row total"><span class="l">Botón de crear</span><span class="v">no existe</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TICKET FINAL ============ -->
+  <div class="ronda">
+    <div class="ronda-head">
+      <div class="ronda-badge">✓</div>
+      <div class="ronda-titles">
+        <h2>Hoja de cierre</h2>
+        <div class="files">todo lo que debió pasar, en un solo lugar</div>
+      </div>
+    </div>
+    <div class="ticket">
+      <div class="ticket-head">Turno 1 &middot; Corte</div>
+      <div class="ticket-body">
+        <div class="row"><span>Apertura</span><span class="v">$3,000.00</span></div>
+        <div class="row"><span>Ventas (6, ya con 3 devoluciones)</span><span class="v">$934.91</span></div>
+        <div class="row"><span>Retiros (solo V8+V9 — V7 ya iba en el total)</span><span class="v">−$168.50</span></div>
+        <div class="row sep grand"><span>Efectivo esperado</span><span class="v">$3,611.50</span></div>
+        <div class="row"><span>Comisiones cobradas (nunca bajan)</span><span class="v">$7.71</span></div>
+        <div class="row"><span>Abono de Mario (Ronda 3)</span><span class="v">$200.00</span></div>
+        <div class="row"><span>Deuda de Mario al final</span><span class="v">$659.88</span></div>
+        <div class="row sep"><span>Diferencia al cerrar</span><span class="v">$0.00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>FERRETERÍA ALDRETE — GUION v2, VERIFICADO LÍNEA POR LÍNEA CONTRA LOS 22 ARCHIVOS DEL ROL, 10-SEP-2026 22:35</footer>
+
+</div>

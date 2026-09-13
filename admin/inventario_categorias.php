@@ -12,7 +12,6 @@ verificarSesion();
 // (puro) ni Inventario/Cajero.
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
-require_once __DIR__ . '/_admin_sucursal_filtro.php';
 // Eliminar categoría
 if (isset($_GET['eliminar'])) {
     // [FIX-CRIT-B-03] Sin CSRF antes — cualquier página visitada con la sesión del
@@ -220,7 +219,6 @@ if (isset($_GET['editar'])) {
     <div class="content">
         <!-- Lista -->
         <div>
-        <div class="filtros"><?php renderSucursalSwitcher(); ?></div>
             <?php if (isset($_GET['msg'])): ?>
                 <?php if ($_GET['msg'] === 'creado'): ?>
                     <div class="msg msg-exito">Categoría creada correctamente.</div>
@@ -258,7 +256,6 @@ if (isset($_GET['editar'])) {
                 <table>
                     <thead>
                         <tr>
-                            <th>ID</th>
                             <th>Nombre</th>
                             <th>Productos</th>
                             <th>Acciones</th>
@@ -267,7 +264,6 @@ if (isset($_GET['editar'])) {
                     <tbody id="tablaFiltrable">
                         <?php foreach ($categorias as $c): ?>
                         <tr>
-                            <td style="color:#aaa;"><?= $c['categoria_id'] ?></td>
                             <td><strong><?= htmlspecialchars($c['nombre']) ?></strong></td>
                             <td><span class="badge-count"><?= $c['total_productos'] ?> productos</span></td>
                             <td>

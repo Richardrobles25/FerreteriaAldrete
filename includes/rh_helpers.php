@@ -23,22 +23,48 @@ function calcSaldoVacaciones(PDO $pdo, int $empleadoId, string $fechaIngreso, ?s
     $ingreso = new DateTime($fechaIngreso);
     if ($ingreso > $hasta) return 0;
 
+    // [FEATURE-SALDO-INICIAL-VACACIONES] Un empleado que ya trabajaba antes de que existiera
+    // el sistema puede traer dias acumulados (o ya gastados) que el sistema nunca vio -- ni sus
+    // aniversarios pasados ni las vacaciones que ya tomo antes quedaron registrados aqui. Si el
+    // admin capturo un ajuste manual (empleados.saldo_vacaciones_ajuste/_fecha, normalmente al
+    // darlo de alta) se usa ese numero como punto de partida real en vez de simular desde 0 en
+    // fecha_ingreso -- solo se simulan aniversarios y vacaciones ESTRICTAMENTE POSTERIORES a esa
+    // fecha de ajuste (todo lo anterior ya esta neteado en el numero capturado a mano). Si no
+    // hay ajuste (el caso normal, empleados nuevos que arrancan de cero), el comportamiento es
+    // identico al de siempre.
+    $saldoInicial = 0;
+    $desde        = $ingreso;
+    $stmtAjuste = $pdo->prepare("SELECT saldo_vacaciones_ajuste, saldo_vacaciones_ajuste_fecha FROM empleados WHERE empleado_id = ?");
+    $stmtAjuste->execute([$empleadoId]);
+    $ajusteRow = $stmtAjuste->fetch(PDO::FETCH_ASSOC);
+    if ($ajusteRow && $ajusteRow['saldo_vacaciones_ajuste'] !== null && $ajusteRow['saldo_vacaciones_ajuste_fecha']) {
+        $fechaAjuste = new DateTime($ajusteRow['saldo_vacaciones_ajuste_fecha']);
+        // Si la fecha de ajuste es invalida (posterior al corte que se esta consultando, o
+        // anterior a la fecha de ingreso real por un error de captura) se ignora el ajuste y
+        // se cae al comportamiento normal, en vez de producir un saldo negativo o adelantado.
+        if ($fechaAjuste <= $hasta && $fechaAjuste >= $ingreso) {
+            $saldoInicial = max(0, min(12, (int)$ajusteRow['saldo_vacaciones_ajuste']));
+            $desde        = $fechaAjuste;
+        }
+    }
+
     $eventos = [];
 
-    // Aniversarios de acreditacion (+6, tope 12) hasta la fecha de corte
+    // Aniversarios de acreditacion (+6, tope 12) hasta la fecha de corte, solo los posteriores
+    // al punto de partida (fecha_ingreso normalmente, o la fecha de ajuste si aplica).
     $n = 1;
     while (true) {
         $aniv = (clone $ingreso)->modify("+{$n} year");
         if ($aniv > $hasta) break;
-        $eventos[] = ['fecha' => $aniv, 'dias' => 6];
+        if ($aniv > $desde) $eventos[] = ['fecha' => $aniv, 'dias' => 6];
         $n++;
     }
-    if (empty($eventos)) return 0; // aun no cumple su primer aniversario
+    if (empty($eventos) && $saldoInicial <= 0) return 0; // aun no cumple su primer aniversario (y sin ajuste manual)
 
     // Vacaciones ya tomadas (no rechazadas) hasta la fecha de corte, que descuentan saldo
     $sql = "SELECT fecha_inicio, dias_tomados FROM vacaciones
-            WHERE empleado_id = ? AND estado != 'Rechazado' AND fecha_inicio <= ?";
-    $params = [$empleadoId, $hasta->format('Y-m-d')];
+            WHERE empleado_id = ? AND estado != 'Rechazado' AND fecha_inicio <= ? AND fecha_inicio > ?";
+    $params = [$empleadoId, $hasta->format('Y-m-d'), $desde->format('Y-m-d')];
     if ($excluirVacacionId) {
         $sql .= " AND vacacion_id != ?";
         $params[] = $excluirVacacionId;
@@ -51,7 +77,7 @@ function calcSaldoVacaciones(PDO $pdo, int $empleadoId, string $fechaIngreso, ?s
 
     usort($eventos, fn($a, $b) => $a['fecha'] <=> $b['fecha']);
 
-    $saldo = 0;
+    $saldo = $saldoInicial;
     foreach ($eventos as $ev) {
         $saldo = $ev['dias'] > 0 ? min(12, $saldo + $ev['dias']) : max(0, $saldo + $ev['dias']);
     }

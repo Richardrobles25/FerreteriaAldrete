@@ -1,0 +1,300 @@
+<title>Combinaciones Peligrosas</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --bg:#f2ece0; --surface:#fffdf8; --surface-2:#ece2cc; --surface-3:#e4d7b8;
+  --ink:#2b2620; --muted:#736b58; --line:#ddd0ac;
+  --accent:#a5301f; --accent-2:#8a2717; --accent-ink:#fff8f0;
+  --good:#2f7a4f; --good-bg:#e3efe2; --good-line:#bfd9bd;
+  --warn:#8a5a00; --warn-bg:#faf1d6; --warn-line:#e6cf8f;
+  --credit:#2b5b8a; --credit-bg:#e3edf5; --credit-line:#bcd4e8;
+  --bad:#a5301f; --bad-bg:#f7e3df; --bad-line:#e3b6a9;
+  --bug:#7a2f9e; --bug-bg:#efe3f5; --bug-line:#d3b6e3;
+  --shadow: 0 1px 2px rgba(43,38,32,.06), 0 6px 16px -8px rgba(43,38,32,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1b1712; --surface:#231e17; --surface-2:#2b2419; --surface-3:#352c1d;
+    --ink:#efe6d4; --muted:#a99a80; --line:#3d3323;
+    --accent:#e8836f; --accent-2:#f2a08f; --accent-ink:#1b1712;
+    --good:#6fc78f; --good-bg:#1f2f21; --good-line:#365239;
+    --warn:#e3b954; --warn-bg:#332a12; --warn-line:#5c4a1e;
+    --credit:#7db3e0; --credit-bg:#1c2b38; --credit-line:#33495c;
+    --bad:#e8836f; --bad-bg:#3a221c; --bad-line:#5c3428;
+    --bug:#c99ee0; --bug-bg:#2a1f33; --bug-line:#4a3a5c;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px -8px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1b1712; --surface:#231e17; --surface-2:#2b2419; --surface-3:#352c1d;
+  --ink:#efe6d4; --muted:#a99a80; --line:#3d3323;
+  --accent:#e8836f; --accent-2:#f2a08f; --accent-ink:#1b1712;
+  --good:#6fc78f; --good-bg:#1f2f21; --good-line:#365239;
+  --warn:#e3b954; --warn-bg:#332a12; --warn-line:#5c4a1e;
+  --credit:#7db3e0; --credit-bg:#1c2b38; --credit-line:#33495c;
+  --bad:#e8836f; --bad-bg:#3a221c; --bad-line:#5c3428;
+  --bug:#c99ee0; --bug-bg:#2a1f33; --bug-line:#4a3a5c;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px -8px rgba(0,0,0,.5);
+}
+
+*{box-sizing:border-box;}
+body{background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;line-height:1.5;}
+.wrap{max-width:900px;margin:0 auto;padding:28px 20px 80px;}
+.num{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+
+.masthead{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:26px 28px;position:relative;overflow:hidden;}
+.masthead::before{content:"";position:absolute;top:0;left:0;bottom:0;width:8px;background:repeating-linear-gradient(135deg,var(--accent) 0 6px,var(--accent-2) 6px 12px);}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:600;}
+h1{font-family:'Big Shoulders Display',sans-serif;font-weight:800;font-size:clamp(28px,4.6vw,40px);letter-spacing:.01em;text-transform:uppercase;margin:4px 0 6px;text-wrap:balance;line-height:.98;}
+.masthead p.lead{color:var(--muted);font-size:14.5px;max-width:68ch;margin:0 0 18px;}
+.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:3px;overflow:hidden;}
+.meta-cell{background:var(--surface);padding:10px 14px;}
+.meta-cell .k{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600;}
+.meta-cell .v{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;margin-top:2px;}
+
+.tocbar{display:flex;gap:6px;flex-wrap:wrap;margin:22px 0 22px;position:sticky;top:10px;z-index:5;}
+.tocbar a{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:var(--ink);background:var(--surface);
+  border:1px solid var(--line);padding:6px 11px;border-radius:20px;text-decoration:none;box-shadow:var(--shadow);white-space:nowrap;}
+.tocbar a:hover{border-color:var(--accent);color:var(--accent);}
+
+.callout{border-radius:4px;padding:14px 16px;font-size:13.5px;margin:0 0 22px;border:1px solid;}
+.callout.warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--ink);}
+.callout.warn b{color:var(--warn);}
+.callout.bug{background:var(--bug-bg);border-color:var(--bug-line);color:var(--ink);}
+.callout.bug b{color:var(--bug);}
+.callout p{margin:0 0 6px;}
+.callout p:last-child{margin-bottom:0;}
+.callout ul{margin:6px 0 0;padding-left:20px;}
+.callout li{margin-bottom:4px;}
+
+.step{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:16px 18px;margin-bottom:14px;display:flex;gap:14px;scroll-margin-top:70px;}
+.step input[type=checkbox]{width:19px;height:19px;flex-shrink:0;margin-top:2px;accent-color:var(--accent);cursor:pointer;}
+.step-body{flex:1;min-width:0;}
+.step-title{font-weight:600;font-size:14.5px;margin:0 0 4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.step-title .tag{font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:700;color:var(--accent-ink);background:var(--accent);letter-spacing:.03em;padding:2px 7px;border-radius:3px;}
+.step-desc{font-size:13.5px;color:var(--ink);margin:0 0 10px;}
+.step-desc code, .step-desc .code{font-family:'IBM Plex Mono',monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:12.5px;}
+.badge-bug{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--bug);background:var(--bug-bg);border:1px solid var(--bug-line);padding:2px 8px;border-radius:20px;}
+.badge-done{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--good);background:var(--good-bg);border:1px solid var(--good-line);padding:2px 8px;border-radius:20px;}
+.step.done{border-left:4px solid var(--good);}
+.badge-reject{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--bad);background:var(--bad-bg);border:1px solid var(--bad-line);padding:2px 8px;border-radius:20px;}
+.badge-new{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--credit);background:var(--credit-bg);border:1px solid var(--credit-line);padding:2px 8px;border-radius:20px;}
+
+.expect{background:var(--good-bg);border:1px solid var(--good-line);border-radius:4px;padding:10px 14px;}
+.expect .exp-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--good);font-weight:700;margin-bottom:6px;}
+.expect .row{display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:2px 0;}
+.expect .row .l{color:var(--muted);}
+.expect .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.expect .row.total{border-top:1px dashed var(--good-line);margin-top:6px;padding-top:7px;font-weight:700;}
+.expect .row.total .v{font-size:15px;}
+.expect.credit{background:var(--credit-bg);border-color:var(--credit-line);}
+.expect.credit .exp-label{color:var(--credit);}
+.expect.reject{background:var(--bad-bg);border-color:var(--bad-line);}
+.expect.reject .exp-label{color:var(--bad);}
+
+.foundbug{background:var(--bug-bg);border:1px solid var(--bug-line);border-radius:4px;padding:12px 14px;margin-top:10px;}
+.foundbug .fb-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--bug);font-weight:700;margin-bottom:6px;}
+.foundbug .row{display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:2px 0;}
+.foundbug .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.foundbug .row.bad .v{color:var(--bad);text-decoration:line-through;}
+.foundbug .row.fixed .v{color:var(--good);}
+
+.dtable{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0 2px;}
+.dtable th,.dtable td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;}
+.dtable th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;}
+.dtable td.num, .dtable th.num{text-align:right;font-family:'IBM Plex Mono',monospace;}
+.tablewrap{overflow-x:auto;}
+
+.section-head{display:flex;align-items:baseline;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:8px;margin:36px 0 16px;}
+.section-head h2{font-family:'Big Shoulders Display',sans-serif;font-weight:700;font-size:21px;text-transform:uppercase;letter-spacing:.01em;margin:0;}
+.section-head .n{font-family:'Big Shoulders Display',sans-serif;font-weight:800;font-size:26px;color:var(--accent);line-height:1;}
+
+footer{text-align:center;color:var(--muted);font-size:12px;margin-top:50px;font-family:'IBM Plex Mono',monospace;}
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow">Ferretería Aldrete &middot; Certificación de sistema &middot; combinaciones peligrosas</div>
+    <h1>Combinaciones que<br>de verdad pueden fallar</h1>
+    <p class="lead">7 escenarios diseñados específicamente para romper la lógica de negocio, no solo para cubrir funciones. Se enfocan en <span class="code">devoluciones.php</span> combinado con ajuste por daño, descuento de cliente, comisión Mixto, crédito con abonos previos, cancelaciones parciales y cruce de turno — las combinaciones de más de 2 factores a la vez, que es donde ya salió un bug real durante el diseño de este guion.</p>
+    <div class="meta-grid">
+      <div class="meta-cell"><div class="k">Fecha</div><div class="v">11-sep-2026</div></div>
+      <div class="meta-cell"><div class="k">Usuario</div><div class="v">inventarioCajero2</div></div>
+      <div class="meta-cell"><div class="k">Sucursal</div><div class="v">Barrio de los Indios</div></div>
+      <div class="meta-cell"><div class="k">Cliente de pruebas</div><div class="v">Mario González</div></div>
+    </div>
+  </div>
+
+  <div class="tocbar">
+    <a href="#setup">Antes de empezar</a>
+    <a href="#d1">D1 Ajuste+desc. parcial</a>
+    <a href="#d2">D2 Segunda devolución</a>
+    <a href="#d3">D3 Mixto+comisión</a>
+    <a href="#d4">D4 Crédito con excedente</a>
+    <a href="#d5">D5 Cancelar la 2ª</a>
+    <a href="#d6">D6 Rechazo de exceso</a>
+    <a href="#d7">D7 Cruce de turno</a>
+  </div>
+
+  <div class="callout bug" id="setup">
+    <p><b>D1 a D4 ya quedaron confirmados — con 2 bugs reales encontrados y corregidos.</b> D1+D2 (ver detalle en D2) y D4 (ver detalle en D4) — ambos de dinero real que se perdía en devoluciones sobre créditos/descuentos ya "cerrados". D3 salió limpio desde el primer intento, sin ningún ajuste. Los 4 quedan marcados abajo con <span class="badge-done">✓ confirmado</span>.</p>
+    <p><b>D4 en particular</b> necesitó dos correcciones sobre la marcha: primero el monto del abono (Mario ya traía 2 créditos viejos activos, así que hubo que pagar el total pendiente completo — $773.88 por Transferencia, no $114.00, por el FIFO). Y al hacer la devolución, salió un SEGUNDO bug real: cuando el crédito de la venta ya estaba Liquidado de antes, el sistema no generaba el retiro del excedente — $57.00 del cliente se perdían sin dejar rastro. Ya corregido en ambos roles y reparado en tu base de datos real.</p>
+    <p><b>D5, D6 y D7 siguen exactamente igual</b> — no dependen de nada que ya hayas hecho (usan Serrucho, que sigue intacto en stock 12.000).</p>
+    <p><b>Punto de partida real:</b> Turno #1 (caja 7), apertura $2,000.00. Mario González ya no tiene ningún crédito activo (los 6 quedaron Liquidados tras el abono de D4). D5 y D6 usan la MISMA venta en cadena. D7 es el único que cierra tu turno actual — déjalo al final.</p>
+  </div>
+
+  <div class="section-head"><span class="n">D1</span><h2 id="d1">Ajuste por daño + descuento de cliente, devolución PARCIAL</h2></div>
+  <div class="step done">
+    <input type="checkbox" checked>
+    <div class="step-body">
+      <p class="step-title"><span class="badge-done">✓ confirmado</span><span class="badge-bug">bug encontrado y corregido</span>Vender con ambos descuentos combinados, devolver solo PARTE</p>
+      <p class="step-desc">4× <b>Chapa de pomo para recámara</b> con <b>ajuste por daño</b> al piso exacto ($190.00 → $120.00, nota "Caja golpeada"), cliente <b>Mario González</b> (5%), Efectivo. Luego, en <span class="code">devoluciones.php</span>, devuelve solo <b>1 de las 4</b> unidades (parcial, no completa).</p>
+      <div class="expect">
+        <div class="exp-label">Venta (folio 0027/0028 en mis pruebas)</div>
+        <div class="row"><span class="l">Subtotal (bruto, 4×$190.00)</span><span class="v">$760.00</span></div>
+        <div class="row"><span class="l">Descuento (ajuste $280.00 + cliente $24.00)</span><span class="v">$304.00</span></div>
+        <div class="row total"><span class="l">Total cobrado</span><span class="v">$456.00</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Al devolver 1 de las 4 unidades, el sistema debe aislar correctamente cuánto de esa unidad era "ajuste por daño" ($70.00) y cuánto era "5% de cliente" ($6.00 sobre el precio ya ajustado de $120.00):</p>
+      <div class="expect">
+        <div class="exp-label">Devolución de 1 unidad — resultado esperado</div>
+        <div class="row"><span class="l">Reembolso (95% de $120.00)</span><span class="v">$114.00</span></div>
+        <div class="row"><span class="l">Venta después — subtotal / descuento / total</span><span class="v">$570.00 / $228.00 / $342.00</span></div>
+        <div class="row total"><span class="l">Estado</span><span class="v">Modificado (quedan 3 pendientes)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">D2</span><h2 id="d2">Segunda devolución parcial de la MISMA línea</h2></div>
+  <div class="step done">
+    <input type="checkbox" checked>
+    <div class="step-body">
+      <p class="step-title"><span class="badge-done">✓ confirmado</span><span class="badge-bug">bug real — ya corregido</span>Devolver las 3 unidades restantes de D1</p>
+      <p class="step-desc">Sobre la MISMA venta de D1 (ya con 1 unidad devuelta), regresa las <b>3 unidades restantes</b> de Chapa de pomo. Esto debe traer la venta a exactamente $0.00 — es matemáticamente la segunda mitad de la misma devolución completa, solo que registrada en dos pasos.</p>
+      <div class="foundbug">
+        <div class="fb-label">Lo que encontré ANTES de corregirlo (11-sep-2026, venta_id=34/folio 0027)</div>
+        <div class="row bad"><span class="l">Reembolso de las 3 unidades (buggy)</span><span class="v">$256.50</span></div>
+        <div class="row bad"><span class="l">Venta después (buggy)</span><span class="v">subtotal $0.00 · total $85.50 restante</span></div>
+        <div class="row"><span class="l">Causa raíz</span><span class="v" style="font-weight:400;font-size:12.5px;">La fórmula del % de cliente leía <code>ventas.subtotal</code>/<code>descuento</code> directo — columnas que YA se reducen con cada devolución — en vez de los valores originales de la venta completa. Funcionaba bien en la primera devolución (nada se había reducido todavía) pero se rompía desde la segunda en adelante, SOLO en ventas con ajuste por daño o promoción de por medio.</span></div>
+        <div class="row fixed"><span class="l">Reembolso corregido (re-verificado en vivo, venta_id=35/folio 0028)</span><span class="v">$342.00</span></div>
+      </div>
+      <div class="expect" style="margin-top:10px;">
+        <div class="exp-label">Resultado esperado (código ya corregido)</div>
+        <div class="row"><span class="l">Reembolso de las 3 unidades</span><span class="v">$342.00</span></div>
+        <div class="row"><span class="l">Suma de las 2 devoluciones (D1+D2)</span><span class="v">$114.00 + $342.00 = $456.00 exacto</span></div>
+        <div class="row"><span class="l">Venta después</span><span class="v">subtotal $0.00 · descuento $0.00 · total $0.00</span></div>
+        <div class="row total"><span class="l">Estado</span><span class="v">Devuelto</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Si te da $342.00 exacto (no $256.50), el fix quedó bien. Ya lo re-verifiqué yo mismo en vivo con una venta nueva — esto es para que tú también lo veas con tus propios ojos.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">D3</span><h2 id="d3">Mixto + comisión + descuento de cliente, devolución PARCIAL</h2></div>
+  <div class="step done">
+    <input type="checkbox" checked>
+    <div class="step-body">
+      <p class="step-title"><span class="badge-done">✓ confirmado con tu ticket real (folio 0029)</span>Tres factores de dinero a la vez: % cliente, comisión de terminal, devolución parcial</p>
+      <p class="step-desc">2× <b>Malla electrosoldada 6x6-10</b> ($850.00 c/u), cliente <b>Mario González</b> (5%), pago <b>Mixto</b>: $800.00 en efectivo, el resto por Terminal (comisión de la sucursal: 4.60%). Luego devuelve <b>1 de las 2</b> unidades (parcial).</p>
+      <div class="expect">
+        <div class="exp-label">Venta esperada — coincidió exacto con tu ticket</div>
+        <div class="row"><span class="l">Subtotal / Descuento cliente (5%)</span><span class="v">$1,700.00 / $85.00</span></div>
+        <div class="row"><span class="l">Base a cobrar (1700-85)</span><span class="v">$1,615.00</span></div>
+        <div class="row"><span class="l">Comisión (sobre 1615-800=815 × 4.60%)</span><span class="v">$37.49</span></div>
+        <div class="row total"><span class="l">Total cobrado</span><span class="v">$1,652.49</span></div>
+      </div>
+      <div class="expect" style="margin-top:10px;">
+        <div class="exp-label">Devolución de 1 unidad — confirmado en tu pantalla</div>
+        <div class="row"><span class="l">Reembolso en efectivo (95% de $850.00)</span><span class="v">$807.50</span></div>
+        <div class="row"><span class="l">Aviso de comisión "no reembolsable"</span><span class="v">$18.75</span></div>
+        <div class="row"><span class="l">Venta después — subtotal / descuento / total</span><span class="v">$850.00 / $42.50 / $844.99</span></div>
+        <div class="row"><span class="l">Retiro de caja generado</span><span class="v">$807.50 (Mixto siempre genera retiro)</span></div>
+        <div class="row total"><span class="l">Stock (antes/después de la devolución)</span><span class="v">8.000 / 9.000</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Confirmado tal cual en tu ticket y en la base de datos: no necesitaba el fix de D1/D2 (no hay ajuste por daño aquí) — sirvió como control, y el caso "normal" con descuento de cliente sigue funcionando exacto después del cambio.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">D4</span><h2 id="d4">Crédito ya liquidado por abono, luego devolución parcial</h2></div>
+  <div class="step">
+    <input type="checkbox" checked>
+    <div class="step-body">
+      <p class="step-title"><span class="badge-done">✓ confirmado — 2º bug encontrado y corregido</span>Devolver algo que el cliente ya pagó de más</p>
+      <p class="step-desc">10× <b>Codo PVC 90° 2"</b> ($12.00 c/u) a <b>Crédito</b>, cliente Mario (folio 0030). Se abonó el total pendiente completo ($773.88 por Transferencia, ver corrección arriba) — el crédito de Codo PVC quedó en $0.00/Liquidado. Al devolver <b>5 de las 10</b> unidades, salió esto:</p>
+      <div class="foundbug">
+        <div class="fb-label">Lo que pasó ANTES de corregirlo (11-sep-2026, venta_id=37/folio 0030)</div>
+        <div class="row bad"><span class="l">Movimiento de caja generado</span><span class="v">ninguno</span></div>
+        <div class="row"><span class="l">Causa raíz</span><span class="v" style="font-weight:400;font-size:12.5px;">La consulta que busca el crédito de la venta para calcular el excedente solo buscaba estado <code>'Activo'</code> o <code>'Vencido'</code> — nunca <code>'Liquidado'</code>. Como el crédito ya estaba Liquidado (por el abono previo), la consulta no encontraba nada, el excedente se quedaba calculado en $0.00, y como resultado nunca se generaba el retiro. El handler para CANCELAR una devolución ya esperaba 'Liquidado' correctamente — solo el de PROCESAR una devolución nueva se había quedado desactualizado.</span></div>
+        <div class="row bad"><span class="l">Resultado real</span><span class="v">$57.00 del cliente, desaparecidos — ni en su crédito ni en la caja</span></div>
+      </div>
+      <div class="expect credit" style="margin-top:10px;">
+        <div class="exp-label">Resultado esperado (código ya corregido)</div>
+        <div class="row"><span class="l">Reembolso calculado (95% de $60.00)</span><span class="v">$57.00</span></div>
+        <div class="row"><span class="l">Saldo del crédito (ya estaba en $0.00)</span><span class="v">sigue en $0.00</span></div>
+        <div class="row total"><span class="l">Excedente reembolsado EN EFECTIVO (retiro)</span><span class="v">$57.00</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Ya corregí la consulta en <span class="code">cajeroInventario/devoluciones.php</span> y <span class="code">admin/cajero_devoluciones.php</span> (agregando 'Liquidado' a la lista de estados), y reparé a mano el registro de tu prueba real (folio 0030) agregando el retiro de $57.00 que faltaba — tu base de datos ya quedó consistente. Si vuelves a probar este mismo caso con una venta nueva, ahora sí debe generar el retiro automáticamente.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">D5</span><h2 id="d5">Cancelar la SEGUNDA de dos devoluciones (no la única)</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="badge-new">nunca probado</span>Deshacer solo una parte, sin tocar la otra</p>
+      <p class="step-desc">6× <b>Serrucho para madera 20"</b> ($175.00 c/u), Efectivo, sin cliente. Total $1,050.00. Devuelve <b>2 unidades</b> (primera devolución). Después, en una devolución SEPARADA, devuelve <b>1 unidad más</b> (segunda devolución). Ahora, en <span class="code">devoluciones.php</span>, <b>cancela solo la SEGUNDA</b> (la de 1 unidad) — no la primera.</p>
+      <div class="expect">
+        <div class="exp-label">Tras las 2 devoluciones (antes de cancelar nada)</div>
+        <div class="row"><span class="l">Devuelto: 2 + 1 = 3 unidades</span><span class="v">-$350.00 y -$175.00</span></div>
+        <div class="row total"><span class="l">Venta: subtotal / total</span><span class="v">$525.00 / $525.00 (quedan 3 pendientes)</span></div>
+      </div>
+      <div class="expect" style="margin-top:10px;">
+        <div class="exp-label">Tras cancelar SOLO la segunda devolución (1 unidad) — resultado esperado</div>
+        <div class="row"><span class="l">Venta: subtotal / total</span><span class="v">$700.00 / $700.00</span></div>
+        <div class="row"><span class="l">La primera devolución (2 unidades)</span><span class="v">sigue Activa, sin tocar</span></div>
+        <div class="row total"><span class="l">Estado de la venta</span><span class="v">Modificado (NO "Completada")</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;"><b>El riesgo real aquí:</b> si el código de "estado tras cancelar" no revisa que sigue habiendo OTRA devolución activa, podría marcar la venta como "Completada" otra vez — como si nunca se hubiera devuelto nada — cuando en realidad 2 unidades siguen devueltas de verdad. Confirma con cuidado que diga "Modificado", no "Completada".</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">D6</span><h2 id="d6">Intentar devolver más de lo que queda pendiente</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="badge-reject">debe fallar</span>Sobre la MISMA venta de D5 (quedan 4 unidades pendientes: 6 − 2 ya devueltas)</p>
+      <p class="step-desc">Intenta devolver <b>5 unidades</b> de Serrucho (más de las 4 que en realidad quedan pendientes, ya que 2 siguen devueltas de la primera devolución de D5).</p>
+      <div class="expect reject">
+        <div class="exp-label">Debe RECHAZARSE — no debe registrarse nada</div>
+        <div class="row total"><span class="l">Mensaje esperado</span><span class="v">"No puedes regresar mas producto del que realmente queda pendiente por devolver."</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Confirma que la venta sigue exactamente en subtotal $700.00 / total $700.00 después del intento (sin cambios), y que el stock de Serrucho no se movió.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">D7</span><h2 id="d7">Devolución de una venta en Efectivo de un turno YA CERRADO</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="badge-new">nunca probado — cierra tu turno actual</span>Cruce de turno: la venta y la devolución caen en cajas distintas</p>
+      <p class="step-desc"><b>Este paso cierra tu caja actual — déjalo al final.</b> 1) Vende 1× cualquier producto en <b>Efectivo</b>, sin cliente, en tu turno actual — guarda el folio. 2) Cierra la caja (corte de caja). 3) Abre una caja NUEVA. 4) Desde esta caja nueva, devuelve completa la venta del paso 1.</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Reembolso</span><span class="v">en efectivo, monto total de la venta</span></div>
+        <div class="row total"><span class="l">Retiro de caja generado</span><span class="v">SÍ (a diferencia de devolver en la MISMA caja)</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Recuerda por qué: cuando devuelves una venta en Efectivo <b>de la misma caja</b>, no hace falta retiro porque <code>ventas.total</code> ya baja y el corte de esa caja ya lo refleja solo. Pero aquí la venta original quedó en el corte de la caja YA CERRADA — ese corte no se puede volver a tocar. Si el sistema NO genera un retiro explícito en la caja nueva, ese dinero devuelto nunca aparecería en ningún corte de caja: ni en el viejo (ya cerrado, congelado) ni en el nuevo (no se registró nada). Es la combinación exacta donde ese dinero podría "desaparecer" del cuadre.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">✓</span><h2>Qué hacer si algo no te da exacto</h2></div>
+  <div class="callout warn">
+    <p>Igual que la vez pasada: si un número no coincide, <b>para ahí mismo y dímelo</b> — no sigas al siguiente escenario. Dime el folio, qué esperabas y qué te salió. D1, D2 y D3 ya quedaron confirmados (D1/D2 con el bug ya corregido, D3 limpio). Sigue desde D4 con el abono corregido ($773.88 por Transferencia), luego D5 → D6 → D7.</p>
+  </div>
+
+  <footer>FERRETERÍA ALDRETE — GUION DE COMBINACIONES PELIGROSAS, VERIFICADO CONTRA EL CÓDIGO Y LA BASE DE DATOS REAL, 11-SEP-2026</footer>
+
+</div>

@@ -56,6 +56,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // al capturar "Asistencia normal" sin horario explicito en Asistencia (ver formAsistencia.php).
     $horas_esperadas_semana = floatval(str_replace(',', '', is_scalar($_POST['horas_esperadas_semana'] ?? null) ? $_POST['horas_esperadas_semana'] : 0));
     $horas_por_dia          = floatval(str_replace(',', '', is_scalar($_POST['horas_por_dia'] ?? null) ? $_POST['horas_por_dia'] : 0));
+    // [FEATURE-SALDO-INICIAL-VACACIONES] Campo opcional para un empleado que ya trabajaba antes
+    // de usar el sistema y ya trae dias de vacaciones acumulados (o ya gastados) que el sistema
+    // nunca vio. Vacio = sin ajuste, se comporta igual que siempre (ver calcSaldoVacaciones()).
+    $saldoVacAjusteRaw = trim(is_scalar($_POST['saldo_vacaciones_ajuste'] ?? null) ? (string)$_POST['saldo_vacaciones_ajuste'] : '');
+    $saldoVacAjuste    = null;
 
     // [FIX-ALTO-G-07] "!strtotime($fecha_ingreso)" no bloqueaba nada: strtotime() acepta
     // expresiones relativas como "+1 year" o "next monday" y regresa un timestamp valido
@@ -110,8 +115,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($horas_esperadas_semana > 100)                    $errores[] = 'Las horas esperadas por semana no pueden ser mayores a 100. Verifica la cantidad capturada.';
     if ($horas_por_dia <= 0)                              $errores[] = 'Las horas por día deben ser mayores a 0.';
     if ($horas_por_dia > 16)                              $errores[] = 'Las horas por día no pueden ser mayores a 16. Verifica la cantidad capturada.';
+    if ($saldoVacAjusteRaw !== '') {
+        if (!ctype_digit($saldoVacAjusteRaw)) {
+            $errores[] = 'Los días de vacaciones disponibles deben ser un número entero.';
+        } else {
+            $saldoVacAjuste = intval($saldoVacAjusteRaw);
+            // [FEATURE-SALDO-INICIAL-VACACIONES] Mismo tope de 12 que ya usa la politica real
+            // de vacaciones (ver calcSaldoVacaciones()) -- un numero mayor nunca podria darse
+            // bajo esa politica, asi que se rechaza aqui como un probable error de captura.
+            if ($saldoVacAjuste > 12) $errores[] = 'Los días de vacaciones disponibles no pueden ser mayores a 12 (el tope de la política de vacaciones).';
+        }
+    }
 
     if (empty($errores)) {
+        // [FEATURE-SALDO-INICIAL-VACACIONES] Solo se actualiza la fecha de ajuste cuando el
+        // NUMERO realmente cambia -- si no, cualquier edicion inocente del empleado (ej.
+        // corregir el sueldo) reenviaria el mismo valor ya guardado y "correria" la fecha de
+        // ajuste a hoy sin necesidad, saltandose de silencio cualquier aniversario o vacacion
+        // ya registrada entre la fecha de ajuste original y hoy.
+        $saldoVacAjusteActual = null;
+        if ($esEdicion && $editando && $editando['saldo_vacaciones_ajuste'] !== null) {
+            $saldoVacAjusteActual = intval($editando['saldo_vacaciones_ajuste']);
+        }
+        if ($saldoVacAjuste !== $saldoVacAjusteActual) {
+            $saldoVacAjusteFecha = $saldoVacAjuste !== null ? date('Y-m-d') : null;
+        } else {
+            $saldoVacAjusteFecha = ($esEdicion && $editando) ? $editando['saldo_vacaciones_ajuste_fecha'] : null;
+        }
+
         // [FIX-EMPLEADO-NOMBRE-RACE] El chequeo de nombre duplicado de mas arriba (linea
         // ~70) es solo a nivel de aplicacion (SELECT + comparar en PHP) — sin ningun
         // candado ni restriccion real en la base de datos, dos altas casi simultaneas del
@@ -129,15 +160,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($empleado_id) {
                 $pdo->prepare("
                     UPDATE empleados SET nombre=?, fecha_ingreso=?, sueldo_semanal=?, activo=?,
-                        horas_esperadas_semana=?, horas_por_dia=?
+                        horas_esperadas_semana=?, horas_por_dia=?,
+                        saldo_vacaciones_ajuste=?, saldo_vacaciones_ajuste_fecha=?
                     WHERE empleado_id=?
-                ")->execute([$nombre, $fecha_ingreso, $sueldo_semanal, $activo, $horas_esperadas_semana, $horas_por_dia, $empleado_id]);
+                ")->execute([$nombre, $fecha_ingreso, $sueldo_semanal, $activo, $horas_esperadas_semana, $horas_por_dia, $saldoVacAjuste, $saldoVacAjusteFecha, $empleado_id]);
                 header('Location: empleados.php?msg=actualizado');
             } else {
                 $pdo->prepare("
-                    INSERT INTO empleados (nombre, fecha_ingreso, sueldo_semanal, activo, horas_esperadas_semana, horas_por_dia)
-                    VALUES (?, ?, ?, 1, ?, ?)
-                ")->execute([$nombre, $fecha_ingreso, $sueldo_semanal, $horas_esperadas_semana, $horas_por_dia]);
+                    INSERT INTO empleados (nombre, fecha_ingreso, sueldo_semanal, activo, horas_esperadas_semana, horas_por_dia, saldo_vacaciones_ajuste, saldo_vacaciones_ajuste_fecha)
+                    VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+                ")->execute([$nombre, $fecha_ingreso, $sueldo_semanal, $horas_esperadas_semana, $horas_por_dia, $saldoVacAjuste, $saldoVacAjusteFecha]);
                 header('Location: empleados.php?msg=registrado');
             }
             exit();
@@ -167,6 +199,10 @@ $v = [
     // en un alta nueva se comporta igual que siempre.
     'horas_esperadas_semana' => $esPost ? $horas_esperadas_semana  : ($editando['horas_esperadas_semana'] ?? 51),
     'horas_por_dia'          => $esPost ? $horas_por_dia           : ($editando['horas_por_dia']          ?? 9),
+    // [FEATURE-SALDO-INICIAL-VACACIONES] Se repobla con el valor YA guardado (no con el saldo
+    // calculado en vivo) para que reenviar el formulario sin tocar este campo nunca dispare el
+    // "cambio detectado" de mas arriba y corra la fecha de ajuste sin necesidad.
+    'saldo_vacaciones_ajuste' => $esPost ? $saldoVacAjuste          : ($editando['saldo_vacaciones_ajuste'] ?? null),
 ];
 ?>
 <!DOCTYPE html>
@@ -266,6 +302,12 @@ $v = [
                 <div class="form-group">
                     <label>Fecha de ingreso</label>
                     <input type="date" name="fecha_ingreso" value="<?= htmlspecialchars($v['fecha_ingreso']) ?>" max="<?= date('Y-m-d') ?>" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Días de vacaciones disponibles hoy (opcional)</label>
+                    <input type="number" name="saldo_vacaciones_ajuste" value="<?= htmlspecialchars($v['saldo_vacaciones_ajuste'] ?? '') ?>" step="1" min="0" max="12" placeholder="Dejar vacío si no aplica">
+                    <div style="font-size:11px;color:#aaa;margin-top:4px;">Solo para un empleado que YA trabajaba aquí antes de usar el sistema y ya trae días acumulados (o ya los gastó). Si se deja vacío, el sistema calcula el saldo desde cero a partir de la fecha de ingreso.</div>
                 </div>
 
                 <div class="form-group">

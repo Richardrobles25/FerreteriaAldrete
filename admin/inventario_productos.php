@@ -216,6 +216,11 @@ function detectarCampo(string $header): ?string {
     $h = normalizarEncabezado($header);
     // Orden importante: patrones más específicos primero
     $mapa = [
+        // [FEATURE-CODIGO-PROVEEDOR-IMPORT] Debe ir ANTES que 'codigo' — "Código proveedor"
+        // normaliza a "codigoproveedor", que ya contiene "codigo" como subcadena; con 'codigo'
+        // primero, str_contains() lo habria detectado como la columna de codigo del PRODUCTO.
+        'codigoproveedor' => 'codigo_proveedor',
+        'codproveedor'    => 'codigo_proveedor',
         'codigo'        => 'codigo',
         'preciocosto'   => 'precio_compra',
         'preciocompra'  => 'precio_compra',
@@ -236,6 +241,8 @@ function detectarCampo(string $header): ?string {
         'nombre'        => 'nombre',
         'unidadmedida'  => 'unidad_medida',
         'unidad'        => 'unidad_medida',
+        'proveedores'   => 'proveedores',
+        'proveedor'     => 'proveedores',
     ];
     foreach ($mapa as $patron => $campo) {
         if (str_contains($h, $patron)) return $campo;
@@ -296,6 +303,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $categoriasCreadas = [];
             $unidadesCache    = []; // evita INSERT repetido para misma unidad
             $unidadesCreadas  = [];
+            $proveedoresCache   = []; // nombre => proveedor_id, evita SELECT repetido
+            $proveedoresCreados = [];
 
             // Solo Administrador puede dar de alta catálogo global nuevo; ya se validó arriba
             // que solo Administrador llega a este bloque ($puedeImportarExcel).
@@ -334,12 +343,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $sucursalImport = ($sucursalVista > 0) ? $sucursalVista : null;
 
                 try {
+                    // [FIX-IMPORT-LARGO] (mismo patron ya usado en inventario_formProducto.php):
+                    // productos.codigo es VARCHAR(50) y nombre_producto VARCHAR(150) sin ningun
+                    // tope aqui — una celda mas larga se truncaba en silencio localmente (o
+                    // tronaba 500 crudo en el servidor real bajo SQL modo estricto, ver
+                    // [[project-enum-sql-mode]]) en vez de reportarse como error de esta fila.
+                    if (mb_strlen($codigo) > 50)  throw new Exception('El código no puede tener más de 50 caracteres.');
+                    if (mb_strlen($nombre) > 150) throw new Exception('El nombre no puede tener más de 150 caracteres.');
                     // [FIX-ALTO-B-11] Antes no se validaba el signo de precios/stock: un
                     // Excel con una celda negativa (typo o manipulado) se importaba tal cual,
                     // dejando precios negativos o stock negativo en el catálogo/sucursal.
-                    if ($precio_compra < 0 || $precio_venta < 0 || $precio_mayoreo < 0
-                        || $stock_actual < 0 || $stock_minimo < 0 || $stock_maximo < 0) {
-                        throw new Exception('Precios y cantidades de stock no pueden ser negativos.');
+                    // [FIX-STOCK-IGNORADO-TODAS-SUCURSALES] El signo de precios SIEMPRE se
+                    // valida (catálogo global). El de stock se movió a validarse junto con las
+                    // demás reglas de stock, solo cuando $sucursalImport !== null — ver abajo.
+                    if ($precio_compra < 0 || $precio_venta < 0 || $precio_mayoreo < 0) {
+                        throw new Exception('Los precios no pueden ser negativos.');
                     }
                     // [FIX-PRECIO-CERO-01] El formulario manual (inventario_formProducto.php)
                     // exige precio_venta > 0, pero aqui solo se validaba "< 0" — una celda con
@@ -355,33 +373,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
                         throw new Exception('Los precios no pueden ser mayores a $500,000.00.');
                     }
-                    // [FIX-STOCK-ENTERO-01] Igual que compras.php/salidas.php/formProducto.php:
-                    // un producto que no es "Suelto" (se vende por pieza entera) no puede tener
-                    // stock con decimales — antes el Excel lo dejaba pasar tal cual.
-                    if ($tipo_venta !== 'Suelto' && (floor($stock_actual) != $stock_actual || floor($stock_minimo) != $stock_minimo || floor($stock_maximo) != $stock_maximo)) {
-                        throw new Exception('Este producto se maneja por unidad; el stock inicial/mínimo/máximo debe ser un número entero.');
+                    // [FIX-MAYOREO-MAYOR-VENTA] (portado de inventario_formProducto.php) El
+                    // precio de mayoreo es un descuento por volumen -- sin este candado, una
+                    // celda de Excel con el mayoreo mas caro que el precio normal se importaba
+                    // tal cual, y en el punto de venta terminaria cobrandole de mas a un
+                    // cliente que compra por mayoreo.
+                    if ($precio_mayoreo > 0 && $precio_mayoreo > $precio_venta) {
+                        throw new Exception('El precio de mayoreo no puede ser mayor al precio de venta.');
                     }
-                    // [FIX-STOCK-MAX-IMPORT] stock_actual/minimo/maximo son DECIMAL(10,3) (tope
-                    // tecnico 9,999,999.999) sin validador de tope superior — una celda del
-                    // Excel con un error de captura se importaba truncada en silencio al
-                    // maximo de la columna, sin ningun aviso. Mismo tope que ya usa entradas.php.
-                    if ($stock_actual > 999999 || $stock_minimo > 999999 || $stock_maximo > 999999) {
-                        throw new Exception('El stock inicial/mínimo/máximo no puede ser mayor a 999,999.');
+                    // [FIX-STOCK-IGNORADO-TODAS-SUCURSALES] En "Todas las sucursales"
+                    // ($sucursalImport === null) el stock del Excel NUNCA se escribe (ver mas
+                    // abajo, el upsert de stock_sucursal ya esta condicionado a
+                    // "if ($sucursalImport !== null)") -- validar, y de encontrar un error
+                    // RECHAZAR LA FILA COMPLETA (incluyendo nombre/precio/categoria/proveedores,
+                    // que SI aplican en este modo) por un valor de stock que de todos modos se
+                    // va a descartar, no tenia sentido. Estas 3 reglas de stock solo corren
+                    // cuando el stock realmente se va a usar.
+                    if ($sucursalImport !== null) {
+                        // [FIX-ALTO-B-11] (ver arriba, parte de precios) stock negativo.
+                        if ($stock_actual < 0 || $stock_minimo < 0 || $stock_maximo < 0) {
+                            throw new Exception('Las cantidades de stock no pueden ser negativas.');
+                        }
+                        // [FIX-STOCK-ENTERO-01] Igual que compras.php/salidas.php/formProducto.php:
+                        // un producto que no es "Suelto" (se vende por pieza entera) no puede tener
+                        // stock con decimales — antes el Excel lo dejaba pasar tal cual.
+                        if ($tipo_venta !== 'Suelto' && (floor($stock_actual) != $stock_actual || floor($stock_minimo) != $stock_minimo || floor($stock_maximo) != $stock_maximo)) {
+                            throw new Exception('Este producto se maneja por unidad; el stock inicial/mínimo/máximo debe ser un número entero.');
+                        }
+                        // [FIX-STOCK-MAX-IMPORT] stock_actual/minimo/maximo son DECIMAL(10,3) (tope
+                        // tecnico 9,999,999.999) sin validador de tope superior — una celda del
+                        // Excel con un error de captura se importaba truncada en silencio al
+                        // maximo de la columna, sin ningun aviso. Mismo tope que ya usa entradas.php.
+                        if ($stock_actual > 999999 || $stock_minimo > 999999 || $stock_maximo > 999999) {
+                            throw new Exception('El stock inicial/mínimo/máximo no puede ser mayor a 999,999.');
+                        }
                     }
 
-                    // [FIX-UNIDAD-GLOBAL-01] unidades_medida.sucursal_id es NOT NULL — en "Todas
-                    // las sucursales" ($sucursalImport === null) este INSERT tronaba con
-                    // "Column 'sucursal_id' cannot be null" en cuanto el Excel traía una unidad
-                    // que aun no existiera en NINGUNA sucursal. El campo unidad_medida del
-                    // producto (un varchar libre, no una FK) igual se guarda bien mas abajo; solo
-                    // se omite la auto-creacion de la unidad como sugerencia cuando no hay una
-                    // sucursal especifica a la cual asociarla.
-                    if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida]) && $puedeCrearCatalogo && $sucursalImport !== null) {
-                        $checkUnd = $pdo->prepare("SELECT unidad_id FROM unidades_medida WHERE nombre = ? AND sucursal_id = ? LIMIT 1");
-                        $checkUnd->execute([$unidad_medida, $sucursalImport]);
+                    // [CAMBIO-UNIDAD-GLOBAL 2026-09-09] unidades_medida ya es catalogo global
+                    // (sin sucursal_id) — la auto-creacion desde el Excel ya no depende de que
+                    // haya una sucursal especifica elegida en la importacion.
+                    if ($unidad_medida !== '' && !isset($unidadesCache[$unidad_medida]) && $puedeCrearCatalogo) {
+                        $checkUnd = $pdo->prepare("SELECT unidad_id FROM unidades_medida WHERE nombre = ? LIMIT 1");
+                        $checkUnd->execute([$unidad_medida]);
                         if (!$checkUnd->fetchColumn()) {
-                            $pdo->prepare("INSERT INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                                ->execute([$unidad_medida, $sucursalImport]);
+                            $pdo->prepare("INSERT INTO unidades_medida (nombre) VALUES (?)")
+                                ->execute([$unidad_medida]);
                             $unidadesCreadas[] = $unidad_medida;
                         }
                         $unidadesCache[$unidad_medida] = true;
@@ -406,6 +442,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                                 if ($categoria_id) $categoriasCreadas[] = $nombreCat;
                             }
                             if ($categoria_id) $categoriasCache[$nombreCat] = $categoria_id;
+                        }
+                    }
+
+                    // [FEATURE-PROVEEDORES-IMPORT] Proveedor(es): opcional, admite varios
+                    // separados por coma (a diferencia de categoría, un producto sí puede tener
+                    // mas de un proveedor — mismo patrón que ya usa el formulario manual). Si la
+                    // celda viene vacía, $proveedorIdsFila queda en null y NO se tocan los
+                    // vínculos que el producto ya tuviera (igual que categoría vacía no borra la
+                    // categoría existente).
+                    // [FEATURE-CODIGO-PROVEEDOR-IMPORT] $proveedorIdsFila ahora es un mapa
+                    // [proveedor_id => codigo_proveedor|null] en vez de una lista simple, para
+                    // poder guardar el código propio de CADA proveedor. La columna "Código
+                    // proveedor" es opcional y se empareja por POSICIÓN con "Proveedor(es)"
+                    // (mismo orden, separados por coma) — ej. Proveedor(es)="A, B" y
+                    // Código proveedor="111, 222" deja A=111, B=222; si faltan códigos para
+                    // algunos proveedores de la lista, esos quedan sin código (NULL).
+                    $proveedorIdsFila = null;
+                    $proveedoresCelda = isset($colMap['proveedores']) ? trim($row[$colMap['proveedores']] ?? '') : '';
+                    if ($proveedoresCelda !== '') {
+                        $proveedorIdsFila = [];
+                        $nombresProv = array_values(array_filter(array_map('trim', explode(',', $proveedoresCelda)), fn($v) => $v !== ''));
+                        $codigosProvCelda = isset($colMap['codigo_proveedor']) ? trim($row[$colMap['codigo_proveedor']] ?? '') : '';
+                        $codigosProv = $codigosProvCelda !== '' ? array_map('trim', explode(',', $codigosProvCelda)) : [];
+                        foreach ($nombresProv as $posProv => $nombreProv) {
+                            if (isset($proveedoresCache[$nombreProv])) {
+                                $provId = $proveedoresCache[$nombreProv];
+                            } else {
+                                $stmtProv = $pdo->prepare("SELECT proveedor_id FROM proveedores WHERE nombre = ? LIMIT 1");
+                                $stmtProv->execute([$nombreProv]);
+                                $provId = $stmtProv->fetchColumn();
+                                if ($provId) {
+                                    $provId = (int)$provId;
+                                } elseif ($puedeCrearCatalogo) {
+                                    $pdo->prepare("INSERT INTO proveedores (nombre, activo) VALUES (?, 1)")->execute([$nombreProv]);
+                                    $provId = (int)$pdo->lastInsertId();
+                                    $proveedoresCreados[] = $nombreProv;
+                                } else {
+                                    $provId = null;
+                                }
+                                if ($provId) $proveedoresCache[$nombreProv] = $provId;
+                            }
+                            if ($provId) {
+                                $codigoProv = trim($codigosProv[$posProv] ?? '');
+                                // producto_proveedor.codigo_proveedor es VARCHAR(50).
+                                if (mb_strlen($codigoProv) > 50) {
+                                    throw new Exception('El código de proveedor de "'.$nombreProv.'" no puede tener más de 50 caracteres.');
+                                }
+                                $proveedorIdsFila[$provId] = $codigoProv !== '' ? $codigoProv : null;
+                            }
                         }
                     }
 
@@ -434,6 +519,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                                 $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
                                     ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
                             }
+                            // [FEATURE-PROVEEDORES-IMPORT] Igual que el formulario manual: si la
+                            // celda trajo proveedor(es), reemplaza la lista completa de esta
+                            // producto (borra y re-inserta) -- si vino vacia, no se toca nada.
+                            if ($proveedorIdsFila !== null) {
+                                $pdo->prepare("DELETE FROM producto_proveedor WHERE producto_id = ?")->execute([$prodId]);
+                                foreach ($proveedorIdsFila as $provIdLink => $codigoProvLink) {
+                                    $pdo->prepare("INSERT INTO producto_proveedor (producto_id, proveedor_id, codigo_proveedor) VALUES (?, ?, ?)")
+                                        ->execute([$prodId, $provIdLink, $codigoProvLink]);
+                                }
+                            }
                         }
                         // Upsert stock de la sucursal (solo si hay una sucursal especifica elegida)
                         if ($sucursalImport !== null) {
@@ -452,6 +547,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         $pdo->prepare("INSERT INTO productos (categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, tipo_venta, unidad_medida, activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
                             ->execute([$categoria_id, $codigo, $nombre, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $unidad_medida ?: null]);
                         $prodId = (int)$pdo->lastInsertId();
+                        // [FEATURE-PROVEEDORES-IMPORT] Producto nuevo: si la celda trajo
+                        // proveedor(es), se vinculan de una vez (no hay nada previo que borrar).
+                        if ($proveedorIdsFila !== null) {
+                            foreach ($proveedorIdsFila as $provIdLink => $codigoProvLink) {
+                                $pdo->prepare("INSERT INTO producto_proveedor (producto_id, proveedor_id, codigo_proveedor) VALUES (?, ?, ?)")
+                                    ->execute([$prodId, $provIdLink, $codigoProvLink]);
+                            }
+                        }
                         // Insertar stock para la sucursal (solo si hay una sucursal especifica elegida)
                         if ($sucursalImport !== null) {
                             $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
@@ -481,6 +584,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             if ($sucursalVista === 0) $exitoImport .= ' Solo se actualizó el catálogo global (nombre, precios, categoría) — el stock del Excel se omitió porque no hay una sucursal específica elegida.';
             if ($categoriasCreadas) $exitoImport .= ' Categorías nuevas: ' . implode(', ', array_unique($categoriasCreadas)) . '.';
             if ($unidadesCreadas)   $exitoImport .= ' Unidades nuevas: ' . implode(', ', array_unique($unidadesCreadas)) . '.';
+            if ($proveedoresCreados) $exitoImport .= ' Proveedores nuevos: ' . implode(', ', array_unique($proveedoresCreados)) . '.';
             if (!isset($colMap['categoria'])) $exitoImport .= ' (El archivo no tiene columna de Categoría)';
             if ($filasConError) $erroresImport = array_merge($erroresImport, $filasConError);
         } catch (Exception $e) {
@@ -504,29 +608,52 @@ if (isset($_GET['plantilla'])) {
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Plantilla');
-        $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
+        // [FIX-STOCK-IGNORADO-TODAS-SUCURSALES] En "Todas las sucursales" el stock del Excel
+        // se descarta por completo al importar (no hay una sucursal especifica a la cual
+        // aplicarlo). Primero se probo dejar las 3 columnas de stock en blanco con un aviso en
+        // el encabezado, pero el usuario lo probo y lo encontro mas confuso que util ("hace
+        // mucho mas confuso, quitala de ahi") -- ahora, en ese modo, las 3 columnas de stock se
+        // QUITAN por completo de la plantilla descargada (no aparecen ni vacias). Si se
+        // selecciona una sucursal especifica, la plantilla sigue igual que siempre, con las 3
+        // columnas y sus valores de ejemplo.
+        $sinSucursalEspecifica = ($sucursalVista === 0);
+        // Varios ejemplos representativos de una ferretería: por unidad y por granel/kg,
+        // con y sin mayoreo, con y sin categoría/descripción — para que quede claro cómo
+        // llenar cada tipo de producto real, no solo un caso genérico.
+        // [FEATURE-PROVEEDORES-IMPORT] Columna opcional (como Categoría): admite mas de un
+        // proveedor separados por coma, a diferencia de Categoría que solo acepta uno.
+        // [FEATURE-CODIGO-PROVEEDOR-IMPORT] Columna opcional adicional: el código con el que
+        // CADA proveedor identifica este producto (su propio SKU/clave), en el MISMO ORDEN y
+        // separado por coma que "Proveedor(es)" — ej. fila 2: 2 proveedores → 2 códigos.
+        $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida','Proveedor(es)','Código proveedor'];
+        $ejemplos = [
+            ['TOR-001', 'Tornillo Phillips 1/4" x 1"', 'Tornillería', '0.50', '1.00', '0.80', '500', '100', '2000', 'Unidad', 'Caja con 500 piezas', 'pieza', 'Ferretera del Pacífico', 'FP-TOR001'],
+            ['CEM-050', 'Cemento gris 50kg', 'Materiales', '145.00', '185.00', '170.00', '80', '10', '200', 'Unidad', 'Saco de 50kg', 'saco', 'Cementos Nayarit, Materiales Ixtlán', 'CN-4050, MI-2210'],
+            ['ARE-001', 'Arena de río', 'Materiales', '', '25.00', '', '500', '50', '0', 'Suelto', 'Se vende por kg', 'kg', '', ''],
+            ['PINT-BL1', 'Pintura vinílica blanca 1L', 'Pinturas', '60.00', '95.00', '', '30', '5', '80', 'Unidad', '', 'pieza', '', ''],
+            ['CABLE-12', 'Cable eléctrico calibre 12', '', '8.50', '13.00', '11.50', '200', '20', '0', 'Suelto', 'Se vende por metro', 'metro', 'Electricos del Norte', 'EN-CAL12'],
+        ];
+        if ($sinSucursalEspecifica) {
+            $quitarIdx = [6, 7, 8]; // Stock inicial, Stock mínimo, Stock máximo
+            $headers = array_values(array_diff_key($headers, array_flip($quitarIdx)));
+            foreach ($ejemplos as &$filaEj) {
+                $filaEj = array_values(array_diff_key($filaEj, array_flip($quitarIdx)));
+            }
+            unset($filaEj);
+        }
         foreach ($headers as $i => $h) {
             $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
             $sheet->setCellValue("{$col}1", $h);
             $sheet->getStyle("{$col}1")->getFont()->setBold(true);
         }
-        // Varios ejemplos representativos de una ferretería: por unidad y por granel/kg,
-        // con y sin mayoreo, con y sin categoría/descripción — para que quede claro cómo
-        // llenar cada tipo de producto real, no solo un caso genérico.
-        $ejemplos = [
-            ['TOR-001', 'Tornillo Phillips 1/4" x 1"', 'Tornillería', '0.50', '1.00', '0.80', '500', '100', '2000', 'Unidad', 'Caja con 500 piezas', 'pieza'],
-            ['CEM-050', 'Cemento gris 50kg', 'Materiales', '145.00', '185.00', '170.00', '80', '10', '200', 'Unidad', 'Saco de 50kg', 'saco'],
-            ['ARE-001', 'Arena de río', 'Materiales', '', '25.00', '', '500', '50', '0', 'Suelto', 'Se vende por kg', 'kg'],
-            ['PINT-BL1', 'Pintura vinílica blanca 1L', 'Pinturas', '60.00', '95.00', '', '30', '5', '80', 'Unidad', '', 'pieza'],
-            ['CABLE-12', 'Cable eléctrico calibre 12', '', '8.50', '13.00', '11.50', '200', '20', '0', 'Suelto', 'Se vende por metro', 'metro'],
-        ];
         foreach ($ejemplos as $fila => $ejemplo) {
             foreach ($ejemplo as $i => $v) {
                 $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
                 $sheet->setCellValue("{$col}" . ($fila + 2), $v);
             }
         }
-        foreach (range('A','L') as $col) {
+        $ultimaCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($headers));
+        foreach (range('A', $ultimaCol) as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
         $tmpPlantilla = sys_get_temp_dir() . '/plt_' . uniqid() . '.xlsx';

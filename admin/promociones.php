@@ -17,20 +17,44 @@ if (($_GET['msg'] ?? '') === 'error_token') {
 
 // ── Búsqueda de productos por sucursal (AJAX) ────────────────────────────────
 if (isset($_GET['buscar_prods'])) {
-    $sucursalId = intval(is_scalar($_GET['sucursal_id'] ?? null) ? $_GET['sucursal_id'] : 0);
-    $q          = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
+    $sucursalParam = is_scalar($_GET['sucursal_id'] ?? null) ? (string)$_GET['sucursal_id'] : '';
+    $q             = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
     header('Content-Type: application/json');
-    if (!$sucursalId) { echo json_encode([]); exit(); }
     $like = '%' . $q . '%';
-    $stmt = $pdo->prepare("
-        SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.tipo_venta
-        FROM productos p
-        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
-        WHERE p.activo = 1
-          AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)
-        ORDER BY p.nombre_producto ASC LIMIT 30
-    ");
-    $stmt->execute([$sucursalId, $like, $like]);
+    if ($sucursalParam === 'ambas') {
+        // [FEATURE-PROMO-AMBAS-SUCURSALES] "Ambas sucursales" solo debe ofrecer productos que
+        // tengan stock activo en TODAS las sucursales activas -- si faltara en una, esa
+        // sucursal se quedaría sin poder aplicar la promoción. Doble NOT EXISTS = "no existe
+        // ninguna sucursal activa donde el producto NO tenga stock activo".
+        $stmt = $pdo->prepare("
+            SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.tipo_venta
+            FROM productos p
+            WHERE p.activo = 1
+              AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)
+              AND NOT EXISTS (
+                  SELECT 1 FROM sucursales s2
+                  WHERE s2.activo = 1
+                    AND NOT EXISTS (
+                        SELECT 1 FROM stock_sucursal ss2
+                        WHERE ss2.producto_id = p.producto_id AND ss2.sucursal_id = s2.sucursal_id AND ss2.activo = 1
+                    )
+              )
+            ORDER BY p.nombre_producto ASC LIMIT 30
+        ");
+        $stmt->execute([$like, $like]);
+    } else {
+        $sucursalId = intval($sucursalParam);
+        if (!$sucursalId) { echo json_encode([]); exit(); }
+        $stmt = $pdo->prepare("
+            SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.tipo_venta
+            FROM productos p
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+            WHERE p.activo = 1
+              AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)
+            ORDER BY p.nombre_producto ASC LIMIT 30
+        ");
+        $stmt->execute([$sucursalId, $like, $like]);
+    }
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit();
 }
@@ -48,7 +72,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // (columna que ni existia) y quedaba activa en TODAS las sucursales sin que el
         // admin lo supiera, y el listado la mostraba con la sucursal del creador (que
         // para un Administrador es NULL, ocultandola por completo del listado).
-        $sucursalId       = intval(is_scalar($_POST['sucursal_id'] ?? null) ? $_POST['sucursal_id'] : 0);
+        // [FEATURE-PROMO-AMBAS-SUCURSALES] "ambas" es un valor especial (no un id numerico)
+        // que representa "aplica a todas las sucursales activas" -- se guarda como
+        // sucursal_id NULL, el mismo mecanismo que ya usaban las promociones legacy sin
+        // sucursal (cajero_nuevaVenta.php/nuevaVenta.php ya tratan sucursal_id IS NULL como
+        // "aplica en cualquier sucursal" al calcular el precio de venta).
+        $sucursalIdRaw    = is_scalar($_POST['sucursal_id'] ?? null) ? (string)$_POST['sucursal_id'] : '';
+        $esAmbas          = $sucursalIdRaw === 'ambas';
+        $sucursalId       = $esAmbas ? 0 : intval($sucursalIdRaw);
         $precioPromo      = floatval(is_scalar($_POST['precio_promocional'] ?? null) ? $_POST['precio_promocional'] : 0);
         $fechaInicio      = trim(is_scalar($_POST['fecha_inicio'] ?? null) ? (string)$_POST['fecha_inicio'] : '');
         $fechaFin         = trim(is_scalar($_POST['fecha_fin'] ?? null) ? (string)$_POST['fecha_fin'] : '');
@@ -67,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fechaFinValida    = preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fechaFin, $mFF)    && checkdate((int)$mFF[2], (int)$mFF[3], (int)$mFF[1]);
 
         if (!$productoId)         $error = 'Selecciona un producto.';
-        elseif (!$sucursalId)     $error = 'Selecciona la sucursal donde aplicará la promoción.';
+        elseif (!$esAmbas && !$sucursalId) $error = 'Selecciona la sucursal donde aplicará la promoción.';
         elseif ($precioPromo < 0.01) $error = 'El precio promocional debe ser de al menos $0.01.';
         elseif (!$fechaInicioValida || !$fechaFinValida) $error = 'Ingresa fechas válidas para la promoción.';
         elseif ($fechaFin < $fechaInicio)    $error = 'La fecha de fin no puede ser anterior al inicio.';
@@ -76,11 +107,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtP = $pdo->prepare("SELECT precio_venta, nombre_producto FROM productos WHERE producto_id = ?");
             $stmtP->execute([$productoId]);
             $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
-            $stmtSuc = $pdo->prepare("SELECT nombre FROM sucursales WHERE sucursal_id = ? AND activo = 1");
-            $stmtSuc->execute([$sucursalId]);
-            $sucNombre = $stmtSuc->fetchColumn();
+            $sucNombre = null;
+            if (!$esAmbas) {
+                $stmtSuc = $pdo->prepare("SELECT nombre FROM sucursales WHERE sucursal_id = ? AND activo = 1");
+                $stmtSuc->execute([$sucursalId]);
+                $sucNombre = $stmtSuc->fetchColumn();
+            }
+            // [FEATURE-PROMO-AMBAS-SUCURSALES] El buscador ya solo ofrece productos con stock
+            // en TODAS las sucursales activas cuando se elige "Ambas sucursales", pero eso es
+            // cosmético -- un POST directo podía mandar cualquier producto_id. Se revalida aquí
+            // antes de aceptar la promoción, misma lógica de doble NOT EXISTS del buscador.
+            $tieneEnTodas = true;
+            if ($esAmbas && $prod) {
+                $stmtChk = $pdo->prepare("
+                    SELECT NOT EXISTS (
+                        SELECT 1 FROM sucursales s2
+                        WHERE s2.activo = 1
+                          AND NOT EXISTS (
+                              SELECT 1 FROM stock_sucursal ss2
+                              WHERE ss2.producto_id = ? AND ss2.sucursal_id = s2.sucursal_id AND ss2.activo = 1
+                          )
+                    )
+                ");
+                $stmtChk->execute([$productoId]);
+                $tieneEnTodas = (bool)$stmtChk->fetchColumn();
+            }
             if (!$prod) { $error = 'Producto no encontrado.'; }
-            elseif ($sucNombre === false) { $error = 'La sucursal seleccionada no existe o está inactiva.'; }
+            elseif (!$esAmbas && $sucNombre === false) { $error = 'La sucursal seleccionada no existe o está inactiva.'; }
+            elseif ($esAmbas && !$tieneEnTodas) {
+                $error = 'El producto no tiene stock activo en todas las sucursales -- no se puede crear una promoción para "Ambas sucursales".';
+            }
             elseif ($precioPromo >= $prod['precio_venta']) {
                 $error = 'El precio promocional ($' . number_format($precioPromo,2) . ') debe ser menor al precio normal ($' . number_format($prod['precio_venta'],2) . ').';
             } else {
@@ -95,25 +151,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // aplicarian en la MISMA sucursal: la nueva sucursal exacta, o una promo
                 // previa sin sucursal_id (promos antiguas antes de este fix, que siguen
                 // aplicando a todas las sucursales para no romper lo ya creado).
-                $stmtSolape = $pdo->prepare("
-                    SELECT promocion_id, precio_promocional, fecha_inicio, fecha_fin
-                    FROM promociones
-                    WHERE producto_id = ? AND activo = 1
-                      AND (sucursal_id = ? OR sucursal_id IS NULL)
-                      AND fecha_inicio <= ? AND fecha_fin >= ?
-                    LIMIT 1
-                ");
-                $stmtSolape->execute([$productoId, $sucursalId, $fechaFin, $fechaInicio]);
+                // [FEATURE-PROMO-AMBAS-SUCURSALES] Una promo "ambas" aplicará en TODAS las
+                // sucursales, asi que conflicta con cualquier promo activa del producto sin
+                // importar su sucursal (no solo con las NULL/legacy).
+                if ($esAmbas) {
+                    $stmtSolape = $pdo->prepare("
+                        SELECT promocion_id, precio_promocional, fecha_inicio, fecha_fin
+                        FROM promociones
+                        WHERE producto_id = ? AND activo = 1
+                          AND fecha_inicio <= ? AND fecha_fin >= ?
+                        LIMIT 1
+                    ");
+                    $stmtSolape->execute([$productoId, $fechaFin, $fechaInicio]);
+                } else {
+                    $stmtSolape = $pdo->prepare("
+                        SELECT promocion_id, precio_promocional, fecha_inicio, fecha_fin
+                        FROM promociones
+                        WHERE producto_id = ? AND activo = 1
+                          AND (sucursal_id = ? OR sucursal_id IS NULL)
+                          AND fecha_inicio <= ? AND fecha_fin >= ?
+                        LIMIT 1
+                    ");
+                    $stmtSolape->execute([$productoId, $sucursalId, $fechaFin, $fechaInicio]);
+                }
                 $solape = $stmtSolape->fetch(PDO::FETCH_ASSOC);
                 if ($solape) {
-                    $error = 'Ya existe una promoción activa para "' . htmlspecialchars($prod['nombre_producto']) . '" en esa sucursal, del '
+                    // [FIX-DOBLE-ESCAPE-PROMO] $error se escapa completo al mostrarlo (linea
+                    // ~397 mas abajo) -- escapar aqui tambien dejaba literal el "&quot;" en
+                    // pantalla para cualquier producto cuyo nombre trajera comillas (comun en
+                    // este catalogo: medidas en pulgadas, ej. Tornillo 1/4").
+                    $error = 'Ya existe una promoción activa para "' . $prod['nombre_producto'] . '" ' . ($esAmbas ? 'en alguna sucursal' : 'en esa sucursal') . ', del '
                         . date('d/m/Y', strtotime($solape['fecha_inicio'])) . ' al ' . date('d/m/Y', strtotime($solape['fecha_fin']))
                         . ' (precio $' . number_format($solape['precio_promocional'], 2) . '). '
                         . 'Desactívala primero o ajusta las fechas para que no se traslapen.';
                 } else {
                     $pdo->prepare("INSERT INTO promociones (producto_id, sucursal_id, precio_promocional, fecha_inicio, fecha_fin, descripcion, usuario_id) VALUES (?,?,?,?,?,?,?)")
-                        ->execute([$productoId, $sucursalId, $precioPromo, $fechaInicio, $fechaFin, $descripcion ?: null, $_SESSION['usuario_id']]);
-                    $msg = 'Promoción creada para "' . htmlspecialchars($prod['nombre_producto']) . '" en ' . htmlspecialchars($sucNombre) . '.';
+                        ->execute([$productoId, $esAmbas ? null : $sucursalId, $precioPromo, $fechaInicio, $fechaFin, $descripcion ?: null, $_SESSION['usuario_id']]);
+                    // [FIX-DOBLE-ESCAPE-PROMO] mismo fix que en el error de traslape de arriba
+                    // -- $msg tambien se escapa completo al mostrarse.
+                    $msg = 'Promoción creada para "' . $prod['nombre_producto'] . '" en ' . ($esAmbas ? 'ambas sucursales' : $sucNombre) . '.';
                 }
             }
         }
@@ -136,14 +212,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             // [FIX-ALTO-B-09] Traslape acotado a la misma sucursal (o promos legacy sin
             // sucursal_id), igual que al crear.
-            $stmtSolapeAct = $pdo->prepare("
-                SELECT promocion_id FROM promociones
-                WHERE producto_id = ? AND activo = 1 AND promocion_id != ?
-                  AND (sucursal_id <=> ? OR sucursal_id IS NULL)
-                  AND fecha_inicio <= ? AND fecha_fin >= ?
-                LIMIT 1
-            ");
-            $stmtSolapeAct->execute([$promAct['producto_id'], $id, $promAct['sucursal_id'], $promAct['fecha_fin'], $promAct['fecha_inicio']]);
+            // [FEATURE-PROMO-AMBAS-SUCURSALES] Si la promo que se reactiva es "ambas"
+            // (sucursal_id NULL), aplicará en TODAS las sucursales al quedar activa, así que
+            // hay que revisar traslape contra CUALQUIER promo activa del producto, no solo
+            // contra otras NULL -- si no, una promo especifica de sucursal 1 creada mientras
+            // esta estaba pausada no se detectaria.
+            if ($promAct['sucursal_id'] === null) {
+                $stmtSolapeAct = $pdo->prepare("
+                    SELECT promocion_id FROM promociones
+                    WHERE producto_id = ? AND activo = 1 AND promocion_id != ?
+                      AND fecha_inicio <= ? AND fecha_fin >= ?
+                    LIMIT 1
+                ");
+                $stmtSolapeAct->execute([$promAct['producto_id'], $id, $promAct['fecha_fin'], $promAct['fecha_inicio']]);
+            } else {
+                $stmtSolapeAct = $pdo->prepare("
+                    SELECT promocion_id FROM promociones
+                    WHERE producto_id = ? AND activo = 1 AND promocion_id != ?
+                      AND (sucursal_id <=> ? OR sucursal_id IS NULL)
+                      AND fecha_inicio <= ? AND fecha_fin >= ?
+                    LIMIT 1
+                ");
+                $stmtSolapeAct->execute([$promAct['producto_id'], $id, $promAct['sucursal_id'], $promAct['fecha_fin'], $promAct['fecha_inicio']]);
+            }
             if ($stmtSolapeAct->fetch()) {
                 $error = 'No se puede reactivar: se traslapa en fechas con otra promoción activa del mismo producto. Desactívala primero.';
             } else {
@@ -381,7 +472,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                                 <div style="font-size:11px;color:#888;margin-top:2px;"><?= htmlspecialchars($pr['descripcion']) ?></div>
                                 <?php endif; ?>
                             </td>
-                            <td style="font-size:12px;"><?= $pr['sucursal_nombre'] !== null ? htmlspecialchars($pr['sucursal_nombre']) : '<em style="color:#aaa;">Todas (legacy)</em>' ?></td>
+                            <td style="font-size:12px;"><?= $pr['sucursal_nombre'] !== null ? htmlspecialchars($pr['sucursal_nombre']) : '<em style="color:#1565c0;">Ambas sucursales</em>' ?></td>
                             <td class="precio-orig">$<?= number_format($pr['precio_venta'], 2) ?></td>
                             <td style="font-weight:700;color:#2e7d32;">$<?= number_format($pr['precio_promocional'], 2) ?></td>
                             <td><span class="ahorro-badge">-<?= $ahorroPct ?>%</span></td>
@@ -443,10 +534,20 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         <label>Sucursal *</label>
                         <select id="selSucursal" name="sucursal_id" onchange="onSucursalChange(this.value)">
                             <option value="">-- Selecciona sucursal --</option>
+                            <?php if (count($sucursales) > 1): ?>
+                            <option value="ambas">Ambas sucursales</option>
+                            <?php endif; ?>
                             <?php foreach ($sucursales as $s): ?>
                             <option value="<?= $s['sucursal_id'] ?>"><?= htmlspecialchars($s['nombre']) ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <!-- [FEATURE-PROMO-AMBAS-SUCURSALES] Aviso de que el buscador solo
+                             ofrecera productos con stock en TODAS las sucursales cuando se
+                             elige "Ambas" -- para que no parezca que el buscador esta vacio
+                             o fallando cuando en realidad esta filtrando correctamente. -->
+                        <div id="hintSucursal" style="font-size:11px;color:#888;margin-top:4px;display:none;">
+                            Solo se muestran productos con stock disponible en <strong>ambas</strong> sucursales.
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -523,6 +624,7 @@ function onSucursalChange(val) {
     document.getElementById('inputProductoId').value = '';
     document.getElementById('prodSelBox').style.display = 'none';
     document.getElementById('sugProd').style.display = 'none';
+    document.getElementById('hintSucursal').style.display = val === 'ambas' ? 'block' : 'none';
     prodSelPrecio = 0;
 }
 

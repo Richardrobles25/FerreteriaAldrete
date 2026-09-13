@@ -96,6 +96,56 @@ function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
     return $totales;
 }
 
+// [FIX-DEVOLUCION-PARCIAL-2] Reconstruye el subtotal bruto y el descuento TOTAL originales de
+// la venta (ajuste por daño/promo + descuento de cliente, sumados), sin depender de
+// ventas.subtotal/ventas.descuento -- esas dos columnas SI se reducen con cada devolucion
+// (ver el UPDATE mas abajo), asi que leerlas directo ya no representa la venta original a
+// partir de la SEGUNDA devolucion parcial. Verificado en vivo: una venta con ajuste por daño
+// ($190->$120 x4, folio 0027) + 5% de descuento de cliente devolvia bien la primera unidad
+// ($114.00, correcto) pero la segunda devolucion (las 3 restantes) solo devolvia $256.50 en
+// vez de los $342.00 que faltaban -- la venta quedaba en estado 'Devuelto' (subtotal=0) con
+// $85.50 "perdidos" en total, nunca entregados al cliente. Causa: ventaSubtotalBruto se leia
+// de ventas.subtotal (ya reducido por la primera devolucion) mientras subtotalFinalVenta se
+// recalcula siempre de venta_productos (nunca cambia) -- la resta entre ambos ya no
+// representaba el ajuste total real. Aqui se reconstruyen ambos valores desde fuentes que
+// nunca cambian: venta_productos.precio_unitario*cantidad para el bruto (las filas de
+// venta_productos jamas se tocan), y el descuento actual + lo que devoluciones ACTIVAS previas
+// ya le restaron (cada una resto exactamente subtotal_bruto_devuelto-total_devuelto) para
+// reconstruir el descuento original.
+function obtenerSubtotalDescuentoOriginal(PDO $pdo, int $ventaId, float $descuentoActual): array
+{
+    // [FIX-DEVOLUCION-PROMO-DESCUENTO 2026-09-12] "precio_unitario" es el precio de CATALOGO
+    // (antes de promocion, ver nuevaVenta.php: precio_orig = item.precio_normal), asi que
+    // SUM(precio_unitario*cantidad) SIEMPRE incluye el descuento de una promocion activa,
+    // exista o no ajuste por daño en la linea. Pero ventas.descuento (y por lo tanto
+    // "ventaDescuentoTotal" reconstruido abajo) NUNCA cuenta la promocion como descuento --
+    // solo cuenta ajuste por daño + descuento de cliente (ver nuevaVenta.php,
+    // "$sumaDescuentoAjustes" solo suma items CON nota_ajuste). El resultado: en una venta con
+    // promocion pero SIN ajuste por daño, "perItemDiscountVenta" (mas abajo) quedaba igual al
+    // descuento de la promocion (que ventas.descuento nunca conto), y "clientDiscountVenta" se
+    // recortaba a $0 -- el reembolso proporcional de una devolucion IGNORABA por completo el
+    // descuento de cliente y le devolvia de mas (reproducido en vivo: venta $306.00 con promo
+    // $75->$60 + 15% de cliente, devolver 2 de 6 unidades daba $120.00 en vez de los $102.00
+    // correctos -- $18.00 de mas, exactos al 15% de esas 2 unidades). Se usa
+    // "subtotal + descuento" de venta_productos (precio_final*cantidad + el ajuste por daño YA
+    // contado en ventas.descuento) como bruto en vez del precio de catalogo: para una linea con
+    // ajuste por daño da el mismo resultado que antes (el ajuste ya venia de una base de
+    // catalogo), pero para una linea solo con promocion ya no arrastra un descuento fantasma
+    // que ventas.descuento nunca reconoció.
+    $stmtBruto = $pdo->prepare("SELECT COALESCE(SUM(subtotal + descuento), 0) FROM venta_productos WHERE venta_id = ?");
+    $stmtBruto->execute([$ventaId]);
+    $subtotalBrutoOriginal = round(floatval($stmtBruto->fetchColumn()), 2);
+
+    $stmtDescPrev = $pdo->prepare("
+        SELECT COALESCE(SUM(subtotal_bruto_devuelto - total_devuelto), 0)
+        FROM devoluciones WHERE venta_id = ? AND cancelada_en IS NULL
+    ");
+    $stmtDescPrev->execute([$ventaId]);
+    $descuentoYaRestado = round(floatval($stmtDescPrev->fetchColumn()), 2);
+
+    return [$subtotalBrutoOriginal, round($descuentoActual + $descuentoYaRestado, 2)];
+}
+
 // Buscar venta via AJAX (por folio NNNN + mes + año)
 if (isset($_GET['buscar_venta'])) {
     header('Content-Type: application/json');
@@ -127,6 +177,15 @@ if (isset($_GET['buscar_venta'])) {
         }
 
         if ($venta) {
+            // [FIX-DEVOLUCION-PARCIAL-2] El preview de actualizarResumen() (JS) necesita el
+            // subtotal/descuento ORIGINALES de la venta, no los que ya trae ventas.subtotal/
+            // descuento tras devoluciones previas -- ver obtenerSubtotalDescuentoOriginal().
+            [$subtotalOriginal, $descuentoOriginal] = obtenerSubtotalDescuentoOriginal(
+                $pdo, intval($venta['venta_id']), floatval($venta['descuento'])
+            );
+            $venta['subtotal_original']  = $subtotalOriginal;
+            $venta['descuento_original'] = $descuentoOriginal;
+
             $stmtP = $pdo->prepare("
                 SELECT vp.*, p.nombre_producto, p.codigo,
                        pk.nombre AS paquete_nombre,
@@ -221,23 +280,25 @@ if (isset($_GET['cancelar_dev'])) {
                            'Cancelacion devolucion #' . $devolucion_id . ($nota_cancel ? ': ' . $nota_cancel : '')]);
         }
 
-        // [AUTOFIX] Bug C: restaurar correctamente subtotal (bruto), descuento, comisión y total.
+        // [AUTOFIX] Bug C: restaurar correctamente subtotal (bruto), descuento y total.
         // Los registros nuevos almacenan subtotal_bruto_devuelto y comision_devuelta.
         // Para registros anteriores (columnas en 0) se usa total_devuelto como fallback.
+        // [FIX-COMISION-NO-REEMBOLSABLE] (portado de admin/cajero_devoluciones.php):
+        // comision_terminal ya NO se toca al devolver -- la comision nunca se le regresa al
+        // cliente, asi que tampoco se le "quita" nunca a la venta. Por lo mismo, cancelar una
+        // devolucion ya no debe sumarsela de vuelta: nunca se le resto.
         $totalDevuelto = floatval($dev['total_devuelto']);
         $subtotalBruto = floatval($dev['subtotal_bruto_devuelto'] ?? 0);
         if ($subtotalBruto < 0.001) $subtotalBruto = $totalDevuelto; // fallback registros viejos
-        $comisionDev   = floatval($dev['comision_devuelta'] ?? 0);
         $descuentoDev  = max(0.0, round($subtotalBruto - $totalDevuelto, 2));
 
         $pdo->prepare("
             UPDATE ventas
-            SET subtotal          = subtotal + ?,
-                descuento         = descuento + ?,
-                comision_terminal = comision_terminal + ?,
-                total             = total + ?
+            SET subtotal  = subtotal + ?,
+                descuento = descuento + ?,
+                total     = total + ?
             WHERE venta_id = ?
-        ")->execute([$subtotalBruto, $descuentoDev, $comisionDev, $totalDevuelto + $comisionDev, $dev['venta_id']]);
+        ")->execute([$subtotalBruto, $descuentoDev, $totalDevuelto, $dev['venta_id']]);
 
         // Estado: si quedan otras devoluciones activas → Modificado, sino → Completada
         $stmtOtras = $pdo->prepare("SELECT COUNT(*) FROM devoluciones WHERE venta_id = ? AND devolucion_id != ? AND cancelada_en IS NULL");
@@ -614,8 +675,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // El factorNeto anterior usaba subtotalBruto como base, lo que "redistribuía"
             // los ajustes por daño sobre todos los ítems y daba montos incorrectos.
 
-            $ventaSubtotalBruto  = floatval($ventaInfo['venta_subtotal'] ?? 0);
-            $ventaDescuentoTotal = floatval($ventaInfo['venta_descuento'] ?? 0);
+            // [FIX-DEVOLUCION-PARCIAL-2 2026-09-11] $ventaInfo['venta_subtotal']/['venta_descuento']
+            // son ventas.subtotal/descuento LEIDOS AL INICIO de esta peticion -- correctos en la
+            // primera devolucion de una venta, pero YA REDUCIDOS por cualquier devolucion previa
+            // en la segunda en adelante, mientras que $subtotalFinalVenta (abajo) siempre se
+            // recalcula de venta_productos (nunca cambia). Esa mezcla de un valor que decae con
+            // uno que no rompia perItemDiscountVenta/factorClienteNeto a partir de la segunda
+            // devolucion parcial de una venta con ajuste por daño o promocion: verificado en vivo
+            // con una venta de $190->$120 x4 (ajuste por daño) + 5% descuento cliente (folio 0027,
+            // venta_id=34) -- la primera devolucion (1 unidad) devolvio $114.00 correcto, pero la
+            // segunda (las 3 restantes) solo devolvio $256.50 en vez de los $342.00 que faltaban,
+            // dejando la venta en estado 'Devuelto' (subtotal=0) con $85.50 nunca entregados al
+            // cliente. Se reconstruyen ambos valores desde fuentes que nunca cambian -- ver
+            // obtenerSubtotalDescuentoOriginal().
+            [$ventaSubtotalBruto, $ventaDescuentoTotal] = obtenerSubtotalDescuentoOriginal(
+                $pdo, $venta_id, floatval($ventaInfo['venta_descuento'] ?? 0)
+            );
 
             $perItemDiscountVenta = max(0.0, $ventaSubtotalBruto - $subtotalFinalVenta);
             $clientDiscountVenta  = max(0.0, $ventaDescuentoTotal - $perItemDiscountVenta);
@@ -728,29 +803,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // [AUTOFIX] Bug B: actualizar con bases correctas por campo
                 // subtotal -= precio bruto devuelto | descuento -= descuento proporcional
-                // comision_terminal -= comisión proporcional | total -= precio_final + comisión
+                // total -= precio_final devuelto
+                // [FIX-COMISION-NO-REEMBOLSABLE] (portado de admin/cajero_devoluciones.php):
+                // Antes tambien se restaba la comision proporcional (comisionDevuelta) de
+                // comision_terminal Y de total -- pero el retiro de caja de mas abajo
+                // ($montoRetiro = $totalDevuelto, SIN comision) ya confirma que al cliente solo
+                // se le regresa el valor del producto, nunca la comision de terminal (por eso
+                // el aviso "no reembolsable" en el modal). Restar la comision del total tambien
+                // "borraba" ese dinero de la contabilidad sin que saliera del cajon ni se le
+                // diera a nadie -- comision_terminal ya no se toca en ninguna devolucion,
+                // parcial o total, para que total = subtotal + comision_terminal siga siendo
+                // verdad siempre.
                 $pdo->prepare("
                     UPDATE ventas
-                    SET subtotal          = GREATEST(0, subtotal - ?),
-                        descuento         = GREATEST(0, descuento - ?),
-                        comision_terminal = GREATEST(0, comision_terminal - ?),
-                        total             = GREATEST(0, total - ?)
+                    SET subtotal  = GREATEST(0, subtotal - ?),
+                        descuento = GREATEST(0, descuento - ?),
+                        total     = GREATEST(0, total - ?)
                     WHERE venta_id = ?
-                ")->execute([$subtotalBrutoDevuelto, $descuentoDevuelto, $comisionDevuelta, $totalDevuelto + $comisionDevuelta, $venta_id]);
+                ")->execute([$subtotalBrutoDevuelto, $descuentoDevuelto, $totalDevuelto, $venta_id]);
 
-                // Actualizar estado según si fue devolución total o parcial
-                $stmtNuevoTotal = $pdo->prepare("SELECT total FROM ventas WHERE venta_id = ?");
-                $stmtNuevoTotal->execute([$venta_id]);
-                $nuevoTotal  = floatval($stmtNuevoTotal->fetchColumn());
-                $nuevoEstado = $nuevoTotal <= 0 ? 'Devuelto' : 'Modificado';
-                if ($nuevoEstado === 'Devuelto') {
-                    // Devolución total: limpiar todos los montos a 0 (incluyendo comision_terminal)
-                    $pdo->prepare("UPDATE ventas SET estado = ?, subtotal = 0, descuento = 0, comision_terminal = 0, total = 0 WHERE venta_id = ?")
-                        ->execute([$nuevoEstado, $venta_id]);
-                } else {
-                    $pdo->prepare("UPDATE ventas SET estado = ? WHERE venta_id = ?")
-                        ->execute([$nuevoEstado, $venta_id]);
-                }
+                // Actualizar estado según si fue devolución total o parcial.
+                // [FIX-COMISION-NO-REEMBOLSABLE] Se usa "subtotal" (no "total") como señal de
+                // devolución completa: con comision_terminal > 0 y ya sin reembolsarse nunca,
+                // "total" ya no llega a exactamente 0 aunque se devuelvan todos los productos
+                // -- se queda con la comision no recuperable, que es justo el punto.
+                $stmtNuevoSubtotal = $pdo->prepare("SELECT subtotal FROM ventas WHERE venta_id = ?");
+                $stmtNuevoSubtotal->execute([$venta_id]);
+                $nuevoSubtotal = floatval($stmtNuevoSubtotal->fetchColumn());
+                $nuevoEstado   = $nuevoSubtotal <= 0 ? 'Devuelto' : 'Modificado';
+                $pdo->prepare("UPDATE ventas SET estado = ? WHERE venta_id = ?")
+                    ->execute([$nuevoEstado, $venta_id]);
 
                 // Si era crédito, actualizar el saldo.
                 // [FIX] Reembolso de crédito con abonos previos: si el cliente ya habia
@@ -766,7 +848,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Se incluye 'Vencido' ademas de 'Activo': un credito vencido tambien
                     // debe reducir su saldo (y, si aplica, reembolsar el excedente) al
                     // devolver productos de esa venta.
-                    $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente, estado FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido')");
+                    // [FIX-DEVOLUCION-CREDITO-LIQUIDADO 2026-09-11] Faltaba 'Liquidado' aqui --
+                    // si el cliente ya habia abonado el credito COMPLETO antes de la devolucion
+                    // (saldo_pendiente=0, estado ya 'Liquidado'), esta consulta no encontraba
+                    // ninguna fila, $cred quedaba en false, y todo este bloque se saltaba --
+                    // incluyendo el calculo de $reembolsoExcedenteCredito, que se quedaba en 0.0.
+                    // Sin retiro generado (necesitaRetiro exige reembolsoExcedenteCredito>0.001),
+                    // el dinero de la devolucion desaparecia por completo: ni se le regresaba al
+                    // cliente en efectivo ni quedaba como saldo a favor. Reproducido en vivo
+                    // (folio 0030/venta_id=37, guion D4): credito ya Liquidado por abono, se
+                    // devolvieron 5 unidades por $57.00 y NO se genero ningun movimiento de caja.
+                    // El handler de cancelar_dev (mas arriba en este archivo) ya esperaba
+                    // 'Liquidado' en su propia consulta -- esta es la unica que se habia quedado
+                    // desactualizada.
+                    $stmtCred = $pdo->prepare("SELECT credito_id, saldo_pendiente, estado FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido','Liquidado')");
                     $stmtCred->execute([$venta_id]);
                     $cred = $stmtCred->fetch(PDO::FETCH_ASSOC);
                     if ($cred) {
@@ -1391,8 +1486,12 @@ function actualizarResumen() {
     // perItemDiscount = diferencia entre subtotalBruto y subtotalFinal (promos + ajustes daño ya en precio_final)
     // clientDiscount  = ventas.descuento - perItemDiscount (porcentaje de descuento global del cliente)
     // factorClienteNeto = (subtotalFinal - clientDiscount) / subtotalFinal
-    const ventaSubtotalBruto  = parseFloat(ventaActual.subtotal || 0);
-    const ventaDescuentoTotal = parseFloat(ventaActual.descuento || 0);
+    // [FIX-DEVOLUCION-PARCIAL-2] Usar los valores ORIGINALES reconstruidos por el servidor
+    // (subtotal_original/descuento_original), no ventaActual.subtotal/.descuento directo --
+    // esos dos ya vienen reducidos por devoluciones previas y factorClienteNeto necesita la
+    // venta completa para ser una tasa estable en la segunda devolucion en adelante.
+    const ventaSubtotalBruto  = parseFloat(ventaActual.subtotal_original ?? ventaActual.subtotal ?? 0);
+    const ventaDescuentoTotal = parseFloat(ventaActual.descuento_original ?? ventaActual.descuento ?? 0);
     const subtotalFinalVenta  = (ventaActual.productos || []).reduce(
         (s, p) => s + parseFloat(p.precio_final || 0) * parseFloat(p.cantidad || 0), 0
     );

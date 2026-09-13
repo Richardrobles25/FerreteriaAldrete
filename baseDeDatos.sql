@@ -184,11 +184,11 @@
         referencia_transferencia VARCHAR(100) NULL DEFAULT NULL,
         monto_efectivo DECIMAL(10,2) DEFAULT 0,
         monto_terminal DECIMAL(10,2) DEFAULT 0,
+        mixto_recibido DECIMAL(10,2) NULL DEFAULT NULL,
         cambio DECIMAL(10,2) DEFAULT 0,
         estado ENUM('Pendiente','Completada','Cancelada','Devuelto','Modificado') NOT NULL DEFAULT 'Pendiente',
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        referencia_transferencia VARCHAR(100) NULL DEFAULT NULL,
         INDEX idx_folio (folio),
         INDEX idx_ventas_mes (created_at),
         FOREIGN KEY (caja_id) REFERENCES cajas(caja_id),
@@ -229,17 +229,33 @@
     );
 
     -- 14. ABONOS
+    -- [FEATURE-TICKET-ABONO 2026-09-11] folio/caja_id/sucursal_id/monto_efectivo/
+    -- monto_terminal/referencia_transferencia/saldo_despues: soportan el comprobante impreso
+    -- de un pago. Un solo pago puede tocar varios creditos por FIFO -- todas las filas que ese
+    -- pago genere comparten el mismo folio, para reconstruir el comprobante completo.
     CREATE TABLE abonos (
         abono_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        folio VARCHAR(20) DEFAULT NULL,
         credito_id INT UNSIGNED NOT NULL,
+        caja_id INT UNSIGNED DEFAULT NULL,
+        sucursal_id INT UNSIGNED DEFAULT NULL,
         usuario_id INT UNSIGNED NOT NULL,
         monto DECIMAL(10,2) NOT NULL,
+        saldo_despues DECIMAL(10,2) DEFAULT NULL,
         comision_terminal DECIMAL(10,2) DEFAULT 0,
         metodo_pago ENUM('Efectivo','Terminal','Credito','Mixto','Transferencia') NOT NULL,
+        monto_efectivo DECIMAL(10,2) DEFAULT 0.00,
+        monto_terminal DECIMAL(10,2) DEFAULT 0.00,
+        referencia_transferencia VARCHAR(100) DEFAULT NULL,
+        monto_recibido DECIMAL(10,2) DEFAULT NULL,
         notas TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_abonos_folio (folio),
+        KEY idx_abonos_caja (caja_id),
         FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
-        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id),
+        FOREIGN KEY (caja_id) REFERENCES cajas(caja_id),
+        FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id)
     );
 
     -- 15. MOVIMIENTOS_INVENTARIO
@@ -331,13 +347,15 @@
     -- ============================================
     -- UNIDADES DE MEDIDA
     -- ============================================
+    -- [CAMBIO-UNIDAD-GLOBAL 2026-09-09] Catalogo global (igual que categorias/proveedores/
+    -- paquetes), no por sucursal -- confirmado con el usuario tras notar la inconsistencia:
+    -- era la unica entidad de catalogo aislada por sucursal, obligando a elegir sucursal
+    -- especifica al crear una unidad en vez de compartirla entre todas.
 
     CREATE TABLE unidades_medida (
     unidad_id   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    sucursal_id INT UNSIGNED NOT NULL,
     nombre      VARCHAR(50) NOT NULL,
-    UNIQUE KEY uq_sucursal_nombre (sucursal_id, nombre),
-    FOREIGN KEY (sucursal_id) REFERENCES sucursales(sucursal_id) ON DELETE CASCADE
+    UNIQUE KEY uq_nombre (nombre)
 );
 
     -- ============================================
@@ -451,6 +469,16 @@ ALTER TABLE usuarios ADD COLUMN es_principal BOOLEAN NOT NULL DEFAULT 0;
 --   independientes a proposito (un empleado puede trabajar dias irregulares).
 ALTER TABLE empleados ADD COLUMN horas_esperadas_semana DECIMAL(5,2) NOT NULL DEFAULT 51.00;
 ALTER TABLE empleados ADD COLUMN horas_por_dia          DECIMAL(4,2) NOT NULL DEFAULT 9.00;
+
+-- [FEATURE-SALDO-INICIAL-VACACIONES] Un empleado que ya trabajaba antes de usar el sistema
+-- puede traer dias de vacaciones ya acumulados (o ya gastados) que el sistema nunca vio -- sin
+-- esto, calcSaldoVacaciones() simula su linea de tiempo completa desde fecha_ingreso asumiendo
+-- 0 dias tomados antes del sistema, dandole hasta 12 dias "de mas" a alguien que en la vida
+-- real ya los uso. Si se captura, es el saldo real a la fecha capturada (saldo_vacaciones_ajuste
+-- _fecha, normalmente "hoy" al darlo de alta) y la formula solo simula aniversarios/vacaciones
+-- POSTERIORES a esa fecha. NULL = comportamiento de siempre (simular desde fecha_ingreso).
+ALTER TABLE empleados ADD COLUMN saldo_vacaciones_ajuste       INT  NULL DEFAULT NULL;
+ALTER TABLE empleados ADD COLUMN saldo_vacaciones_ajuste_fecha DATE NULL DEFAULT NULL;
 
 CREATE TABLE IF NOT EXISTS empleados (
     empleado_id    INT AUTO_INCREMENT PRIMARY KEY,

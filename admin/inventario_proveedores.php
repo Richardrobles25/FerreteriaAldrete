@@ -42,8 +42,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // campos tenia tope de longitud en el servidor — se truncaban en silencio y se guardaban
     // como "creado correctamente" (el correo incluso quedaba con el dominio cortado).
     if (mb_strlen($nombre) > 100)    $errores[] = 'El nombre no puede tener más de 100 caracteres.';
-    if (mb_strlen($telefono) > 20)   $errores[] = 'El teléfono no puede tener más de 20 caracteres.';
+    // [FIX-PROVEEDOR-TELEFONO] (mismo criterio que clientes.php/formUsuario.php/formSucursal.php
+    // en toda la app): no habia validacion de formato, solo de longitud maxima — aceptaba
+    // letras o cualquier cantidad de digitos.
+    if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     if (mb_strlen($correo) > 100)    $errores[] = 'El correo no puede tener más de 100 caracteres.';
+    // [FIX-PROVEEDOR-CORREO] (mismo criterio que clientes.php en toda la app): solo se
+    // validaba longitud, nunca formato — aceptaba cualquier texto sin arroba ni dominio.
+    if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
     if (mb_strlen($direccion) > 255) $errores[] = 'La dirección no puede tener más de 255 caracteres.';
 
     if ($nombre && empty($errores)) {
@@ -230,7 +236,12 @@ if ($editando) {
     .form-group input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
     .form-group input:focus { outline: none; border-color: #14ace7; }
     .cats-check { display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 10px; }
-    .cat-check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #555; }
+    /* [FIX-CSS-CHECKBOX-PROVEEDOR] ".form-group input" y ".form-group label" (mas arriba)
+       aplican a CUALQUIER input/label dentro de .form-group, incluidos estos checkboxes --
+       forzaban el input a verse como una caja de texto de ancho completo, y el label a
+       "display:block" en vez de fila. Estos selectores mas especificos los anulan. */
+    .cats-check label.cat-check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #555; margin-bottom: 0; font-weight: 400; }
+    .cats-check .cat-check-row input[type="checkbox"] { width: 16px; height: 16px; flex: none; padding: 0; border: none; border-radius: 0; }
     .btn-guardar { background: #14ace7; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #1196cb; }
     .btn-cancelar-edit { background: white; color: #666; border: 1px solid #ddd; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 8px; text-decoration: none; display: block; text-align: center; }
@@ -364,7 +375,7 @@ if ($editando) {
                     </div>
                     <div class="form-group">
                         <label>Teléfono</label>
-                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="20">
+                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" title="Ingresa exactamente 10 dígitos numéricos" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)">
                     </div>
                     <div class="form-group">
                         <label>Correo</label>

@@ -266,7 +266,7 @@ $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE a
                 <h3>Registrar entrada</h3>
 
                 <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito'): ?>
-                    <div class="msg msg-exito">
+                    <div class="msg msg-exito msg-flash">
                         Entrada registrada: <strong><?= htmlspecialchars(is_scalar($_GET['prod'] ?? null) ? (string)$_GET['prod'] : '') ?></strong>
                     </div>
                 <?php endif; ?>
@@ -541,6 +541,16 @@ function filtrarTabla(q) {
 function setMotivo(texto) {
     document.getElementById('inputMotivo').value = texto;
 }
+
+// [FEATURE-MSG-AUTODISMISS] A peticion del usuario: el mensaje de exito se quedaba en
+// pantalla para siempre hasta que el admin recargara o navegara. Se oculta solo tras 5s.
+document.querySelectorAll('.msg-flash').forEach(function(el) {
+    setTimeout(function() {
+        el.style.transition = 'opacity 0.4s';
+        el.style.opacity = '0';
+        setTimeout(function() { el.remove(); }, 400);
+    }, 5000);
+});
 </script>
 </body>
 </html>

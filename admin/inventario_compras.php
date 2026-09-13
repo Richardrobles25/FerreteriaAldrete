@@ -86,6 +86,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
                 $errores[] = 'Uno de los productos del carrito es inválido.';
                 break;
             }
+            // [FEATURE-COMPRA-PRODUCTOS-POR-PROVEEDOR] El buscador del navegador ya solo
+            // ofrece productos ligados al proveedor elegido, pero eso es cosmetico -- un POST
+            // directo (curl, DevTools) podia mandar cualquier producto_id sin relacion real
+            // con el proveedor. Se revalida aqui contra producto_proveedor, la unica fuente
+            // de verdad, antes de aceptar la fila.
+            $stmtRelChk = $pdo->prepare("SELECT 1 FROM producto_proveedor WHERE producto_id = ? AND proveedor_id = ?");
+            $stmtRelChk->execute([$prodIdChk, $proveedor_id]);
+            if (!$stmtRelChk->fetchColumn()) {
+                $errores[] = '"' . ($item['nombre'] ?? 'Uno de los productos') . '" no está relacionado con el proveedor seleccionado.';
+                break;
+            }
             if ($cantChk <= 0) {
                 $errores[] = 'La cantidad de "' . ($item['nombre'] ?? 'un producto') . '" debe ser mayor a 0.';
                 break;
@@ -112,9 +123,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             }
             // [FIX-ALTO-C-04] Antes se aceptaba cualquier decimal para cualquier producto,
             // igual que en Salidas: un producto por Unidad podía "entrar" 3.7 piezas.
-            $stmtTipoChk = $pdo->prepare("SELECT tipo_venta FROM productos WHERE producto_id = ?");
+            $stmtTipoChk = $pdo->prepare("SELECT tipo_venta, precio_compra FROM productos WHERE producto_id = ?");
             $stmtTipoChk->execute([$prodIdChk]);
-            $tipoVentaChk = $stmtTipoChk->fetchColumn();
+            $prodChk      = $stmtTipoChk->fetch(PDO::FETCH_ASSOC);
+            $tipoVentaChk = $prodChk ? $prodChk['tipo_venta'] : false;
             if ($tipoVentaChk !== false && $tipoVentaChk !== 'Suelto' && floor($cantChk) != $cantChk) {
                 $errores[] = '"' . ($item['nombre'] ?? 'Un producto') . '" se maneja por unidad; la cantidad debe ser un número entero.';
                 break;
@@ -125,6 +137,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
             // el POS hasta que alguien lo notara.
             if (!empty($item['actualizar_precio']) && $precChk <= 0) {
                 $errores[] = 'No puedes actualizar el precio de venta de "' . ($item['nombre'] ?? 'un producto') . '" con un precio de compra de $0.';
+                break;
+            }
+            // [FIX-PRECIO-SOLO-SUBE] El buscador ya solo muestra el checkbox "Actualizar
+            // precios en inventario" cuando el precio nuevo es mayor al de catálogo, pero eso
+            // es cosmético -- un POST directo podía mandar "actualizar_precio":true con un
+            // precio igual o menor y bajar el precio de venta sin que la UI lo permitiera nunca.
+            $precioCompraCatalogo = $prodChk ? floatval($prodChk['precio_compra']) : 0;
+            if (!empty($item['actualizar_precio']) && $precioCompraCatalogo > 0 && $precChk <= $precioCompraCatalogo) {
+                $errores[] = 'Solo puedes actualizar el precio de "' . ($item['nombre'] ?? 'un producto') . '" si el nuevo precio de compra es mayor al actual ($' . number_format($precioCompraCatalogo, 2) . ').';
                 break;
             }
         }
@@ -224,9 +245,28 @@ $compras = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Datos para el formulario
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo = 1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
-$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_compra FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 ORDER BY p.nombre_producto ASC");
+// [FIX-COMPRA-PRECIO-PREVIEW] precio_venta/precio_mayoreo faltaban aqui -- calcularNuevosPrecios()
+// en JS los necesita para la vista previa de "Actualizar precios en inventario"; sin ellos
+// siempre calculaba con precio_venta=0, mostrando un margen y precio nuevo incorrectos en la
+// vista previa (el UPDATE real en el servidor SI vuelve a leer los precios reales de la BD,
+// asi que el dato guardado nunca estuvo mal -- solo la vista previa que ve el usuario).
+$stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, p.precio_compra, p.precio_venta, p.precio_mayoreo FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1 WHERE p.activo = 1 ORDER BY p.nombre_producto ASC");
 $stmt->execute([$sucursalVista]);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// [FEATURE-COMPRA-PRODUCTOS-POR-PROVEEDOR] El buscador de "Agregar producto" dejaba elegir
+// CUALQUIER producto del catalogo sin importar el proveedor seleccionado arriba, aunque no
+// tuvieran ninguna relacion real (producto_proveedor) -- reportado en vivo por el usuario.
+// Se anexa a cada producto la lista de proveedor_id a los que esta ligado, para filtrar en
+// el navegador segun el proveedor elegido.
+$provPorProducto = [];
+foreach ($pdo->query("SELECT producto_id, proveedor_id FROM producto_proveedor") as $rPP) {
+    $provPorProducto[(int)$rPP['producto_id']][] = (int)$rPP['proveedor_id'];
+}
+foreach ($productos as &$prodConProv) {
+    $prodConProv['proveedor_ids'] = $provPorProducto[(int)$prodConProv['producto_id']] ?? [];
+}
+unset($prodConProv);
 
 if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     require_once __DIR__ . '/export_helper.php';
@@ -418,12 +458,11 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 <?php if (count($compras) > 0): ?>
                 <table>
                     <thead>
-                        <tr><th>#</th><th>Proveedor</th><th>Total</th><th>Usuario</th><th>Fecha</th><th>Notas</th><th></th></tr>
+                        <tr><th>Proveedor</th><th>Total</th><th>Usuario</th><th>Fecha</th><th>Notas</th><th></th></tr>
                     </thead>
                     <tbody id="tablaFiltrable">
                         <?php foreach ($compras as $c): ?>
                         <tr>
-                            <td style="color:#aaa;"><?= $c['compras_proveedor_id'] ?></td>
                             <td><strong><?= htmlspecialchars($c['nombre_proveedor']) ?></strong></td>
                             <td style="font-weight:700;color:#2e7d32;">$<?= number_format($c['total'],2) ?></td>
                             <td style="font-size:12px;"><?= htmlspecialchars($c['usuario']) ?></td>
@@ -447,7 +486,19 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><ul><?php foreach($errores as $e):?><li><?=htmlspecialchars($e)?></li><?php endforeach;?></ul></div>
                 <?php endif; ?>
-
+                <?php if ($sucursalVista === 0): ?>
+                    <!-- [FIX-COMPRA-TODAS-SUCURSALES] Antes el formulario completo (proveedor,
+                         productos, notas) seguia interactivo con "Todas las sucursales"
+                         seleccionado -- el servidor ya rechazaba el POST al final ("Selecciona
+                         una sucursal especifica"), pero nada lo avisaba antes, y el buscador de
+                         productos por proveedor (relacion producto_proveedor) mostraba "Este
+                         proveedor no tiene productos relacionados" para CUALQUIER proveedor —
+                         confuso, ya que el problema real es que no hay sucursal elegida, no que
+                         el proveedor no tenga productos. Mismo patron ya usado en
+                         inventario_salidas.php/inventario_entradas.php: se oculta el formulario
+                         completo y solo se muestra el aviso. -->
+                    <div class="msg" style="background:#fff8e1;color:#e65100;">Selecciona una sucursal específica arriba para registrar una compra.</div>
+                <?php else: ?>
                 <div class="form-group">
                     <label>Proveedor *</label>
                     <input type="hidden" id="proveedorIdCompra" value="">
@@ -465,9 +516,13 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
 
                 <div class="form-group">
                     <label>Agregar producto</label>
+                    <!-- [FEATURE-COMPRA-PRODUCTOS-POR-PROVEEDOR] Solo se pueden agregar productos
+                         que ya estan relacionados (producto_proveedor) con el proveedor elegido
+                         arriba -- deshabilitado hasta que haya un proveedor seleccionado. -->
+                    <div id="hintProdCompra" style="font-size:12px;color:#aaa;margin-bottom:6px;">Selecciona primero un proveedor.</div>
                     <div class="agregar-row">
                         <div style="position:relative;">
-                            <input type="text" id="buscarProdCompra" placeholder="Buscar producto..." autocomplete="off"
+                            <input type="text" id="buscarProdCompra" placeholder="Selecciona primero un proveedor..." autocomplete="off" disabled
                                 oninput="filtrarProductosCompra(this.value)">
                             <input type="hidden" id="prodCompraId" value="">
                             <input type="hidden" id="prodCompraNombre" value="">
@@ -498,6 +553,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                     <button class="btn-guardar" type="submit" onclick="return prepararCompra()">Registrar compra</button>
                     <button type="button" onclick="limpiarFormularioCompra()" style="width:100%;margin-top:8px;background:none;border:none;color:#aaa;font-size:12px;cursor:pointer;">Limpiar formulario</button>
                 </form>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -547,6 +603,12 @@ function esc(str) {
 const productosData   = <?= json_encode(array_values($productos)) ?>;
 const proveedoresData = <?= json_encode(array_values($proveedores)) ?>;
 const puedeEditarPrecios = <?= $puedeEditarPrecios ? 'true' : 'false' ?>;
+// [FIX-COMPRA-TODAS-SUCURSALES] Con "Todas las sucursales" el formulario completo no se
+// renderiza (ver el <?php if ($sucursalVista === 0) ?> de mas arriba) -- ninguno de los
+// elementos del formulario (listaCompra, notasCompra, etc.) existe en el DOM. El resto de
+// este script sigue corriendo igual (es un solo <script>), asi que hay que evitar que el
+// codigo de inicializacion de mas abajo intente tocarlos y truene con un TypeError.
+const formCompraVisible = <?= $sucursalVista !== 0 ? 'true' : 'false' ?>;
 // [FIX-BORRADOR-COMPRAS] Igual que nuevaVenta.php/ventasPendientes.php: si venimos de
 // registrar la compra con exito (?msg=creado), limpiar el borrador ANTES de restaurarlo.
 (function() {
@@ -556,7 +618,13 @@ const puedeEditarPrecios = <?= $puedeEditarPrecios ? 'true' : 'false' ?>;
     }
 })();
 let itemsCompra = (function() {
+    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] (mismo hueco de cajero_nuevaVenta.php) el
+    // Administrador puede cambiar de sucursal a medio armado de una compra -- sin este
+    // candado, restauraba precios/referencias de la sucursal VIEJA como si fueran de la nueva.
     try {
+        const miSuc = <?= intval($sucursalVista) ?>;
+        const sucGuardada = parseInt(localStorage.getItem('itemsCompraDraft_sucursal_id'));
+        if (sucGuardada !== miSuc) return [];
         const guardado = JSON.parse(localStorage.getItem('itemsCompraDraft'));
         return Array.isArray(guardado) ? guardado : [];
     } catch (e) {
@@ -594,13 +662,52 @@ function seleccionarProveedorCompra(id) {
     document.getElementById('proveedorChipCompra').style.display = 'flex';
     document.getElementById('buscarProveedorCompra').value = '';
     document.getElementById('dropProveedoresCompra').style.display = 'none';
+    actualizarEstadoBusquedaProducto();
     guardarEstadoCompra();
 }
 function limpiarProveedorCompra() {
+    // [FEATURE-COMPRA-PRODUCTOS-POR-PROVEEDOR] Los productos ya agregados pueden no tener
+    // relacion con el proveedor NUEVO que se vaya a elegir -- se avisa y se vacia la lista
+    // en vez de dejar productos "huerfanos" de un proveedor distinto al ya seleccionado.
+    if (itemsCompra.length > 0 && !confirm('Cambiar de proveedor vaciará los productos ya agregados (pueden no pertenecer al proveedor nuevo). ¿Continuar?')) return;
+    itemsCompra = [];
+    renderListaCompra();
     document.getElementById('proveedorIdCompra').value = '';
     document.getElementById('proveedorChipCompra').style.display = 'none';
     document.getElementById('buscarProveedorCompra').value = '';
+    actualizarEstadoBusquedaProducto();
     guardarEstadoCompra();
+}
+
+// [FEATURE-COMPRA-PRODUCTOS-POR-PROVEEDOR] Habilita/deshabilita el buscador de "Agregar
+// producto" segun si ya hay un proveedor elegido, y avisa si ese proveedor no tiene NINGUN
+// producto relacionado en el catalogo (para no dejar al usuario escribiendo sin entender
+// por que nunca aparece nada).
+function actualizarEstadoBusquedaProducto() {
+    const provId = document.getElementById('proveedorIdCompra').value;
+    const inp    = document.getElementById('buscarProdCompra');
+    const hint   = document.getElementById('hintProdCompra');
+    if (!provId) {
+        inp.disabled = true;
+        inp.placeholder = 'Selecciona primero un proveedor...';
+        inp.value = '';
+        hint.textContent = 'Selecciona primero un proveedor.';
+        hint.style.color = '#aaa';
+        return;
+    }
+    const tieneProductos = productosData.some(p => p.proveedor_ids.includes(parseInt(provId, 10)));
+    if (tieneProductos) {
+        inp.disabled = false;
+        inp.placeholder = 'Buscar producto...';
+        hint.textContent = 'Solo se muestran productos relacionados con este proveedor.';
+        hint.style.color = '#aaa';
+    } else {
+        inp.disabled = true;
+        inp.placeholder = 'Este proveedor no tiene productos relacionados...';
+        inp.value = '';
+        hint.textContent = 'Este proveedor no tiene productos relacionados en el catálogo. Agrégaselos desde la ficha del producto (sección Proveedores).';
+        hint.style.color = '#e65100';
+    }
 }
 
 // [FIX-BORRADOR-COMPRAS] Persistencia del proveedor seleccionado — mismo patrón que
@@ -629,9 +736,15 @@ function limpiarFormularioCompra() {
 function filtrarProductosCompra(q) {
     const drop = document.getElementById('dropProdCompra');
     if (!q.trim()) { drop.style.display = 'none'; return; }
+    // [FEATURE-COMPRA-PRODUCTOS-POR-PROVEEDOR] Solo ofrecer productos ligados (producto_proveedor)
+    // al proveedor ya seleccionado -- el input esta deshabilitado sin proveedor, pero se
+    // revalida aqui tambien por si acaso.
+    const provId = parseInt(document.getElementById('proveedorIdCompra').value, 10);
+    if (!provId) { drop.style.display = 'none'; return; }
     const norm = normalizar(q);
     const matches = productosData.filter(p =>
-        normalizar(p.nombre_producto).includes(norm) || normalizar(p.codigo).includes(norm)
+        p.proveedor_ids.includes(provId) &&
+        (normalizar(p.nombre_producto).includes(norm) || normalizar(p.codigo).includes(norm))
     ).slice(0, 25);
     drop.innerHTML = matches.length
         ? matches.map(p =>
@@ -662,6 +775,14 @@ function agregarProdCompra() {
     if (!id || cant <= 0 || precio <= 0) { alert('Completa producto, cantidad y precio.'); return; }
 
     const prod = productosData.find(x => x.producto_id == id);
+    // [FIX-CANT-ENTERA-COMPRA] Esta validación ya existía solo en el servidor -- se dejaba
+    // agregar el producto a la lista y hasta enviar toda la compra se enteraba el usuario de
+    // que la cantidad debía ser entera. Ahora se valida aquí, al momento de dar clic en "+",
+    // para no dejar agregar nada hasta que los campos sean correctos.
+    if (prod && prod.tipo_venta !== 'Suelto' && !Number.isInteger(cant)) {
+        alert('"' + nombre + '" se maneja por unidad; la cantidad debe ser un número entero.');
+        return;
+    }
     // Alertar visiblemente cuando el producto ya está en la compra (antes se sumaba en silencio)
     const existe = itemsCompra.find(i => i.producto_id == id);
     if (existe) {
@@ -711,7 +832,7 @@ function calcularNuevosPrecios(prod, nuevoPrecioCompra) {
 
 function renderListaCompra() {
     // [FIX-BORRADOR-COMPRAS] Persistir la lista en cada render, igual que nuevaVenta.php.
-    localStorage.setItem('itemsCompraDraft', JSON.stringify(itemsCompra));
+    localStorage.setItem('itemsCompraDraft', JSON.stringify(itemsCompra)); localStorage.setItem('itemsCompraDraft_sucursal_id', String(<?= intval($sucursalVista) ?>));
     const div = document.getElementById('listaCompra');
     const tot = document.getElementById('totalCompra');
     if (!itemsCompra.length) {
@@ -726,9 +847,16 @@ function renderListaCompra() {
         const prod   = i.prod_data || {};
         const compraViejo = parseFloat(prod.precio_compra || 0);
         const precioChanged = compraViejo > 0 && Math.abs(i.precio_unitario - compraViejo) > 0.001;
+        // [FIX-PRECIO-SOLO-SUBE] El checkbox "Actualizar precios en inventario" solo tiene
+        // sentido cuando el precio de compra SUBIÓ -- si es igual o menor, no hay margen que
+        // recalcular hacia arriba y mostrar la opción solo invita a bajar precios de venta por
+        // error. Si el precio ya no cumple esto (p. ej. se editó después de haber marcado el
+        // checkbox), se desmarca aquí mismo para no enviar un "actualizar_precio" invisible.
+        const precioSubio = compraViejo > 0 && (i.precio_unitario - compraViejo) > 0.001;
+        if (!precioSubio) i.actualizar_precio = false;
         const nuevos = calcularNuevosPrecios(prod, i.precio_unitario);
 
-        const checkboxPrecioHTML = puedeEditarPrecios
+        const checkboxPrecioHTML = (puedeEditarPrecios && precioSubio)
             ? '<label style="font-size:11px;color:#e65100;display:flex;align-items:center;gap:4px;margin-top:4px;cursor:pointer;">'
                 + '<input type="checkbox" ' + (i.actualizar_precio ? 'checked' : '') + ' onchange="toggleActualizarPrecio(' + idx + ',this.checked)" style="width:auto;margin:0;">'
                 + 'Actualizar precios en inventario'
@@ -769,7 +897,7 @@ function renderListaCompra() {
 }
 
 function quitarProdCompra(i) { itemsCompra.splice(i, 1); renderListaCompra(); }
-function toggleActualizarPrecio(idx, val) { itemsCompra[idx].actualizar_precio = val; localStorage.setItem('itemsCompraDraft', JSON.stringify(itemsCompra)); }
+function toggleActualizarPrecio(idx, val) { itemsCompra[idx].actualizar_precio = val; localStorage.setItem('itemsCompraDraft', JSON.stringify(itemsCompra)); localStorage.setItem('itemsCompraDraft_sucursal_id', String(<?= intval($sucursalVista) ?>)); }
 
 function prepararCompra() {
     const prov = document.getElementById('proveedorIdCompra').value;
@@ -781,6 +909,7 @@ function prepararCompra() {
 }
 
 document.addEventListener('click', function(e) {
+    if (!formCompraVisible) return;
     if (!e.target.closest('.prod-search-wrap')) {
         document.getElementById('dropProveedoresCompra').style.display = 'none';
         document.getElementById('dropProdCompra').style.display = 'none';
@@ -791,6 +920,7 @@ document.addEventListener('click', function(e) {
 // restaurarEstadoVenta() en cajero_nuevaVenta.php. Se lee "extra" ANTES de renderListaCompra()
 // por si acaso esa función llegara a disparar algun guardado propio en el futuro.
 (function restaurarEstadoCompra() {
+    if (!formCompraVisible) return;
     let extra = null;
     try { extra = JSON.parse(localStorage.getItem('compraExtra')); } catch (e) {}
 

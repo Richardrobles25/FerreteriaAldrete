@@ -35,7 +35,7 @@ if (isset($_GET['editar'])) {
     if ($editando) {
         $stmtPP = $pdo->prepare("
             SELECT pp.producto_id, pp.cantidad,
-                   p.nombre_producto, p.codigo, p.precio_venta, p.precio_compra
+                   p.nombre_producto, p.codigo, p.precio_venta, p.precio_compra, p.tipo_venta
             FROM paquete_productos pp
             JOIN productos p ON pp.producto_id = p.producto_id AND p.activo = 1
             WHERE pp.paquete_id = ?
@@ -79,6 +79,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$nombre)             $errores[] = 'El nombre es obligatorio.';
     if (!$codigo)             $errores[] = 'El código es obligatorio.';
+    // [FIX-PAQUETE-LARGO] (mismo patron ya corregido en categorias/proveedores/productos/
+    // clientes/gastos/empleados): codigo es VARCHAR(50) y nombre VARCHAR(150) sin ningun tope
+    // en el servidor — un valor mas largo se truncaba en silencio y se guardaba como "creado
+    // correctamente".
+    if (mb_strlen($codigo) > 50)  $errores[] = 'El código no puede tener más de 50 caracteres.';
+    if (mb_strlen($nombre) > 150) $errores[] = 'El nombre no puede tener más de 150 caracteres.';
     if ($precio_paquete <= 0) $errores[] = 'El precio debe ser mayor a 0.';
     // [FIX-PRECIO-MAX-PAQUETE] precio_paquete es DECIMAL(10,2) (tope real 99,999,999.99);
     // sin validar, un valor absurdo tronaba con HTTP 500 crudo en vez de un mensaje claro
@@ -90,8 +96,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // producto_id que no existe/esta inactivo generaba un paquete inconsistente
     // (componentes fantasma o descuentos de stock negativos al vender).
     if (!empty($items)) {
-        $idsValidos = array_column($pdo->query("SELECT producto_id FROM productos WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC), 'producto_id');
-        $idsValidos = array_map('intval', $idsValidos);
+        $tiposVentaMap = [];
+        foreach ($pdo->query("SELECT producto_id, tipo_venta FROM productos WHERE activo = 1")->fetchAll(PDO::FETCH_ASSOC) as $rTV) {
+            $tiposVentaMap[intval($rTV['producto_id'])] = $rTV['tipo_venta'];
+        }
+        $idsValidos = array_keys($tiposVentaMap);
         // [FIX-PAQUETE-DUPLICADO] Un mismo producto repetido dos veces en el mismo paquete
         // (con distinta cantidad cada vez) generaba dos filas en paquete_productos para el
         // mismo producto_id — al vender, el motor solo usa la ULTIMA cantidad (sobrescribe
@@ -99,7 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // y mostrando el producto duplicado en la lista de "requeridos" de Nueva Venta.
         $idsVistos = [];
         foreach ($items as $item) {
-            $cantidadItem = floatval($item['cantidad'] ?? 0);
+            $cantidadItem = round(floatval($item['cantidad'] ?? 0), 3);
             $productoItem = intval($item['producto_id'] ?? 0);
             if ($cantidadItem <= 0) {
                 $errores[] = 'Cada producto del paquete debe tener cantidad mayor a 0.';
@@ -107,6 +116,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (!in_array($productoItem, $idsValidos, true)) {
                 $errores[] = 'El paquete contiene un producto inválido o inactivo.';
+                break;
+            }
+            // [FIX-PAQUETE-CANTIDAD-GRANEL] El formulario forzaba cantidad entera (step="1",
+            // parseInt en JS) sin importar el tipo_venta del producto — un producto "Suelto"
+            // (kg/metro/etc, igual que en Nueva Venta) no podia agregarse a un paquete con
+            // cantidad fraccionaria (ej. 0.5 kg de cemento a granel), y del lado servidor un
+            // POST directo tampoco lo bloqueaba para productos "Unidad" (podia guardarse un
+            // paquete con 1.5 martillos). Mismo criterio que ya usa nuevaVenta.php
+            // (FIX-CANTIDAD-ENTERA-VENTA).
+            if (($tiposVentaMap[$productoItem] ?? null) !== 'Suelto' && floor($cantidadItem) != $cantidadItem) {
+                $errores[] = 'La cantidad debe ser un número entero para productos que no se venden a granel.';
                 break;
             }
             if (in_array($productoItem, $idsVistos, true)) {
@@ -173,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             foreach ($items as $item) {
                 $pdo->prepare("INSERT INTO paquete_productos (paquete_id, producto_id, cantidad) VALUES (?,?,?)")
-                    ->execute([$paquete_id, intval($item['producto_id']), floatval($item['cantidad'])]);
+                    ->execute([$paquete_id, intval($item['producto_id']), round(floatval($item['cantidad']), 3)]);
             }
             $pdo->commit();
             header('Location: inventario_paquetes.php?msg='.($paquete_id&&$_POST['paquete_id']?'editado':'creado'));
@@ -196,7 +216,7 @@ $paquetes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Todos los productos activos para el formulario
 $stmtProds = $pdo->query("
-    SELECT producto_id, codigo, nombre_producto, precio_venta, precio_compra
+    SELECT producto_id, codigo, nombre_producto, precio_venta, precio_compra, tipo_venta
     FROM productos
     WHERE activo = 1
     ORDER BY nombre_producto ASC
@@ -490,17 +510,19 @@ let itemsPaquete = <?= json_encode(array_map(fn($p) => [
     'nombre'      => $p['nombre_producto'],
     'cantidad'    => floatval($p['cantidad']),
     'precio'      => floatval($p['precio_venta']),
-    'costo'       => floatval($p['precio_compra'])
+    'costo'       => floatval($p['precio_compra']),
+    'tipo_venta'  => $p['tipo_venta']
 ], $prodsPaquete)) ?>;
 
 const prodsCatalogo = <?= json_encode(array_values(array_map(fn($p) => [
     'producto_id'    => intval($p['producto_id']),
     'nombre_producto'=> $p['nombre_producto'],
     'precio_venta'   => floatval($p['precio_venta']),
-    'precio_compra'  => floatval($p['precio_compra'])
+    'precio_compra'  => floatval($p['precio_compra']),
+    'tipo_venta'     => $p['tipo_venta']
 ], $productos))) ?>;
 
-let prodSelId = null, prodSelNombre = '', prodSelPrecio = 0, prodSelCosto = 0;
+let prodSelId = null, prodSelNombre = '', prodSelPrecio = 0, prodSelCosto = 0, prodSelTipoVenta = 'Unidad';
 
 const prodsMap = {};
 prodsCatalogo.forEach(p => prodsMap[p.producto_id] = p);
@@ -518,14 +540,22 @@ function filtrarProductos(q) {
 }
 
 function seleccionarProd(id) {
-    const p       = prodsMap[id];
-    prodSelId     = p.producto_id;
-    prodSelNombre = p.nombre_producto;
-    prodSelPrecio = p.precio_venta;
-    prodSelCosto  = p.precio_compra;
+    const p          = prodsMap[id];
+    prodSelId        = p.producto_id;
+    prodSelNombre    = p.nombre_producto;
+    prodSelPrecio    = p.precio_venta;
+    prodSelCosto     = p.precio_compra;
+    prodSelTipoVenta = p.tipo_venta;
     document.getElementById('buscarProd').value           = p.nombre_producto;
     document.getElementById('prodDropdown').style.display = 'none';
-    document.getElementById('cantPaq').focus();
+    // [FIX-PAQUETE-CANTIDAD-GRANEL] Igual que nuevaVenta.php: un producto "Suelto" (se vende
+    // por kg/metro/etc) acepta cantidad fraccionaria; los demas solo enteros.
+    const esSuelto = prodSelTipoVenta === 'Suelto';
+    const inpCant  = document.getElementById('cantPaq');
+    inpCant.step   = esSuelto ? '0.001' : '1';
+    inpCant.min    = esSuelto ? '0.001' : '1';
+    inpCant.value  = '';
+    inpCant.focus();
 }
 
 document.addEventListener('click', function(e) {
@@ -558,9 +588,18 @@ function sugerirCodigo(nombre) {
 }
 
 function agregarProdPaquete() {
-    const cant = parseInt(document.getElementById('cantPaq').value) || 0;
     if (!prodSelId) { alert('Selecciona un producto.'); return; }
-    if (cant < 1)   { alert('La cantidad debe ser al menos 1.'); return; }
+    // [FIX-PAQUETE-CANTIDAD-GRANEL] parseInt truncaba cualquier decimal capturado para un
+    // producto "Suelto" (0.5 se volvia 0 y quedaba bloqueado por el minimo) — igual que
+    // nuevaVenta.php, se usa parseFloat solo para "Suelto".
+    const esSuelto = prodSelTipoVenta === 'Suelto';
+    const cantRaw  = document.getElementById('cantPaq').value;
+    const cant     = esSuelto ? parseFloat(cantRaw) : parseInt(cantRaw);
+    const minCant  = esSuelto ? 0.001 : 1;
+    if (!cant || isNaN(cant) || cant < minCant) {
+        alert(esSuelto ? 'La cantidad debe ser mayor a 0.' : 'La cantidad debe ser al menos 1.');
+        return;
+    }
 
     // [AUTOFIX] BUG-06: Avisar que el producto ya existe en el paquete antes de reemplazar la cantidad
     const existe = itemsPaquete.find(i => i.producto_id === prodSelId);
@@ -571,11 +610,13 @@ function agregarProdPaquete() {
         )) return;
         existe.cantidad = cant;
     }
-    else { itemsPaquete.push({ producto_id: prodSelId, nombre: prodSelNombre, cantidad: cant, precio: prodSelPrecio, costo: prodSelCosto }); }
+    else { itemsPaquete.push({ producto_id: prodSelId, nombre: prodSelNombre, cantidad: cant, precio: prodSelPrecio, costo: prodSelCosto, tipo_venta: prodSelTipoVenta }); }
 
     document.getElementById('buscarProd').value = '';
     document.getElementById('cantPaq').value    = '';
-    prodSelId = null; prodSelNombre = ''; prodSelPrecio = 0;
+    document.getElementById('cantPaq').step     = '1';
+    document.getElementById('cantPaq').min      = '1';
+    prodSelId = null; prodSelNombre = ''; prodSelPrecio = 0; prodSelTipoVenta = 'Unidad';
     renderListaPaq();
     actualizarHintAhorro();
 }
@@ -586,14 +627,18 @@ function renderListaPaq() {
         div.innerHTML = '<div class="paq-vacio">Sin productos agregados</div>';
         return;
     }
-    div.innerHTML = itemsPaquete.map((item, idx) => `
+    div.innerHTML = itemsPaquete.map((item, idx) => {
+        const esSuelto = item.tipo_venta === 'Suelto';
+        const cantDisp = esSuelto ? parseFloat(item.cantidad).toFixed(3).replace(/\.?0+$/,'') : item.cantidad;
+        return `
         <div class="paq-item">
             <div class="paq-item-info">
                 <div class="paq-item-nombre">${esc(item.nombre)}</div>
-                <div class="paq-item-sub">× ${item.cantidad} · $${(item.cantidad * item.precio).toFixed(2)} precio normal</div>
+                <div class="paq-item-sub">× ${cantDisp} · $${(item.cantidad * item.precio).toFixed(2)} precio normal</div>
             </div>
             <button class="btn-quitar-paq" type="button" onclick="quitarProdPaq(${idx})">×</button>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 }
 
 function quitarProdPaq(idx) {

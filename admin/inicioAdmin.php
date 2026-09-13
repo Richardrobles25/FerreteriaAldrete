@@ -67,7 +67,10 @@ $stmtStock = $pdo->query("
 $stockBajo = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
 
 // Auto-marcar vencidos antes de consultar
-$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite <= CURDATE()");
+// [FIX-MORA-DIA-GRACIA 2026-09-12] (espejo de cajeroInventario/creditos.php) el cliente tiene
+// TODO el dia del corte para pagar sin marcarse Vencido -- antes "<= CURDATE()" lo marcaba
+// Vencido ese MISMO dia del corte, sin el dia completo de gracia.
+$pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 
 // Créditos vencidos
 $stmtCred = $pdo->query("

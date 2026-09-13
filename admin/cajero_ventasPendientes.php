@@ -111,23 +111,9 @@ if (isset($_GET['liquidar'])) {
                 throw new Exception('ya_no_pendiente');
             }
 
-            // Descontar stock ahora que se confirma la entrega
-            $stmtItems = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
-            $stmtItems->execute([$venta_id]);
-            foreach ($stmtItems->fetchAll(PDO::FETCH_ASSOC) as $it) {
-                $stmtSt = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
-                $stmtSt->execute([$it['producto_id'], $sucursalVista]);
-                $stockAnt = floatval($stmtSt->fetchColumn() ?: 0);
-                // Bug #3: Bloquear liquidación si no hay stock suficiente
-                if ($stockAnt < floatval($it['cantidad'])) {
-                    throw new Exception('stock_insuficiente');
-                }
-                $stockNvo = max(0, $stockAnt - floatval($it['cantidad']));
-                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-                    ->execute([$stockNvo, $it['producto_id'], $sucursalVista]);
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta domicilio confirmada')")
-                    ->execute([$it['producto_id'], $_SESSION['usuario_id'], $sucursalVista, floatval($it['cantidad']), $stockAnt, $stockNvo]);
-            }
+            // [FIX-STOCK-PENDIENTE-INMEDIATO] El stock ya se descontó al CREAR la pendiente
+            // (ver el foreach de arriba en el POST de creación) -- liquidar ya no debe volver a
+            // tocarlo, solo confirma la entrega/cobro y reasigna la venta a la caja actual.
 
             // Si es pago a crédito, crear registro en tabla creditos
             $metodoPagoLiq = trim($ventaLiq['metodo_pago']);
@@ -206,7 +192,9 @@ if (isset($_GET['cancelar'])) {
         exit();
     }
 
-    // El stock nunca fue descontado al crear la pendiente, así que solo se cancela la venta
+    // [FIX-STOCK-PENDIENTE-INMEDIATO] El stock SÍ se descuenta ahora al crear la pendiente
+    // (envío ya comprometido), así que cancelarla debe devolverlo -- antes este comentario
+    // decía lo contrario porque el stock nunca se tocaba hasta "liquidar".
     $pdo->beginTransaction();
     try {
         // [FIX-NC2] "AND estado='Pendiente'" en el WHERE: si "Liquidar" se disparo casi al
@@ -217,6 +205,21 @@ if (isset($_GET['cancelar'])) {
         if ($stmtCancel->rowCount() === 0) {
             throw new Exception('ya_no_pendiente');
         }
+
+        // Devolver el stock reservado por esta pendiente
+        $stmtItemsCancel = $pdo->prepare("SELECT producto_id, cantidad FROM venta_productos WHERE venta_id = ?");
+        $stmtItemsCancel->execute([$venta_id]);
+        foreach ($stmtItemsCancel->fetchAll(PDO::FETCH_ASSOC) as $itC) {
+            $stmtStC = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtStC->execute([$itC['producto_id'], $sucursalVista]);
+            $stockAntC = floatval($stmtStC->fetchColumn() ?: 0);
+            $stockNvoC = $stockAntC + floatval($itC['cantidad']);
+            $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                ->execute([$stockNvoC, $itC['producto_id'], $sucursalVista]);
+            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,'Cancelación de venta pendiente')")
+                ->execute([$itC['producto_id'], $_SESSION['usuario_id'], $sucursalVista, floatval($itC['cantidad']), $stockAntC, $stockNvoC]);
+        }
+
         $pdo->commit();
         header('Location: cajero_ventasPendientes.php?msg=cancelado');
         exit();
@@ -236,7 +239,7 @@ if (isset($_GET['get_ticket_venta'])) {
         SELECT v.venta_id, v.folio, v.created_at, v.caja_id, v.cliente_id,
                v.subtotal, v.descuento, v.comision_terminal, v.total,
                v.metodo_pago, v.referencia_transferencia, v.estado,
-               v.monto_efectivo, v.monto_terminal, v.cambio
+               v.monto_efectivo, v.monto_terminal, v.mixto_recibido, v.cambio
         FROM ventas v
         JOIN cajas c ON v.caja_id = c.caja_id
         WHERE v.venta_id = ? AND c.usuario_id = ?
@@ -640,8 +643,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $sumaItems, $descuentoCliente, $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
                 $venta_id = $pdo->lastInsertId();
 
-                // Stock NO se descuenta al crear — se descuenta solo cuando se liquida (entrega confirmada)
-                // Pero sí se valida que el stock disponible (actual menos comprometido en otras pendientes) sea suficiente
+                // [FIX-STOCK-PENDIENTE-INMEDIATO] Antes el stock NO se descontaba al crear la
+                // pendiente -- solo se validaba con un cálculo de "comprometido" (stock_actual
+                // menos lo reservado por otras pendientes de los últimos 3 días) que vivía
+                // SOLO aquí. Ninguna otra pantalla (nuevaVenta.php, inventario_productos.php,
+                // el buscador de productos, etc.) sabía de esa reserva -- todas seguían
+                // mostrando/vendiendo el stock_actual crudo como si estuviera 100% disponible.
+                // Confirmado con el usuario: al ser un envío a domicilio ya comprometido, el
+                // stock debe descontarse de una vez (igual que una venta normal), no quedar
+                // "reservado" de forma invisible para el resto del sistema. Esto también
+                // simplifica "liquidar" (ya no vuelve a tocar stock, solo confirma entrega/cobro)
+                // y "cancelar" ahora sí debe devolverlo (ver el handler de $_GET['cancelar']).
                 foreach ($items as $item) {
                     $precioOrig   = floatval($item['precio_normal'] ?? $item['precio']);
                     $precioFinal  = floatval($item['precio']);
@@ -651,35 +663,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $subtotalItem = isset($item['subtotal_exacto']) ? floatval($item['subtotal_exacto']) : $cantidadItem * $precioFinal;
                     $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
 
-                    // Validar stock disponible = stock_actual - comprometido en otras pendientes activas
                     $stmtStockActual = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
                     $stmtStockActual->execute([$item['producto_id'], $sucursalVista]);
                     $stockActual = floatval($stmtStockActual->fetchColumn() ?: 0);
 
-                    // [FIX-ALTO-D1-05] Antes se sumaba TODA pendiente sin importar su antigüedad:
-                    // una pendiente olvidada de hace meses seguía "reservando" stock para
-                    // siempre, de forma invisible, hasta que alguien la liquidara o cancelara a
-                    // mano. Ahora solo cuenta como comprometido si se creó en los últimos 3
-                    // días — pasado ese plazo deja de bloquear stock para nuevas ventas, pero la
-                    // pendiente sigue existiendo tal cual y se puede liquidar/cancelar cuando
-                    // sea (no se borra ni se auto-cancela nada).
-                    $stmtComprometido = $pdo->prepare("
-                        SELECT COALESCE(SUM(vp.cantidad), 0)
-                        FROM venta_productos vp
-                        JOIN ventas v ON vp.venta_id = v.venta_id
-                        JOIN cajas c ON v.caja_id = c.caja_id
-                        WHERE vp.producto_id = ?
-                          AND v.estado = 'Pendiente'
-                          AND c.sucursal_id = ?
-                          AND v.created_at > (NOW() - INTERVAL 3 DAY)
-                    ");
-                    $stmtComprometido->execute([$item['producto_id'], $sucursalVista]);
-                    $stockComprometido = floatval($stmtComprometido->fetchColumn() ?: 0);
-
-                    $stockDisponible = $stockActual - $stockComprometido;
-                    if ($stockDisponible < $cantidadItem) {
-                        throw new Exception('Stock insuficiente para uno o más productos. Disponible: ' . number_format(max(0, $stockDisponible), 2));
+                    if ($stockActual < $cantidadItem) {
+                        throw new Exception('Stock insuficiente para uno o más productos. Disponible: ' . number_format(max(0, $stockActual), 2));
                     }
+                    $stockNvoPend = max(0, $stockActual - $cantidadItem);
+                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                        ->execute([$stockNvoPend, $item['producto_id'], $sucursalVista]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta pendiente (envío a domicilio)')")
+                        ->execute([$item['producto_id'], $_SESSION['usuario_id'], $sucursalVista, $cantidadItem, $stockActual, $stockNvoPend]);
 
                     $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal, paquete_id) VALUES (?,?,?,?,?,?,?)")
                         ->execute([$venta_id, $item['producto_id'], $cantidadItem, $precioOrig, $precioFinal, $subtotalItem, $paqId]);
@@ -1252,7 +1247,13 @@ const ICONS = <?= json_encode([
     }
 })();
 let carritoP = (function() {
+    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] (mismo hueco encontrado en cajero_nuevaVenta.php)
+    // el Administrador puede cambiar de sucursal a medio armado de un apartado -- sin este
+    // candado, restauraba productos con el precio/promocion/stock de la sucursal VIEJA.
     try {
+        const miSuc = <?= intval($sucursalVista) ?>;
+        const sucGuardada = parseInt(localStorage.getItem('carritoPendiente_sucursal_id'));
+        if (sucGuardada !== miSuc) return [];
         const guardado = JSON.parse(localStorage.getItem('carritoPendiente'));
         return Array.isArray(guardado) ? guardado : [];
     } catch (e) {
@@ -1594,6 +1595,7 @@ function cancelarSelPaqPend() {
 function renderCarritoMini() {
     // [FIX-BORRADOR-PENDIENTE] Persistir el carrito en cada render, igual que nuevaVenta.php.
     localStorage.setItem('carritoPendiente', JSON.stringify(carritoP));
+    localStorage.setItem('carritoPendiente_sucursal_id', String(<?= intval($sucursalVista) ?>));
     const div = document.getElementById('carritoMini');
     const tot = document.getElementById('totalMini');
     if (!carritoP.length) {
@@ -2060,6 +2062,14 @@ function generarTicketHTML(venta) {
         <div class="t-linea"></div>
         <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
 
+    // [FIX-REFERENCIA-TICKET] (portado de cajero_nuevaVenta.php): el ticket nunca mostraba la
+    // referencia bancaria de una venta por Transferencia, aunque ya se guardaba correctamente
+    // en la base de datos (venta.referencia_transferencia, incluida en el SELECT de arriba).
+    if (venta.metodo_pago === 'Transferencia' && venta.referencia_transferencia) {
+        html += `
+        <div class="t-fila"><span>Referencia</span><span>${esc(venta.referencia_transferencia)}</span></div>`;
+    }
+
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
         html += `
         <div class="t-fila"><span>Recibido</span><span>$${fmt(venta.monto_efectivo)}</span></div>
@@ -2069,6 +2079,15 @@ function generarTicketHTML(venta) {
         html += `
         <div class="t-fila"><span>Efectivo</span><span>$${fmt(venta.monto_efectivo)}</span></div>
         <div class="t-fila"><span>Terminal</span><span>$${fmt(venta.monto_terminal)}</span></div>`;
+        // [FEATURE-TICKET-MIXTO] (portado de cajero_nuevaVenta.php): mostrar cuánto se recibió
+        // en efectivo y el cambio dado, si se capturó ese dato al cobrar.
+        if (venta.mixto_recibido && parseFloat(venta.mixto_recibido) > parseFloat(venta.monto_efectivo)) {
+            const recibidoMixto = parseFloat(venta.mixto_recibido);
+            const efMixto        = parseFloat(venta.monto_efectivo) || 0;
+            html += `
+        <div class="t-fila"><span>Recibido</span><span>$${recibidoMixto.toFixed(2)}</span></div>
+        <div class="t-fila"><span>Cambio</span><span>$${(recibidoMixto - efMixto).toFixed(2)}</span></div>`;
+        }
     }
     // [AUTOFIX] BUG-07: Comparar sin acento para cubrir 'Crédito' y 'Credito'
     if (venta.metodo_pago === 'Crédito' || venta.metodo_pago === 'Credito') {

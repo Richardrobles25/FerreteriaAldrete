@@ -14,6 +14,7 @@ verificarSesion();
 // formProducto.php (cajeroInventario/), que sí es edit-only y sí acepta esos roles.
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
+require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 $editando  = null;
 $errores   = [];
@@ -21,30 +22,21 @@ $esEdicion = isset($_GET['id']);
 $proveedoresProducto = [];
 $esAdmin = $_SESSION['rol'] === 'Administrador';
 
-// ?todas=1  → crear producto en TODAS las sucursales (solo admin)
-$todasSucursales = !$esEdicion && $esAdmin && isset($_GET['todas']);
-// Sucursal de contexto para stock en edición / unidades de medida.
-// [FIX-CRIT-B-04/H-03] Antes se tomaba ?sucursal= directo del GET sin comprobar rol ni
-// existencia — un usuario de Inventario (o antes también Inventario/Cajero) de la
-// sucursal 1 podía escribir/editar stock de la sucursal 2 (o de un sucursal_id
-// inexistente) con solo cambiar el parámetro de la URL. Ahora: para no-Administrador
-// SIEMPRE es su propia sucursal (se ignora el GET, igual que hace
-// _admin_sucursal_filtro.php para el resto del sistema); para Administrador se valida
-// contra la lista real de sucursales activas antes de aceptarla.
-if ($esAdmin) {
-    $sucursalGetVal = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
-    $sucursalEdit = intval($_SESSION['sucursal_id']);
-    if ($sucursalGetVal > 0) {
-        $stmtValSucEdit = $pdo->prepare("SELECT 1 FROM sucursales WHERE sucursal_id = ? AND activo = 1");
-        $stmtValSucEdit->execute([$sucursalGetVal]);
-        if ($stmtValSucEdit->fetchColumn()) {
-            $sucursalEdit = $sucursalGetVal;
-        }
-    }
-} else {
-    $sucursalEdit = intval($_SESSION['sucursal_id']);
-}
+// [FIX-STOCK-TODAS-SUCURSALES-EDICION] Este archivo es Administrador-only (ver verificarRol
+// arriba), y _admin_sucursal_filtro.php ya calcula $sucursalVista respetando ?sucursal= y la
+// sesion -- se usa esa misma variable (igual que el resto de Inventario) en vez de la logica
+// bespoke que tenia este archivo antes. Esa logica anterior NUNCA reconocia "Todas las
+// sucursales": si se entraba a EDITAR un producto sin un ?sucursal= explicito en el link (el
+// caso real cuando se navega desde la vista global, ver inventario_productos.php), caia en
+// silencio a la sucursal propia del admin -- y GUARDAR terminaba dando de alta/editando stock
+// ahi sin que el admin lo pidiera ni lo supiera. Reportado en vivo por el usuario. Ahora,
+// $todasSucursales tambien es true al EDITAR con la vista global activa (antes solo aplicaba
+// al CREAR con ?todas=1), lo que oculta el control de stock (ver mas abajo) y evita el guardado
+// de cualquier stock_sucursal (ver el guardado mas abajo).
+$todasSucursales = $esAdmin && (isset($_GET['todas']) || ($esEdicion && $sucursalVista === 0));
+$sucursalEdit = $sucursalVista;
 $stockEdicion = ['stock_actual' => 0, 'stock_minimo' => 0, 'stock_maximo' => 0];
+$nombreSucursalEdit = $nombreSucursalVista;
 
 function esValorEnteroValido($valor): bool {
     if ($valor === null || $valor === '') {
@@ -124,6 +116,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
         $errores[] = 'Los precios no pueden ser mayores a $500,000.00. Verifica la cantidad capturada.';
     }
+    // [FIX-MAYOREO-MAYOR-VENTA] El precio de mayoreo es un descuento por comprar varias
+    // piezas -- no tenia ningun candado que impidiera capturarlo MAS ALTO que el precio de
+    // venta normal, lo que en el punto de venta terminaria cobrandole de mas a un cliente
+    // que compra por mayoreo en vez de darle un descuento.
+    if ($precio_mayoreo > 0 && $precio_mayoreo > $precio_venta) {
+        $errores[] = 'El precio de mayoreo no puede ser mayor al precio de venta normal.';
+    }
     if ($tipo_venta !== 'Suelto') {
         if (!esValorEnteroValido($stock_minimo_raw)) $errores[] = 'El stock minimo solo acepta valores enteros cuando el tipo de venta es por unidad.';
         if (!esValorEnteroValido($stock_maximo_raw)) $errores[] = 'El stock maximo solo acepta valores enteros cuando el tipo de venta es por unidad.';
@@ -155,9 +154,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errores)) {
         $pdo->beginTransaction();
         try {
-        // Auto-insertar unidad en sucursal(es) afectadas
-        if ($unidad_medida !== '' && !$todasSucursales) {
-            $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")->execute([$unidad_medida, $sucursalEdit]);
+        // [CAMBIO-UNIDAD-GLOBAL 2026-09-09] unidades_medida ya es catalogo global.
+        if ($unidad_medida !== '') {
+            $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre) VALUES (?)")->execute([$unidad_medida]);
         }
 
         if ($producto_id) {
@@ -179,11 +178,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // archivo/inventario_productos.php): si la fila no existe se crea con stock_actual
             // en 0 (este formulario de edición nunca captura cantidad inicial), y si ya existe
             // solo se actualizan los límites sin tocar su stock_actual real.
-            $pdo->prepare("
-                INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
-                VALUES (?, ?, 0, ?, ?, 1)
-                ON DUPLICATE KEY UPDATE stock_minimo = VALUES(stock_minimo), stock_maximo = VALUES(stock_maximo)
-            ")->execute([$producto_id,$sucursalEdit,$stock_minimo,$stock_maximo]);
+            // [FIX-STOCK-TODAS-SUCURSALES-EDICION] Con la vista "Todas las sucursales" activa
+            // ($todasSucursales true tambien al editar, ver arriba) no hay una sucursal real a
+            // la cual asociar este stock -- se omite por completo el upsert, igual que ya hacia
+            // la rama de CREAR de mas abajo. Antes esta rama de EDITAR no tenia este candado y
+            // siempre escribia en $sucursalEdit (que caia en silencio a la sucursal propia del
+            // admin), dando de alta/editando stock ahi sin que el admin lo pidiera.
+            if (!$todasSucursales) {
+                $pdo->prepare("
+                    INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo)
+                    VALUES (?, ?, 0, ?, ?, 1)
+                    ON DUPLICATE KEY UPDATE stock_minimo = VALUES(stock_minimo), stock_maximo = VALUES(stock_maximo)
+                ")->execute([$producto_id,$sucursalEdit,$stock_minimo,$stock_maximo]);
+            }
         } else {
             // Insertar en catálogo global (sin sucursal_id, sin stock)
             $pdo->prepare("
@@ -238,9 +245,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $categorias  = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
-$stmtUnd = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE sucursal_id = ? ORDER BY nombre ASC");
-$stmtUnd->execute([$sucursalEdit]);
-$unidadesMedida = $stmtUnd->fetchAll(PDO::FETCH_COLUMN);
+$unidadesMedida = $pdo->query("SELECT nombre FROM unidades_medida ORDER BY nombre ASC")->fetchAll(PDO::FETCH_COLUMN);
 
 // Categoría actual para pre-llenar el autocomplete
 $categoriaNombreActual = '';
@@ -415,7 +420,7 @@ if ($editando && $editando['categoria_id']) {
                             <div style="display:flex;gap:8px;align-items:center;">
                                 <input type="text" name="codigo" id="inputCodigo"
                                     value="<?= htmlspecialchars(is_scalar($_POST['codigo'] ?? null) ? $_POST['codigo'] : ($editando['codigo'] ?? '')) ?>"
-                                    placeholder="Ej. TUBO-3/4-PVC"
+                                    placeholder="Ej. CEM-050"
                                     oninput="this.value=this.value.toUpperCase()"
                                     autocomplete="off"
                                     maxlength="50"
@@ -562,7 +567,12 @@ if ($editando && $editando['categoria_id']) {
                 <?php else: ?>
                 <div class="seccion">
                 <?php endif; ?>
-                    <div class="seccion-titulo">Control de stock</div>
+                    <div class="seccion-titulo">
+                        Control de stock
+                        <?php if ($esAdmin): ?>
+                            <span style="font-weight:400;color:#888;font-size:12px;"> — <?= htmlspecialchars($nombreSucursalEdit) ?></span>
+                        <?php endif; ?>
+                    </div>
                     <div class="form-row-3">
                         <?php if (!$editando): ?>
                         <div class="form-group">
@@ -572,6 +582,28 @@ if ($editando && $editando['categoria_id']) {
                                 class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0">
                             <div class="hint">Stock con el que arranca.</div>
+                        </div>
+                        <?php else:
+                            // [FIX-STOCK-ACTUAL-INVISIBLE] Al editar, este formulario nunca
+                            // mostraba el stock_actual real de la sucursal en ningun lado — solo
+                            // minimo/maximo (editables) y "Cantidad inicial" (solo aparece al
+                            // CREAR). Reportado en vivo por el usuario tras una importacion:
+                            // no habia forma de verificar desde aqui si el stock realmente
+                            // quedo como se esperaba. Es de solo lectura a proposito: el stock
+                            // real solo debe cambiar via Entradas/Salidas o una re-importacion
+                            // de Excel (que preserva el stock_actual existente para no pisar un
+                            // conteo fisico real), nunca escribiendose aqui.
+                            $esSueltoEdit = $tipoActual === 'Suelto';
+                            $stockActualNum = (float)($stockEdicion['stock_actual'] ?? 0);
+                            $stockActualFmt = $esSueltoEdit
+                                ? rtrim(rtrim(number_format($stockActualNum, 3, '.', ''), '0'), '.')
+                                : number_format($stockActualNum, 0);
+                        ?>
+                        <div class="form-group">
+                            <label>Stock actual</label>
+                            <input type="text" value="<?= htmlspecialchars($stockActualFmt) ?>" disabled
+                                style="background:#f5f5f5;color:#888;cursor:not-allowed;">
+                            <div class="hint">Solo cambia con Entradas/Salidas o una nueva importación de Excel.</div>
                         </div>
                         <?php endif; ?>
                         <div class="form-group">

@@ -110,13 +110,16 @@ if (isset($_GET['detalle_venta'])) {
         $venta['devoluciones'] = $devolucionesList;
 
         // Reconstruir valores originales (antes de cualquier devolución)
+        // [FIX-COMISION-NO-REEMBOLSABLE] (portado de admin/cajero_historialVentas.php):
+        // comision_terminal ya no se reduce en ninguna devolución (nunca se reembolsa) -- su
+        // valor actual YA ES el original, sumar comision_devuelta aquí lo duplicaría. Por la
+        // misma razón, original_total ya no debe sumar $sumComision.
         $sumBruto    = array_sum(array_column($devolucionesList, 'subtotal_bruto_devuelto'));
-        $sumComision = array_sum(array_column($devolucionesList, 'comision_devuelta'));
         $sumTotal    = array_sum(array_column($devolucionesList, 'total_devuelto'));
         $venta['original_subtotal']  = floatval($venta['subtotal'])  + $sumBruto;
         $venta['original_descuento'] = floatval($venta['descuento']) + ($sumBruto - $sumTotal);
-        $venta['original_comision']  = floatval($venta['comision_terminal']) + $sumComision;
-        $venta['original_total']     = floatval($venta['total'])     + $sumTotal + $sumComision;
+        $venta['original_comision']  = floatval($venta['comision_terminal']);
+        $venta['original_total']     = floatval($venta['total'])     + $sumTotal;
     }
     header('Content-Type: application/json');
     echo json_encode($venta);
@@ -185,15 +188,18 @@ $stmt->execute($params);
 $ventas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Totales del período ──────────────────────────────────────────────────────
+// [FIX-COMISION-NO-REEMBOLSABLE] (portado de admin/cajero_historialVentas.php): se agrega
+// 'Devuelto' a estos filtros porque una venta totalmente devuelta con comisión de terminal ya
+// no queda en $0 (esa comisión nunca se reembolsa, se queda como venta.total residual).
 $stmtTot = $pdo->prepare("
     SELECT
         COUNT(*) as total_ventas,
-        COALESCE(SUM(CASE WHEN v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as total_cobrado,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'      AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as ef,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'      AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('Credito','Crédito') AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'          AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as mixto,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia'  AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as transf,
+        COALESCE(SUM(CASE WHEN v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as total_cobrado,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'      AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as ef,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'      AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as term,
+        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('Credito','Crédito') AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as cred,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'          AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as mixto,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia'  AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as transf,
         COUNT(CASE WHEN v.estado='Cancelada' THEN 1 END) as canceladas
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
@@ -1120,6 +1126,9 @@ function renderDetalle(v) {
             <div class="det-campo"><span>Comisión</span><strong>$${fmt(v.comision_terminal)}</strong></div>
             <div class="det-campo"><span>Cambio</span><strong>$${fmt(v.cambio)}</strong></div>
         ` : ''}
+        ${v.metodo_pago === 'Transferencia' && v.referencia_transferencia ? `
+            <div class="det-campo"><span>Referencia</span><strong>${esc(v.referencia_transferencia)}</strong></div>
+        ` : ''}
     `;
 
     // Productos — agrupar paquetes en una sola fila
@@ -1471,6 +1480,14 @@ function generarTicketHTML(venta) {
         <div class="t-linea"></div>
         <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
 
+    // [FIX-REFERENCIA-TICKET] (portado de admin/cajero_historialVentas.php): el ticket
+    // reimpreso desde el historial nunca mostraba la referencia bancaria de una venta por
+    // Transferencia, aunque ya se guardaba correctamente en la base de datos.
+    if (venta.metodo_pago === 'Transferencia' && venta.referencia_transferencia) {
+        html += `
+        <div class="t-fila"><span>Referencia</span><span>${esc(venta.referencia_transferencia)}</span></div>`;
+    }
+
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
         html += `
         <div class="t-fila"><span>Recibido</span><span>$${fmt(venta.monto_efectivo)}</span></div>
@@ -1480,6 +1497,15 @@ function generarTicketHTML(venta) {
         html += `
         <div class="t-fila"><span>Efectivo</span><span>$${fmt(venta.monto_efectivo)}</span></div>
         <div class="t-fila"><span>Terminal</span><span>$${fmt(venta.monto_terminal)}</span></div>`;
+        // [FEATURE-TICKET-MIXTO] (portado de cajero_nuevaVenta.php): mostrar cuánto se recibió
+        // en efectivo y el cambio dado, si se capturó ese dato al cobrar.
+        if (venta.mixto_recibido && parseFloat(venta.mixto_recibido) > parseFloat(venta.monto_efectivo)) {
+            const recibidoMixto = parseFloat(venta.mixto_recibido);
+            const efMixto        = parseFloat(venta.monto_efectivo) || 0;
+            html += `
+        <div class="t-fila"><span>Recibido</span><span>$${recibidoMixto.toFixed(2)}</span></div>
+        <div class="t-fila"><span>Cambio</span><span>$${(recibidoMixto - efMixto).toFixed(2)}</span></div>`;
+        }
     }
     if (venta.metodo_pago === 'Crédito' || venta.metodo_pago === 'Credito') {
         const notaCred = datosTicket.ticket_nota_credito || 'Al firmar acepto cubrir el monto total adeudado';

@@ -84,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Historial de salidas
 $stmt = $pdo->prepare("
-    SELECT m.*, p.nombre_producto, p.codigo
+    SELECT m.*, p.nombre_producto, p.codigo, p.tipo_venta
     FROM movimientos_inventario m
     JOIN productos p ON m.producto_id = p.producto_id
     -- [FIX] Filtrar por la sucursal del MOVIMIENTO (antes se veían salidas de otras sucursales
@@ -96,7 +96,7 @@ $stmt->execute([$_SESSION['sucursal_id']]);
 $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $stmt = $pdo->prepare("
-    SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.tipo_venta
+    SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, ss.stock_minimo, p.tipo_venta
     FROM productos p
     INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     WHERE p.activo = 1 AND ss.activo = 1
@@ -152,18 +152,15 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .motivos-rapidos { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
     .motivo-btn { background: #f0f0f0; border: none; padding: 5px 12px; border-radius: 99px; font-size: 12px; cursor: pointer; color: #555; }
     .motivo-btn:hover { background: #bbdefb; color: #1565c0; }
-    .prod-busq-wrap { position: relative; }
-    .prod-drop { display:none; position:absolute; top:calc(100% + 2px); left:0; right:0; background:#fff; border:1px solid #e0e0e0; border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,0.10); z-index:999; max-height:240px; overflow-y:auto; }
-    .prod-drop-item { display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer; border-bottom:0.5px solid #f5f5f5; min-width:0; }
-    .prod-drop-item:hover { background:#eef8ff; }
-    .prod-drop-item:last-child { border-bottom:none; }
-    .prod-sel-panel { background:#f0f9ff; border:1px solid #dbeafe; border-radius:6px; padding:12px 14px; margin-bottom:14px; }
-    .prod-sel-nombre { font-size:13px; font-weight:700; color:#1e3a5f; margin-bottom:10px; }
-    .prod-sel-fila { display:flex; align-items:center; gap:10px; }
-    .prod-sel-fila input[type=number] { width:90px; padding:8px 10px; border:1px solid #bcd6f7; border-radius:6px; font-size:14px; font-weight:600; text-align:center; }
-    .prod-sel-stock { font-size:12px; color:#555; flex:1; }
-    .prod-sel-cancelar { background:none; border:none; color:#aaa; font-size:18px; cursor:pointer; line-height:1; padding:2px 6px; border-radius:4px; }
-    .prod-sel-cancelar:hover { color:#c0392b; }
+    .prod-search-wrap { position: relative; }
+    .prod-drop { display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.1); z-index: 200; max-height: 220px; overflow-y: auto; margin-top: 2px; }
+    .prod-drop-item { padding: 10px 14px; cursor: pointer; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .prod-drop-item:hover { background: #eef8ff; }
+    .prod-drop-item:last-child { border-bottom: none; }
+    .prod-chip { display: none; margin-top: 8px; background: #eef8ff; border: 1px solid #bbdefb; border-radius: 6px; padding: 8px 12px; font-size: 13px; justify-content: space-between; align-items: center; }
+    .prod-chip button { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 12px; font-weight: 700; }
+    .stock-info { background: #e8f5e9; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #2e7d32; margin-bottom: 14px; display: none; }
+    .stock-info.bajo { background: #fdecea; color: #c0392b; }
     .btn-guardar { background: #c0392b; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #a93226; }
     table { width: 100%; border-collapse: collapse; }
@@ -275,11 +272,11 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <h3>Registrar salida</h3>
 
                 <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito' && empty($errores)): ?>
-                    <div class="msg msg-exito">Salida registrada correctamente.</div>
+                    <div class="msg msg-exito msg-flash">Salida registrada correctamente.</div>
                 <?php endif; ?>
                 <?php if (isset($_GET['msg']) && $_GET['msg'] === 'exito_minimo' && empty($errores)): ?>
                     <!-- [AUTOFIX] INFO-3E-1: Advertencia de stock bajo mínimo después del registro -->
-                    <div class="msg" style="background:#fff8e1;color:#e65100;border-left:3px solid #e65100;">
+                    <div class="msg msg-flash" style="background:#fff8e1;color:#e65100;border-left:3px solid #e65100;">
                         <?= icono('triangle-alert') ?> Salida registrada, pero el stock quedó por debajo del mínimo establecido.
                     </div>
                 <?php endif; ?>
@@ -292,27 +289,33 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <div class="form-group">
                         <label>Producto *</label>
-                        <div class="prod-busq-wrap">
-                            <!-- [AUTOFIX] OBS-7: Eliminar onfocus que disparaba el dropdown al hacer clic en "Quitar selección".
-                                 cancelarSelSalida() llama a .focus() que activaba onfocus → mostraba el primer producto disponible.
-                                 Ahora el dropdown solo aparece cuando el usuario escribe (oninput). -->
-                            <input type="text" id="buscarProductoSalida" placeholder="Buscar por nombre o código..."
+                        <input type="hidden" name="producto_id" id="productoIdHidden" value="">
+                        <div class="prod-search-wrap">
+                            <input type="text" id="buscarProducto"
+                                placeholder="Buscar por nombre o código..."
                                 autocomplete="off"
-                                oninput="filtrarDropSalida(this.value)"
-                                onblur="setTimeout(ocultarDropSalida, 200)"
-                                style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
-                            <div id="dropProductosSalida" class="prod-drop"></div>
+                                oninput="filtrarProductos(this.value)"
+                                style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:Arial,sans-serif;">
+                            <div class="prod-drop" id="dropProductos"></div>
                         </div>
-                        <input type="hidden" name="producto_id" id="inputProductoSalidaId">
+                        <div class="prod-chip" id="productoChip">
+                            <span id="productoChipNombre"></span>
+                            <button type="button" onclick="limpiarProducto()"><?= icono('x') ?> Quitar</button>
+                        </div>
                     </div>
 
-                    <div class="prod-sel-panel" id="panelSelSalida" style="display:none;">
-                        <div class="prod-sel-nombre" id="panelSelSalidaNombre"></div>
-                        <div class="prod-sel-fila">
-                            <input type="number" name="cantidad" id="inputCantidad" min="1" step="1" value="" placeholder="0" inputmode="numeric" oninput="sanitizarCantidadSalida()">
-                            <span class="prod-sel-stock">Stock: <strong id="stockActual"></strong></span>
-                            <button type="button" class="prod-sel-cancelar" onclick="cancelarSelSalida()" title="Quitar selección">✕</button>
-                        </div>
+                    <div class="stock-info" id="stockInfo">
+                        Stock actual: <strong id="stockActualVal"></strong>
+                        · Mínimo: <span id="stockMinimoVal"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Cantidad a retirar *</label>
+                        <!-- [FIX-MEDIO-C-09] (mismo criterio que entradas.php) htmlspecialchars para no
+                             reflejar crudo un valor manipulado por POST directo en el atributo value. -->
+                        <input type="number" name="cantidad" id="inputCantidad"
+                            placeholder="0" step="1" min="1" inputmode="numeric"
+                            value="<?= htmlspecialchars(is_scalar($_POST['cantidad'] ?? null) ? (string)$_POST['cantidad'] : '', ENT_QUOTES, 'UTF-8') ?>">
                     </div>
 
                     <div class="form-group">
@@ -334,22 +337,24 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         <div>
             <div class="card" style="padding:0;">
-                <div style="padding:16px 20px;border-bottom:0.5px solid #eee;">
+                <div style="padding:16px 20px;border-bottom:0.5px solid #eee;display:flex;justify-content:space-between;align-items:center;gap:12px;">
                     <h3 style="margin:0;">Salidas recientes</h3>
+                    <input type="text" placeholder="Filtrar historial..." oninput="filtrarTabla(this.value)"
+                        style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:12px;width:160px;">
                 </div>
                 <?php if (count($historial) > 0): ?>
                 <table>
                     <thead>
                         <tr><th>Producto</th><th>Cantidad</th><th>Stock ant.</th><th>Stock nuevo</th><th>Motivo</th><th>Fecha</th></tr>
                     </thead>
-                    <tbody>
+                    <tbody id="tablaFiltrable">
                         <?php foreach ($historial as $h): ?>
                         <tr>
                             <td>
                                 <strong><?= htmlspecialchars($h['nombre_producto']) ?></strong>
                                 <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($h['codigo']) ?></div>
                             </td>
-                            <td style="color:#c0392b;font-weight:700;">-<?= number_format($h['cantidad'],2) ?></td>
+                            <td style="color:#c0392b;font-weight:700;">-<?= number_format($h['cantidad'], $h['tipo_venta'] === 'Suelto' ? 2 : 0) ?></td>
                             <td><?= number_format($h['stock_anterior'],2) ?></td>
                             <td><?= number_format($h['stock_nuevo'],2) ?></td>
                             <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'—') ?></td>
@@ -367,92 +372,123 @@ $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
-const prodsSalida = <?= json_encode(array_values(array_map(fn($p) => [
-    'id'    => (int)$p['producto_id'],
-    'nombre'=> $p['nombre_producto'],
-    'codigo'=> $p['codigo'],
-    'stock' => (float)$p['stock_actual'],
-    'tipo'  => $p['tipo_venta'],
-    'texto' => mb_strtolower($p['codigo'].' '.$p['nombre_producto']),
+// [FEATURE-DISENO-SALIDAS-COMO-ENTRADAS] (espejo de admin/inventario_salidas.php) Portado de
+// entradas.php a peticion del usuario -- mismo diseno de buscador+chip+stock-info que
+// "Entradas", adaptado a que aqui la cantidad se RESTA en vez de sumarse (tope al stock
+// actual, sin seccion de proveedor).
+
+// [FIX-XSS-NOMBRE] (mismo criterio que entradas.php) nombre_producto/codigo vienen del
+// catalogo y se insertan en innerHTML -- se escapan antes de mostrarlos en el dropdown.
+function esc(str) {
+    return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+const productosData = <?= json_encode(array_values(array_map(fn($p) => [
+    'producto_id'    => (int)$p['producto_id'],
+    'codigo'         => $p['codigo'],
+    'nombre_producto'=> $p['nombre_producto'],
+    'tipo_venta'     => $p['tipo_venta'],
+    'stock_actual'   => (float)$p['stock_actual'],
+    'stock_minimo'   => (float)$p['stock_minimo'],
 ], $productos))) ?>;
 
-let prodSelSalida = null;
+function normalizar(str) {
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-function normalizar(s) { return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
-// [FIX-XSS-NOMBRE] p.nombre viene del catalogo (lo captura Administrador/Inventario) y se
-// insertaba tal cual en innerHTML - un nombre con "<img src=x onerror=...>" ejecutaba JS con
-// solo escribirlo en el buscador, sin necesidad de dar clic. Mismo criterio que nuevaVenta.php.
-function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-
-function filtrarDropSalida(q) {
-    const qn = normalizar(q);
-    const drop = document.getElementById('dropProductosSalida');
-    const resultados = qn.length < 1
-        ? prodsSalida.slice(0, 30)
-        : prodsSalida.filter(p => normalizar(p.texto).includes(qn)).slice(0, 50);
-    if (!resultados.length) {
-        drop.innerHTML = '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Sin resultados.</div>';
+// -- Autocomplete de producto --------------------------------------------------
+function filtrarProductos(q) {
+    const drop = document.getElementById('dropProductos');
+    if (!q.trim()) { drop.style.display = 'none'; return; }
+    const norm = normalizar(q);
+    const matches = productosData.filter(function(p) {
+        return normalizar(p.nombre_producto).includes(norm) || normalizar(p.codigo).includes(norm);
+    }).slice(0, 25);
+    if (!matches.length) {
+        drop.innerHTML = '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>';
     } else {
-        drop.innerHTML = resultados.map(p => `
-            <div class="prod-drop-item" onclick="seleccionarProdSalida(${p.id})">
-                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${esc(p.nombre)}</span>
-                <span style="font-size:11px;color:#aaa;white-space:nowrap;flex-shrink:0;">${esc(p.codigo)}</span>
-                <span style="font-size:12px;color:#c0392b;font-weight:600;white-space:nowrap;flex-shrink:0;">${p.stock % 1 === 0 ? p.stock : p.stock.toFixed(2)}</span>
-            </div>
-        `).join('');
+        drop.innerHTML = matches.map(function(p) {
+            const stockOk = parseFloat(p.stock_actual) > parseFloat(p.stock_minimo);
+            return '<div class="prod-drop-item" onclick="seleccionarProducto(' + p.producto_id + ')">'
+                + '<div><strong>' + esc(p.nombre_producto) + '</strong><span style="color:#aaa;font-size:11px;"> \u00b7 ' + esc(p.codigo) + '</span></div>'
+                + '<span style="font-size:12px;font-weight:600;color:' + (stockOk ? '#2e7d32' : '#c0392b') + ';">Stock: ' + parseFloat(p.stock_actual).toFixed(2) + '</span>'
+                + '</div>';
+        }).join('');
     }
     drop.style.display = 'block';
 }
 
-function ocultarDropSalida() {
-    document.getElementById('dropProductosSalida').style.display = 'none';
-}
-
-function seleccionarProdSalida(id) {
-    prodSelSalida = prodsSalida.find(p => p.id === id);
-    if (!prodSelSalida) return;
-    ocultarDropSalida();
-    document.getElementById('buscarProductoSalida').value = '';
-    document.getElementById('inputProductoSalidaId').value = prodSelSalida.id;
-    document.getElementById('panelSelSalidaNombre').textContent = prodSelSalida.nombre + ' · ' + prodSelSalida.codigo;
-    document.getElementById('stockActual').textContent = prodSelSalida.stock % 1 === 0 ? prodSelSalida.stock : prodSelSalida.stock.toFixed(2);
-    const input = document.getElementById('inputCantidad');
-    input.max = prodSelSalida.stock;
-    if (prodSelSalida.tipo === 'Suelto') {
-        input.step = '0.001';
-        input.min = '0.001';
-        input.setAttribute('inputmode', 'decimal');
+function seleccionarProducto(id) {
+    const p = productosData.find(function(x){ return x.producto_id == id; });
+    if (!p) return;
+    document.getElementById('productoIdHidden').value = id;
+    document.getElementById('buscarProducto').value   = '';
+    document.getElementById('dropProductos').style.display = 'none';
+    document.getElementById('productoChipNombre').textContent = p.nombre_producto;
+    document.getElementById('productoChip').style.display    = 'flex';
+    mostrarStockInfo(parseFloat(p.stock_actual), parseFloat(p.stock_minimo));
+    // Productos "Suelto" (granel) aceptan decimales; el resto solo enteros -- consistente con
+    // la validacion del servidor.
+    // [ESPECIFICO-SALIDAS] A diferencia de entradas.php, aqui la cantidad NUNCA puede superar
+    // el stock actual disponible (se esta restando, no sumando) -- se limita con max.
+    const inpCant = document.getElementById('inputCantidad');
+    inpCant.max = p.stock_actual;
+    if (p.tipo_venta === 'Suelto') {
+        inpCant.step = '0.001'; inpCant.min = '0.001';
+        inpCant.setAttribute('inputmode', 'decimal');
     } else {
-        input.step = '1';
-        input.min = '1';
-        input.setAttribute('inputmode', 'numeric');
+        inpCant.step = '1'; inpCant.min = '1';
+        inpCant.setAttribute('inputmode', 'numeric');
     }
-    input.value = '';
-    document.getElementById('panelSelSalida').style.display = 'block';
-    setTimeout(() => input.focus(), 50);
+    inpCant.value = '';
+    setTimeout(() => inpCant.focus(), 50);
 }
 
-function sanitizarCantidadSalida() {
-    if (!prodSelSalida || prodSelSalida.tipo === 'Suelto') return;
-    const input = document.getElementById('inputCantidad');
-    const val = input.value;
-    if (val !== '' && val.includes('.')) {
-        const n = parseFloat(val);
-        if (!isNaN(n)) input.value = Math.floor(n) || '';
-    }
+function limpiarProducto() {
+    document.getElementById('productoIdHidden').value = '';
+    document.getElementById('productoChip').style.display = 'none';
+    document.getElementById('stockInfo').style.display    = 'none';
+    document.getElementById('buscarProducto').value = '';
+    const inpCant = document.getElementById('inputCantidad');
+    inpCant.step = '1'; inpCant.min = '1'; inpCant.removeAttribute('max');
+    inpCant.value = '';
 }
 
-function cancelarSelSalida() {
-    prodSelSalida = null;
-    document.getElementById('panelSelSalida').style.display = 'none';
-    document.getElementById('inputProductoSalidaId').value = '';
-    document.getElementById('inputCantidad').value = '';
-    document.getElementById('buscarProductoSalida').value = '';
-    document.getElementById('buscarProductoSalida').focus();
+function mostrarStockInfo(stock, minimo) {
+    const info = document.getElementById('stockInfo');
+    document.getElementById('stockActualVal').textContent = stock.toFixed(2);
+    document.getElementById('stockMinimoVal').textContent = minimo.toFixed(2);
+    info.style.display = 'block';
+    info.className = 'stock-info' + (stock <= minimo ? ' bajo' : '');
+}
+
+// Cerrar dropdown al hacer clic fuera
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.prod-search-wrap')) {
+        document.getElementById('dropProductos').style.display = 'none';
+    }
+});
+
+// -- Filtro del historial de salidas --------------------------------------------
+function filtrarTabla(q) {
+    q = normalizar(q);
+    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
+    });
 }
 
 function setMotivo(texto) { document.getElementById('inputMotivo').value = texto; }
+
+// [FEATURE-MSG-AUTODISMISS] (espejo de admin/inventario_salidas.php) A peticion del usuario:
+// el mensaje de exito (o la advertencia de stock bajo minimo) se quedaba en pantalla para
+// siempre. Se oculta solo tras 5 segundos.
+document.querySelectorAll('.msg-flash').forEach(function(el) {
+    setTimeout(function() {
+        el.style.transition = 'opacity 0.4s';
+        el.style.opacity = '0';
+        setTimeout(function() { el.remove(); }, 400);
+    }, 5000);
+});
 </script>
 </body>
 </html>

@@ -550,11 +550,11 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         $vDescuento = $esPostCliente ? $descuento : ($editando['descuento_fijo']  ?? 0);
                         $vNotas     = $esPostCliente ? $notas     : ($editando['notas']           ?? '');
                         $vCredAut   = $esPostCliente ? $creditoAutorizado : ($editando['credito_autorizado'] ?? 0);
-                        $vLimite    = $esPostCliente ? $limiteCredito     : ($editando['limite_credito'] ?: '');
+                        $vLimite    = $esPostCliente ? $limiteCredito     : ($editando['limite_credito'] ?? '');
                     ?>
                     <div class="form-group"><label>Nombre completo *</label><input type="text" name="nombre_completo" maxlength="100" value="<?= htmlspecialchars($vNombre) ?>" placeholder="Ej. Juan Garcia"></div>
                     <div class="form-row">
-                        <div class="form-group"><label>Telefono</label><input type="text" name="telefono" value="<?= htmlspecialchars($vTelefono) ?>" placeholder="10 digitos"></div>
+                        <div class="form-group"><label>Telefono</label><input type="tel" name="telefono" value="<?= htmlspecialchars($vTelefono) ?>" placeholder="10 digitos" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"></div>
                         <div class="form-group"><label>Descuento fijo (%)</label><input type="number" name="descuento_fijo" value="<?= htmlspecialchars($vDescuento) ?>" step="0.01" min="0" max="100"></div>
                     </div>
                     <div class="form-group"><label>Direccion</label><input type="text" name="direccion" maxlength="255" value="<?= htmlspecialchars($vDireccion) ?>" placeholder="Calle, numero, colonia"></div>

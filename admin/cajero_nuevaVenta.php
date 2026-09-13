@@ -464,7 +464,7 @@ if (isset($_GET['ticket_venta'])) {
 
     $stmtP = $pdo->prepare("
         SELECT vp.producto_id, vp.cantidad, vp.precio_unitario, vp.precio_final, vp.subtotal,
-               vp.nota_ajuste, vp.paquete_id, p.nombre_producto, p.codigo,
+               vp.descuento, vp.nota_ajuste, vp.paquete_id, p.nombre_producto, p.codigo,
                pk.nombre AS paquete_nombre, pk.precio_paquete
         FROM venta_productos vp
         JOIN productos p ON vp.producto_id = p.producto_id
@@ -473,6 +473,19 @@ if (isset($_GET['ticket_venta'])) {
     ");
     $stmtP->execute([$venta_id]);
     $venta['productos'] = $stmtP->fetchAll(PDO::FETCH_ASSOC);
+
+    // [FEATURE-DESCUENTO-AJUSTE-DAÑO-TICKET 2026-09-11] (espejo de cajeroInventario/nuevaVenta.php)
+    // ventas.descuento mezcla el ajuste por daño (venta_productos.descuento, ya guardado por
+    // item) con el descuento de cliente en un solo numero. Para el ticket se separan de nuevo:
+    // el ajuste es la suma de las lineas, y lo que sobra de ventas.descuento es el descuento
+    // de cliente puro.
+    $descuentoAjustesTicket = 0.0;
+    foreach ($venta['productos'] as $pTicket) {
+        $descuentoAjustesTicket += floatval($pTicket['descuento'] ?? 0);
+    }
+    $descuentoAjustesTicket = round($descuentoAjustesTicket, 2);
+    $venta['descuento_ajustes']      = $descuentoAjustesTicket;
+    $venta['descuento_cliente_puro'] = max(0.0, round(floatval($venta['descuento']) - $descuentoAjustesTicket, 2));
 
     // [AUTOFIX] descuento_display = descuento almacenado directamente (ya es el valor correcto)
     $venta['descuento_display'] = floatval($venta['descuento']);
@@ -511,6 +524,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $cambio            = floatval(is_scalar($_POST['cambio'] ?? null) ? $_POST['cambio'] : 0);
 
     $referencia_transferencia = ($metodo_pago === 'Transferencia') ? trim(is_scalar($_POST['referencia_transferencia'] ?? null) ? (string)$_POST['referencia_transferencia'] : '') : null;
+    // [FEATURE-TICKET-MIXTO] "Efectivo recibido" del pago Mixto es solo una ayuda de cambio
+    // para el cajero (ver calcularMixto() más abajo), no afecta monto_efectivo/monto_terminal
+    // ni ninguna validación -- se guarda tal cual solo para poder mostrarlo en el ticket
+    // impreso. NULL si no aplica o no se capturó.
+    $mixtoRecibidoRaw = is_scalar($_POST['mixto_recibido'] ?? null) ? trim((string)$_POST['mixto_recibido']) : '';
+    $mixto_recibido   = ($metodo_pago === 'Mixto' && $mixtoRecibidoRaw !== '' && is_numeric($mixtoRecibidoRaw) && floatval($mixtoRecibidoRaw) > 0)
+        ? round(floatval($mixtoRecibidoRaw), 2) : null;
 
     // [AUTOFIX] N-02: Validar metodo_pago contra whitelist permitido
     $metodosPermitidos = ['Efectivo', 'Terminal', 'Mixto', 'Credito', 'Transferencia'];
@@ -719,6 +739,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
             $sumaItems = round($sumaItems, 2);
 
+            // [FEATURE-DESCUENTO-AJUSTE-DAÑO 2026-09-11, a peticion explicita del usuario,
+            // portado de cajeroInventario/nuevaVenta.php] El "Ajuste de precio por daño" ahora
+            // SI cuenta como descuento en ventas.subtotal/descuento (antes se guardaba como si
+            // el producto costara ese precio desde el inicio, sin dejar rastro de cuanto se
+            // rebajo -- un reporte que sumara la columna "descuento" nunca veia estos ajustes,
+            // aunque en pantalla si se le mostraba al cajero "Descuento -$X"). Se usa la misma
+            // pareja precio_orig/precio_final que ya se guarda en venta_productos.precio_unitario
+            // mas abajo (mismo criterio de confianza que ese campo ya tenia, es informativo/de
+            // ticket, no el que determina el total realmente cobrado -- $sumaItems/$total
+            // siguen sin tocarse). Una promo o el precio de mayoreo (sin nota_ajuste) NO
+            // cuentan: no son un descuento que el cajero otorgo, son precios normales del
+            // catalogo.
+            // Importante: devoluciones.php YA esperaba que ventas.subtotal fuera el bruto (ver
+            // su calculo de "perItemDiscountVenta" = ventaSubtotalBruto - subtotalFinalVenta) —
+            // sin este fix, esa resta siempre daba 0 y el reembolso proporcional de una
+            // devolucion parcial en una venta con ajuste POR DAÑO junto con descuento de
+            // cliente quedaba mal calculado.
+            $descuentoAjustePorIdx = [];
+            $sumaDescuentoAjustes  = 0.0;
+            foreach ($items as $idxAj => $itAj) {
+                $notaAjChk = trim($itAj['nota_ajuste'] ?? '');
+                $esPaqAj   = !empty($itAj['paquete_id']) && intval($itAj['paquete_id']) > 0;
+                if ($notaAjChk === '' || $esPaqAj) continue;
+                $precioOrigAj  = floatval($itAj['precio_orig'] ?? $itAj['precio'] ?? 0);
+                $precioFinalAj = floatval($itAj['precio'] ?? 0);
+                $cantAj        = floatval($itAj['cantidad'] ?? 0);
+                $montoAj = max(0.0, round(($precioOrigAj - $precioFinalAj) * $cantAj, 2));
+                $descuentoAjustePorIdx[$idxAj] = $montoAj;
+                $sumaDescuentoAjustes += $montoAj;
+            }
+            $sumaDescuentoAjustes = round($sumaDescuentoAjustes, 2);
+
             // 3) Descuento de cliente implícito = descuento enviado − descuentos por ítem
             //    (las promos y ajustes ya vienen reflejados en el precio de cada ítem)
             $descuentoCliente = round($descuento - (round($subtotal, 2) - $sumaItems), 2);
@@ -840,16 +892,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $stmt = $pdo->prepare("
                 INSERT INTO ventas
                 (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
-                 total,metodo_pago,monto_efectivo,monto_terminal,cambio,estado,notas,referencia_transferencia)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?,?)
+                 total,metodo_pago,monto_efectivo,monto_terminal,mixto_recibido,cambio,estado,notas,referencia_transferencia)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?,?)
             ");
             $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
-                            $sumaItems,$descuentoCliente,$comision_terminal,$total,
-                            $metodo_pago,$monto_efectivo,$monto_terminal,$cambio,$notas_venta,
+                            round($sumaItems + $sumaDescuentoAjustes, 2), round($descuentoCliente + $sumaDescuentoAjustes, 2), $comision_terminal,$total,
+                            $metodo_pago,$monto_efectivo,$monto_terminal,$mixto_recibido,$cambio,$notas_venta,
                             $referencia_transferencia]);
             $venta_id = $pdo->lastInsertId();
 
-            foreach ($items as $item) {
+            foreach ($items as $idxVP => $item) {
                 $precioFinal  = floatval($item['precio']);
                 $precioOrig   = floatval($item['precio_orig'] ?? $precioFinal);
                 // [FIX-PAQUETE-CENTAVO] Para el último item de un grupo de paquete, usar el
@@ -935,8 +987,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     }
                 }
 
-                $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,precio_final,descuento,subtotal,paquete_id,nota_ajuste) VALUES (?,?,?,?,?,0,?,?,?)")
-                    ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$precioOrig,$precioFinal,$subtotalItem,$paqId,$notaAjuste ?: null]);
+                $descuentoItemVal = $descuentoAjustePorIdx[$idxVP] ?? 0.0;
+                $pdo->prepare("INSERT INTO venta_productos (venta_id,producto_id,cantidad,precio_unitario,precio_final,descuento,subtotal,paquete_id,nota_ajuste) VALUES (?,?,?,?,?,?,?,?,?)")
+                    ->execute([$venta_id,$item['producto_id'],$item['cantidad'],$precioOrig,$precioFinal,$descuentoItemVal,$subtotalItem,$paqId,$notaAjuste ?: null]);
 
                 // Bloquear la fila del stock para evitar condición de carrera
                 $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
@@ -1138,6 +1191,12 @@ if (!$caja) {
     .msg-exito { background: #e8f5e9; color: #2e7d32; padding: 12px 16px; border-radius: 6px; font-size: 13px; border-left: 3px solid #2e7d32; grid-column: span 2; display: flex; justify-content: space-between; align-items: center; }
     .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 5px 11px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; margin-left: 10px; }
     #_notifVentaOk { padding: 8px 12px !important; font-size: 12px !important; gap: 0; }
+    /* [FEATURE-NOTIF-FLOTANTE] (espejo de cajeroInventario/nuevaVenta.php) */
+    #_notifFlotante { position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:9999;
+        white-space:nowrap; padding:8px 12px; font-size:12px; border-radius:6px; gap:6px;
+        display:none; align-items:center; box-shadow:0 2px 10px rgba(0,0,0,.15); }
+    #_notifFlotante.exito { background:#e8f5e9; color:#2e7d32; border-left:3px solid #2e7d32; }
+    #_notifFlotante.error { background:#fdecea; color:#c0392b; border-left:3px solid #c0392b; }
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; align-items: center; justify-content: center; }
     .modal-overlay.visible { display: flex; }
     .modal { background: white; border-radius: 10px; width: 90%; max-width: 700px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -1417,6 +1476,11 @@ if (!$caja) {
                             <input type="number" id="mixtoEfectivo" placeholder="0.00" step="0.01" class="js-zero-default" oninput="calcularMixto()">
                         </div>
                         <div class="form-group-sm">
+                            <label>Efectivo recibido <span style="font-size:11px;color:#888;font-weight:400;">(para calcular cambio)</span></label>
+                            <input type="number" id="mixtoRecibido" placeholder="0.00" step="0.01" oninput="calcularMixto()">
+                        </div>
+                        <div class="resumen-fila cambio-fila"><span id="mixtoCambioLabel">Cambio</span><span id="resCambioMixto">$0.00</span></div>
+                        <div class="form-group-sm">
                             <label>Cargo a terminal <span style="font-size:11px;color:#888;font-weight:400;">(resto + comisión)</span></label>
                             <input type="number" id="mixtoTerminal" placeholder="0.00" step="0.01" readonly
                                 style="background:#f5f5f5;color:#555;cursor:not-allowed;">
@@ -1437,6 +1501,7 @@ if (!$caja) {
                     <input type="hidden" name="metodo_pago" id="inputMetodoPago">
                     <input type="hidden" name="monto_efectivo" id="inputMontoEfectivo">
                     <input type="hidden" name="monto_terminal" id="inputMontoTerminal">
+                    <input type="hidden" name="mixto_recibido" id="inputMixtoRecibido">
                     <input type="hidden" name="comision_terminal" id="inputComisionTerminal">
                     <input type="hidden" name="referencia_transferencia" id="inputReferenciaTransferencia">
                     <input type="hidden" name="descuento" id="inputDescuento">
@@ -1584,9 +1649,39 @@ const ICONS = <?= json_encode([
     'plus'     => icono('plus', '', 14),
     'printer'  => icono('printer', '', 14),
 ]) ?>;
+
+// [FEATURE-NOTIF-FLOTANTE] (espejo de cajeroInventario/nuevaVenta.php)
+function mostrarNotifTemporal(mensajeHtml, tipo = 'exito', duracionMs = 4000) {
+    let notif = document.getElementById('_notifFlotante');
+    if (!notif) {
+        notif = document.createElement('div');
+        notif.id = '_notifFlotante';
+        document.body.appendChild(notif);
+    }
+    notif.className = tipo === 'error' ? 'error' : 'exito';
+    notif.innerHTML = mensajeHtml;
+    notif.style.display = 'flex';
+    clearTimeout(notif._hideTimer);
+    notif._hideTimer = setTimeout(() => { notif.style.display = 'none'; }, duracionMs);
+}
+
 // ── Estado global ────────────────────────────────────────────────────────────
 let carrito           = (function() {
+    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] El borrador de localStorage no distinguia
+    // sucursal -- un cajero normal nunca puede cambiar de sucursal a medio carrito (la suya es
+    // fija), pero el Administrador SI puede (selector de sucursal), y esta misma clave
+    // "carrito" tambien la usa cajeroInventario/nuevaVenta.php en el mismo origen. Sin este
+    // candado, cambiar de sucursal (o entrar como Administrador justo despues de un cajero en
+    // el mismo navegador) restauraba productos con el precio/promocion/stock de la sucursal
+    // VIEJA -- reproducido en vivo: un producto con promocion exclusiva de Pinar se quedo
+    // marcado "Promoción" con el precio de Pinar al cambiar la vista a otra sucursal. El
+    // servidor solo exige que el precio no baje del piso (precio_compra), asi que una promo
+    // vieja mas barata que el piso de la sucursal nueva se habria cobrado de menos sin que
+    // nadie lo notara. Se guarda la sucursal junto con el carrito y se descarta si no coincide.
     try {
+        const miSuc = <?= intval($sucursalVista) ?>;
+        const sucGuardada = parseInt(localStorage.getItem('carrito_sucursal_id'));
+        if (sucGuardada !== miSuc) return [];
         const guardado = JSON.parse(localStorage.getItem('carrito'));
         return Array.isArray(guardado) ? guardado : [];
     } catch (e) {
@@ -1974,7 +2069,7 @@ function agregarPaquete(paq) {
     carrito.push({
         producto_id:       null,
         paquete_id:        parseInt(paq.paquete_id),
-        nombre:            '📦 ' + paq.nombre,
+        nombre:            paq.nombre,
         precio:            parseFloat(paq.precio_paquete),
         cantidad:          1,
         stock:             maxCombos,
@@ -1995,6 +2090,7 @@ function agregarPaquete(paq) {
 // ── Render carrito ───────────────────────────────────────────────────────────
 function renderCarrito() {
     localStorage.setItem('carrito', JSON.stringify(carrito));
+    localStorage.setItem('carrito_sucursal_id', String(<?= intval($sucursalVista) ?>));
 
     const body  = document.getElementById('carritoBody');
     const tabla = document.getElementById('carritoTabla');
@@ -2010,7 +2106,7 @@ function renderCarrito() {
             const stockBadgeClass = item.cantidad >= item.stock ? 'stock-bajo' : 'stock-ok';
             return `<tr class="paq-row">
                 <td>
-                    <strong>${esc(item.nombre)}</strong>
+                    <strong>${ICONS.package} ${esc(item.nombre)}</strong>
                     <div style="font-size:11px;color:#aaa;">${esc(subNames)}</div>
                 </td>
                 <td>$${item.precio.toFixed(2)}</td>
@@ -2238,7 +2334,7 @@ function aplicarAjuste() {
 
     renderCarrito(); recalcularTodo();
     actualizarSelectProductos();
-    alert(`✅ Ajuste aplicado: ${item.nombre} × ${cantDanada} → $${nuevo.toFixed(2)}`);
+    mostrarNotifTemporal(`${ICONS.checkBig} Ajuste aplicado: ${esc(item.nombre)} × ${cantDanada} → $${nuevo.toFixed(2)}`, 'exito');
 }
 
 function quitarAjusteProducto() {
@@ -2368,6 +2464,8 @@ function limpiarVenta() {
     if (_mixtoEf2) _mixtoEf2.value = '';
     const _mixtoTerm2 = document.getElementById('mixtoTerminal');
     if (_mixtoTerm2) _mixtoTerm2.value = '';
+    const _mixtoRec2 = document.getElementById('mixtoRecibido');
+    if (_mixtoRec2) _mixtoRec2.value = '';
     guardarEstadoVenta();
 }
 
@@ -2541,6 +2639,7 @@ function seleccionarMetodo(metodo, btn) {
         document.getElementById('camposMixto').classList.add('visible');
         document.getElementById('mixtoEfectivo').value = '';
         document.getElementById('mixtoTerminal').value = '0.00';
+        document.getElementById('mixtoRecibido').value = '';
     }
     recalcularTodo(); verificarCobrar();
 }
@@ -2558,7 +2657,8 @@ function guardarEstadoVenta() {
         pago: {
             montoEfectivo:       document.getElementById('montoEfectivo')?.value || '',
             transferReferencia:  document.getElementById('transferReferencia')?.value || '',
-            mixtoEfectivo:       document.getElementById('mixtoEfectivo')?.value || ''
+            mixtoEfectivo:       document.getElementById('mixtoEfectivo')?.value || '',
+            mixtoRecibido:       document.getElementById('mixtoRecibido')?.value || ''
         }
     };
     localStorage.setItem('ventaExtra', JSON.stringify(extra));
@@ -2703,6 +2803,27 @@ function calcularMixto() {
     document.getElementById('inputMontoEfectivo').value    = ef.toFixed(2);
     document.getElementById('inputMontoTerminal').value    = termDisplay.toFixed(2);
     document.getElementById('inputTotal').value            = total.toFixed(2);
+
+    // [FEATURE-CAMBIO-MIXTO] "Efectivo recibido" es lo que el cliente entrega físicamente en
+    // billetes/monedas, que puede ser más que "Monto efectivo" (la parte que en realidad se
+    // aplica a la venta, el resto va a terminal). La diferencia es el cambio que hay que
+    // regresar. Es solo una ayuda visual para el cajero -- no se envía al servidor, no cambia
+    // monto_efectivo/monto_terminal.
+    const recibido      = parseFloat(document.getElementById('mixtoRecibido').value) || 0;
+    const elCambioMixto = document.getElementById('resCambioMixto');
+    const elLabelMixto  = document.getElementById('mixtoCambioLabel');
+    if (recibido > 0 && recibido < ef) {
+        elCambioMixto.textContent = '-$' + (ef - recibido).toFixed(2);
+        elCambioMixto.style.color = '#c0392b';
+        elLabelMixto.textContent = 'Falta';
+        elLabelMixto.style.color = '#c0392b';
+    } else {
+        elCambioMixto.textContent = '$' + Math.max(0, recibido - ef).toFixed(2);
+        elCambioMixto.style.color = '#2e7d32';
+        elLabelMixto.textContent = 'Cambio';
+        elLabelMixto.style.color = '';
+    }
+
     verificarCobrar();
 }
 
@@ -2795,7 +2916,7 @@ function prepararVenta() {
         .filter(item => item.tipo === 'paquete')
         .map(item => ({
             paquete_id: item.paquete_id,
-            nombre: item.nombre.replace(/^📦\s*/, ''),
+            nombre: item.nombre,
             cantidad: item.cantidad,
             precio_paquete: item.precio,
             productos: item.productos_paquete.map(prod => ({
@@ -2807,6 +2928,10 @@ function prepararVenta() {
     if (metodoPago === 'Transferencia') {
         document.getElementById('inputReferenciaTransferencia').value =
             String(document.getElementById('transferReferencia').value || '').trim();
+    }
+    if (metodoPago === 'Mixto') {
+        document.getElementById('inputMixtoRecibido').value =
+            String(document.getElementById('mixtoRecibido')?.value || '').trim();
     }
     const metaVenta = {
         pago: metodoPago === 'Transferencia' ? {
@@ -2884,6 +3009,8 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
             if (_mixtoEf) _mixtoEf.value = '';
             const _mixtoTerm = document.getElementById('mixtoTerminal');
             if (_mixtoTerm) _mixtoTerm.value = '';
+            const _mixtoRec = document.getElementById('mixtoRecibido');
+            if (_mixtoRec) _mixtoRec.value = '';
             document.getElementById('recPaquetes').style.display = 'none';
             const chk = document.getElementById('chkAjusteDano');
             if (chk) { chk.checked = false; }
@@ -2902,7 +3029,7 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
         })
         .catch(err => {
             const msg = err.message || 'No se pudo procesar la venta.';
-            alert('⚠ ' + msg);
+            mostrarNotifTemporal(`${ICONS.warning} ${esc(msg)}`, 'error', 6000);
         })
         .finally(() => {
             btn.disabled = false;
@@ -3049,22 +3176,30 @@ function generarTicketHTML(venta) {
 
     html += `<div class="t-linea"></div>`;
 
-    // [AUTOFIX] N-01: Usar descuento_display (proporcional al subtotal actual) en lugar de descuento bruto
-    if (parseFloat(venta.descuento_display ?? venta.descuento) > 0) {
+    // [FEATURE-DESCUENTO-AJUSTE-DAÑO-TICKET 2026-09-11] (espejo de cajeroInventario/nuevaVenta.php)
+    // Antes se mostraba un solo renglon "Descuento cliente" con el ajuste por daño y el
+    // descuento de cliente ya mezclados — se separan porque son cosas distintas (una es una
+    // rebaja manual con nota, la otra es el % del cliente) y el usuario pidio verlas por
+    // separado en el ticket impreso.
+    const ajusteMontoTicket  = parseFloat(venta.descuento_ajustes ?? 0);
+    const clienteMontoTicket = parseFloat(venta.descuento_cliente_puro ?? (venta.descuento_display ?? venta.descuento));
+    const descuentoTotalTicket = ajusteMontoTicket + clienteMontoTicket;
+    if (descuentoTotalTicket > 0) {
         html += `<div class="t-fila"><span>Subtotal</span><span>$${parseFloat(venta.subtotal).toFixed(2)}</span></div>`;
     }
     if (parseFloat(venta.comision_terminal) > 0) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${parseFloat(venta.comision_terminal).toFixed(2)}</span></div>`;
     }
-    if (parseFloat(venta.descuento_display ?? venta.descuento) > 0) {
-        // Descuento de cliente: aplica igual sin importar el método de pago. venta.descuento
-        // aquí es solo el descuento de cliente — promos y ajustes ya van reflejados en el
-        // precio de cada producto, ver comentario en el INSERT de la venta.
-        const descuentoMontoTicket = parseFloat(venta.descuento_display ?? venta.descuento);
-        const subtotalVentaTicket  = parseFloat(venta.subtotal) || 0;
-        const pctDescClienteTicket = subtotalVentaTicket > 0 ? (descuentoMontoTicket / subtotalVentaTicket * 100) : 0;
-        const etiquetaDescTicket   = pctDescClienteTicket > 0 ? `Descuento cliente (${pctDescClienteTicket.toFixed(1)}%)` : 'Ahorraste';
-        html += `<div class="t-fila" style="font-size:11px;"><span>${etiquetaDescTicket}</span><span>-$${descuentoMontoTicket.toFixed(2)}</span></div>`;
+    if (ajusteMontoTicket > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ajuste de precio</span><span>-$${ajusteMontoTicket.toFixed(2)}</span></div>`;
+    }
+    if (clienteMontoTicket > 0) {
+        // Base del % = lo que ya trae los ajustes descontados (asi se calculo el tope de
+        // descuento_fijo del cliente en el servidor: sobre $sumaItems, no sobre el bruto).
+        const baseClienteTicket   = (parseFloat(venta.subtotal) || 0) - ajusteMontoTicket;
+        const pctDescClienteTicket = baseClienteTicket > 0 ? (clienteMontoTicket / baseClienteTicket * 100) : 0;
+        const etiquetaDescTicket   = pctDescClienteTicket > 0 ? `Descuento cliente (${pctDescClienteTicket.toFixed(1)}%)` : 'Descuento cliente';
+        html += `<div class="t-fila" style="font-size:11px;"><span>${etiquetaDescTicket}</span><span>-$${clienteMontoTicket.toFixed(2)}</span></div>`;
     }
 
     html += `
@@ -3074,19 +3209,38 @@ function generarTicketHTML(venta) {
         <div class="t-linea"></div>
         <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
 
-    if (meta.pago && meta.pago.metodo_real === 'Transferencia') {
+    // [FIX-REFERENCIA-TICKET] Antes esto dependia de "meta.pago.metodo_real", un campo que
+    // nunca se llegaba a guardar en ningun lado (ver metaVenta.pago en prepararVenta(), que solo
+    // guarda "referencia") -- la condicion nunca era verdadera y la Referencia jamas aparecia
+    // en el ticket impreso, aunque si se guardaba correctamente en la base de datos. Se usa
+    // directamente venta.referencia_transferencia (columna real de la tabla ventas, ya viene
+    // en el SELECT v.* de ?ticket_venta=) en vez del blob de notas, que es mas fragil.
+    if (venta.metodo_pago === 'Transferencia' && venta.referencia_transferencia) {
         html += `
-        <div class="t-fila"><span>Pago real</span><span>Transferencia</span></div>
-        <div class="t-fila"><span>Referencia</span><span>${esc(meta.pago.referencia || '—')}</span></div>`;
-        if (meta.pago.banco_origen) {
-            html += `<div class="t-fila"><span>Banco origen</span><span>${esc(meta.pago.banco_origen)}</span></div>`;
-        }
+        <div class="t-fila"><span>Referencia</span><span>${esc(venta.referencia_transferencia)}</span></div>`;
     }
 
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
         html += `
         <div class="t-fila"><span>Recibido</span><span>$${parseFloat(venta.monto_efectivo).toFixed(2)}</span></div>
         <div class="t-fila"><span>Cambio</span><span>$${parseFloat(venta.cambio).toFixed(2)}</span></div>`;
+    }
+
+    // [FEATURE-TICKET-MIXTO] El ticket de un pago Mixto no mostraba nada del desglose
+    // efectivo/terminal ni de cuánto se recibió en efectivo -- solo "Método de pago: Mixto"
+    // y el total, sin forma de saber cuánto cobrar en cada medio ni cuánto cambio se dio.
+    if (venta.metodo_pago === 'Mixto') {
+        const mEf   = parseFloat(venta.monto_efectivo) || 0;
+        const mTerm = parseFloat(venta.monto_terminal) || 0;
+        html += `
+        <div class="t-fila"><span>Efectivo</span><span>$${mEf.toFixed(2)}</span></div>
+        <div class="t-fila"><span>Terminal</span><span>$${mTerm.toFixed(2)}</span></div>`;
+        if (venta.mixto_recibido && parseFloat(venta.mixto_recibido) > mEf) {
+            const recibidoMixto = parseFloat(venta.mixto_recibido);
+            html += `
+        <div class="t-fila"><span>Recibido</span><span>$${recibidoMixto.toFixed(2)}</span></div>
+        <div class="t-fila"><span>Cambio</span><span>$${(recibidoMixto - mEf).toFixed(2)}</span></div>`;
+        }
     }
 
     if (venta.metodo_pago === 'Credito') {
@@ -3239,6 +3393,7 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
         if (extra.pago.montoEfectivo)      document.getElementById('montoEfectivo').value      = extra.pago.montoEfectivo;
         if (extra.pago.transferReferencia) document.getElementById('transferReferencia').value = extra.pago.transferReferencia;
         if (extra.pago.mixtoEfectivo)      document.getElementById('mixtoEfectivo').value      = extra.pago.mixtoEfectivo;
+        if (extra.pago.mixtoRecibido)      document.getElementById('mixtoRecibido').value      = extra.pago.mixtoRecibido;
     }
 
     // Forzar repintado real de un checkbox: leer offsetHeight solo recalcula layout,

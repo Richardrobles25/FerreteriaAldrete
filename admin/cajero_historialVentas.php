@@ -17,11 +17,27 @@ if (isset($_GET['detalle_venta'])) {
     // de cualquier sucursal — antes exigia "ca.sucursal_id = 0", que ninguna venta real cumple.
     $venta_id = intval(is_scalar($_GET['detalle_venta'] ?? null) ? $_GET['detalle_venta'] : 0);
     $condSucDet = ($sucursalVista !== 0) ? ' AND ca.sucursal_id = ?' : '';
+    // [FIX-TICKET-SUCURSAL-VISTA] El ticket usaba SIEMPRE $sucursalTicket (calculado mas abajo
+    // a partir de $sucursalVista, el filtro de la pagina) para el logo/RFC/direccion/telefono/
+    // pie de pagina -- con "Todas las sucursales" ($sucursalVista=0) esa consulta no encuentra
+    // ninguna fila (no existe una sucursal con id 0) y el ticket salia en blanco/generico
+    // ("Ferreteria Aldrete" a secas, sin nada de la sucursal real donde se hizo la venta),
+    // pareciendo el formato viejo de antes de que existiera esta personalizacion. Se trae aqui
+    // los datos de LA SUCURSAL REAL DE LA VENTA (via cajas -> sucursales), no la del filtro.
     $stmtV = $pdo->prepare("
         SELECT v.*, c.nombre_completo AS cliente, c.telefono AS tel_cliente,
-               u.nombre_completo AS cajero
+               u.nombre_completo AS cajero,
+               s.nombre AS suc_nombre, s.rfc AS suc_rfc, s.direccion AS suc_direccion,
+               s.telefono AS suc_telefono, s.datos_ticket AS suc_datos_ticket,
+               s.ticket_logo AS suc_ticket_logo, s.ticket_font_size AS suc_ticket_font_size,
+               s.ticket_ancho_mm AS suc_ticket_ancho_mm, s.ticket_pie AS suc_ticket_pie,
+               s.ticket_pie_efectivo AS suc_ticket_pie_efectivo,
+               s.ticket_pie_credito AS suc_ticket_pie_credito,
+               s.ticket_pie_terminal AS suc_ticket_pie_terminal,
+               s.ticket_nota_credito AS suc_ticket_nota_credito
         FROM ventas v
         JOIN cajas ca ON v.caja_id = ca.caja_id $condSucDet
+        LEFT JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
         LEFT JOIN clientes c ON v.cliente_id = c.cliente_id
         LEFT JOIN usuarios u ON v.usuario_id = u.usuario_id
         WHERE v.venta_id = ?
@@ -118,13 +134,34 @@ if (isset($_GET['detalle_venta'])) {
         $venta['devoluciones'] = $devolucionesList;
 
         // Reconstruir valores originales (antes de cualquier devolución)
+        // [FIX-COMISION-NO-REEMBOLSABLE] comision_terminal ya no se reduce en ninguna
+        // devolución (nunca se reembolsa, ver cajero_devoluciones.php) -- su valor actual YA
+        // ES el original, sumar comision_devuelta aquí lo duplicaría. Por la misma razón,
+        // original_total ya no debe sumar $sumComision (total tampoco se le resta esa comision).
         $sumBruto    = array_sum(array_column($devolucionesList, 'subtotal_bruto_devuelto'));
-        $sumComision = array_sum(array_column($devolucionesList, 'comision_devuelta'));
         $sumTotal    = array_sum(array_column($devolucionesList, 'total_devuelto'));
         $venta['original_subtotal']  = floatval($venta['subtotal'])  + $sumBruto;
         $venta['original_descuento'] = floatval($venta['descuento']) + ($sumBruto - $sumTotal);
-        $venta['original_comision']  = floatval($venta['comision_terminal']) + $sumComision;
-        $venta['original_total']     = floatval($venta['total'])     + $sumTotal + $sumComision;
+        $venta['original_comision']  = floatval($venta['comision_terminal']);
+        $venta['original_total']     = floatval($venta['total'])     + $sumTotal;
+
+        // [FIX-TICKET-SUCURSAL-VISTA] Config de ticket de LA SUCURSAL DE LA VENTA, para que
+        // generarTicketHTML() la use en vez de la global (que depende del filtro de la pagina).
+        $venta['ticket_config'] = [
+            'nombre'              => $venta['suc_nombre']              ?? 'Ferretería Aldrete',
+            'rfc'                 => $venta['suc_rfc']                 ?? '',
+            'direccion'           => $venta['suc_direccion']           ?? '',
+            'telefono'            => $venta['suc_telefono']            ?? '',
+            'datos_ticket'        => $venta['suc_datos_ticket']        ?? '',
+            'ticket_logo'         => $venta['suc_ticket_logo']         ?? null,
+            'ticket_font_size'    => intval($venta['suc_ticket_font_size'] ?? 12),
+            'ticket_ancho_mm'     => intval($venta['suc_ticket_ancho_mm']  ?? 58),
+            'ticket_pie'          => $venta['suc_ticket_pie']          ?? '',
+            'ticket_pie_efectivo' => $venta['suc_ticket_pie_efectivo'] ?? '',
+            'ticket_pie_credito'  => $venta['suc_ticket_pie_credito']  ?? '',
+            'ticket_pie_terminal' => $venta['suc_ticket_pie_terminal'] ?? '',
+            'ticket_nota_credito' => $venta['suc_ticket_nota_credito'] ?? '',
+        ];
     }
     header('Content-Type: application/json');
     echo json_encode($venta);
@@ -196,15 +233,20 @@ $stmt->execute($params);
 $ventas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Totales del período ──────────────────────────────────────────────────────
+// [FIX-COMISION-NO-REEMBOLSABLE] Se agrega 'Devuelto' a estos filtros: una venta totalmente
+// devuelta con comisión de terminal ya no queda en $0 (esa comisión nunca se reembolsa, se
+// queda como venta.total residual -- ver cajero_devoluciones.php). Sin 'Devuelto' aquí, ese
+// dinero real y ya cobrado desaparecía de estas tarjetas. Mismo criterio que ya usa
+// cajero_corteCaja.php (WHERE estado IN ('Completada','Modificado','Devuelto')).
 $stmtTot = $pdo->prepare("
     SELECT
         COUNT(*) as total_ventas,
-        COALESCE(SUM(CASE WHEN v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as total_cobrado,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'      AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as ef,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'      AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as term,
-        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('Credito','Crédito') AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as cred,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'          AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as mixto,
-        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia'  AND v.estado IN ('Completada','Modificado') THEN v.total ELSE 0 END),0) as transf,
+        COALESCE(SUM(CASE WHEN v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as total_cobrado,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Efectivo'      AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as ef,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Terminal'      AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as term,
+        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('Credito','Crédito') AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as cred,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Mixto'          AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as mixto,
+        COALESCE(SUM(CASE WHEN v.metodo_pago='Transferencia'  AND v.estado IN ('Completada','Modificado','Devuelto') THEN v.total ELSE 0 END),0) as transf,
         COUNT(CASE WHEN v.estado='Cancelada' THEN 1 END) as canceladas
     FROM ventas v
     JOIN cajas ca ON v.caja_id = ca.caja_id
@@ -1080,6 +1122,9 @@ function renderDetalle(v) {
             <div class="det-campo"><span>Comisión</span><strong>$${fmt(v.comision_terminal)}</strong></div>
             <div class="det-campo"><span>Cambio</span><strong>$${fmt(v.cambio)}</strong></div>
         ` : ''}
+        ${v.metodo_pago === 'Transferencia' && v.referencia_transferencia ? `
+            <div class="det-campo"><span>Referencia</span><strong>${esc(v.referencia_transferencia)}</strong></div>
+        ` : ''}
     `;
 
     // Productos — agrupar paquetes en una sola fila
@@ -1291,7 +1336,7 @@ function reimprimirTicket(ventaId) {
                     estilo.id = '__ticketPageStyle';
                     document.head.appendChild(estilo);
                 }
-                estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm auto; margin: 0; }`;
+                estilo.textContent = `@page { size: ${(venta.ticket_config || datosTicket).ticket_ancho_mm}mm auto; margin: 0; }`;
                 setTimeout(() => window.print(), 150);
             };
             const imgH = document.querySelector('#ticketImprimir img');
@@ -1311,26 +1356,27 @@ function reimprimirDesdeModal() {
 }
 
 function generarTicketHTML(venta) {
+    const dt = venta.ticket_config || datosTicket;
     const fecha = venta.fecha_formateada || venta.created_at;
 
     // Aplicar configuracion de ticket de la sucursal
     const elTicket = document.getElementById('ticketImprimir');
-    elTicket.style.fontSize = datosTicket.ticket_font_size + 'px';
-    elTicket.style.width    = datosTicket.ticket_ancho_mm  + 'mm';
+    elTicket.style.fontSize = dt.ticket_font_size + 'px';
+    elTicket.style.width    = dt.ticket_ancho_mm  + 'mm';
 
     let html = '';
-    if (datosTicket.ticket_logo) {
-        const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
-        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    if (dt.ticket_logo) {
+        const maxW = dt.ticket_ancho_mm >= 80 ? '140px' : '100px';
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${dt.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
     }
-    html += `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
+    html += `<div class="t-centro t-bold t-grande">${esc(dt.nombre)}</div>`;
 
-    if (datosTicket.datos_ticket) {
-        html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(datosTicket.datos_ticket)}</div>`;
+    if (dt.datos_ticket) {
+        html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(dt.datos_ticket)}</div>`;
     } else {
-        if (datosTicket.rfc)       html += `<div class="t-centro">RFC: ${esc(datosTicket.rfc)}</div>`;
-        if (datosTicket.direccion) html += `<div class="t-centro">${esc(datosTicket.direccion)}</div>`;
-        if (datosTicket.telefono)  html += `<div class="t-centro">Tel: ${esc(datosTicket.telefono)}</div>`;
+        if (dt.rfc)       html += `<div class="t-centro">RFC: ${esc(dt.rfc)}</div>`;
+        if (dt.direccion) html += `<div class="t-centro">${esc(dt.direccion)}</div>`;
+        if (dt.telefono)  html += `<div class="t-centro">Tel: ${esc(dt.telefono)}</div>`;
     }
 
     html += `
@@ -1431,6 +1477,15 @@ function generarTicketHTML(venta) {
         <div class="t-linea"></div>
         <div class="t-fila"><span>Método de pago</span><span>${esc(venta.metodo_pago)}</span></div>`;
 
+    // [FIX-REFERENCIA-TICKET] (portado de cajero_nuevaVenta.php/cajero_ventasPendientes.php):
+    // el ticket reimpreso desde el historial nunca mostraba la referencia bancaria de una
+    // venta por Transferencia, aunque ya se guardaba correctamente en la base de datos
+    // (venta.referencia_transferencia, incluida en el SELECT v.* de ?detalle_venta=).
+    if (venta.metodo_pago === 'Transferencia' && venta.referencia_transferencia) {
+        html += `
+        <div class="t-fila"><span>Referencia</span><span>${esc(venta.referencia_transferencia)}</span></div>`;
+    }
+
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {
         html += `
         <div class="t-fila"><span>Recibido</span><span>$${fmt(venta.monto_efectivo)}</span></div>
@@ -1440,9 +1495,18 @@ function generarTicketHTML(venta) {
         html += `
         <div class="t-fila"><span>Efectivo</span><span>$${fmt(venta.monto_efectivo)}</span></div>
         <div class="t-fila"><span>Terminal</span><span>$${fmt(venta.monto_terminal)}</span></div>`;
+        // [FEATURE-TICKET-MIXTO] (portado de cajero_nuevaVenta.php): mostrar cuánto se recibió
+        // en efectivo y el cambio dado, si se capturó ese dato al cobrar.
+        if (venta.mixto_recibido && parseFloat(venta.mixto_recibido) > parseFloat(venta.monto_efectivo)) {
+            const recibidoMixto = parseFloat(venta.mixto_recibido);
+            const efMixto        = parseFloat(venta.monto_efectivo) || 0;
+            html += `
+        <div class="t-fila"><span>Recibido</span><span>$${recibidoMixto.toFixed(2)}</span></div>
+        <div class="t-fila"><span>Cambio</span><span>$${(recibidoMixto - efMixto).toFixed(2)}</span></div>`;
+        }
     }
     if (venta.metodo_pago === 'Crédito' || venta.metodo_pago === 'Credito') {
-        const notaCred = datosTicket.ticket_nota_credito || 'Al firmar acepto cubrir el monto total adeudado';
+        const notaCred = dt.ticket_nota_credito || 'Al firmar acepto cubrir el monto total adeudado';
         html += `
         <div class="t-centro" style="margin-top:6px;font-weight:bold;">*** VENTA A CRÉDITO ***</div>
         <div class="t-linea"></div>
@@ -1452,10 +1516,10 @@ function generarTicketHTML(venta) {
 
     const _metodo = venta.metodo_pago || '';
     let _pie;
-    if (_metodo === 'Crédito' || _metodo === 'Credito') _pie = datosTicket.ticket_pie_credito;
-    else if (_metodo === 'Terminal')                     _pie = datosTicket.ticket_pie_terminal;
-    else                                                 _pie = datosTicket.ticket_pie_efectivo;
-    const pieTexto = _pie || datosTicket.ticket_pie || '¡Gracias por su compra!';
+    if (_metodo === 'Crédito' || _metodo === 'Credito') _pie = dt.ticket_pie_credito;
+    else if (_metodo === 'Terminal')                     _pie = dt.ticket_pie_terminal;
+    else                                                 _pie = dt.ticket_pie_efectivo;
+    const pieTexto = _pie || dt.ticket_pie || '¡Gracias por su compra!';
     html += `
         <div class="t-linea"></div>
         <div class="t-centro">${esc(pieTexto)}</div>

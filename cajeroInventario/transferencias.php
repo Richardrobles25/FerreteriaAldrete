@@ -499,6 +499,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     .msg-exito { background: #e8f5e9; color: #2e7d32; border-left: 3px solid #2e7d32; }
     .errores { background: #fdecea; color: #c0392b; padding: 12px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; border-left: 3px solid #c0392b; }
     .errores ul { margin: 6px 0 0 16px; }
+    .btn-limpiar { background: white; color: #666; border: 1px solid #ddd; padding: 9px 14px; border-radius: 6px; font-size: 13px; text-decoration: none; display: inline-block; }
     table { width: 100%; border-collapse: collapse; }
     thead { background: #f9f9f9; }
     th { padding: 10px 12px; text-align: left; font-size: 11px; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #eee; }
@@ -707,7 +708,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                         </select>
                     </div>
                     <button type="submit" style="background:#14ace7;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Filtrar</button>
-                    <a href="transferencias.php" style="font-size:12px;color:#aaa;align-self:center;text-decoration:none;">Limpiar</a>
+                    <a class="btn-limpiar" href="transferencias.php">Limpiar</a>
                 </form>
             </div>
 
@@ -873,7 +874,13 @@ const prodsBySucursal = <?= json_encode($prodsBySucursal) ?>;
     }
 })();
 let itemsTransf = (function() {
+    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] (espejo de admin/inventario_transferencias.php)
+    // misma clave de localStorage compartida en el mismo origen con la version de admin, que
+    // SI puede cambiar de sucursal a medio armado de un borrador.
     try {
+        const miSuc = <?= intval($_SESSION['sucursal_id']) ?>;
+        const sucGuardada = parseInt(localStorage.getItem('itemsTransfDraft_sucursal_id'));
+        if (sucGuardada !== miSuc) return [];
         const guardado = JSON.parse(localStorage.getItem('itemsTransfDraft'));
         return Array.isArray(guardado) ? guardado : [];
     } catch (e) {
@@ -1038,6 +1045,7 @@ function agregarItem() {
 function renderItems() {
     // [FIX-BORRADOR-TRANSF] Persistir la lista en cada render, igual que nuevaVenta.php.
     localStorage.setItem('itemsTransfDraft', JSON.stringify(itemsTransf));
+    localStorage.setItem('itemsTransfDraft_sucursal_id', String(<?= intval($_SESSION['sucursal_id']) ?>));
     const div = document.getElementById('listaItems');
     if (!itemsTransf.length) {
         div.innerHTML = '<div class="items-vacio">Sin productos agregados</div>';

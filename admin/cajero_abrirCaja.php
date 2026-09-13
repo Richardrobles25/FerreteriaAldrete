@@ -22,17 +22,21 @@ if ($sucursalVista !== 0) {
     $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
     $cajaAbierta = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // [FIX-MEDIO-D3-10] Antes "numero_turno" se calculaba como "cuantas cajas de OTROS
-    // usuarios estan ABIERTAS ahora mismo + 1" — un numero de turnos CONCURRENTES, no un
-    // consecutivo real. En la operacion tipica (un solo cajero a la vez por sucursal) ese
-    // conteo casi siempre da 0, asi que absolutamente todos los turnos del dia se abrian
-    // como "Turno #1", sin importar cuantos hubiera habido antes. Ahora es un consecutivo
-    // real: cuantas cajas (abiertas o ya cerradas, de cualquier usuario) se han abierto HOY
-    // en esta sucursal + 1.
+    // [REVERTIDO-FIX-MEDIO-D3-10 2026-09-10, a peticion explicita del usuario] "numero_turno"
+    // vuelve a ser un numero de turnos CONCURRENTES: cuantas cajas siguen ABIERTAS ahora mismo
+    // en esta sucursal (de cualquier usuario) + 1. El usuario confirmo que quiere que se
+    // "reinicie" -- si solo hay un cajero a la vez, siempre debe salir "Turno #1"; si otra
+    // maquina abre caja al mismo tiempo, esa sale "Turno #2"; en cuanto ambas se cierren, la
+    // siguiente vuelve a salir "Turno #1" (no sigue subiendo con el consecutivo del dia). Esto
+    // ya se habia probado antes (ver comentario historico [FIX-MEDIO-D3-10]) y se habia
+    // cambiado precisamente porque en operacion de un solo cajero por sucursal, dos turnos
+    // del mismo dia (manana y tarde) salian ambos como "Turno #1" sin poder distinguirse por
+    // numero en el historial -- el usuario confirmo que prefiere ese comportamiento de todos
+    // modos, asi que se revierte a proposito.
     $stmtTurno = $pdo->prepare("
         SELECT COUNT(*) + 1
         FROM cajas
-        WHERE sucursal_id = ? AND DATE(abierta_en) = CURDATE()
+        WHERE sucursal_id = ? AND estado = 'Abierta'
     ");
     $stmtTurno->execute([$sucursalVista]);
     $siguienteTurno = $stmtTurno->fetchColumn();

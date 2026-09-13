@@ -51,7 +51,10 @@ $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
 
 // [AUTOFIX] BUG-07: Envolver en try/catch para evitar crash si la BD falla
 try {
-    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite <= CURDATE()");
+    // [FIX-MORA-DIA-GRACIA 2026-09-12] (espejo de cajeroInventario/creditos.php) el cliente
+    // tiene TODO el dia del corte para pagar sin marcarse Vencido -- antes "<= CURDATE()"
+    // marcaba Vencido y cobraba mora ese MISMO dia del corte, sin el dia completo de gracia.
+    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 } catch (\PDOException $e) {
     error_log('[Ferreteria/abonos] Error al actualizar vencidos: ' . $e->getMessage());
 }
@@ -71,7 +74,7 @@ try {
         JOIN ventas v     ON cr.venta_id     = v.venta_id
         JOIN cajas  ca    ON v.caja_id       = ca.caja_id
         JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
-        WHERE cr.estado = 'Vencido' AND cr.fecha_limite <= CURDATE() AND s.porcentaje_mora > 0
+        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND s.porcentaje_mora > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
         $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, fecha_limite, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
@@ -84,7 +87,7 @@ try {
         $fechaLimiteActual = $credLock['fecha_limite'];
         $ultimaMora        = 0.0;
 
-        while (strtotime($fechaLimiteActual) <= strtotime(date('Y-m-d'))) {
+        while (strtotime($fechaLimiteActual) < strtotime(date('Y-m-d'))) {
             $moraAmt           = round($saldoActual * $pct / 100, 2);
             $saldoBase         = $saldoActual;
             $saldoActual       = round($saldoActual + $moraAmt, 2);
@@ -203,8 +206,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         }
 
         // Aplicar FIFO: liquidar créditos del más antiguo al más reciente. Un abono parcial ya
-        // NO regresa el crédito a "Activo" ni le toca fecha_limite/mora_acumulada — sigue
-        // "Vencido" (si ya lo estaba) hasta liquidarse por completo.
+        // NO regresa el crédito a "Activo" ni le toca fecha_limite — sigue "Vencido" (si ya lo
+        // estaba) hasta liquidarse por completo.
+        // [FIX-MORA-BADGE-ABONO 2026-09-12] (espejo de admin/cajero_creditos.php y
+        // cajeroInventario/creditos.php, que ya lo tenian): mora_acumulada SI se limpia con cada
+        // abono -- es solo un campo de despliegue ("la ultima mora que se cobro"), no un saldo
+        // aparte. Sin este reset, el badge "Mora actual: +$X" y el boton "Cancelar mora" seguian
+        // activos despues de pagar, y si el admin le daba clic a "Cancelar mora" ya con el abono
+        // aplicado, restaba esa mora POR SEGUNDA VEZ del saldo (ya reducido por el abono real),
+        // regalando dinero. El historial de movimientos_mora no se toca -- sigue intacto.
         $restante = $monto;
         foreach ($creditsRows as $cr) {
             if ($restante <= 0.001) break;
@@ -216,10 +226,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
                 ->execute([$cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $comisionEste, $metodo, $notas]);
             if ($seLiquida) {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado' WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado', mora_acumulada = 0 WHERE credito_id = ?")
                     ->execute([$cr['credito_id']]);
             } else {
-                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ? WHERE credito_id = ?")
+                $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, mora_acumulada = 0 WHERE credito_id = ?")
                     ->execute([$nuevoSaldo, $cr['credito_id']]);
             }
 

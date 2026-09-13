@@ -12,36 +12,24 @@ verificarSesion();
 // (puro) ni Inventario/Cajero.
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
-require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
-$esAdmin = $_SESSION['rol'] === 'Administrador';
+// [CAMBIO-UNIDAD-GLOBAL 2026-09-09] Unidades de medida ahora es un catalogo GLOBAL, igual
+// que categorias/proveedores/paquetes -- confirmado con el usuario: era la unica entidad de
+// catalogo aislada por sucursal, y eso obligaba a elegir una sucursal especifica para crear
+// una unidad en vez de compartirla entre todas. Se alinea con el mismo patron ya usado en
+// inventario_categorias.php.
 
 // Eliminar unidad
 if (isset($_GET['eliminar'])) {
     // [FIX-CRIT-B-03] CSRF ausente antes.
     requerirCSRF($_GET['_token'] ?? '', 'inventario_unidades.php');
     $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
-    $u = $pdo->prepare("SELECT nombre, sucursal_id FROM unidades_medida WHERE unidad_id = ?");
+    $u = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ?");
     $u->execute([$id]);
     $unidadRow = $u->fetch(PDO::FETCH_ASSOC);
     if ($unidadRow) {
-        // [FIX-MEDIO-B-20 REVERTIDO 2026-09-03 / FIX-UNIDAD-CRUZADA] El conteo global de
-        // FIX-MEDIO-B-20 evitaba dejar productos "huerfanos" (usando un nombre de unidad que
-        // ya no existe en ningun catalogo), pero probado en vivo genero un bug real distinto y
-        // mas grave: la sucursal 2 no podia borrar SU PROPIA unidad sin uso porque la
-        // sucursal 1 tenia -- sin ninguna relacion -- un producto usando el mismo texto de
-        // unidad. Bloquear el borrado de "algo que no es mio, por culpa de datos de otra
-        // sucursal que ni siquiera puedo ver" es peor experiencia que el riesgo cosmetico de
-        // un producto quedando con un texto de unidad que ya no esta en ningun catalogo (se
-        // resuelve solo la proxima vez que se edite ese producto, cayendo en "escribir otra").
-        // Se limita el conteo a productos que ESTA sucursal (la dueña de la unidad) realmente
-        // tiene en stock.
-        $check = $pdo->prepare("
-            SELECT COUNT(*) FROM productos p
-            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-            WHERE p.unidad_medida = ? AND p.activo = 1 AND ss.activo = 1
-        ");
-        $check->execute([$unidadRow['sucursal_id'], $unidadRow['nombre']]);
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND activo = 1");
+        $check->execute([$unidadRow['nombre']]);
         if ($check->fetchColumn() > 0) {
             header('Location: inventario_unidades.php?msg=error_productos');
             exit();
@@ -56,12 +44,10 @@ if (isset($_GET['eliminar'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-CRIT-B-03] CSRF ausente antes.
     requerirCSRF($_POST['_token'] ?? '', 'inventario_unidades.php');
-    $nombre     = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
+    $nombre = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
     // [FIX-UNIDAD-ID-DESINCRONIZADO] (mismo patron que categorias.php): se ancla al ?editar=
     // de la URL, no al <input hidden name="unidad_id">.
-    $id         = is_scalar($_GET['editar'] ?? null) ? intval($_GET['editar']) : 0;
-    $sucursalId = $esAdmin ? intval(is_scalar($_POST['sucursal_id'] ?? null) ? $_POST['sucursal_id'] : $sucursalVista) : intval($_SESSION['sucursal_id']);
-    if ($sucursalId === 0 && !$esAdmin) $sucursalId = intval($_SESSION['sucursal_id']);
+    $id = is_scalar($_GET['editar'] ?? null) ? intval($_GET['editar']) : 0;
 
     // [AUTOFIX] VALIDACION-3B-2: Validar nombre en blanco antes de tocar la BD
     if ($nombre === '') {
@@ -80,59 +66,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [AUTOFIX] ERROR-UNIT-01: Capturar PDOException de clave duplicada en lugar de exponer el error PHP
     try {
         if ($id) {
-            // [FIX-MEDIO-B-20] Antes renombrar una unidad no tocaba los productos que ya la
-            // usaban (productos.unidad_medida es una copia de texto, no una FK): quedaban
-            // con un nombre de unidad que ya no existe en el catalogo. Se propaga el
-            // renombre a los productos que tenian el nombre viejo exacto.
-            $stmtNombreViejo = $pdo->prepare("SELECT nombre, sucursal_id FROM unidades_medida WHERE unidad_id = ?");
-            $stmtNombreViejo->execute([$id]);
-            $filaVieja       = $stmtNombreViejo->fetch(PDO::FETCH_ASSOC);
-
             // [FIX-UNIDAD-EDICION-FANTASMA] Antes, si $id no correspondía a ninguna unidad real
             // (borrada por otra sesión, o un POST directo con un id inventado), el UPDATE de
             // abajo afectaba 0 filas en silencio y aun así se reportaba "Unidad actualizada
             // correctamente" — probado en vivo con unidad_id=999999.
-            if (!$filaVieja) {
+            $stmtNombreViejo = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ?");
+            $stmtNombreViejo->execute([$id]);
+            $nombreViejo = $stmtNombreViejo->fetchColumn();
+            if ($nombreViejo === false) {
                 header('Location: inventario_unidades.php?msg=no_encontrado');
                 exit();
             }
-            $nombreViejo     = $filaVieja['nombre'];
-            $sucursalIdVieja = intval($filaVieja['sucursal_id']);
 
             // [FIX-MEDIO-H-07] El renombre de la unidad y su propagacion en cascada a
-            // productos.unidad_medida eran dos UPDATE sueltos: si el segundo fallaba, el
-            // catalogo de unidades ya mostraba el nombre nuevo pero todos los productos que la
-            // usaban se quedaban con el nombre viejo, ahora huerfano (ya no existe en ningun
-            // catalogo) -- justo el desajuste que el fix B-20 de arriba intentaba evitar.
+            // productos.unidad_medida (copia de texto, no una FK) son dos UPDATE sueltos: si
+            // el segundo fallara, el catalogo ya mostraria el nombre nuevo pero los productos
+            // que la usaban se quedarian con el nombre viejo, huerfano.
             $pdo->beginTransaction();
-            $pdo->prepare("UPDATE unidades_medida SET nombre = ?, sucursal_id = ? WHERE unidad_id = ?")
-                ->execute([$nombre, $sucursalId, $id]);
-
-            // [FIX-UNIDAD-CRUZADA] Antes este UPDATE era global: renombrar una unidad de UNA
-            // sucursal cambiaba en silencio el texto que ven TODAS las sucursales en
-            // cualquier producto que coincidiera, aunque no tuvieran ninguna relacion con
-            // quien pidio el renombre. Probado en vivo. Se limita a los productos que la
-            // sucursal DUEÑA de esta unidad (antes del renombre) realmente tiene en stock.
-            if ($nombreViejo !== false && $nombreViejo !== $nombre) {
-                $pdo->prepare("
-                    UPDATE productos p
-                    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-                    SET p.unidad_medida = ?
-                    WHERE p.unidad_medida = ? AND ss.activo = 1
-                ")->execute([$sucursalIdVieja, $nombre, $nombreViejo]);
+            $pdo->prepare("UPDATE unidades_medida SET nombre = ? WHERE unidad_id = ?")
+                ->execute([$nombre, $id]);
+            if ($nombreViejo !== $nombre) {
+                $pdo->prepare("UPDATE productos SET unidad_medida = ? WHERE unidad_medida = ?")
+                    ->execute([$nombre, $nombreViejo]);
             }
             $pdo->commit();
             header('Location: inventario_unidades.php?msg=editado');
         } else {
-            $pdo->prepare("INSERT INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                ->execute([$nombre, $sucursalId]);
+            $pdo->prepare("INSERT INTO unidades_medida (nombre) VALUES (?)")
+                ->execute([$nombre]);
             header('Location: inventario_unidades.php?msg=creado');
         }
         exit();
     } catch (\PDOException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         if ($e->getCode() === '23000') {
-            // Clave duplicada — nombre ya existe para esta sucursal
+            // Clave duplicada — nombre ya existe
             header('Location: inventario_unidades.php?msg=duplicado');
             exit();
         }
@@ -141,63 +109,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $busqueda = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
-
-// Cargar unidades según rol y filtro de sucursal
-if ($esAdmin && $sucursalVista === 0) {
-    if ($busqueda) {
-        $stmt = $pdo->prepare("
-            SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(DISTINCT pss.producto_id) AS total_productos
-            FROM unidades_medida u
-            LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
-            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
-            WHERE u.nombre LIKE ?
-            GROUP BY u.unidad_id
-            ORDER BY s.nombre ASC, u.nombre ASC
-        ");
-        $stmt->execute(['%'.$busqueda.'%']);
-    } else {
-        $stmt = $pdo->query("
-            SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(DISTINCT pss.producto_id) AS total_productos
-            FROM unidades_medida u
-            LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
-            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
-            GROUP BY u.unidad_id
-            ORDER BY s.nombre ASC, u.nombre ASC
-        ");
-    }
+if ($busqueda) {
+    $stmt = $pdo->prepare("
+        SELECT u.*, COUNT(p.producto_id) AS total_productos
+        FROM unidades_medida u
+        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
+        WHERE u.nombre LIKE ?
+        GROUP BY u.unidad_id
+        ORDER BY u.nombre ASC
+    ");
+    $stmt->execute(['%'.$busqueda.'%']);
 } else {
-    $filtroSuc = ($esAdmin && $sucursalVista !== 0) ? $sucursalVista : intval($_SESSION['sucursal_id']);
-    if ($busqueda) {
-        $stmt = $pdo->prepare("
-            SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(DISTINCT pss.producto_id) AS total_productos
-            FROM unidades_medida u
-            LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
-            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
-            WHERE u.sucursal_id = ? AND u.nombre LIKE ?
-            GROUP BY u.unidad_id
-            ORDER BY u.nombre ASC
-        ");
-        $stmt->execute([$filtroSuc, '%'.$busqueda.'%']);
-    } else {
-        $stmt = $pdo->prepare("
-            SELECT u.*, s.nombre AS nombre_sucursal,
-                   COUNT(DISTINCT pss.producto_id) AS total_productos
-            FROM unidades_medida u
-            LEFT JOIN sucursales s ON u.sucursal_id = s.sucursal_id
-            LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
-            LEFT JOIN stock_sucursal pss ON pss.producto_id = p.producto_id AND pss.sucursal_id = u.sucursal_id AND pss.activo = 1
-            WHERE u.sucursal_id = ?
-            GROUP BY u.unidad_id
-            ORDER BY u.nombre ASC
-        ");
-        $stmt->execute([$filtroSuc]);
-    }
+    $stmt = $pdo->query("
+        SELECT u.*, COUNT(p.producto_id) AS total_productos
+        FROM unidades_medida u
+        LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
+        GROUP BY u.unidad_id
+        ORDER BY u.nombre ASC
+    ");
 }
 $unidades = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -208,11 +137,6 @@ if (isset($_GET['editar'])) {
     $stmt2->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt2->fetch(PDO::FETCH_ASSOC);
 }
-
-// Sucursales para el select del form (solo admin)
-$todasSucursales = $esAdmin
-    ? $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE activo = 1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -320,8 +244,6 @@ $todasSucursales = $esAdmin
     <div class="content">
         <!-- Lista -->
         <div>
-            <div class="filtros"><?php renderSucursalSwitcher(); ?></div>
-
             <?php if (isset($_GET['msg'])): ?>
                 <?php if ($_GET['msg'] === 'creado'): ?>
                     <div class="msg msg-exito">Unidad creada correctamente.</div>
@@ -332,7 +254,7 @@ $todasSucursales = $esAdmin
                 <?php elseif ($_GET['msg'] === 'error_productos'): ?>
                     <div class="msg msg-error">No puedes eliminar esta unidad porque tiene productos asociados.</div>
                 <?php elseif ($_GET['msg'] === 'duplicado'): ?>
-                    <div class="msg msg-error">Ya existe una unidad con ese nombre en esta sucursal. Elige un nombre diferente.</div>
+                    <div class="msg msg-error">Ya existe una unidad con ese nombre. Elige un nombre diferente.</div>
                 <?php elseif ($_GET['msg'] === 'vacio'): ?>
                     <div class="msg msg-error">El nombre de la unidad de medida es obligatorio.</div>
                 <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
@@ -360,7 +282,6 @@ $todasSucursales = $esAdmin
                     <thead>
                         <tr>
                             <th>Nombre</th>
-                            <?php if ($esAdmin && $sucursalVista === 0): ?><th>Sucursal</th><?php endif; ?>
                             <th>Productos</th>
                             <th>Acciones</th>
                         </tr>
@@ -369,9 +290,6 @@ $todasSucursales = $esAdmin
                         <?php foreach ($unidades as $u): ?>
                         <tr>
                             <td><strong><?= htmlspecialchars($u['nombre']) ?></strong></td>
-                            <?php if ($esAdmin && $sucursalVista === 0): ?>
-                                <td style="color:#888;"><?= htmlspecialchars($u['nombre_sucursal'] ?? '—') ?></td>
-                            <?php endif; ?>
                             <td><span class="badge-count"><?= $u['total_productos'] ?> productos</span></td>
                             <td>
                                 <div class="acciones">
@@ -402,22 +320,8 @@ $todasSucursales = $esAdmin
                         <input type="text" name="nombre" maxlength="30"
                             value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>"
                             placeholder="Ej. pieza, kg, metro, litro" autofocus>
-                        <div class="hint">Este nombre aparecerá en el punto de venta junto a la cantidad.</div>
+                        <div class="hint">Este nombre aparecerá en el punto de venta junto a la cantidad, en todas tus sucursales.</div>
                     </div>
-
-                    <?php if ($esAdmin): ?>
-                    <div class="form-group">
-                        <label>Sucursal</label>
-                        <select name="sucursal_id">
-                            <?php foreach ($todasSucursales as $s): ?>
-                                <option value="<?= $s['sucursal_id'] ?>"
-                                    <?= (($editando['sucursal_id'] ?? $sucursalVista) == $s['sucursal_id']) ? 'selected' : '' ?>>
-                                    <?= htmlspecialchars($s['nombre']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <?php endif; ?>
 
                     <button class="btn-guardar" type="submit">
                         <?= $editando ? 'Guardar cambios' : 'Agregar unidad' ?>

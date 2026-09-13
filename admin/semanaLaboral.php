@@ -156,13 +156,17 @@ foreach ($empleados as $emp) {
     // [FIX-MEDIO-G-17] "Pagar" a mitad de semana (antes de llegar a sabado) tomaba SIEMPRE
     // el sueldo semanal COMPLETO como base, aunque los dias que faltan por transcurrir no
     // tuvieran ningun registro de asistencia (y por lo tanto ninguna deduccion) todavia — se
-    // le pagaba por adelantado dias que ni siquiera habian pasado. Se prorratea la porcion de
-    // dias restantes de la semana (de 6 dias laborales) como una deduccion adicional; en una
-    // semana ya cerrada ($semanaCompleta) esto es 0 y no cambia nada.
-    $diasRestantesSemana  = max(0, 6 - $diasTranscurridos);
-    $sueldoNoDevengado    = $semanaCompleta ? 0.0 : round($sueldo * $diasRestantesSemana / 6, 2);
-
-    $deduccion  = round($horasNetaDeducir * $tarifa,       2) + $sueldoNoDevengado;
+    // le pagaba por adelantado dias que ni siquiera habian pasado. En su momento esto se
+    // arreglo prorrateando una deduccion por los dias restantes de la semana.
+    // [FIX-PREVIEW-DIAS-FUTUROS] Esa prorrateo ya es redundante como candado de seguridad —
+    // "Pagar" esta bloqueado por completo hasta $semanaCompleta (sabado) sin importar este
+    // calculo (ver el "if (!$semanaCompleta)" mas abajo), y un dia YA transcurrido sin
+    // registro lo bloquea por separado $diasFaltantes. Su unico efecto real era mostrar un
+    // "Ajuste" en rojo por dias que literalmente no han ocurrido todavia -- si un empleado ya
+    // cumplio (o compenso con horas extra) todo lo que se le pidio en los dias YA registrados,
+    // igual aparecia como si "le quedara debiendo dinero" por dias futuros que ni siquiera ha
+    // tenido oportunidad de trabajar. Confirmado con el usuario: no debe mostrarse como deuda.
+    $deduccion  = round($horasNetaDeducir * $tarifa,       2);
     $bono       = round($horasExtraNeta   * $tarifa * 1.5, 2);
     $pagoFinal  = round($sueldo - $deduccion + $bono,      2);
 
@@ -198,7 +202,6 @@ foreach ($empleados as $emp) {
         'horas_comp'       => $horasCompensadas,
         'horas_neta_ded'   => $horasNetaDeducir,
         'horas_extra_neta' => $horasExtraNeta,
-        'sueldo_no_devengado' => $sueldoNoDevengado,
         'deduccion'        => $deduccion,
         'bono'             => $bono,
         'pago_final'       => $pagoFinal,
@@ -576,9 +579,6 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                         <?php endif; ?>
                         <?php if ($f['horas_comp'] > 0): ?>
                             <div style="font-size:10px;color:#1a7db5;margin-top:2px;"><?= number_format($f['horas_comp'], 2) ?> h compensadas</div>
-                        <?php endif; ?>
-                        <?php if ($f['sueldo_no_devengado'] > 0): ?>
-                            <div style="font-size:10px;color:#c0392b;margin-top:2px;">incluye -$<?= number_format($f['sueldo_no_devengado'], 2) ?> por días aún no transcurridos</div>
                         <?php endif; ?>
                     </td>
                     <td>

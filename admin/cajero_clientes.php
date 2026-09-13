@@ -411,7 +411,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-row">
                         <div class="form-group">
                             <label>Teléfono</label>
-                            <input type="text" name="telefono" value="<?= htmlspecialchars($vTelefonoCC) ?>" placeholder="10 dígitos">
+                            <input type="tel" name="telefono" value="<?= htmlspecialchars($vTelefonoCC) ?>" placeholder="10 dígitos" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)">
                         </div>
                         <div class="form-group">
                             <label>Descuento fijo (%)</label>

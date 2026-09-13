@@ -153,6 +153,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $omitidos   = 0;
             $bloqueados = 0;
             $negativos  = 0;
+            $proveedoresCache   = []; // nombre => proveedor_id, evita SELECT repetido
+            $proveedoresCreados = [];
             // Administrador e Inventario pueden dar de alta catálogo global nuevo desde el
             // Excel; ya se validó arriba que solo ellos llegan a este bloque.
             $puedeCrearCatalogo = $puedeImportarExcel;
@@ -171,7 +173,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 $tipo_venta     = trim($row[9] ?? 'Unidad');
                 $descripcion    = trim($row[10] ?? '');
                 $unidad_medida  = trim($row[11] ?? '');
+                // [FEATURE-PROVEEDORES-IMPORT] (portado de admin/inventario_productos.php)
+                $proveedoresCelda = trim($row[12] ?? '');
+                // [FEATURE-CODIGO-PROVEEDOR-IMPORT] (portado de admin/inventario_productos.php)
+                $codigosProvCelda = trim($row[13] ?? '');
 
+                // [FIX-IMPORT-LARGO] (espejo de admin/inventario_productos.php): productos.codigo
+                // es VARCHAR(50) y nombre_producto VARCHAR(150) sin ningun tope aqui — una celda
+                // mas larga se truncaba en silencio localmente (o tronaba 500 crudo en el
+                // servidor real bajo SQL modo estricto, ver [[project-enum-sql-mode]]).
+                if (mb_strlen($codigo) > 50 || mb_strlen($nombre_producto) > 150) {
+                    $negativos++;
+                    continue;
+                }
                 // [FIX-CONSISTENCIA] Igual que admin/inventario_productos.php (FIX-ALTO-B-11):
                 // antes no se validaba el signo de precios/stock — un Excel con una celda
                 // negativa (typo o manipulado) se importaba tal cual, dejando precios
@@ -197,6 +211,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     $negativos++;
                     continue;
                 }
+                // [FIX-MAYOREO-MAYOR-VENTA] (portado de admin/inventario_formProducto.php) El
+                // precio de mayoreo es un descuento por volumen -- sin este candado, una celda
+                // con el mayoreo mas caro que el precio normal se importaba tal cual.
+                if ($precio_mayoreo > 0 && $precio_mayoreo > $precio_venta) {
+                    $negativos++;
+                    continue;
+                }
                 // [FIX-STOCK-ENTERO-01] (portado de admin/inventario_productos.php): igual que
                 // compras.php/salidas.php/formProducto.php, un producto que no es "Suelto" no
                 // puede tener stock con decimales.
@@ -213,10 +234,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     continue;
                 }
 
-                // Auto-crear unidad de medida si no existe en la sucursal
+                // [CAMBIO-UNIDAD-GLOBAL 2026-09-09] unidades_medida ya es catalogo global.
                 if ($unidad_medida !== '') {
-                    $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                        ->execute([$unidad_medida, $_SESSION['sucursal_id']]);
+                    $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre) VALUES (?)")
+                        ->execute([$unidad_medida]);
                 }
 
                 // Buscar o crear categoría por nombre (sin duplicados)
@@ -230,6 +251,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                         $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)")->execute([$nombreCat]);
                         $categoria_id = $pdo->lastInsertId();
                     }
+                }
+
+                // [FEATURE-PROVEEDORES-IMPORT] (portado de admin/inventario_productos.php)
+                // Proveedor(es): opcional, admite varios separados por coma. Si viene vacia,
+                // $proveedorIdsFila queda en null y no se tocan los vinculos existentes.
+                // [FEATURE-CODIGO-PROVEEDOR-IMPORT] (portado de admin/inventario_productos.php)
+                // $proveedorIdsFila ahora es [proveedor_id => codigo_proveedor|null]. "Código
+                // proveedor" es opcional y se empareja por POSICIÓN con "Proveedor(es)" (mismo
+                // orden, separados por coma).
+                $proveedorIdsFila = null;
+                $codigoProvLargo = false;
+                if ($proveedoresCelda !== '') {
+                    $proveedorIdsFila = [];
+                    $nombresProv = array_values(array_filter(array_map('trim', explode(',', $proveedoresCelda)), fn($v) => $v !== ''));
+                    $codigosProv = $codigosProvCelda !== '' ? array_map('trim', explode(',', $codigosProvCelda)) : [];
+                    foreach ($nombresProv as $posProv => $nombreProv) {
+                        if (isset($proveedoresCache[$nombreProv])) {
+                            $provId = $proveedoresCache[$nombreProv];
+                        } else {
+                            $stmtProv = $pdo->prepare("SELECT proveedor_id FROM proveedores WHERE nombre = ? LIMIT 1");
+                            $stmtProv->execute([$nombreProv]);
+                            $provId = $stmtProv->fetchColumn();
+                            if ($provId) {
+                                $provId = (int)$provId;
+                            } elseif ($puedeCrearCatalogo) {
+                                $pdo->prepare("INSERT INTO proveedores (nombre, activo) VALUES (?, 1)")->execute([$nombreProv]);
+                                $provId = (int)$pdo->lastInsertId();
+                                $proveedoresCreados[] = $nombreProv;
+                            } else {
+                                $provId = null;
+                            }
+                            if ($provId) $proveedoresCache[$nombreProv] = $provId;
+                        }
+                        if ($provId) {
+                            $codigoProv = trim($codigosProv[$posProv] ?? '');
+                            // producto_proveedor.codigo_proveedor es VARCHAR(50).
+                            if (mb_strlen($codigoProv) > 50) { $codigoProvLargo = true; break; }
+                            $proveedorIdsFila[$provId] = $codigoProv !== '' ? $codigoProv : null;
+                        }
+                    }
+                }
+                if ($codigoProvLargo) {
+                    $negativos++;
+                    continue;
                 }
 
                 // Verificar si el código ya existe en el catálogo
@@ -253,6 +318,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     if ($puedeCrearCatalogo) {
                         $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
                             ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $producto_id]);
+                        // [FEATURE-PROVEEDORES-IMPORT] Reemplaza la lista completa si la celda
+                        // trajo proveedor(es); si vino vacia, no toca los vinculos existentes.
+                        if ($proveedorIdsFila !== null) {
+                            $pdo->prepare("DELETE FROM producto_proveedor WHERE producto_id = ?")->execute([$producto_id]);
+                            foreach ($proveedorIdsFila as $provIdLink => $codigoProvLink) {
+                                $pdo->prepare("INSERT INTO producto_proveedor (producto_id, proveedor_id, codigo_proveedor) VALUES (?, ?, ?)")
+                                    ->execute([$producto_id, $provIdLink, $codigoProvLink]);
+                            }
+                        }
                     }
                     // Crear o actualizar stock de esta sucursal
                     // Si ya existe el registro → solo actualiza mínimo/máximo (preserva stock_actual)
@@ -271,6 +345,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     $pdo->prepare("INSERT INTO productos (categoria_id, codigo, nombre_producto, descripcion, precio_compra, precio_venta, precio_mayoreo, tipo_venta, unidad_medida, activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
                         ->execute([$categoria_id, $codigo, $nombre_producto, $descripcion, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $unidad_medida ?: null]);
                     $producto_id = $pdo->lastInsertId();
+                    // [FEATURE-PROVEEDORES-IMPORT] Producto nuevo: no hay nada previo que borrar.
+                    if ($proveedorIdsFila !== null) {
+                        foreach ($proveedorIdsFila as $provIdLink => $codigoProvLink) {
+                            $pdo->prepare("INSERT INTO producto_proveedor (producto_id, proveedor_id, codigo_proveedor) VALUES (?, ?, ?)")
+                                ->execute([$producto_id, $provIdLink, $codigoProvLink]);
+                        }
+                    }
                     // Insertar stock en esta sucursal
                     $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,?,?,1)")
                         ->execute([$producto_id, $_SESSION['sucursal_id'], $stock_actual, $stock_minimo, $stock_maximo]);
@@ -288,7 +369,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
                 . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes." : '')
-                . ($negativos > 0 ? " $negativos fila(s) omitida(s): precio inválido (negativo, cero, texto o mayor a \$500,000.00) o stock con decimales en un producto por unidad." : '');
+                . ($negativos > 0 ? " $negativos fila(s) omitida(s): precio inválido (negativo, cero, texto o mayor a \$500,000.00) o stock con decimales en un producto por unidad." : '')
+                . ($proveedoresCreados ? ' Proveedores nuevos: ' . implode(', ', array_unique($proveedoresCreados)) . '.' : '');
         } catch (Exception $e) {
             $erroresImport[] = 'Error al leer el archivo: ' . $e->getMessage();
         }
@@ -314,20 +396,27 @@ if (isset($_GET['plantilla'])) {
         // posición 4, igual que admin/inventario_productos.php) — con solo 11 columnas aquí,
         // llenar esta plantilla tal cual y volver a subirla recorría precio_venta/mayoreo/
         // stocks una columna, corrompiendo todos los datos.
-        $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida'];
+        $headers = ['Código*','Nombre*','Categoría','Precio compra','Precio venta*','Precio mayoreo','Stock inicial','Stock mínimo','Stock máximo','Tipo venta (Unidad/Suelto)','Descripción','Unidad de medida','Proveedor(es)','Código proveedor'];
         $sheet->fromArray($headers, null, 'A1');
-        $sheet->getStyle('A1:L1')->getFont()->setBold(true);
+        $sheet->getStyle('A1:N1')->getFont()->setBold(true);
         // Varios ejemplos representativos de una ferretería: por unidad y por granel/kg,
         // con y sin mayoreo, con y sin categoría/descripción.
+        // [FEATURE-PROVEEDORES-IMPORT] Columna opcional (como Categoría): admite mas de un
+        // proveedor separados por coma, a diferencia de Categoría que solo acepta uno.
+        // [FEATURE-CODIGO-PROVEEDOR-IMPORT] Columna opcional adicional: el código con el que
+        // CADA proveedor identifica este producto, en el MISMO ORDEN y separado por coma que
+        // "Proveedor(es)" — igual que admin/inventario_productos.php. Como este importador lee
+        // por POSICIÓN (no por nombre de encabezado), el orden/cantidad de columnas de arriba
+        // debe coincidir exacto con lo que lee el POST de este mismo archivo.
         $ejemplos = [
-            ['TOR-001', 'Tornillo Phillips 1/4" x 1"', 'Tornillería', '0.50', '1.00', '0.80', '500', '100', '2000', 'Unidad', 'Caja con 500 piezas', 'pieza'],
-            ['CEM-050', 'Cemento gris 50kg', 'Materiales', '145.00', '185.00', '170.00', '80', '10', '200', 'Unidad', 'Saco de 50kg', 'saco'],
-            ['ARE-001', 'Arena de río', 'Materiales', '', '25.00', '', '500', '50', '0', 'Suelto', 'Se vende por kg', 'kg'],
-            ['PINT-BL1', 'Pintura vinílica blanca 1L', 'Pinturas', '60.00', '95.00', '', '30', '5', '80', 'Unidad', '', 'pieza'],
-            ['CABLE-12', 'Cable eléctrico calibre 12', '', '8.50', '13.00', '11.50', '200', '20', '0', 'Suelto', 'Se vende por metro', 'metro'],
+            ['TOR-001', 'Tornillo Phillips 1/4" x 1"', 'Tornillería', '0.50', '1.00', '0.80', '500', '100', '2000', 'Unidad', 'Caja con 500 piezas', 'pieza', 'Ferretera del Pacífico', 'FP-TOR001'],
+            ['CEM-050', 'Cemento gris 50kg', 'Materiales', '145.00', '185.00', '170.00', '80', '10', '200', 'Unidad', 'Saco de 50kg', 'saco', 'Cementos Nayarit, Materiales Ixtlán', 'CN-4050, MI-2210'],
+            ['ARE-001', 'Arena de río', 'Materiales', '', '25.00', '', '500', '50', '0', 'Suelto', 'Se vende por kg', 'kg', '', ''],
+            ['PINT-BL1', 'Pintura vinílica blanca 1L', 'Pinturas', '60.00', '95.00', '', '30', '5', '80', 'Unidad', '', 'pieza', '', ''],
+            ['CABLE-12', 'Cable eléctrico calibre 12', '', '8.50', '13.00', '11.50', '200', '20', '0', 'Suelto', 'Se vende por metro', 'metro', 'Electricos del Norte', 'EN-CAL12'],
         ];
         $sheet->fromArray($ejemplos, null, 'A2');
-        foreach (range('A','L') as $col) {
+        foreach (range('A','N') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
         $tmpFile = sys_get_temp_dir() . '/plt_' . uniqid() . '.xlsx';

@@ -1,0 +1,355 @@
+<title>Combinaciones Punto de Venta</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --bg:#f2ece0; --surface:#fffdf8; --surface-2:#ece2cc; --surface-3:#e4d7b8;
+  --ink:#2b2620; --muted:#736b58; --line:#ddd0ac;
+  --accent:#c9490c; --accent-2:#a83c09; --accent-ink:#fff8f0;
+  --good:#2f7a4f; --good-bg:#e3efe2; --good-line:#bfd9bd;
+  --warn:#8a5a00; --warn-bg:#faf1d6; --warn-line:#e6cf8f;
+  --credit:#2b5b8a; --credit-bg:#e3edf5; --credit-line:#bcd4e8;
+  --bad:#a5301f; --bad-bg:#f7e3df; --bad-line:#e3b6a9;
+  --shadow: 0 1px 2px rgba(43,38,32,.06), 0 6px 16px -8px rgba(43,38,32,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1b1712; --surface:#231e17; --surface-2:#2b2419; --surface-3:#352c1d;
+    --ink:#efe6d4; --muted:#a99a80; --line:#3d3323;
+    --accent:#ff8a3d; --accent-2:#ffa565; --accent-ink:#1b1712;
+    --good:#6fc78f; --good-bg:#1f2f21; --good-line:#365239;
+    --warn:#e3b954; --warn-bg:#332a12; --warn-line:#5c4a1e;
+    --credit:#7db3e0; --credit-bg:#1c2b38; --credit-line:#33495c;
+    --bad:#e8836f; --bad-bg:#3a221c; --bad-line:#5c3428;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px -8px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1b1712; --surface:#231e17; --surface-2:#2b2419; --surface-3:#352c1d;
+  --ink:#efe6d4; --muted:#a99a80; --line:#3d3323;
+  --accent:#ff8a3d; --accent-2:#ffa565; --accent-ink:#1b1712;
+  --good:#6fc78f; --good-bg:#1f2f21; --good-line:#365239;
+  --warn:#e3b954; --warn-bg:#332a12; --warn-line:#5c4a1e;
+  --credit:#7db3e0; --credit-bg:#1c2b38; --credit-line:#33495c;
+  --bad:#e8836f; --bad-bg:#3a221c; --bad-line:#5c3428;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px -8px rgba(0,0,0,.5);
+}
+
+*{box-sizing:border-box;}
+body{background:var(--bg);color:var(--ink);font-family:'IBM Plex Sans',system-ui,sans-serif;line-height:1.5;}
+.wrap{max-width:880px;margin:0 auto;padding:28px 20px 80px;}
+.num{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
+
+.masthead{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:26px 28px;position:relative;overflow:hidden;}
+.masthead::before{content:"";position:absolute;top:0;left:0;bottom:0;width:8px;background:repeating-linear-gradient(135deg,var(--accent) 0 6px,var(--accent-2) 6px 12px);}
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:600;}
+h1{font-family:'Big Shoulders Display',sans-serif;font-weight:800;font-size:clamp(28px,4.6vw,40px);letter-spacing:.01em;text-transform:uppercase;margin:4px 0 6px;text-wrap:balance;line-height:.98;}
+.masthead p.lead{color:var(--muted);font-size:14.5px;max-width:64ch;margin:0 0 18px;}
+.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:3px;overflow:hidden;}
+.meta-cell{background:var(--surface);padding:10px 14px;}
+.meta-cell .k{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600;}
+.meta-cell .v{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;margin-top:2px;}
+
+.tocbar{display:flex;gap:6px;flex-wrap:wrap;margin:22px 0 22px;position:sticky;top:10px;z-index:5;}
+.tocbar a{font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:var(--ink);background:var(--surface);
+  border:1px solid var(--line);padding:6px 11px;border-radius:20px;text-decoration:none;box-shadow:var(--shadow);white-space:nowrap;}
+.tocbar a:hover{border-color:var(--accent);color:var(--accent);}
+
+.callout{border-radius:4px;padding:14px 16px;font-size:13.5px;margin:0 0 22px;border:1px solid;}
+.callout.warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--ink);}
+.callout.warn b{color:var(--warn);}
+.callout p{margin:0 0 6px;}
+.callout p:last-child{margin-bottom:0;}
+.callout ul{margin:6px 0 0;padding-left:20px;}
+.callout li{margin-bottom:4px;}
+
+.step{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:16px 18px;margin-bottom:14px;display:flex;gap:14px;scroll-margin-top:70px;}
+.step input[type=checkbox]{width:19px;height:19px;flex-shrink:0;margin-top:2px;accent-color:var(--accent);cursor:pointer;}
+.step-body{flex:1;min-width:0;}
+.step-title{font-weight:600;font-size:14.5px;margin:0 0 4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.step-title .tag{font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:700;color:var(--accent-ink);background:var(--accent);letter-spacing:.03em;padding:2px 7px;border-radius:3px;}
+.step-desc{font-size:13.5px;color:var(--ink);margin:0 0 10px;}
+.step-desc code, .step-desc .code{font-family:'IBM Plex Mono',monospace;background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:12.5px;}
+.badge-new{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--credit);background:var(--credit-bg);border:1px solid var(--credit-line);padding:2px 8px;border-radius:20px;}
+.badge-reject{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.03em;color:var(--bad);background:var(--bad-bg);border:1px solid var(--bad-line);padding:2px 8px;border-radius:20px;}
+
+.expect{background:var(--good-bg);border:1px solid var(--good-line);border-radius:4px;padding:10px 14px;}
+.expect .exp-label{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--good);font-weight:700;margin-bottom:6px;}
+.expect .row{display:flex;justify-content:space-between;gap:12px;font-size:13.5px;padding:2px 0;}
+.expect .row .l{color:var(--muted);}
+.expect .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.expect .row.total{border-top:1px dashed var(--good-line);margin-top:6px;padding-top:7px;font-weight:700;}
+.expect .row.total .v{font-size:15px;}
+.expect.credit{background:var(--credit-bg);border-color:var(--credit-line);}
+.expect.credit .exp-label{color:var(--credit);}
+.expect.reject{background:var(--bad-bg);border-color:var(--bad-line);}
+.expect.reject .exp-label{color:var(--bad);}
+
+.dtable{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0 2px;}
+.dtable th,.dtable td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;}
+.dtable th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;}
+.dtable td.num, .dtable th.num{text-align:right;font-family:'IBM Plex Mono',monospace;}
+.tablewrap{overflow-x:auto;}
+
+.section-head{display:flex;align-items:baseline;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:8px;margin:36px 0 16px;}
+.section-head h2{font-family:'Big Shoulders Display',sans-serif;font-weight:700;font-size:21px;text-transform:uppercase;letter-spacing:.01em;margin:0;}
+.section-head .n{font-family:'Big Shoulders Display',sans-serif;font-weight:800;font-size:26px;color:var(--accent);line-height:1;}
+
+.ticket{background:var(--surface);border:1px solid var(--line);border-radius:4px;box-shadow:var(--shadow);
+  padding:0;max-width:420px;margin:0 auto;overflow:hidden;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px);
+  background-size: 100% 27px;}
+.ticket-head{background:var(--ink);color:var(--bg);text-align:center;padding:16px;font-family:'Big Shoulders Display',sans-serif;
+  font-size:20px;letter-spacing:.03em;text-transform:uppercase;background-image:none;}
+.ticket-body{padding:14px 22px 20px;}
+.ticket .row{display:flex;justify-content:space-between;font-size:13.5px;height:27px;align-items:center;}
+.ticket .row.sep{border-top:1px dashed var(--muted);margin-top:6px;padding-top:8px;height:33px;}
+.ticket .row .v{font-family:'IBM Plex Mono',monospace;font-weight:600;}
+.ticket .row.grand{font-weight:800;font-size:16px;}
+.ticket .row.grand .v{color:var(--accent);}
+
+footer{text-align:center;color:var(--muted);font-size:12px;margin-top:50px;font-family:'IBM Plex Mono',monospace;}
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow">Ferretería Aldrete &middot; Certificación de sistema &middot; parte 2</div>
+    <h1>Combinaciones del<br>punto de venta</h1>
+    <p class="lead">12 combinaciones de <span class="code">nuevaVenta.php</span> y sus consecuencias (devoluciones, pendientes) que el guion anterior no cubrió — pago por Transferencia, ajuste de precio, mayoreo, cantidades decimales, paquete mezclado con productos sueltos, rechazos de límite de crédito y de stock, pendiente a crédito, cancelar una pendiente, devolver una venta a crédito, devolver una venta por Transferencia, y cancelar una devolución.</p>
+    <div class="meta-grid">
+      <div class="meta-cell"><div class="k">Fecha</div><div class="v">11-sep-2026</div></div>
+      <div class="meta-cell"><div class="k">Usuario</div><div class="v">inventarioCajero2</div></div>
+      <div class="meta-cell"><div class="k">Sucursal</div><div class="v">Barrio de los Indios</div></div>
+      <div class="meta-cell"><div class="k">Cliente de pruebas</div><div class="v">Mario González</div></div>
+    </div>
+  </div>
+
+  <div class="tocbar">
+    <a href="#setup">Antes de empezar</a>
+    <a href="#m1">M1 Transferencia</a>
+    <a href="#m2">M2 Ajuste</a>
+    <a href="#m3">M3 Mayoreo</a>
+    <a href="#m4">M4 Decimales</a>
+    <a href="#m5">M5 Paquete+suelto</a>
+    <a href="#m6">M6 Rechazo crédito</a>
+    <a href="#m7">M7 Rechazo stock</a>
+    <a href="#m8">M8 Pendiente→crédito</a>
+    <a href="#m9">M9 Cancelar pendiente</a>
+    <a href="#m10">M10 Devolver crédito</a>
+    <a href="#m11">M11 Devolver transf.</a>
+    <a href="#m12">M12 Cancelar devolución</a>
+  </div>
+
+  <div class="callout warn" id="setup">
+    <p><b>Antes de empezar:</b> abre una caja nueva (ya viste que ahora te va a dar "Turno #1" porque no hay ninguna abierta) con <b>$2,000.00</b> de apertura. Todo lo de esta guía cae en ese mismo turno.</p>
+    <p><b>Deuda actual de Mario González (punto de partida real):</b> $659.88 &middot; crédito disponible: $2,340.12 &middot; descuento fijo: 5%.</p>
+    <p>Sigue el orden — M8 alimenta a M10, y M1 alimenta a M11 y M12.</p>
+  </div>
+
+  <div class="section-head"><span class="n">M1</span><h2 id="m1">Pago por Transferencia</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Venta con Transferencia como método de pago</p>
+      <p class="step-desc">1× <b>Nivel de burbuja 60cm</b> ($185.00). Sin cliente. Pago <b>Transferencia</b> — te va a pedir una referencia (cualquier texto/número sirve).</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Subtotal</span><span class="v">$185.00</span></div>
+        <div class="row"><span class="l">Comisión</span><span class="v">$0.00 (Transferencia no genera comisión)</span></div>
+        <div class="row"><span class="l">Stock (antes / después)</span><span class="v">15.000 / 14.000</span></div>
+        <div class="row total"><span class="l">Total cobrado</span><span class="v">$185.00</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Guarda este folio — lo vas a devolver en M11.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M2</span><h2 id="m2">Ajuste de precio manual, justo al piso permitido</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Ajustar el precio de un producto en el carrito</p>
+      <p class="step-desc">Agrega 1× <b>Chapa de pomo para recámara</b> (precio normal $190.00). En el carrito, usa la opción de <b>ajustar precio</b> y captura exactamente <b>$120.00</b> (es el precio de compra exacto de este producto) — el sistema exige una nota cuando ajustas, escribe algo como "Caja golpeada". Pago Efectivo.</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">$120.00 debe ACEPTARSE</span><span class="v">es el piso exacto, no menos</span></div>
+        <div class="row total"><span class="l">Total cobrado</span><span class="v">$120.00</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;"><b>Para confirmar que el piso de verdad protege:</b> intenta ajustar OTRO producto a $1.00 sin importar cuál sea (con o sin nota) — debe rechazarlo con "Precio inválido para el producto." No completes esa venta, solo confirma el rechazo y cancela.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M3</span><h2 id="m3">Precio de mayoreo</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Activar el precio de mayoreo de un producto</p>
+      <p class="step-desc">Agrega <b>5× Cemento gris 50kg</b> (precio normal $185.00) y activa el botón/toggle de <b>precio mayoreo</b> — su precio mayoreo es $170.00. Pago Efectivo.</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Precio unitario con mayoreo activo</span><span class="v">$170.00 (no $185.00)</span></div>
+        <div class="row"><span class="l">Stock (antes / después)</span><span class="v">78.000 / 73.000</span></div>
+        <div class="row total"><span class="l">Total cobrado (5 × $170.00)</span><span class="v">$850.00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M4</span><h2 id="m4">Producto Suelto con cantidad decimal</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Vender una cantidad con decimales de verdad</p>
+      <p class="step-desc">Todo lo anterior fue en piezas enteras. Agrega <b>Alambre recocido calibre 18</b> (se vende por kg) con cantidad <b>3.750</b> kg exactos ($48.00/kg). Pago Efectivo.</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Stock (antes / después)</span><span class="v">30.000 / 26.250</span></div>
+        <div class="row total"><span class="l">Total (3.750 × $48.00)</span><span class="v">$180.00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M5</span><h2 id="m5">Paquete + producto suelto en el mismo carrito</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Mezclar un paquete con productos normales</p>
+      <p class="step-desc">En un solo carrito: 1× paquete <b>"Tubos Paquete"</b> ($1,000.00) + <b>2 metros</b> de <b>Cable eléctrico calibre 12</b> ($13.00/m, suelto). Pago Efectivo. El ticket debe mostrar el paquete desglosado en sus 2 productos Y la línea del cable, sin mezclarse entre sí.</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Tubo PVC sanitario 4" (stock)</span><span class="v">15.000 → 11.000</span></div>
+        <div class="row"><span class="l">Tubo PVC hidráulico 2" (stock)</span><span class="v">25.000 → 24.000</span></div>
+        <div class="row"><span class="l">Cable eléctrico cal. 12 (stock)</span><span class="v">189.500 → 187.500</span></div>
+        <div class="row total"><span class="l">Total ($1,000.00 paquete + $26.00 cable)</span><span class="v">$1,026.00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M6</span><h2 id="m6">Rechazo: venta a crédito que excede el límite</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag badge-reject">debe fallar</span>Intentar una venta a crédito por encima de lo disponible</p>
+      <p class="step-desc">Cliente <b>Mario González</b>. Agrega <b>2× Rotomartillo SDS 800W</b> ($2,250.00 c/u). Método <b>Crédito</b>. Intenta completar la venta.</p>
+      <div class="expect reject">
+        <div class="exp-label">Debe RECHAZARSE — no debe registrarse nada</div>
+        <div class="row"><span class="l">Total solicitado (con su 5% de descuento)</span><span class="v">$4,275.00</span></div>
+        <div class="row"><span class="l">Crédito disponible de Mario</span><span class="v">$2,340.12</span></div>
+        <div class="row total"><span class="l">Mensaje esperado</span><span class="v">"...excede el límite... Disponible: $2,340.12"</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Después del rechazo, confirma que NO se descontó stock de Rotomartillo (sigue en 4.000) y que la deuda de Mario sigue en $659.88.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M7</span><h2 id="m7">Rechazo: cantidad mayor al stock disponible</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag badge-reject">debe fallar</span>Intentar vender más de lo que hay en existencia</p>
+      <p class="step-desc">Intenta vender <b>15× Malla electrosoldada 6x6-10</b> — solo hay <b>10.000</b> en stock.</p>
+      <div class="expect reject">
+        <div class="exp-label">Debe RECHAZARSE — no debe registrarse nada</div>
+        <div class="row total"><span class="l">Mensaje esperado</span><span class="v">"Stock insuficiente para uno de los productos..."</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Confirma que el stock de Malla electrosoldada sigue exacto en 10.000 después del intento.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M8</span><h2 id="m8">Venta pendiente pagada a crédito</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Registrar y luego liquidar una pendiente a Crédito</p>
+      <p class="step-desc">En <span class="code">ventasPendientes.php</span>, registra 1× <b>Serrucho para madera 20"</b> ($175.00) como pendiente, cliente <b>Mario González</b>, método <b>Crédito</b>. El stock se descuenta desde este momento (12.000 → 11.000). Después dale <b>Liquidar</b> — aquí es cuando de verdad se crea el cargo a su crédito (a diferencia de una pendiente en Efectivo).</p>
+      <div class="expect credit">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Subtotal / descuento (5%) / total</span><span class="v">$175.00 / $8.75 / $166.25</span></div>
+        <div class="row total"><span class="l">Deuda de Mario tras liquidar</span><span class="v">$659.88 → $826.13</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Guarda este folio — lo vas a devolver en M10.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M9</span><h2 id="m9">Cancelar una venta pendiente (sin liquidarla)</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Registrar una pendiente y luego cancelarla</p>
+      <p class="step-desc">Registra 2× <b>Esmeriladora angular 4 1/2"</b> como pendiente (cualquier método, sin cliente). El stock baja de inmediato. Esta vez, en vez de liquidar, dale <b>Cancelar</b>.</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Stock al registrar la pendiente</span><span class="v">6.000 → 4.000</span></div>
+        <div class="row total"><span class="l">Stock al cancelarla</span><span class="v">4.000 → 6.000 (vuelve exacto)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M10</span><h2 id="m10">Devolver una venta pagada a crédito</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Devolución que reduce el crédito, no la caja</p>
+      <p class="step-desc">Busca el folio de <b>M8</b> (el Serrucho a crédito) en <span class="code">devoluciones.php</span> y devuélvelo completo.</p>
+      <div class="expect credit">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Reembolso</span><span class="v">NO es efectivo — se descuenta del crédito</span></div>
+        <div class="row"><span class="l">Deuda de Mario</span><span class="v">$826.13 → $659.88 (vuelve exacto)</span></div>
+        <div class="row"><span class="l">Total de M8</span><span class="v">$166.25 → $0.00</span></div>
+        <div class="row total"><span class="l">Retiro de caja generado</span><span class="v">ninguno</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">A diferencia de una devolución de Terminal, aquí SÍ puede llegar a $0.00 exacto — el Crédito nunca tuvo comisión que dejar como residuo.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M11</span><h2 id="m11">Devolver una venta pagada por Transferencia</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Devolución que sí genera retiro de caja</p>
+      <p class="step-desc">Busca el folio de <b>M1</b> (Nivel de burbuja, Transferencia) y devuélvelo completo.</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado</div>
+        <div class="row"><span class="l">Reembolso (siempre en efectivo)</span><span class="v">$185.00</span></div>
+        <div class="row"><span class="l">Total de M1</span><span class="v">$185.00 → $0.00</span></div>
+        <div class="row"><span class="l">Estado de M1</span><span class="v">Devuelto</span></div>
+        <div class="row total"><span class="l">Retiro de caja registrado</span><span class="v">$185.00</span></div>
+      </div>
+      <p class="step-desc" style="margin-top:8px;">Sí debe generar retiro (a diferencia de M10) — una venta por Transferencia nunca fue parte del "efectivo" del corte, así que el reembolso solo se refleja con este retiro explícito.</p>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">M12</span><h2 id="m12">Cancelar una devolución</h2></div>
+  <div class="step">
+    <input type="checkbox">
+    <div class="step-body">
+      <p class="step-title"><span class="tag">nunca probado</span>Deshacer la devolución de M11</p>
+      <p class="step-desc">En <span class="code">devoluciones.php</span>, busca la devolución que acabas de hacer en M11 y dale <b>Cancelar devolución</b> (tienes 24 horas desde que se procesó para poder hacerlo).</p>
+      <div class="expect">
+        <div class="exp-label">Resultado esperado — todo debe volver exacto a como estaba antes de M11</div>
+        <div class="row"><span class="l">Stock de Nivel de burbuja</span><span class="v">15.000 → 14.000 de nuevo</span></div>
+        <div class="row"><span class="l">Total de M1</span><span class="v">$0.00 → $185.00 de nuevo</span></div>
+        <div class="row"><span class="l">Estado de M1</span><span class="v">Devuelto → Completada</span></div>
+        <div class="row total"><span class="l">Movimiento de caja</span><span class="v">Ingreso de $185.00 (revierte el retiro)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head"><span class="n">✓</span><h2>Hoja de cierre</h2></div>
+  <div class="ticket">
+    <div class="ticket-head">Resumen del turno</div>
+    <div class="ticket-body">
+      <div class="row"><span>Apertura</span><span class="v">$2,000.00</span></div>
+      <div class="row"><span>Efectivo (M2+M3+M4+M5)</span><span class="v">$2,176.00</span></div>
+      <div class="row"><span>Transferencia (M1, de vuelta tras M12)</span><span class="v">$185.00</span></div>
+      <div class="row"><span>Crédito (M8, en $0.00 tras M10)</span><span class="v">$0.00</span></div>
+      <div class="row"><span>Retiro M11 + Ingreso M12</span><span class="v">se cancelan, neto $0.00</span></div>
+      <div class="row sep grand"><span>Efectivo esperado en caja</span><span class="v">$4,176.00</span></div>
+      <div class="row"><span>Rechazos confirmados (M6, M7)</span><span class="v">2, sin tocar nada</span></div>
+      <div class="row sep"><span>Deuda final de Mario</span><span class="v">$659.88 (sin cambio neto)</span></div>
+    </div>
+  </div>
+
+  <footer>FERRETERÍA ALDRETE — GUION DE COMBINACIONES, VERIFICADO CONTRA EL CÓDIGO Y LA BASE DE DATOS REAL, 11-SEP-2026</footer>
+
+</div>

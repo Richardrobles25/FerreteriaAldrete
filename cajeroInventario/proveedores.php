@@ -45,8 +45,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // truncado incluso le cortaba el dominio dejando un correo invalido guardado) y direccion
     // (VARCHAR(255)) se truncaban en silencio y se guardaban como "creado correctamente".
     if (mb_strlen($nombre) > 100)    $errores[] = 'El nombre no puede tener más de 100 caracteres.';
-    if (mb_strlen($telefono) > 20)   $errores[] = 'El teléfono no puede tener más de 20 caracteres.';
+    // [FIX-PROVEEDOR-TELEFONO] (espejo de admin/inventario_proveedores.php, mismo criterio
+    // que clientes.php/formUsuario.php/formSucursal.php en toda la app): no habia validacion
+    // de formato, solo de longitud maxima — aceptaba letras o cualquier cantidad de digitos.
+    if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     if (mb_strlen($correo) > 100)    $errores[] = 'El correo no puede tener más de 100 caracteres.';
+    // [FIX-PROVEEDOR-CORREO] (espejo de admin/inventario_proveedores.php, mismo criterio que
+    // clientes.php en toda la app): solo se validaba longitud, nunca formato.
+    if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
     if (mb_strlen($direccion) > 255) $errores[] = 'La dirección no puede tener más de 255 caracteres.';
 
     // [AUTOFIX] BUG-02: Verificar nombre duplicado antes de insertar/actualizar
@@ -400,7 +406,7 @@ if ($editando) {
                     </div>
                     <div class="form-group">
                         <label>Teléfono</label>
-                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="20">
+                        <input type="text" name="telefono" value="<?= htmlspecialchars($editando['telefono'] ?? '') ?>" placeholder="10 dígitos" maxlength="10" pattern="[0-9]{10}" inputmode="numeric" title="Ingresa exactamente 10 dígitos numéricos" oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)">
                     </div>
                     <div class="form-group">
                         <label>Correo</label>

@@ -9,13 +9,16 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
-$sucursalId = intval($_SESSION['sucursal_id']);
 // [FIX-UX-PERMISOS] Crear/editar/eliminar unidades es solo Administrador (ya exigido en el
 // backend abajo), pero la vista mostraba los botones y el formulario a cualquier rol: un
 // Inventario/Cajero los veia activos y solo al hacer clic se enteraba de que no podia. Se
 // oculta la UI que de todos modos el backend va a rechazar, en vez de dejar que el usuario
 // lo descubra a la mala.
 $esAdminUnidades = ($_SESSION['rol'] ?? '') === 'Administrador';
+
+// [CAMBIO-UNIDAD-GLOBAL 2026-09-09] Unidades de medida ahora es un catalogo GLOBAL, igual
+// que categorias/proveedores/paquetes (portado de admin/inventario_unidades.php) -- ya no
+// esta aislado por sucursal.
 
 // Eliminar unidad
 if (isset($_GET['eliminar'])) {
@@ -29,29 +32,18 @@ if (isset($_GET['eliminar'])) {
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
     requerirCSRF($_GET['_token'] ?? '', 'unidades.php');
     $id = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
-    $u = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?");
-    $u->execute([$id, $sucursalId]);
+    $u = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ?");
+    $u->execute([$id]);
     $row = $u->fetch(PDO::FETCH_ASSOC);
     if ($row) {
-        // [FIX-UNIDAD-CRUZADA] Antes este conteo era GLOBAL (todas las sucursales): un
-        // producto de OTRA sucursal que por coincidencia usara el mismo nombre de unidad
-        // bloqueaba el borrado aunque esta sucursal no tuviera ningun producto usandola.
-        // Probado en vivo: sucursal 2 no podia borrar su propia unidad sin uso porque
-        // sucursal 1 tenia un producto (sin ninguna relacion) con el mismo nombre de
-        // unidad. Se limita el conteo a productos que esta sucursal realmente tiene en
-        // stock_sucursal.
-        $check = $pdo->prepare("
-            SELECT COUNT(*) FROM productos p
-            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-            WHERE p.unidad_medida = ? AND p.activo = 1 AND ss.activo = 1
-        ");
-        $check->execute([$sucursalId, $row['nombre']]);
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND activo = 1");
+        $check->execute([$row['nombre']]);
         if ($check->fetchColumn() > 0) {
             header('Location: unidades.php?msg=error_productos');
             exit();
         }
     }
-    $pdo->prepare("DELETE FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?")->execute([$id, $sucursalId]);
+    $pdo->prepare("DELETE FROM unidades_medida WHERE unidad_id = ?")->execute([$id]);
     header('Location: unidades.php?msg=eliminado');
     exit();
 }
@@ -70,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nombre = trim(is_scalar($_POST['nombre'] ?? null) ? (string)$_POST['nombre'] : '');
     // [FIX-UNIDAD-ID-DESINCRONIZADO] (portado de admin/inventario_unidades.php): se ancla al
     // ?editar= de la URL, no al <input hidden name="unidad_id">.
-    $id     = is_scalar($_GET['editar'] ?? null) ? intval($_GET['editar']) : 0;
+    $id = is_scalar($_GET['editar'] ?? null) ? intval($_GET['editar']) : 0;
 
     // [FIX-UNIDAD-VACIO] Antes un nombre vacio (tras trim) simplemente no hacia nada -- ni
     // guardaba, ni mostraba ningun error. admin/inventario_unidades.php ya tenia este mismo
@@ -94,52 +86,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // PDOException de clave duplicada en lugar de exponer el error crudo del servidor.
         try {
             if ($id) {
+                // [FIX-UNIDAD-EDICION-FANTASMA] Igual que admin/inventario_unidades.php: antes
+                // se reportaba "editado" sin importar si la unidad realmente existía — un
+                // unidad_id borrado mostraba éxito sin que nada hubiera pasado.
+                $stmtNombreViejo = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ?");
+                $stmtNombreViejo->execute([$id]);
+                $nombreViejo = $stmtNombreViejo->fetchColumn();
+                if ($nombreViejo === false) {
+                    header('Location: unidades.php?msg=no_encontrado');
+                    exit();
+                }
+
                 // [FIX-CONSISTENCIA] Igual que admin/inventario_unidades.php (FIX-MEDIO-B-20 +
                 // FIX-MEDIO-H-07): renombrar una unidad no tocaba los productos que ya la
                 // usaban (productos.unidad_medida es una copia de texto, no una FK) — quedaban
                 // con un nombre de unidad que ya no existe en el catalogo. Se propaga el
                 // renombre a los productos que tenian el nombre viejo exacto, envuelto en una
                 // transaccion para que ambos UPDATE tengan exito o ninguno.
-                $stmtNombreViejo = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?");
-                $stmtNombreViejo->execute([$id, $sucursalId]);
-                $nombreViejo = $stmtNombreViejo->fetchColumn();
-
-                // [FIX-UNIDAD-EDICION-FANTASMA] Igual que admin/inventario_unidades.php: antes
-                // se reportaba "editado" sin importar si la unidad realmente existía (y le
-                // pertenecía a esta sucursal) — un unidad_id borrado, o de otra sucursal,
-                // mostraba éxito sin que nada hubiera pasado.
-                if ($nombreViejo === false) {
-                    header('Location: unidades.php?msg=no_encontrado');
-                    exit();
-                }
-
                 $pdo->beginTransaction();
-                $pdo->prepare("UPDATE unidades_medida SET nombre = ? WHERE unidad_id = ? AND sucursal_id = ?")
-                    ->execute([$nombre, $id, $sucursalId]);
-                // [FIX-UNIDAD-CRUZADA] Antes este UPDATE tambien era GLOBAL: renombrar una
-                // unidad en ESTA sucursal cambiaba en silencio el texto que ven TODAS las
-                // sucursales en cualquier producto (aunque no lo tuvieran en stock), porque
-                // productos.unidad_medida es una sola columna de texto compartida. Probado en
-                // vivo: renombrar la unidad de la sucursal 1 cambio el texto en un producto
-                // que tambien tenia stock en sucursal 2 sin que sucursal 2 tocara nada, y el
-                // catalogo de unidades de sucursal 2 se quedo diciendo el nombre viejo. Se
-                // limita el renombre a los productos que ESTA sucursal tiene en stock -- si el
-                // producto tambien esta en otra sucursal seguira compartiendo el mismo texto
-                // (es una sola fila de catalogo global), pero ya no se toca un producto que
-                // esta sucursal no tiene ninguna relacion con el.
-                if ($nombreViejo !== false && $nombreViejo !== $nombre) {
-                    $pdo->prepare("
-                        UPDATE productos p
-                        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
-                        SET p.unidad_medida = ?
-                        WHERE p.unidad_medida = ? AND ss.activo = 1
-                    ")->execute([$sucursalId, $nombre, $nombreViejo]);
+                $pdo->prepare("UPDATE unidades_medida SET nombre = ? WHERE unidad_id = ?")
+                    ->execute([$nombre, $id]);
+                if ($nombreViejo !== $nombre) {
+                    $pdo->prepare("UPDATE productos SET unidad_medida = ? WHERE unidad_medida = ?")
+                        ->execute([$nombre, $nombreViejo]);
                 }
                 $pdo->commit();
                 header('Location: unidades.php?msg=editado');
             } else {
-                $pdo->prepare("INSERT INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                    ->execute([$nombre, $sucursalId]);
+                $pdo->prepare("INSERT INTO unidades_medida (nombre) VALUES (?)")
+                    ->execute([$nombre]);
                 header('Location: unidades.php?msg=creado');
             }
             exit();
@@ -154,25 +129,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// [FIX-UNIDAD-CRUZADA] Mismo problema que el borrado/renombre: el conteo de "total_productos"
-// era global, inflando (o mostrando productos que no existen para esta sucursal) el numero que
-// ve el usuario. Se limita a productos con stock activo en ESTA sucursal.
-$stmt = $pdo->prepare("
-    SELECT u.*, COUNT(DISTINCT ss.producto_id) AS total_productos
+$stmt = $pdo->query("
+    SELECT u.*, COUNT(p.producto_id) AS total_productos
     FROM unidades_medida u
     LEFT JOIN productos p ON p.unidad_medida = u.nombre AND p.activo = 1
-    LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = u.sucursal_id AND ss.activo = 1
-    WHERE u.sucursal_id = ?
     GROUP BY u.unidad_id
     ORDER BY u.nombre ASC
 ");
-$stmt->execute([$sucursalId]);
 $unidades = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $editando = null;
 if (isset($_GET['editar'])) {
-    $stmt2 = $pdo->prepare("SELECT * FROM unidades_medida WHERE unidad_id = ? AND sucursal_id = ?");
-    $stmt2->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0), $sucursalId]);
+    $stmt2 = $pdo->prepare("SELECT * FROM unidades_medida WHERE unidad_id = ?");
+    $stmt2->execute([intval(is_scalar($_GET['editar'] ?? null) ? $_GET['editar'] : 0)]);
     $editando = $stmt2->fetch(PDO::FETCH_ASSOC);
 }
 ?>
@@ -354,7 +323,7 @@ if (isset($_GET['editar'])) {
                 <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
                     <div class="msg msg-error">El nombre de la unidad no puede tener más de 30 caracteres.</div>
                 <?php elseif ($_GET['msg'] === 'duplicado'): ?>
-                    <div class="msg msg-error">Ya existe una unidad con ese nombre en esta sucursal. Elige un nombre diferente.</div>
+                    <div class="msg msg-error">Ya existe una unidad con ese nombre. Elige un nombre diferente.</div>
                 <?php elseif ($_GET['msg'] === 'vacio'): ?>
                     <div class="msg msg-error">El nombre de la unidad es obligatorio.</div>
                 <?php elseif ($_GET['msg'] === 'no_encontrado'): ?>
@@ -424,7 +393,7 @@ if (isset($_GET['editar'])) {
                         <input type="text" name="nombre"
                             value="<?= htmlspecialchars($editando['nombre'] ?? '') ?>"
                             placeholder="Ej. pieza, kg, metro, litro" autofocus>
-                        <div class="hint">Aparecerá en el punto de venta junto a la cantidad.</div>
+                        <div class="hint">Aparecerá en el punto de venta junto a la cantidad, en todas las sucursales.</div>
                     </div>
                     <button class="btn-guardar" type="submit">
                         <?= $editando ? 'Guardar cambios' : 'Agregar unidad' ?>

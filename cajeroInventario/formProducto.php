@@ -119,6 +119,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($precio_compra > 500000 || $precio_venta > 500000 || $precio_mayoreo > 500000) {
         $errores[] = 'Los precios no pueden ser mayores a $500,000.00. Verifica la cantidad capturada.';
     }
+    // [FIX-MAYOREO-MAYOR-VENTA] (portado de admin/inventario_formProducto.php) El precio de
+    // mayoreo es un descuento por comprar varias piezas -- no tenia ningun candado que
+    // impidiera capturarlo MAS ALTO que el precio de venta normal.
+    if ($precio_mayoreo > 0 && $precio_mayoreo > $precio_venta) {
+        $errores[] = 'El precio de mayoreo no puede ser mayor al precio de venta normal.';
+    }
     if ($tipo_venta !== 'Suelto') {
         if (!esValorEnteroValido($stock_minimo_raw)) $errores[] = 'El stock minimo solo acepta valores enteros cuando el tipo de venta es por unidad.';
         if (!esValorEnteroValido($stock_maximo_raw)) $errores[] = 'El stock maximo solo acepta valores enteros cuando el tipo de venta es por unidad.';
@@ -148,10 +154,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // proveedores borrados sin el re-insertado que los reemplaza.
         $pdo->beginTransaction();
         try {
-            // Auto-insertar unidad en la tabla si no existe aún
+            // [CAMBIO-UNIDAD-GLOBAL 2026-09-09] unidades_medida ya es catalogo global.
             if ($unidad_medida !== '') {
-                $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre, sucursal_id) VALUES (?, ?)")
-                    ->execute([$unidad_medida, intval($_SESSION['sucursal_id'])]);
+                $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre) VALUES (?)")
+                    ->execute([$unidad_medida]);
             }
 
             // Actualizar catálogo (datos compartidos) — este archivo es EDIT-ONLY, nunca crea
@@ -204,9 +210,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $categorias  = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 $proveedores = $pdo->query("SELECT proveedor_id, nombre FROM proveedores WHERE activo=1 ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
-$stmtUnd = $pdo->prepare("SELECT nombre FROM unidades_medida WHERE sucursal_id = ? ORDER BY nombre ASC");
-$stmtUnd->execute([$_SESSION['sucursal_id']]);
-$unidadesMedida = $stmtUnd->fetchAll(PDO::FETCH_COLUMN);
+$unidadesMedida = $pdo->query("SELECT nombre FROM unidades_medida ORDER BY nombre ASC")->fetchAll(PDO::FETCH_COLUMN);
 
 // Categoría actual para pre-llenar el autocomplete
 $categoriaNombreActual = '';
@@ -436,7 +440,7 @@ if ($editando && $editando['categoria_id']) {
                             <label>Código *</label>
                             <input type="text" name="codigo"
                                 value="<?= htmlspecialchars(is_scalar($_POST['codigo'] ?? null) ? $_POST['codigo'] : ($editando['codigo'] ?? '')) ?>"
-                                placeholder="Ej. TUBO-3/4-PVC"
+                                placeholder="Ej. CEM-050"
                                 oninput="this.value=this.value.toUpperCase()"
                                 maxlength="50"
                                 autocomplete="off">
@@ -534,6 +538,30 @@ if ($editando && $editando['categoria_id']) {
                                 class="js-zero-default js-stock-control"
                                 step="1" min="0" placeholder="0" inputmode="decimal" lang="en">
                             <div class="hint">Stock con el que arranca.</div>
+                        </div>
+                        <?php else:
+                            // [FIX-STOCK-ACTUAL-INVISIBLE] (espejo de admin/inventario_formProducto.php)
+                            // Este archivo es edit-only ($editando siempre viene con datos), asi que
+                            // "Cantidad inicial" nunca se mostraba y el stock_actual real de la
+                            // sucursal tampoco aparecia en ningun lado — solo minimo/maximo
+                            // (editables). Es de solo lectura a proposito: el stock real solo debe
+                            // cambiar via Entradas/Salidas o una re-importacion de Excel (que
+                            // preserva el stock_actual existente para no pisar un conteo fisico
+                            // real), nunca escribiendose aqui. $tipoActual todavia no esta definido
+                            // en este punto del archivo (la seccion "Tipo de venta" viene despues),
+                            // asi que se calcula el mismo valor de forma local.
+                            $tipoActualStock = $_POST['tipo_venta'] ?? $editando['tipo_venta'] ?? 'Unidad';
+                            $esSueltoEdit = $tipoActualStock === 'Suelto';
+                            $stockActualNum = (float)($editando['stock_actual'] ?? 0);
+                            $stockActualFmt = $esSueltoEdit
+                                ? rtrim(rtrim(number_format($stockActualNum, 3, '.', ''), '0'), '.')
+                                : number_format($stockActualNum, 0);
+                        ?>
+                        <div class="form-group">
+                            <label>Stock actual</label>
+                            <input type="text" value="<?= htmlspecialchars($stockActualFmt) ?>" disabled
+                                style="background:#f5f5f5;color:#888;cursor:not-allowed;">
+                            <div class="hint">Solo cambia con Entradas/Salidas o una nueva importación de Excel.</div>
                         </div>
                         <?php endif; ?>
                         <div class="form-group">

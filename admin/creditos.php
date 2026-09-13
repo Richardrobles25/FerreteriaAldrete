@@ -36,7 +36,10 @@ function siguienteCorteQuincenal(string $fechaDesde): string {
 }
 
 try {
-    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite <= CURDATE()");
+    // [FIX-MORA-DIA-GRACIA 2026-09-12] (espejo de cajeroInventario/creditos.php) el cliente
+    // tiene TODO el dia del corte para pagar sin marcarse Vencido -- antes "<= CURDATE()"
+    // marcaba Vencido y cobraba mora ese MISMO dia del corte, sin el dia completo de gracia.
+    $pdo->exec("UPDATE creditos SET estado='Vencido' WHERE estado='Activo' AND fecha_limite IS NOT NULL AND fecha_limite < CURDATE()");
 } catch (\PDOException $e) {
     error_log('[Ferreteria/creditos] Error al actualizar vencidos: ' . $e->getMessage());
 }
@@ -62,7 +65,7 @@ try {
         JOIN ventas v     ON cr.venta_id     = v.venta_id
         JOIN cajas  ca    ON v.caja_id       = ca.caja_id
         JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
-        WHERE cr.estado = 'Vencido' AND cr.fecha_limite <= CURDATE() AND s.porcentaje_mora > 0
+        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND s.porcentaje_mora > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
         $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, fecha_limite, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
@@ -90,7 +93,7 @@ try {
         $fechaLimiteActual = $credLock['fecha_limite'];
         $ultimaMora        = 0.0;
 
-        while (strtotime($fechaLimiteActual) <= strtotime(date('Y-m-d'))) {
+        while (strtotime($fechaLimiteActual) < strtotime(date('Y-m-d'))) {
             $moraAmt           = round($saldoActual * $pct / 100, 2);
             $saldoBase         = $saldoActual;
             $saldoActual       = round($saldoActual + $moraAmt, 2);
@@ -387,11 +390,10 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         <div class="tabla-wrapper">
             <?php if (count($creditos) > 0): ?>
                 <table>
-                    <thead><tr><th>#</th><th>Cliente</th><th>Sucursal</th><th>Venta</th><th>Abonos</th><th>Pendiente</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
+                    <thead><tr><th>Cliente</th><th>Sucursal</th><th>Venta</th><th>Abonos</th><th>Pendiente</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
                     <tbody id="tablaFiltrable">
                         <?php foreach ($creditos as $credito): ?>
                             <tr>
-                                <td style="color:#aaa;"><?= intval($credito['credito_id']) ?></td>
                                 <td><strong><?= htmlspecialchars($credito['nombre_completo']) ?></strong><div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($credito['telefono'] ?: 'Sin telefono') ?></div><div style="font-size:11px;color:#aaa;">Limite: $<?= number_format($credito['limite_credito'], 2) ?></div></td>
                                 <td><?= htmlspecialchars($credito['sucursal']) ?></td>
                                 <td><strong>$<?= number_format($credito['monto_total'], 2) ?></strong><div style="font-size:11px;color:#aaa;">Venta #<?= intval($credito['venta_id']) ?> - <?= date('d/m/Y', strtotime($credito['fecha_venta'])) ?></div></td>

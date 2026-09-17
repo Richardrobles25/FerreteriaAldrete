@@ -56,6 +56,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
 
     if ($sucursalVista === 0) {
         $erroresApertura[] = 'Selecciona una sucursal específica para abrir una caja. "Todas las sucursales" es solo de consulta.';
+    } elseif ($sucursalCerrada) {
+        // [FEATURE-CERRAR-SUCURSAL] Candado de servidor -- el formulario ya se oculta en el
+        // render de abajo, esto cubre un POST directo (bypass de la UI).
+        $erroresApertura[] = 'Esta sucursal está cerrada. No se pueden abrir turnos nuevos aquí hasta que se reabra desde Sucursales.';
     } else {
         $monto_apertura_raw = is_scalar($_POST['monto_apertura'] ?? null) ? $_POST['monto_apertura'] : '';
         $monto_apertura     = floatval($monto_apertura_raw);
@@ -231,6 +235,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     · Monto inicial: $<?= number_format($cajaAbierta['monto_apertura'], 2) ?>
                 </div>
                 <a class="btn-ir" href="cajero_nuevaVenta.php">Ir a nueva venta</a>
+            <?php elseif ($sucursalCerrada): ?>
+                <h1>Sucursal cerrada</h1>
+                <p><?= htmlspecialchars($nombreSucursalVista) ?> está cerrada — no se pueden abrir turnos nuevos aquí. Su historial sigue disponible para consulta en Ventas, Créditos y Cortes de caja. Para volver a operar, reábrela desde Sucursales.</p>
             <?php else: ?>
                 <h1>Abrir caja</h1>
                 <p>Registra el monto con el que inicias el turno en <?= htmlspecialchars($nombreSucursalVista) ?>.</p>

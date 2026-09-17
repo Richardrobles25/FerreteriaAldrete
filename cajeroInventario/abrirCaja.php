@@ -41,16 +41,30 @@ $stmtAbiertas = $pdo->prepare("
 $stmtAbiertas->execute([$_SESSION['sucursal_id'], $_SESSION['usuario_id']]);
 $cajasAbiertas = $stmtAbiertas->fetchColumn();
 
+// [FEATURE-CERRAR-SUCURSAL] (espejo de admin/cajero_abrirCaja.php, via $sucursalCerrada) --
+// este rol no elige sucursal, siempre es la propia ($_SESSION['sucursal_id']), asi que se
+// revisa directo aqui en vez de depender de _admin_sucursal_filtro.php (exclusivo de admin).
+$stmtSucCerrada = $pdo->prepare("SELECT activo FROM sucursales WHERE sucursal_id = ?");
+$stmtSucCerrada->execute([$_SESSION['sucursal_id']]);
+$sucursalCerrada = intval($stmtSucCerrada->fetchColumn()) === 0;
+
 $erroresApertura = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
     // [FIX-A1] Verificar CSRF antes de procesar la apertura de caja
     requerirCSRF($_POST['_token'] ?? '', 'abrirCaja.php');
+
+    if ($sucursalCerrada) {
+        $erroresApertura[] = 'Esta sucursal está cerrada. No se pueden abrir turnos nuevos aquí -- contacta al Administrador.';
+    }
     $monto_apertura_raw = is_scalar($_POST['monto_apertura'] ?? null) ? $_POST['monto_apertura'] : '';
     $monto_apertura     = floatval($monto_apertura_raw);
     $observaciones      = trim(is_scalar($_POST['observaciones'] ?? null) ? (string)$_POST['observaciones'] : '');
 
     // [AUTOFIX] VALIDACION-1A-1: Requerir monto de apertura mayor a $0.00
-    if ($monto_apertura_raw === '' || $monto_apertura < 0) {
+    if ($sucursalCerrada) {
+        // ya se agrego el error de arriba -- no seguir validando el monto si de plano no se
+        // va a poder abrir la caja aqui.
+    } elseif ($monto_apertura_raw === '' || $monto_apertura < 0) {
         $erroresApertura[] = 'El monto de apertura es obligatorio y no puede ser negativo.';
     } elseif ($monto_apertura == 0) {
         $erroresApertura[] = 'El monto de apertura debe ser mayor a $0.00. Si no tienes fondo inicial, contacta al administrador.';
@@ -267,6 +281,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     · Monto inicial: $<?= number_format($cajaAbierta['monto_apertura'], 2) ?>
                 </div>
                 <a class="btn-ir" href="nuevaVenta.php">Ir a nueva venta</a>
+            <?php elseif ($sucursalCerrada): ?>
+                <h1>Sucursal cerrada</h1>
+                <p>Tu sucursal está cerrada — no se pueden abrir turnos nuevos aquí. Contacta al Administrador si crees que esto es un error.</p>
             <?php else: ?>
                 <h1>Abrir caja</h1>
                 <p>Registra el monto con el que inicias el turno.</p>

@@ -722,6 +722,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
     }
 }
 
+// [FEATURE-ELIMINAR-CATALOGO-GLOBAL] Eliminar (desactivar) un producto del catálogo global,
+// afectando TODAS las sucursales a la vez -- a diferencia de "eliminar_producto" de arriba,
+// que solo desactiva stock_sucursal de la sucursal que se esta viendo. Antes no existia forma
+// de dar de baja un producto de raiz: el boton "Eliminar" tambien aparecia en la vista "Todas
+// las sucursales" pero siempre fallaba con "error_sin_sucursal", sin ninguna alternativa real.
+// Nunca se hace DELETE fisico (romperia el historial de ventas/movimientos ya ligado por FK) --
+// mismo patron de baja logica que ya usa el resto del sistema (productos.activo ya se respeta
+// en nuevaVenta/ventasPendientes/compras/salidas/entradas/transferencias/paquetes).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto_global'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
+    // Igual que la importacion por Excel: solo Administrador puede tocar el catalogo global
+    // completo -- Inventario/Inventario-Cajero solo administran el stock de su sucursal.
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: inventario_productos.php?msg=no_autorizado_import');
+        exit();
+    }
+    $id     = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
+    $motivo = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
+
+    if ($id && $motivo !== '') {
+        $stmtProd = $pdo->prepare("SELECT producto_id FROM productos WHERE producto_id = ? AND activo = 1");
+        $stmtProd->execute([$id]);
+        if ($stmtProd->fetch()) {
+            $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ?")->execute([$id]);
+            error_log('[inventario_productos.php] Producto ELIMINADO DEL CATALOGO GLOBAL producto_id=' . $id . ' por usuario_id=' . $_SESSION['usuario_id'] . ' motivo: ' . $motivo);
+            header('Location: inventario_productos.php?msg=eliminado_global');
+            exit();
+        }
+    }
+    header('Location: inventario_productos.php?msg=error_eliminar');
+    exit();
+}
+
+// [FEATURE-ELIMINAR-CATALOGO-GLOBAL] Reactivar un producto dado de baja del catalogo global --
+// sin esto, un producto desactivado quedaria invisible para siempre (todas las consultas del
+// sistema ya filtran WHERE p.activo = 1), sin ninguna forma de deshacer el error. Mismo tipo de
+// hallazgo que ya se corrigio antes en proveedores.php ("no habia forma de ver desactivados").
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reactivar_producto_global'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: inventario_productos.php?msg=no_autorizado_import');
+        exit();
+    }
+    $id = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
+    if ($id) {
+        $pdo->prepare("UPDATE productos SET activo = 1 WHERE producto_id = ?")->execute([$id]);
+        error_log('[inventario_productos.php] Producto REACTIVADO en catalogo global producto_id=' . $id . ' por usuario_id=' . $_SESSION['usuario_id']);
+    }
+    header('Location: inventario_productos.php?msg=reactivado&ver_inactivos=1');
+    exit();
+}
+
 // AJAX: catálogo global — productos que la sucursal seleccionada aún no tiene
 if (isset($_GET['catalogo_disponible'])) {
     header('Content-Type: application/json');
@@ -905,10 +957,13 @@ $categoria   = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria']
 $stock_bajo  = isset($_GET['stock_bajo']);
 $esAdmin     = $_SESSION['rol'] === 'Administrador';
 $vistaGlobal = $esAdmin && $sucursalVista === 0;
+// [FEATURE-ELIMINAR-CATALOGO-GLOBAL] Solo tiene sentido en vista global -- por sucursal, los
+// productos inactivos-por-sucursal ya se ven/reactivan desde "+Agregar del catálogo".
+$verInactivos = $vistaGlobal && isset($_GET['ver_inactivos']);
 
 if ($vistaGlobal) {
     // Vista global: catálogo puro, sin JOIN a stock_sucursal
-    $where   = "WHERE p.activo = 1";
+    $where   = "WHERE p.activo = " . ($verInactivos ? '0' : '1');
     $params  = [];
     $orderBy = "p.nombre_producto ASC";
     if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
@@ -1034,6 +1089,8 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     .btn-entrada:hover { background: #c8e6c9; }
     .btn-eliminar { background: #fdecea; color: #c0392b; }
     .btn-eliminar:hover { background: #ffcdd2; }
+    .btn-reactivar-global { background: #e8f5e9; color: #2e7d32; }
+    .btn-reactivar-global:hover { background: #c8e6c9; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 999; }
     .modal-overlay.visible { display: flex; }
@@ -1157,6 +1214,8 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             'creado'           => icono('circle-check-big') . ' Producto registrado correctamente en el catálogo.',
             'editado'          => icono('circle-check-big') . ' Producto actualizado correctamente.',
             'eliminado'        => icono('circle-check-big') . ' Producto eliminado correctamente.',
+            'eliminado_global' => icono('circle-check-big') . ' Producto eliminado del catálogo global — ya no aparece en ninguna sucursal. Puedes reactivarlo desde "Ver productos inactivos".',
+            'reactivado'       => icono('circle-check-big') . ' Producto reactivado en el catálogo global.',
             'agregado_catalogo'=> icono('circle-check-big') . ' Producto(s) agregado(s) a la sucursal correctamente.',
             'error_agregar_catalogo' => icono('circle-x') . ' No se pudo completar el alta de productos. No se guardó ningún cambio, intenta de nuevo.',
             'error_stock_max' => icono('circle-x') . ' El stock inicial/mínimo/máximo no puede ser mayor a 999,999. Verifica la cantidad capturada.',
@@ -1200,6 +1259,10 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 <?php if (!$vistaGlobal): ?>
                 <a class="btn-stock-bajo <?= $stock_bajo?'activo':'' ?>" href="inventario_productos.php?stock_bajo=1">
                     Stock bajo (<?= $totalStockBajo ?>)
+                </a>
+                <?php else: ?>
+                <a class="btn-stock-bajo <?= $verInactivos?'activo':'' ?>" href="inventario_productos.php?sucursal=0<?= $verInactivos ? '' : '&ver_inactivos=1' ?>">
+                    <?= $verInactivos ? 'Ver activos' : 'Ver productos inactivos' ?>
                 </a>
                 <?php endif; ?>
             </div>
@@ -1262,7 +1325,11 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                                 el id/nombre van en data-* correctamente escapados con htmlspecialchars, y
                                 un listener delegado (ver el <script> de abajo) llama a la misma función
                                 confirmarEliminacion() de siempre. */ ?>
-                                <button class="btn-accion btn-eliminar" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>">Eliminar</button>
+                                <?php if ($verInactivos): ?>
+                                <button class="btn-accion btn-reactivar-global" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>">Reactivar</button>
+                                <?php else: ?>
+                                <button class="btn-accion btn-eliminar" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>" data-global="<?= $vistaGlobal ? '1' : '0' ?>">Eliminar</button>
+                                <?php endif; ?>
                             </div>
                         </td>
                     </tr>
@@ -1329,15 +1396,28 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     <input type="hidden" name="producto_id" id="inputEliminarProductoId">
     <input type="hidden" name="motivo_eliminacion" id="inputEliminarProductoMotivo">
 </form>
+<?php if ($vistaGlobal): ?>
+<form method="POST" id="formEliminarProductoGlobal" style="display:none;">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+    <input type="hidden" name="eliminar_producto_global" value="1">
+    <input type="hidden" name="producto_id" id="inputEliminarProductoIdGlobal">
+    <input type="hidden" name="motivo_eliminacion" id="inputEliminarProductoMotivoGlobal">
+</form>
+<form method="POST" id="formReactivarProductoGlobal" style="display:none;">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+    <input type="hidden" name="reactivar_producto_global" value="1">
+    <input type="hidden" name="producto_id" id="inputReactivarProductoId">
+</form>
+<?php endif; ?>
 <div class="modal-overlay" id="modalEliminarProducto" aria-hidden="true">
     <div class="modal-card">
-        <h3>Eliminar producto</h3>
+        <h3 id="tituloEliminarProducto">Eliminar producto</h3>
         <p id="textoEliminarProducto">Se desactivará el stock de este producto <strong>solo en la sucursal que estás viendo</strong> (no se borra del catálogo global ni se desactiva en otras sucursales) y el motivo se guardará en el historial de movimientos.</p>
         <textarea id="textareaEliminarProducto" placeholder="Escribe el motivo de la eliminación"></textarea>
         <div class="modal-error" id="errorEliminarProducto">Necesitas capturar un motivo para continuar.</div>
         <div class="modal-acciones">
             <button type="button" class="btn-modal-cancelar" onclick="cerrarModalEliminacion()">Cancelar</button>
-            <button type="button" class="btn-modal-confirmar" onclick="enviarEliminacionProducto()">Eliminar producto</button>
+            <button type="button" class="btn-modal-confirmar" id="btnConfirmarEliminarProducto" onclick="enviarEliminacionProducto()">Eliminar producto</button>
         </div>
     </div>
 </div>
@@ -1374,9 +1454,17 @@ function toggleImport() { document.getElementById('importCard').classList.toggle
 document.getElementById('importCard').classList.add('visible');
 <?php endif; ?>
 let productoEliminarActual = null;
-confirmarEliminacion = function(id, nombre) {
-    productoEliminarActual = { id, nombre };
-    document.getElementById('textoEliminarProducto').textContent = 'Se desactivará "' + nombre + '" y se registrará el motivo en el historial de movimientos.';
+// [FEATURE-ELIMINAR-CATALOGO-GLOBAL] esGlobal=true cuando el boton viene de la vista "Todas
+// las sucursales" -- el warning y el destino del submit cambian, pero se reutiliza el mismo
+// modal (mismo patron de captura de motivo) en vez de duplicar todo el markup.
+confirmarEliminacion = function(id, nombre, esGlobal) {
+    esGlobal = !!esGlobal;
+    productoEliminarActual = { id, nombre, esGlobal };
+    document.getElementById('tituloEliminarProducto').textContent = esGlobal ? 'Eliminar del catálogo global' : 'Eliminar producto';
+    document.getElementById('textoEliminarProducto').innerHTML = esGlobal
+        ? '<strong>⚠ Esto afecta TODAS las sucursales:</strong> "' + nombre + '" desaparecerá del catálogo completo (Pinar y Barrio de los Indios, no solo la que estás viendo). El historial de ventas ya registradas no se toca. Podrás reactivarlo después desde "Ver productos inactivos".'
+        : 'Se desactivará "' + nombre + '" y se registrará el motivo en el historial de movimientos.';
+    document.getElementById('btnConfirmarEliminarProducto').textContent = esGlobal ? 'Eliminar del catálogo global' : 'Eliminar producto';
     document.getElementById('textareaEliminarProducto').value = '';
     document.getElementById('errorEliminarProducto').style.display = 'none';
     document.getElementById('modalEliminarProducto').classList.add('visible');
@@ -1396,10 +1484,17 @@ function enviarEliminacionProducto() {
         document.getElementById('textareaEliminarProducto').focus();
         return;
     }
-    document.getElementById('inputEliminarProductoId').value = productoEliminarActual.id;
-    document.getElementById('inputEliminarProductoMotivo').value = motivo;
-    cerrarModalEliminacion();
-    document.getElementById('formEliminarProducto').submit();
+    if (productoEliminarActual.esGlobal) {
+        document.getElementById('inputEliminarProductoIdGlobal').value = productoEliminarActual.id;
+        document.getElementById('inputEliminarProductoMotivoGlobal').value = motivo;
+        cerrarModalEliminacion();
+        document.getElementById('formEliminarProductoGlobal').submit();
+    } else {
+        document.getElementById('inputEliminarProductoId').value = productoEliminarActual.id;
+        document.getElementById('inputEliminarProductoMotivo').value = motivo;
+        cerrarModalEliminacion();
+        document.getElementById('formEliminarProducto').submit();
+    }
 }
 document.getElementById('modalEliminarProducto').addEventListener('click', function(e) {
     if (e.target === this) cerrarModalEliminacion();
@@ -1408,7 +1503,20 @@ document.getElementById('modalEliminarProducto').addEventListener('click', funct
 // atributo onclick (ver comentario junto al botón "Eliminar" más arriba).
 document.querySelectorAll('.btn-eliminar[data-producto-id]').forEach(function(btn) {
     btn.addEventListener('click', function() {
-        confirmarEliminacion(this.dataset.productoId, this.dataset.productoNombre);
+        confirmarEliminacion(this.dataset.productoId, this.dataset.productoNombre, this.dataset.global === '1');
+    });
+});
+// [FEATURE-ELIMINAR-CATALOGO-GLOBAL] Reactivar: accion reversible y de bajo riesgo (solo
+// vuelve a mostrar el producto), un confirm() nativo es suficiente -- el motivo obligatorio
+// queda reservado para el paso "destructivo" (eliminar), que usa el modal de arriba.
+function reactivarProductoGlobal(id, nombre) {
+    if (!confirm('¿Reactivar "' + nombre + '" en el catálogo global? Volverá a estar disponible para todas las sucursales.')) return;
+    document.getElementById('inputReactivarProductoId').value = id;
+    document.getElementById('formReactivarProductoGlobal').submit();
+}
+document.querySelectorAll('.btn-reactivar-global[data-producto-id]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        reactivarProductoGlobal(this.dataset.productoId, this.dataset.productoNombre);
     });
 });
 document.addEventListener('keydown', function(e) {

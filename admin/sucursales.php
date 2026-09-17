@@ -23,23 +23,49 @@ if (isset($_GET['eliminar'])) {
     // sucursal real sucursal_id=1 sin importar que id se haya mandado.
     $sid = intval(is_scalar($_GET['eliminar'] ?? null) ? $_GET['eliminar'] : 0);
 
-    // [FIX-ALTO-A-05] Antes esta guarda solo contaba usuarios/stock ACTIVOS, pero el
-    // DELETE de abajo borra TODAS las filas de esas tablas sin importar su estado —
-    // un usuario desactivado o una fila de stock_sucursal ya inactiva (o en 0) pasaban
-    // la guarda como si no existieran y se perdian en silencio junto con la sucursal.
-    // Ahora las guardas cuentan TODO lo que el DELETE realmente va a tocar.
-    // Bloquear si hay CUALQUIER usuario asignado (activo o no)
-    $stmtU = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE sucursal_id = ?");
-    $stmtU->execute([$sid]);
-    if ($stmtU->fetchColumn() > 0) {
-        header('Location: sucursales.php?error=con_usuarios'); exit();
+    // [FEATURE-CERRAR-SUCURSAL] Si la sucursal ya está CERRADA (activo=0, ver toggle_activo
+    // abajo), las guardas de usuarios/stock se omiten por completo -- cerrar es en sí mismo
+    // el paso deliberado que confirma la intención de deshacerse de la sucursal (y ya exige su
+    // propio candado: no se puede cerrar con una caja abierta). Exigir ADEMÁS reasignar
+    // usuarios y vaciar stock a mano, sobre una sucursal que el propio admin ya marcó como
+    // cerrada, no protege nada real -- solo vuelve inalcanzable el caso que de verdad importa:
+    // una sucursal creada por error o de prueba. Si sigue ACTIVA, las guardas de siempre
+    // aplican tal cual (ver más abajo).
+    $stmtActivaChk = $pdo->prepare("SELECT activo FROM sucursales WHERE sucursal_id = ?");
+    $stmtActivaChk->execute([$sid]);
+    $sucursalActivaParaEliminar = $stmtActivaChk->fetchColumn();
+
+    if ($sucursalActivaParaEliminar === false) {
+        header('Location: sucursales.php?error=con_registros'); exit();
     }
 
-    // Bloquear si hay CUALQUIER fila de stock para esta sucursal (activa, inactiva, o en 0)
-    $stmtChk = $pdo->prepare("SELECT COUNT(*) FROM stock_sucursal WHERE sucursal_id = ?");
-    $stmtChk->execute([$sid]);
-    if ($stmtChk->fetchColumn() > 0) {
-        header('Location: sucursales.php?error=con_stock'); exit();
+    if (intval($sucursalActivaParaEliminar) === 1) {
+        // [FIX-ALTO-A-05] Antes esta guarda solo contaba usuarios/stock ACTIVOS, pero el
+        // DELETE de abajo borra TODAS las filas de esas tablas sin importar su estado —
+        // un usuario desactivado o una fila de stock_sucursal ya inactiva (o en 0) pasaban
+        // la guarda como si no existieran y se perdian en silencio junto con la sucursal.
+        // Ahora las guardas cuentan TODO lo que el DELETE realmente va a tocar.
+        // Bloquear si hay CUALQUIER usuario asignado (activo o no) -- desactivar NO alcanza
+        // para pasar esta guarda (a proposito). El camino real es reasignar al usuario a
+        // OTRA sucursal desde Usuarios, o cerrar esta sucursal primero (ver arriba).
+        $stmtU = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE sucursal_id = ?");
+        $stmtU->execute([$sid]);
+        if ($stmtU->fetchColumn() > 0) {
+            header('Location: sucursales.php?error=con_usuarios'); exit();
+        }
+
+        // [FEATURE-ELIMINAR-SUCURSAL-VIABLE] Antes bloqueaba con CUALQUIER fila en
+        // stock_sucursal, incluso ya inactiva y en $0.00 de existencia real -- eso volvia la
+        // eliminacion practicamente imposible para siempre en cuanto una sucursal tuviera un
+        // solo producto dado de alta alguna vez. Lo que de verdad importa proteger es la
+        // EXISTENCIA REAL en riesgo de perderse sin aviso, no la mera presencia de una fila --
+        // se suma stock_actual de TODAS las filas (activas o no) y se bloquea solo si esa suma
+        // es mayor a cero.
+        $stmtChk = $pdo->prepare("SELECT COALESCE(SUM(stock_actual),0) FROM stock_sucursal WHERE sucursal_id = ?");
+        $stmtChk->execute([$sid]);
+        if ($stmtChk->fetchColumn() > 0) {
+            header('Location: sucursales.php?error=con_stock'); exit();
+        }
     }
 
     // [FIX-LOGO-HUERFANO] El logo subido para esta sucursal (ver formSucursal.php) vive en
@@ -53,18 +79,46 @@ if (isset($_GET['eliminar'])) {
 
     try {
         $pdo->beginTransaction();
+        // [FIX-CASCADA-SUCURSAL-COMPLETA] Encontrado probando el "Eliminar" de una sucursal
+        // cerrada con datos reales de verdad (venta+credito+abono+devolucion+compra+
+        // transferencia+movimientos), no solo con filas vacias: el orden de abajo se quedaba
+        // corto contra el grafo REAL de llaves foraneas -- faltaban 3 tablas completas
+        // (compra_productos, mora_cancelaciones, movimientos_mora, gastos, promociones) y
+        // movimientos_caja se borraba DESPUES de devoluciones aunque la referencia
+        // (fk_movcaja_dev) va en sentido contrario. Cualquiera de estos, con datos reales
+        // (ej. una sola compra a proveedor, o un credito que ya cobro mora -- que Pinar y
+        // Barrio de los Indios YA tienen), tronaba a medio camino con un error SQL crudo.
+        // Verificado en vivo: reproducido el error real (compra_productos/compras_proveedor),
+        // corregido, y vuelto a probar con la misma sucursal hasta borrar limpio.
+
+        // compra_productos -> compras_proveedor (tiene que irse antes que su cabecera)
+        $pdo->prepare("DELETE cp FROM compra_productos cp JOIN compras_proveedor cpv ON cp.compra_id = cpv.compras_proveedor_id WHERE cpv.sucursal_id = ?")->execute([$sid]);
+        // mora_cancelaciones / movimientos_mora -> creditos (antes de borrar creditos; MUY
+        // probable en la practica, cualquier credito Vencido ya tiene fila en movimientos_mora)
+        $pdo->prepare("DELETE mc FROM mora_cancelaciones mc JOIN creditos cr ON mc.credito_id = cr.credito_id JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        $pdo->prepare("DELETE mm FROM movimientos_mora mm JOIN creditos cr ON mm.credito_id = cr.credito_id JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
         // abonos → creditos → ventas → cajas
         $pdo->prepare("DELETE a FROM abonos a JOIN creditos cr ON a.credito_id = cr.credito_id JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE cr FROM creditos cr JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        // movimientos_caja -> devoluciones (fk_movcaja_dev): tiene que irse ANTES que
+        // devoluciones, no despues (orden viejo, incorrecto, invertido aqui).
+        $pdo->prepare("DELETE FROM movimientos_caja WHERE sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE d FROM devoluciones d JOIN ventas v ON d.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE vp FROM venta_productos vp JOIN ventas v ON vp.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE v FROM ventas v JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
-        $pdo->prepare("DELETE FROM movimientos_caja WHERE sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE FROM cajas WHERE sucursal_id = ?")->execute([$sid]);
         // movimientos_inventario ahora tiene sucursal_id propio — se borran directamente
         $pdo->prepare("DELETE FROM movimientos_inventario WHERE sucursal_id = ?")->execute([$sid]);
+        // compra_productos ya se borro arriba -- ahora si es seguro borrar la cabecera
         $pdo->prepare("DELETE FROM compras_proveedor WHERE sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE FROM transferencias WHERE sucursal_origen_id = ? OR sucursal_destino_id = ?")->execute([$sid, $sid]);
+        // gastos -> sucursales directo (nunca se borraba; una sola fila bloqueaba el DELETE
+        // final de sucursales).
+        $pdo->prepare("DELETE FROM gastos WHERE sucursal_id = ?")->execute([$sid]);
+        // promociones -> sucursales directo (nunca se borraba). Solo las ESPECIFICAS de esta
+        // sucursal -- las promociones globales tienen sucursal_id NULL y no las toca este
+        // WHERE, correctamente siguen aplicando a las demas sucursales.
+        $pdo->prepare("DELETE FROM promociones WHERE sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE FROM stock_sucursal WHERE sucursal_id = ?")->execute([$sid]);
         // Usuarios inactivos se pueden borrar ya que sus movimientos fueron eliminados arriba
         $pdo->prepare("DELETE FROM usuarios WHERE sucursal_id = ?")->execute([$sid]);
@@ -77,15 +131,65 @@ if (isset($_GET['eliminar'])) {
         header('Location: sucursales.php?msg=eliminado'); exit();
     } catch (\PDOException $e) {
         $pdo->rollBack();
+        // [FIX-CASCADA-SUCURSAL-COMPLETA] Antes de este fix, un usuario cuyo historial quedo
+        // repartido entre DOS sucursales (ej. se reasigno de una a otra sin que sus ventas
+        // viejas se movieran, lo cual nunca sucede solo -- solo pasaria si alguien reasigna
+        // manualmente a un empleado) podia seguir bloqueando el DELETE de usuarios incluso con
+        // todo lo demas resuelto. Es un caso extremo que no vale la pena intentar resolver
+        // automaticamente (implicaria borrar o mover historial de OTRA sucursal que no se esta
+        // cerrando) -- se deja como rollback seguro (nada se pierde) con un mensaje mas claro
+        // que el error SQL crudo.
         header('Location: sucursales.php?error=con_registros&detail=' . urlencode($e->getMessage())); exit();
+    }
+}
+
+// [FEATURE-CERRAR-SUCURSAL] Cerrar/reabrir una sucursal SIN borrar nada -- a diferencia de
+// "eliminar" (arriba), esto solo cambia sucursales.activo. No exige mover usuarios ni vaciar
+// stock: el punto es justo que sea la opcion ligera y reversible. Lo que SI cambia al cerrar:
+// (a) deja de aparecer en el selector de sucursal al dar de alta/editar usuarios
+// (formUsuario.php ya filtraba WHERE activo=1, sin necesidad de tocarlo), y (b) ya no se puede
+// abrir una caja nueva ahi (ver admin/cajero_abrirCaja.php y cajeroInventario/abrirCaja.php) --
+// bloqueando ese punto de entrada se bloquea de facto toda venta/movimiento nuevo, porque el
+// sistema ya exige caja abierta para casi todo. Su historial (ventas, creditos, cortes,
+// movimientos ya registrados) sigue consultandose normal desde el selector de sucursal del
+// Administrador (ver _admin_sucursal_filtro.php).
+if (isset($_GET['toggle_activo'])) {
+    requerirCSRF($_GET['_token'] ?? '', 'sucursales.php');
+    $sidToggle = intval(is_scalar($_GET['toggle_activo'] ?? null) ? $_GET['toggle_activo'] : 0);
+
+    $stmtSuc = $pdo->prepare("SELECT activo FROM sucursales WHERE sucursal_id = ?");
+    $stmtSuc->execute([$sidToggle]);
+    $sucActual = $stmtSuc->fetch(PDO::FETCH_ASSOC);
+
+    if (!$sucActual) {
+        header('Location: sucursales.php?error=con_registros'); exit();
+    }
+
+    if (intval($sucActual['activo']) === 1) {
+        // Va a CERRAR -- bloquear si hay una caja abierta ahora mismo (no cerrar a media
+        // operacion, con dinero fisico ya contado dentro de un turno activo).
+        $stmtCajaAbierta = $pdo->prepare("SELECT COUNT(*) FROM cajas WHERE sucursal_id = ? AND estado = 'Abierta'");
+        $stmtCajaAbierta->execute([$sidToggle]);
+        if ($stmtCajaAbierta->fetchColumn() > 0) {
+            header('Location: sucursales.php?error=con_caja_abierta'); exit();
+        }
+        $pdo->prepare("UPDATE sucursales SET activo = 0 WHERE sucursal_id = ?")->execute([$sidToggle]);
+        header('Location: sucursales.php?msg=cerrada'); exit();
+    } else {
+        $pdo->prepare("UPDATE sucursales SET activo = 1 WHERE sucursal_id = ?")->execute([$sidToggle]);
+        header('Location: sucursales.php?msg=reabierta'); exit();
     }
 }
 
 // [FIX-ALTO-A-05] total_usuarios/con_stock siguen contando solo lo ACTIVO — son la
 // estadistica que se muestra en la tarjeta ("N usuarios", "N productos en stock") y esa
 // lectura de negocio no cambia. Para decidir si el boton "Eliminar" debe estar
-// habilitado se usan dos columnas nuevas que cuentan TODO (igual que el DELETE real),
-// para que el boton nunca prometa algo que la guarda del servidor luego rechaza.
+// habilitado se usan columnas que reflejan EXACTAMENTE lo que la guarda del servidor va a
+// revisar, para que el boton nunca prometa algo que luego se rechaza.
+// [FEATURE-ELIMINAR-SUCURSAL-VIABLE] stock_valor_riesgo reemplaza el conteo de filas de
+// stock_sucursal (ver comentario junto a la guarda de arriba) por la existencia real en
+// riesgo (activa o no) -- una sucursal con productos ya en $0 de existencia SI se puede
+// eliminar, aunque conserve filas de stock_sucursal inactivas.
 $stmt = $pdo->query("
     SELECT s.*,
         (SELECT COUNT(*) FROM usuarios u WHERE u.sucursal_id = s.sucursal_id AND u.activo = 1) AS total_usuarios,
@@ -93,7 +197,7 @@ $stmt = $pdo->query("
          JOIN productos p ON p.producto_id = ss.producto_id AND p.activo = 1
          WHERE ss.sucursal_id = s.sucursal_id AND ss.activo = 1 AND ss.stock_actual > 0) AS con_stock,
         (SELECT COUNT(*) FROM usuarios u2 WHERE u2.sucursal_id = s.sucursal_id) AS usuarios_totales_incl_inactivos,
-        (SELECT COUNT(*) FROM stock_sucursal ss2 WHERE ss2.sucursal_id = s.sucursal_id) AS stock_filas_incl_inactivas
+        (SELECT COALESCE(SUM(ss2.stock_actual),0) FROM stock_sucursal ss2 WHERE ss2.sucursal_id = s.sucursal_id) AS stock_valor_riesgo
     FROM sucursales s
     ORDER BY s.nombre ASC
 ");
@@ -154,6 +258,11 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .btn-eliminar { background: #fdecea; color: #c0392b; }
     .btn-eliminar:hover { background: #ffcdd2; }
     .btn-eliminar-disabled { background: #f5f5f5; color: #bbb; cursor: not-allowed; }
+    .btn-cerrar { background: #fff3e0; color: #e65100; }
+    .btn-cerrar:hover { background: #ffe0b2; }
+    .btn-reabrir { background: #e8f5e9; color: #2e7d32; }
+    .btn-reabrir:hover { background: #c8e6c9; }
+    .badge-cerrada { display: inline-block; background: #ffe0b2; color: #e65100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; padding: 2px 7px; border-radius: 99px; vertical-align: middle; }
     .ticket-preview { background: #f9f9f9; border-radius: 6px; padding: 10px 12px; font-size: 12px; color: #666; margin-bottom: 14px; font-family: monospace; line-height: 1.6; max-height: 80px; overflow: hidden; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; }
     @media (max-width: 768px) {
@@ -203,7 +312,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 No se guardaron los cambios: esa sucursal ya no existe (pudo haberse eliminado desde otra sesión).
             </div>
         <?php elseif (isset($_GET['msg'])): ?>
-            <?php $msgs = ['creado' => 'Sucursal creada.', 'editado' => 'Sucursal actualizada.', 'eliminado' => 'Sucursal eliminada correctamente.']; ?>
+            <?php $msgs = ['creado' => 'Sucursal creada.', 'editado' => 'Sucursal actualizada.', 'eliminado' => 'Sucursal eliminada correctamente.', 'cerrada' => 'Sucursal cerrada. Su historial sigue disponible para consulta; no se puede operar (abrir caja, vender) ni asignarle usuarios nuevos hasta que se reabra.', 'reabierta' => 'Sucursal reabierta — ya puede operar con normalidad.']; ?>
             <?php $msgKeySuc = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
             <div style="background:#e8f5e9;color:#2e7d32;padding:12px 16px;border-radius:6px;font-size:13px;margin-bottom:16px;border-left:3px solid #2e7d32;">
                 <?= htmlspecialchars($msgs[$msgKeySuc] ?? '') ?>
@@ -211,9 +320,10 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <?php endif; ?>
         <?php
             $errMsgs = [
-                'con_stock'    => 'No se puede eliminar la sucursal porque aún tiene productos con stock. Retira o transfiere el stock primero.',
-                'con_usuarios' => 'No se puede eliminar la sucursal porque tiene usuarios activos asignados. Desactívalos primero.',
-                'con_registros'=> 'Ocurrió un error al eliminar la sucursal. Intenta de nuevo.',
+                'con_stock'       => 'No se puede eliminar la sucursal porque todavía tiene productos con existencia (stock mayor a $0). Registra una Salida para dejarlo en 0, o transfiérelo a otra sucursal, antes de eliminar.',
+                'con_usuarios'    => 'No se puede eliminar la sucursal porque tiene usuarios asignados (desactivarlos no alcanza). Reasígnalos a otra sucursal desde Usuarios → Editar antes de eliminar.',
+                'con_registros'   => 'Ocurrió un error al eliminar la sucursal. Intenta de nuevo.',
+                'con_caja_abierta'=> 'No se puede cerrar la sucursal: hay una caja abierta ahí ahora mismo. Espera a que se cierre el turno primero.',
             ];
         ?>
         <?php $errKeySuc = is_scalar($_GET['error'] ?? null) ? $_GET['error'] : ''; ?>
@@ -232,7 +342,7 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="suc-card">
                 <div class="suc-header">
                     <div>
-                        <div class="suc-nombre"><?= htmlspecialchars($s['nombre']) ?></div>
+                        <div class="suc-nombre"><?= htmlspecialchars($s['nombre']) ?><?php if (intval($s['activo']) === 0): ?> <span class="badge-cerrada">Cerrada</span><?php endif; ?></div>
                         <?php if ($s['rfc']): ?><div class="suc-rfc"><?= htmlspecialchars($s['rfc']) ?></div><?php endif; ?>
                     </div>
                 </div>
@@ -253,10 +363,37 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                 <div class="suc-acciones">
                     <a class="btn-accion btn-editar" href="formSucursal.php?id=<?= $s['sucursal_id'] ?>">Editar datos</a>
-                    <?php if (intval($s['usuarios_totales_incl_inactivos']) > 0): ?>
-                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene usuarios asignados (incluidos inactivos)">Eliminar</span>
-                    <?php elseif (intval($s['stock_filas_incl_inactivas']) > 0): ?>
-                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene registros de stock (incluidos inactivos o en 0)">Eliminar</span>
+                    <?php if (intval($s['activo']) === 1): ?>
+                        <a class="btn-accion btn-cerrar"
+                           href="sucursales.php?toggle_activo=<?= $s['sucursal_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
+                           onclick="return confirm('¿Cerrar la sucursal <?= htmlspecialchars($s['nombre'], ENT_QUOTES) ?>? No se borra nada — su historial sigue disponible para consulta, pero no se podrán abrir cajas nuevas, vender, ni asignarle usuarios ahí hasta que la reabras.')">Cerrar</a>
+                    <?php else: ?>
+                        <a class="btn-accion btn-reabrir"
+                           href="sucursales.php?toggle_activo=<?= $s['sucursal_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
+                           onclick="return confirm('¿Reabrir la sucursal <?= htmlspecialchars($s['nombre'], ENT_QUOTES) ?>? Volverá a operar con normalidad.')">Reabrir</a>
+                    <?php endif; ?>
+                    <?php if (intval($s['activo']) === 0): ?>
+                        <?php
+                            // [FEATURE-ELIMINAR-SUCURSAL-CERRADA] Una sucursal CERRADA se puede
+                            // eliminar siempre, sin importar usuarios/stock -- cerrar ya fue el
+                            // paso deliberado. El warning avisa explícitamente cuánto se va a
+                            // llevar entre manos, para que el único candado que queda (el
+                            // confirm de abajo) siga siendo informativo y no una formalidad vacía.
+                            $advertenciaExtra = '';
+                            if (intval($s['usuarios_totales_incl_inactivos']) > 0) {
+                                $advertenciaExtra .= ' Tiene ' . intval($s['usuarios_totales_incl_inactivos']) . ' usuario(s) asignado(s) que también se eliminarán.';
+                            }
+                            if (floatval($s['stock_valor_riesgo']) > 0) {
+                                $advertenciaExtra .= ' Todavía tiene existencia real de productos en stock.';
+                            }
+                        ?>
+                        <a class="btn-accion btn-eliminar"
+                           href="sucursales.php?eliminar=<?= $s['sucursal_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
+                           onclick="return confirm('¿Eliminar la sucursal <?= htmlspecialchars($s['nombre'], ENT_QUOTES) ?>?<?= htmlspecialchars($advertenciaExtra, ENT_QUOTES) ?> Se eliminarán todos sus datos (ventas, créditos, cortes, movimientos). Esta acción no se puede deshacer.')">Eliminar</a>
+                    <?php elseif (intval($s['usuarios_totales_incl_inactivos']) > 0): ?>
+                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: tiene usuarios asignados (incluidos inactivos) — reasígnalos a otra sucursal desde Usuarios, o cierra la sucursal primero para poder eliminarla directo">Eliminar</span>
+                    <?php elseif (floatval($s['stock_valor_riesgo']) > 0): ?>
+                        <span class="btn-accion btn-eliminar-disabled" title="No se puede eliminar: todavía tiene productos con existencia (stock > 0) — déjalo en 0 con una Salida, transfiérelo, o cierra la sucursal primero para poder eliminarla directo">Eliminar</span>
                     <?php else: ?>
                         <a class="btn-accion btn-eliminar"
                            href="sucursales.php?eliminar=<?= $s['sucursal_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>"

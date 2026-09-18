@@ -29,11 +29,19 @@ $esAdmin = $_SESSION['rol'] === 'Administrador';
 // sucursales": si se entraba a EDITAR un producto sin un ?sucursal= explicito en el link (el
 // caso real cuando se navega desde la vista global, ver inventario_productos.php), caia en
 // silencio a la sucursal propia del admin -- y GUARDAR terminaba dando de alta/editando stock
-// ahi sin que el admin lo pidiera ni lo supiera. Reportado en vivo por el usuario. Ahora,
-// $todasSucursales tambien es true al EDITAR con la vista global activa (antes solo aplicaba
-// al CREAR con ?todas=1), lo que oculta el control de stock (ver mas abajo) y evita el guardado
-// de cualquier stock_sucursal (ver el guardado mas abajo).
-$todasSucursales = $esAdmin && (isset($_GET['todas']) || ($esEdicion && $sucursalVista === 0));
+// ahi sin que el admin lo pidiera ni lo supiera. Reportado en vivo por el usuario.
+// [FIX-STOCK-TODAS-SUCURSALES-CREAR] La misma trampa existia al CREAR: $sucursalVista es 0 por
+// default en la sesion del admin (ver _admin_sucursal_filtro.php) hasta que elige una sucursal
+// especifica, y antes esta condicion solo activaba $todasSucursales en ese caso durante EDICION
+// (via $esEdicion &&) o con un ?todas=1 explicito -- nunca al CREAR sin sucursal elegida. El
+// formulario de todos modos mostraba y aceptaba "Cantidad inicial"/stock minimo/maximo, y GUARDAR
+// intentaba un INSERT INTO stock_sucursal con sucursal_id=0 (no existe en `sucursales`), lo que
+// violaba la llave foranea y el catch generico de mas abajo lo mostraba como "No se pudo guardar
+// el producto. Intenta de nuevo." sin ninguna pista de la causa real. Se quita el `$esEdicion &&`
+// para que CREAR y EDITAR compartan la misma regla: viendo "Todas las sucursales" (sucursalVista
+// === 0), el producto solo se da de alta en el catalogo global y el control de stock se oculta
+// (ver mas abajo) en vez de intentar escribir un stock_sucursal invalido.
+$todasSucursales = $esAdmin && (isset($_GET['todas']) || $sucursalVista === 0);
 $sucursalEdit = $sucursalVista;
 $stockEdicion = ['stock_actual' => 0, 'stock_minimo' => 0, 'stock_maximo' => 0];
 $nombreSucursalEdit = $nombreSucursalVista;

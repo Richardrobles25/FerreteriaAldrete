@@ -730,6 +730,16 @@ function esc(str) {
 renderListaPaq();
 actualizarHintAhorro();
 </script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+// (Este archivo selecciona por onmousedown, no onclick -- attachDropdownKeyNav ya lo maneja.)
+attachDropdownKeyNav(
+    document.getElementById('buscarProd'),
+    document.getElementById('prodDropdown'),
+    function () { document.getElementById('prodDropdown').style.display = 'none'; }
+);
+</script>
 </body>
 </html>
 

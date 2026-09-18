@@ -39,6 +39,22 @@ if (isset($_GET['eliminar'])) {
         header('Location: sucursales.php?error=con_registros'); exit();
     }
 
+    // [FEATURE-PROTECCION-ULTIMO-ADMIN] El sistema nunca debe poder quedar sin NINGUNA
+    // sucursal, ni sin NINGUN usuario Administrador -- ambos casos son irrecuperables desde
+    // la propia interfaz (no habria con que sesion volver a entrar). Estas dos guardas son
+    // INCONDICIONALES: a diferencia de las guardas de usuarios/stock de abajo, NO se saltan
+    // aunque la sucursal ya este cerrada -- cerrar no borra nada, pero eliminar si, y
+    // "cerrada" no es garantia de que ya no tenga al unico admin que queda.
+    $totalSucursales = intval($pdo->query("SELECT COUNT(*) FROM sucursales")->fetchColumn());
+    if ($totalSucursales <= 1) {
+        header('Location: sucursales.php?error=ultima_sucursal'); exit();
+    }
+    $stmtOtrosAdmins = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE rol = 'Administrador' AND sucursal_id <> ?");
+    $stmtOtrosAdmins->execute([$sid]);
+    if (intval($stmtOtrosAdmins->fetchColumn()) === 0) {
+        header('Location: sucursales.php?error=sin_admin_restante'); exit();
+    }
+
     if (intval($sucursalActivaParaEliminar) === 1) {
         // [FIX-ALTO-A-05] Antes esta guarda solo contaba usuarios/stock ACTIVOS, pero el
         // DELETE de abajo borra TODAS las filas de esas tablas sin importar su estado —
@@ -97,8 +113,14 @@ if (isset($_GET['eliminar'])) {
         // probable en la practica, cualquier credito Vencido ya tiene fila en movimientos_mora)
         $pdo->prepare("DELETE mc FROM mora_cancelaciones mc JOIN creditos cr ON mc.credito_id = cr.credito_id JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
         $pdo->prepare("DELETE mm FROM movimientos_mora mm JOIN creditos cr ON mm.credito_id = cr.credito_id JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
-        // abonos → creditos → ventas → cajas
-        $pdo->prepare("DELETE a FROM abonos a JOIN creditos cr ON a.credito_id = cr.credito_id JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
+        // abonos → creditos → ventas → cajas, PERO ademas abonos.caja_id es un FK DIRECTO a
+        // cajas (los creditos son globales -- un abono se puede pagar en CUALQUIER sucursal,
+        // no solo donde se origino el credito). Borrar solo por la ruta credito->venta->caja
+        // se queda corto: un abono pagado AQUI para un credito abierto en OTRA sucursal
+        // sobrevive con su caja_id apuntando a una caja que esta a punto de borrarse, y el
+        // DELETE de `cajas` mas abajo truena con fk_abonos_caja. Reproducido en vivo (Pinar,
+        // con abonos reales pagados ahi para creditos abiertos en Barrio de los Indios).
+        $pdo->prepare("DELETE a FROM abonos a LEFT JOIN creditos cr ON a.credito_id = cr.credito_id LEFT JOIN ventas v ON cr.venta_id = v.venta_id LEFT JOIN cajas cv ON v.caja_id = cv.caja_id LEFT JOIN cajas ca ON a.caja_id = ca.caja_id WHERE cv.sucursal_id = ? OR ca.sucursal_id = ?")->execute([$sid, $sid]);
         $pdo->prepare("DELETE cr FROM creditos cr JOIN ventas v ON cr.venta_id = v.venta_id JOIN cajas c ON v.caja_id = c.caja_id WHERE c.sucursal_id = ?")->execute([$sid]);
         // movimientos_caja -> devoluciones (fk_movcaja_dev): tiene que irse ANTES que
         // devoluciones, no despues (orden viejo, incorrecto, invertido aqui).
@@ -324,6 +346,8 @@ $sucursales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 'con_usuarios'    => 'No se puede eliminar la sucursal porque tiene usuarios asignados (desactivarlos no alcanza). Reasígnalos a otra sucursal desde Usuarios → Editar antes de eliminar.',
                 'con_registros'   => 'Ocurrió un error al eliminar la sucursal. Intenta de nuevo.',
                 'con_caja_abierta'=> 'No se puede cerrar la sucursal: hay una caja abierta ahí ahora mismo. Espera a que se cierre el turno primero.',
+                'ultima_sucursal' => 'No se puede eliminar: es la única sucursal que queda. El sistema siempre necesita al menos una.',
+                'sin_admin_restante' => 'No se puede eliminar: se quedarían sin ningún Administrador en el sistema. Crea o reasigna un Administrador en otra sucursal antes de eliminar esta.',
             ];
         ?>
         <?php $errKeySuc = is_scalar($_GET['error'] ?? null) ? $_GET['error'] : ''; ?>

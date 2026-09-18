@@ -2242,5 +2242,19 @@ function imprimirTicketPend() {
     recalcularTotalPend();
 })();
 </script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('buscarProductoPendiente'),
+    document.getElementById('dropdownProdsPend'),
+    ocultarDropPend
+);
+attachDropdownKeyNav(
+    document.getElementById('buscarClientePend'),
+    document.getElementById('dropClientesPend'),
+    ocultarDropClientes
+);
+</script>
 </body>
 </html>

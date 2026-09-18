@@ -936,6 +936,20 @@ document.addEventListener('click', function(e) {
     if (extra && extra.notas) document.getElementById('notasCompra').value = extra.notas;
 })();
 </script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('buscarProveedorCompra'),
+    document.getElementById('dropProveedoresCompra'),
+    function () { document.getElementById('dropProveedoresCompra').style.display = 'none'; }
+);
+attachDropdownKeyNav(
+    document.getElementById('buscarProdCompra'),
+    document.getElementById('dropProdCompra'),
+    function () { document.getElementById('dropProdCompra').style.display = 'none'; }
+);
+</script>
 <script src="../includes/auto_filter.js"></script>
 </body>
 </html>

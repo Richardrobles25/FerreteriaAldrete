@@ -1252,6 +1252,14 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 </div>
 
-
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('busquedaProd'),
+    document.getElementById('sugerencias'),
+    hideSug
+);
+</script>
 </body>
 </html>

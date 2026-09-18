@@ -490,6 +490,15 @@ document.querySelectorAll('.msg-flash').forEach(function(el) {
     }, 5000);
 });
 </script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('buscarProducto'),
+    document.getElementById('dropProductos'),
+    function () { document.getElementById('dropProductos').style.display = 'none'; }
+);
+</script>
 </body>
 </html>
 

@@ -507,6 +507,15 @@ function agregarArea(id) {
 // Inicializar tags al cargar
 document.addEventListener('DOMContentLoaded', renderAreasTags);
 </script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('buscarAreasProveedor'),
+    document.getElementById('areasDropdown'),
+    function () { document.getElementById('areasDropdown').style.display = 'none'; }
+);
+</script>
 <script src="../includes/auto_filter.js"></script>
 </body>
 </html>

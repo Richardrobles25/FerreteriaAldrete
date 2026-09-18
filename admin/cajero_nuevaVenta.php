@@ -3428,5 +3428,19 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
     recalcularTodo();
 })();
 </script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('inputProducto'),
+    document.getElementById('dropdownProductos'),
+    function () { document.getElementById('dropdownProductos').classList.remove('visible'); }
+);
+attachDropdownKeyNav(
+    document.getElementById('inputCliente'),
+    document.getElementById('dropdownClientes'),
+    function () { document.getElementById('dropdownClientes').classList.remove('visible'); }
+);
+</script>
 </body>
 </html>

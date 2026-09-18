@@ -711,5 +711,14 @@ document.getElementById('busqProd').addEventListener('blur', function() {
     setTimeout(() => { document.getElementById('sugProd').style.display = 'none'; }, 200);
 });
 </script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('busqProd'),
+    document.getElementById('sugProd'),
+    function () { document.getElementById('sugProd').style.display = 'none'; }
+);
+</script>
 </body>
 </html>

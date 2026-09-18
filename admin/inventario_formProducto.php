@@ -817,6 +817,14 @@ function agregarProv() {
             </div>
         </div>`;
     lista.appendChild(div);
+    // [FEATURE-DROPDOWN-KEYNAV] Esta fila se crea despues de que dropdown_keynav.js ya cargo
+    // (el script esta al final del body) -- se conecta aqui mismo, no en el bloque de abajo
+    // (ese solo alcanza a las filas que ya existian al cargar la pagina).
+    attachDropdownKeyNav(
+        document.getElementById('inputProv' + idx),
+        document.getElementById('dropProv' + idx),
+        function () { document.getElementById('dropProv' + idx).classList.remove('visible'); }
+    );
     provIdx++;
 }
 
@@ -973,6 +981,25 @@ document.querySelectorAll('.js-stock-control').forEach((input) => {
 });
 
 actualizarModoCantidades();
+</script>
+<script src="../includes/dropdown_keynav.js"></script>
+<script>
+// [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
+attachDropdownKeyNav(
+    document.getElementById('inputCategoria'),
+    document.getElementById('dropCategoria'),
+    function () { document.getElementById('dropCategoria').classList.remove('visible'); }
+);
+// Filas de proveedor que ya existian al cargar la pagina (producto nuevo: 1 fila vacia;
+// producto en edicion con proveedores ya guardados: una fila por cada uno). Las filas que
+// se agreguen despues con "+ Agregar otro proveedor" se conectan dentro de agregarProv().
+document.querySelectorAll('.prov-entrada').forEach(function (entrada) {
+    var inp  = entrada.querySelector('input[id^="inputProv"]');
+    var drop = entrada.querySelector('.autocomplete-dropdown[id^="dropProv"]');
+    if (inp && drop) {
+        attachDropdownKeyNav(inp, drop, function () { drop.classList.remove('visible'); });
+    }
+});
 </script>
 </body>
 </html>

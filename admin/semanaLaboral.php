@@ -15,17 +15,16 @@ require_once '../includes/topbar_info.php';
 // [FIX-TIPO-ARRAY-ID] "?semana[]=x" llega como array y crashea trim() con la ruta del
 // servidor expuesta, disparable con solo abrir un enlace (sin POST ni CSRF).
 $semanaParam = trim(is_scalar($_GET['semana'] ?? null) ? (string)$_GET['semana'] : '');
-if ($semanaParam && strtotime($semanaParam)) {
-    $dtLunes = new DateTime($semanaParam);
-    // Asegurar que sea lunes
-    $dow = (int)$dtLunes->format('N');
-    if ($dow !== 1) $dtLunes->modify('last monday');
-} else {
-    // [FIX-ADELANTO-LIMITE-SEMANA] Se centraliza en lunesDeLaSemana() (rh_helpers.php) para
-    // que adelantos.php use exactamente este mismo criterio al determinar "la semana en
-    // curso" -- antes cada uno lo calculaba por su cuenta y en domingo daban semanas distintas.
-    $dtLunes = new DateTime(lunesDeLaSemana(date('Y-m-d')));
-}
+// [FIX-ADELANTO-LIMITE-SEMANA] Se centraliza en lunesDeLaSemana() (rh_helpers.php) para que
+// adelantos.php use exactamente este mismo criterio al determinar "la semana en curso" --
+// antes cada uno lo calculaba por su cuenta y en domingo daban semanas distintas. Esta rama
+// (?semana= explicito) se habia quedado fuera de esa centralizacion con su propio "ensure
+// lunes" via modify('last monday'), que en domingo retrocede a la semana ANTERIOR -- lo
+// opuesto de lunesDeLaSemana() (avanza al lunes siguiente). Un "?semana=" apuntando a un
+// domingo (ej. un link viejo, o la URL editada a mano) mostraba una semana distinta a la que
+// adelantos.php/formAsistencia.php considerarian esa misma fecha, reintroduciendo exactamente
+// el desincrono que este helper existe para evitar.
+$dtLunes = new DateTime(lunesDeLaSemana($semanaParam && strtotime($semanaParam) ? $semanaParam : date('Y-m-d')));
 $dtSabado = (clone $dtLunes)->modify('+5 days');
 
 $lunes  = $dtLunes->format('Y-m-d');

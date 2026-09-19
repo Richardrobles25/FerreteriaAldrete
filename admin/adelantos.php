@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
 
     $empleado_id = intval(is_scalar($_POST['empleado_id'] ?? null) ? $_POST['empleado_id'] : 0);
     $monto       = floatval(is_scalar($_POST['monto'] ?? null) ? $_POST['monto'] : 0);
-    $fecha       = is_scalar($_POST['fecha'] ?? null) ? $_POST['fecha'] : date('Y-m-d');
+    $fecha       = trim(is_scalar($_POST['fecha'] ?? null) ? (string)$_POST['fecha'] : date('Y-m-d'));
     $motivo      = trim(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : '');
 
     $errores = [];
@@ -36,7 +36,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
     // otros 6 dias ya coincidian, solo domingo daba semanas distintas.
     $lunesSemana  = lunesDeLaSemana(date('Y-m-d'));
     $sabadoSemana = date('Y-m-d', strtotime($lunesSemana . ' +5 days'));
-    if (!$fecha || !strtotime($fecha)) {
+    // [FIX-ADELANTO-FECHA-CALENDARIO-INVALIDA] "!strtotime($fecha)" no rechaza fechas de
+    // calendario imposibles (mismo patron ya corregido en formEmpleado.php/formVacacion.php/
+    // formAsistencia.php: strtotime('2026-02-30') no da false, MySQL es quien la rechaza).
+    // Aqui era peor: el rango valido es una sola semana lunes-sabado (6 caracteres de
+    // diferencia como mucho), y comparar el STRING crudo contra ese rango ("$fecha < $lunes ||
+    // $fecha > $sabado") deja pasar una fecha de calendario invalida cuando la semana cruza un
+    // cambio de mes -- ej. semana lunes 2026-09-28 a sabado 2026-10-03: "2026-09-31" (Septiembre
+    // solo tiene 30 dias) ordena lexicograficamente ENTRE ambos limites ('2026-09-28' <
+    // '2026-09-31' < '2026-10-03' como texto), aunque esa fecha no exista. Sin este fix, ese
+    // valor pasaba las dos validaciones de abajo y llegaba crudo al INSERT (sin try/catch),
+    // que en el servidor (sql_mode estricto) truena con un HTTP 500 exponiendo la ruta del
+    // proyecto. Se exige el formato Y-m-d exacto y se valida con checkdate() que sea una fecha
+    // de calendario real, antes de compararla contra el rango de la semana.
+    $fechaValida = $fecha && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fecha, $mFecha) && checkdate((int)$mFecha[2], (int)$mFecha[3], (int)$mFecha[1]);
+    if (!$fechaValida) {
         $errores[] = 'La fecha no es valida.';
     } elseif ($fecha < $lunesSemana || $fecha > $sabadoSemana) {
         $errores[] = 'Solo se puede adelantar el sueldo de la semana en curso (' . date('d/m/Y', strtotime($lunesSemana)) . ' al ' . date('d/m/Y', strtotime($sabadoSemana)) . ').';
@@ -103,11 +117,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['registrar_adelanto'])
         }
     }
 
+    // [FIX-ADELANTO-INSERT-SIN-CAPTURAR] Mismo patron ya corregido en formEmpleado.php/
+    // formVacacion.php/formAsistencia.php: una PDOException aqui (ej. empleado_id de un
+    // <select> desactualizado que ya no existe, violando la FK) se dejaba sin capturar --
+    // HTTP 500 con la ruta del servidor y el esquema de la BD expuestos.
     if (empty($errores)) {
-        $pdo->prepare("INSERT INTO adelantos_sueldo (empleado_id, monto, fecha, motivo, estado) VALUES (?, ?, ?, ?, 'Pendiente')")
-            ->execute([$empleado_id, $monto, $fecha, $motivo]);
-        header('Location: adelantos.php?msg=registrado');
-        exit();
+        try {
+            $pdo->prepare("INSERT INTO adelantos_sueldo (empleado_id, monto, fecha, motivo, estado) VALUES (?, ?, ?, ?, 'Pendiente')")
+                ->execute([$empleado_id, $monto, $fecha, $motivo]);
+            header('Location: adelantos.php?msg=registrado');
+            exit();
+        } catch (PDOException $e) {
+            $errores[] = 'No se pudo registrar el adelanto. Verifica que el empleado siga existiendo e intenta de nuevo.';
+        }
     }
     $_SESSION['_errores_adelanto'] = $errores;
     header('Location: adelantos.php');

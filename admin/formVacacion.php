@@ -39,7 +39,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $empleado_id  = intval(is_scalar($_POST['empleado_id'] ?? null) ? $_POST['empleado_id'] : 0);
     $fecha_inicio = trim(is_scalar($_POST['fecha_inicio'] ?? null) ? (string)$_POST['fecha_inicio'] : '');
     $fecha_fin    = trim(is_scalar($_POST['fecha_fin'] ?? null) ? (string)$_POST['fecha_fin'] : '');
-    $estado       = trim(is_scalar($_POST['estado'] ?? null) ? (string)$_POST['estado'] : 'Solicitado');
+    // [FIX-VACACION-ESTADO-EDICION-LIBRE] Este formulario (crear/editar fechas y notas) leia
+    // "estado" directo del POST y lo guardaba tal cual, sin ninguna restriccion de transicion
+    // -- exactamente el mismo hueco que [FIX-VACACION-ESTADO-SIN-GUARDA] ya habia cerrado en
+    // el endpoint "cambiar_estado" de vacaciones.php (que exige "AND estado='Solicitado'").
+    // Aqui seguia abierto: un registro se podia CREAR ya 'Aprobado'/'Rechazado' sin pasar
+    // nunca por 'Solicitado', y uno ya 'Rechazado' se podia editar directo a 'Aprobado' (o
+    // viceversa) sin usar el boton "Resolver". Probado en vivo (servidor local): se creo un
+    // registro con estado=Rechazado directo, y luego se edito a Aprobado directo, ambos
+    // aceptados sin restriccion. El tope de saldo (12 dias) SI se revalida en cada guardado de
+    // este archivo y por eso no permitia inflar el total por esta via -- pero el estado en si
+    // quedaba fuera de la regla "solo se resuelve desde Solicitado" que el resto del modulo da
+    // por hecho (el boton "Resolver" en vacaciones.php solo aparece para registros
+    // 'Solicitado'). Ahora el estado nunca sale del POST: un registro nuevo siempre nace
+    // 'Solicitado', y al editar uno existente se conserva el estado que ya tenia -- cambiar de
+    // estado sigue siendo, exclusivamente, trabajo del boton "Resolver".
+    $estado       = ($esEdicion && $editando) ? $editando['estado'] : 'Solicitado';
     $notas        = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
     // [FIX-VACACION-ID-DESINCRONIZADO] (mismo patron ya corregido en admin/formGasto.php,
     // admin/formEmpleado.php y admin/formAsistencia.php) $vacacion_id salia del campo
@@ -219,7 +234,6 @@ $v = [
     'estado'       => $esPost ? $estado       : ($editando['estado']       ?? 'Solicitado'),
     'notas'        => $esPost ? $notas        : ($editando['notas']        ?? ''),
 ];
-$estadosVal = ['Solicitado','Aprobado','Rechazado'];
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -345,11 +359,13 @@ $estadosVal = ['Solicitado','Aprobado','Rechazado'];
                     </div>
                     <div class="form-group">
                         <label>Estado</label>
-                        <select name="estado">
-                            <?php foreach ($estadosVal as $e): ?>
-                                <option value="<?= $e ?>" <?= $v['estado'] === $e ? 'selected' : '' ?>><?= $e ?></option>
-                            <?php endforeach; ?>
-                        </select>
+                        <?php if ($esEdicion): ?>
+                            <input type="text" value="<?= htmlspecialchars($v['estado']) ?>" disabled style="background:#f5f5f5;color:#888;cursor:not-allowed;">
+                            <div style="font-size:11px;color:#aaa;margin-top:4px;">Se cambia desde el botón "Resolver" en la lista de Vacaciones, no aquí.</div>
+                        <?php else: ?>
+                            <input type="text" value="Solicitado" disabled style="background:#f5f5f5;color:#888;cursor:not-allowed;">
+                            <div style="font-size:11px;color:#aaa;margin-top:4px;">Todo registro nuevo empieza como Solicitado.</div>
+                        <?php endif; ?>
                     </div>
                 </div>
 

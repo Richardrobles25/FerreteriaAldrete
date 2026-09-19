@@ -247,7 +247,7 @@ rsort($aniosList);
         <!-- Resumen por empleado -->
         <div class="resumen-grid">
             <?php foreach ($empleados as $emp):
-                $tieneDerecho = tieneDerechoVacaciones($emp['fecha_ingreso']);
+                $tieneDerecho = tieneDerechoVacaciones($emp['fecha_ingreso'], $simFecha);
                 $diasRest = $tieneDerecho ? calcSaldoVacaciones($pdo, $emp['empleado_id'], $emp['fecha_ingreso'], $simFecha) : 0;
                 $diasTom  = intval($diasTomadosMap[$emp['empleado_id']] ?? 0);
                 $pct      = round(($diasRest / 12) * 100);

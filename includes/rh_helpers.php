@@ -2,11 +2,19 @@
 // Helpers compartidos del modulo de Recursos Humanos (admin/empleados, vacaciones, formVacacion)
 
 // Un empleado ya tiene derecho a vacaciones a partir de su primer aniversario de ingreso.
-function tieneDerechoVacaciones(string $fechaIngreso): bool {
-    $hoy     = new DateTime();
+// [FIX-VACACIONES-SIMULACION-DERECHO] Antes esta funcion no aceptaba una fecha de corte y
+// siempre comparaba contra el reloj real del sistema -- vacaciones.php le pasaba $simFecha a
+// calcSaldoVacaciones() (que si la acepta) pero NUNCA a esta funcion, asi que
+// "?simular_fecha=" (pensado para verificar en vivo que el tope/acreditacion funciona con el
+// paso del tiempo) jamas mostraba a un empleado ganando su primer aniversario: $tieneDerecho
+// seguia evaluando la fecha real de hoy y, si aun era false, forzaba $diasRest=0 sin llegar a
+// invocar calcSaldoVacaciones() con la fecha simulada. Ahora acepta el mismo $hastaFecha
+// opcional que calcSaldoVacaciones(), con el mismo default (null = hoy real).
+function tieneDerechoVacaciones(string $fechaIngreso, ?string $hastaFecha = null): bool {
+    $hasta   = $hastaFecha ? new DateTime($hastaFecha) : new DateTime();
     $ingreso = new DateTime($fechaIngreso);
-    if ($ingreso > $hoy) return false;
-    return (int)$hoy->diff($ingreso)->y >= 1;
+    if ($ingreso > $hasta) return false;
+    return (int)$hasta->diff($ingreso)->y >= 1;
 }
 
 // [FIX-NEGOCIO-RH-01] Politica real de la empresa: se acreditan 6 dias por cada aniversario

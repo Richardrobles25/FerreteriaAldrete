@@ -59,6 +59,14 @@ function formatearMotivoDevolucion(string $motivo): string
 // Esto evita que devoluciones de componentes de paquete "contaminen" las filas sueltas
 // cuando el mismo producto aparece tanto en el paquete como vendido de forma independiente.
 // Los callers que necesiten el total por producto_id deben sumar ellos mismos.
+// [FIX-DEVOLUCION-LINEA-DUPLICADA 2026-09-19] (espejo de cajeroInventario/devoluciones.php) La
+// clave "pid:paqueteId" sigue sin distinguir DOS renglones sueltos (paquete_id NULL) del MISMO
+// producto dentro de una misma venta — esto pasa siempre que un ajuste por daño parcial parte
+// una línea en "sana" + "dañada". Reproducido en vivo: devolver las unidades dañadas marcaba
+// TODA la venta (incluidas las sanas, nunca tocadas) como "ya devuelta por completo". Ahora,
+// para líneas sueltas, se usa la clave precisa "pid:Lvid" (vid = venta_productos_id). Los
+// movimientos viejos (antes de la columna movimientos_inventario.venta_productos_id) se quedan
+// en el cajón legacy "pid:", y el caller sigue sumando ese legacy a cada línea suelta.
 function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
 {
     $totales = [];
@@ -66,23 +74,30 @@ function obtenerTotalesDevueltos(PDO $pdo, int $ventaId, int $sucursalId): array
     // [AUTOFIX] Bug A: antes usaba INNER JOIN stock_sucursal → si faltaba la fila,
     // el conteo era 0 y el producto podía devolverse de nuevo indefinidamente.
     // Ahora consultamos directamente vía devoluciones.venta_id (FK exacta).
-    // Incluir paquete_id en GROUP BY para clave compuesta correcta.
+    // Incluir paquete_id (y ahora venta_productos_id) en GROUP BY para clave compuesta correcta.
     $stmtNew = $pdo->prepare("
-        SELECT mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS cantidad_devuelta
+        SELECT mi.producto_id, mi.paquete_id, mi.venta_productos_id, SUM(mi.cantidad) AS cantidad_devuelta
         FROM movimientos_inventario mi
         JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
         WHERE mi.tipo = 'Entrada'
           AND d.cancelada_en IS NULL
-        GROUP BY mi.producto_id, mi.paquete_id
+        GROUP BY mi.producto_id, mi.paquete_id, mi.venta_productos_id
     ");
     $stmtNew->execute([$ventaId]);
     foreach ($stmtNew->fetchAll(PDO::FETCH_ASSOC) as $fila) {
-        $mk = intval($fila['producto_id']) . ':' . ($fila['paquete_id'] ?? '');
-        $totales[$mk] = floatval($fila['cantidad_devuelta']);
+        $pid = intval($fila['producto_id']);
+        if (!empty($fila['paquete_id'])) {
+            $mk = $pid . ':' . $fila['paquete_id'];
+        } elseif (!empty($fila['venta_productos_id'])) {
+            $mk = $pid . ':L' . intval($fila['venta_productos_id']);
+        } else {
+            $mk = $pid . ':'; // legacy: registrado antes de existir venta_productos_id
+        }
+        $totales[$mk] = ($totales[$mk] ?? 0) + floatval($fila['cantidad_devuelta']);
     }
 
     // Compatibilidad con movimientos anteriores a la tabla devoluciones (sin devolucion_id).
-    // Registros viejos no tienen paquete_id → siempre se tratan como sueltos (clave "pid:").
+    // Registros viejos no tienen paquete_id ni venta_productos_id → siempre "pid:".
     $stmtOld = $pdo->prepare("
         SELECT mi.producto_id, SUM(mi.cantidad) AS cantidad_devuelta
         FROM movimientos_inventario mi
@@ -191,9 +206,17 @@ if (isset($_GET['buscar_venta'])) {
 
             foreach ($venta['productos'] as &$productoVenta) {
                 $pid   = intval($productoVenta['producto_id']);
+                $vpId  = intval($productoVenta['venta_productos_id']);
                 $paqId = !empty($productoVenta['paquete_id']) ? intval($productoVenta['paquete_id']) : null;
-                $mk    = $pid . ':' . ($paqId ?? '');
-                $devuelta        = $devueltos[$mk] ?? 0;
+                if ($paqId !== null) {
+                    $devuelta = $devueltos[$pid . ':' . $paqId] ?? 0;
+                } else {
+                    // [FIX-DEVOLUCION-LINEA-DUPLICADA] Ver obtenerTotalesDevueltos(): lo devuelto
+                    // específicamente de ESTA línea (clave precisa "pid:Lvid") más cualquier
+                    // devolución legacy sin línea precisa ("pid:", de antes de este fix) — nunca
+                    // ambas a la vez para el mismo movimiento, así que sumarlas no duplica.
+                    $devuelta = ($devueltos[$pid . ':L' . $vpId] ?? 0) + ($devueltos[$pid . ':'] ?? 0);
+                }
                 $cantidadVendida = floatval($productoVenta['cantidad']);
                 $productoVenta['cantidad_devuelta'] = min($devuelta, $cantidadVendida);
                 $productoVenta['cantidad_restante']  = max(0, $cantidadVendida - $productoVenta['cantidad_devuelta']);
@@ -445,15 +468,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // subtotalFinalVenta se usa para separar descuentos por-ítem (promos/ajustes) del descuento global del cliente
         // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para evitar colisión de precio cuando el mismo
         //           producto aparece como suelto y como parte de paquete en la misma venta.
+        // [FIX-DEVOLUCION-LINEA-DUPLICADA] Esa clave sigue colisionando cuando DOS líneas sueltas
+        // del mismo producto conviven en la venta (ajuste por daño parcial: "sana" + "dañada").
+        // Se agrega también la clave precisa "pid:Lvid" (vid = venta_productos_id) para líneas
+        // sueltas, sin tocar el comportamiento de paquetes.
         $stmtPreciosDB = $pdo->prepare("
-            SELECT producto_id, paquete_id, precio_final, cantidad, subtotal
+            SELECT venta_productos_id, producto_id, paquete_id, precio_final, cantidad, subtotal
             FROM venta_productos
             WHERE venta_id = ?
         ");
         $stmtPreciosDB->execute([$venta_id]);
         $preciosRealDB     = [];
         $subtotalFinalVenta = 0.0;
-        foreach ($stmtPreciosDB->fetchAll(PDO::FETCH_ASSOC) as $fp) {
+        // [FIX-DEVOLUCION-LINEA-DUPLICADA] Se guardan también las filas crudas: el cálculo de
+        // comisión proporcional (más abajo) las reutiliza para no duplicar esta misma consulta.
+        $filasVentaProductos = $stmtPreciosDB->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($filasVentaProductos as $fp) {
             $mapKey = intval($fp['producto_id']) . ':' . ($fp['paquete_id'] ?? '');
             // [FIX-PAQUETE-SUBTOTAL-DEVOLUCION] precio_final tiene solo 2 decimales; para un
             // paquete cuyo precio no divide exacto entre sus componentes (ver
@@ -462,9 +492,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Se usa subtotal/cantidad como precio efectivo de mayor precisión: para una
             // devolución total de la línea, esto reproduce el subtotal real exacto.
             $cantLineaFinal = floatval($fp['cantidad']);
-            $preciosRealDB[$mapKey] = $cantLineaFinal > 0.0001
+            $precioEfectivoLinea = $cantLineaFinal > 0.0001
                 ? floatval($fp['subtotal']) / $cantLineaFinal
                 : floatval($fp['precio_final']);
+            $preciosRealDB[$mapKey] = $precioEfectivoLinea;
+            if (empty($fp['paquete_id'])) {
+                // [FIX-DEVOLUCION-LINEA-DUPLICADA] Clave precisa por línea suelta.
+                $preciosRealDB[intval($fp['producto_id']) . ':L' . intval($fp['venta_productos_id'])] = $precioEfectivoLinea;
+            }
             $subtotalFinalVenta += floatval($fp['subtotal']);
         }
 
@@ -486,13 +521,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para diferenciar filas sueltas de filas en paquete.
         //           Así dos entradas del mismo producto con distinto paquete_id mantienen precios independientes.
+        // [FIX-DEVOLUCION-LINEA-DUPLICADA] Para líneas sueltas, se prefiere la clave precisa
+        // "pid:Lvid" (venta_productos_id que mandó el navegador) cuando corresponde a una fila
+        // real de esta venta. Si no viene o no coincide, se cae al agregado "pid:" de siempre.
         $productosAgrupados = [];
         if (empty($errores)) foreach ($productos_dev as $prod) {
             $productoId = intval($prod['producto_id'] ?? 0);
             $paqueteId  = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
                           ? intval($prod['paquete_id']) : null;
             $cantidad   = floatval($prod['cantidad'] ?? 0);
-            $mapKey     = $productoId . ':' . ($paqueteId ?? '');
+            $ventaProductoId = isset($prod['venta_productos_id']) && $prod['venta_productos_id'] !== null && $prod['venta_productos_id'] !== ''
+                          ? intval($prod['venta_productos_id']) : null;
+
+            if ($paqueteId !== null) {
+                $mapKey = $productoId . ':' . $paqueteId;
+            } else {
+                $mapKeyPreciso = $ventaProductoId ? ($productoId . ':L' . $ventaProductoId) : null;
+                $mapKey = ($mapKeyPreciso && isset($preciosRealDB[$mapKeyPreciso])) ? $mapKeyPreciso : ($productoId . ':');
+            }
 
             if ($productoId <= 0 || $cantidad <= 0) {
                 continue;
@@ -520,6 +566,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $productosAgrupados[$mapKey] = [
                     'producto_id'   => $productoId,
                     'paquete_id'    => $paqueteId,
+                    // [FIX-DEVOLUCION-LINEA-DUPLICADA] Solo se guarda cuando $mapKey terminó
+                    // siendo la clave precisa "pid:Lvid" — null en el fallback legacy "pid:".
+                    'venta_productos_id' => ($paqueteId === null && $mapKey === $productoId . ':L' . $ventaProductoId) ? $ventaProductoId : null,
                     'cantidad'      => 0,
                     'precio_unitario' => $precioUnitario,
                 ];
@@ -617,12 +666,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // 1) Obtener precio_unitario real de venta_productos para los productos devueltos
             // [AUTOFIX] Clave compuesta "producto_id:paquete_id" para precio bruto correcto por fila.
+            // [FIX-DEVOLUCION-LINEA-DUPLICADA] También se indexa por "pid:Lvid" para líneas sueltas.
             $prodIdsRetorno = array_unique(array_map('intval', array_column($productos_dev, 'producto_id')));
             $precioUnitarioMap = [];
             if (!empty($prodIdsRetorno)) {
                 $inPH = implode(',', array_fill(0, count($prodIdsRetorno), '?'));
                 $stmtVPBruto = $pdo->prepare("
-                    SELECT producto_id, paquete_id, precio_unitario
+                    SELECT venta_productos_id, producto_id, paquete_id, precio_unitario
                     FROM venta_productos
                     WHERE venta_id = ? AND producto_id IN ($inPH)
                 ");
@@ -630,6 +680,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach ($stmtVPBruto->fetchAll(PDO::FETCH_ASSOC) as $row) {
                     $mk = intval($row['producto_id']) . ':' . ($row['paquete_id'] ?? '');
                     $precioUnitarioMap[$mk] = floatval($row['precio_unitario']);
+                    if (empty($row['paquete_id'])) {
+                        $precioUnitarioMap[intval($row['producto_id']) . ':L' . intval($row['venta_productos_id'])] = floatval($row['precio_unitario']);
+                    }
                 }
             }
 
@@ -638,10 +691,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pid  = intval($prod['producto_id']);
                 $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
                          ? intval($prod['paquete_id']) : null;
-                $mk   = $pid . ':' . ($paqId ?? '');
+                $mk = ($paqId === null && !empty($prod['venta_productos_id']))
+                    ? ($pid . ':L' . intval($prod['venta_productos_id']))
+                    : ($pid . ':' . ($paqId ?? ''));
                 // [FIX-CRIT-D2-01] Nunca caer al precio del cliente — si no está en la BD, es 0
                 // (no debería ocurrir tras la validación de arriba, pero es defensa en profundidad).
-                $precioUnit = $precioUnitarioMap[$mk] ?? 0.0;
+                $precioUnit = $precioUnitarioMap[$mk] ?? ($precioUnitarioMap[$pid . ':' . ($paqId ?? '')] ?? 0.0);
                 $subtotalBrutoDevuelto += floatval($prod['cantidad']) * $precioUnit;
             }
             $subtotalBrutoDevuelto = round($subtotalBrutoDevuelto, 2);
@@ -672,12 +727,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // subtotalFinalDevuelto = precio_final × qty por cada ítem devuelto
             // [AUTOFIX] Usar clave compuesta para precio_final correcto (suelto vs paquete).
+            // [FIX-DEVOLUCION-LINEA-DUPLICADA] Cuando la devolución trae venta_productos_id
+            // (línea suelta precisa), se usa esa clave exacta en vez del agregado "pid:".
             $subtotalFinalDevuelto = 0.0;
             foreach ($productos_dev as $prod) {
                 $pid   = intval($prod['producto_id']);
                 $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
                          ? intval($prod['paquete_id']) : null;
-                $mk    = $pid . ':' . ($paqId ?? '');
+                $mk = ($paqId === null && !empty($prod['venta_productos_id']))
+                    ? ($pid . ':L' . intval($prod['venta_productos_id']))
+                    : ($pid . ':' . ($paqId ?? ''));
                 // [FIX-CRIT-D2-01] Nunca caer al precio del cliente — mismo razonamiento que arriba.
                 $subtotalFinalDevuelto += floatval($prod['cantidad']) * ($preciosRealDB[$mk] ?? 0.0);
             }
@@ -706,28 +765,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // fan-out del JOIN aplicaba la MISMA cantidad ya devuelta a ambas filas — la
                 // resta esencialmente se contaba doble, "suma_restante_final" salia mas chico
                 // de lo real, el ratio de comision se inflaba, y se reembolsaba mas comision
-                // de la que el cliente en realidad habia pagado. Se agrega paquete_id (que
-                // movimientos_inventario y venta_productos ya guardan) tanto al agrupado como
-                // al JOIN, usando <=> porque paquete_id puede ser NULL en items sueltos.
-                $stmtVComision = $pdo->prepare("
-                    SELECT v.comision_terminal,
-                           COALESCE(SUM(vp.precio_final * GREATEST(0, vp.cantidad - COALESCE(dev.devuelta, 0))), 0) AS suma_restante_final
-                    FROM ventas v
-                    LEFT JOIN venta_productos vp ON vp.venta_id = v.venta_id
-                    LEFT JOIN (
-                        SELECT mi.producto_id, mi.paquete_id, SUM(mi.cantidad) AS devuelta
-                        FROM movimientos_inventario mi
-                        JOIN devoluciones d ON d.devolucion_id = mi.devolucion_id AND d.venta_id = ?
-                        WHERE mi.tipo = 'Entrada' AND d.cancelada_en IS NULL
-                        GROUP BY mi.producto_id, mi.paquete_id
-                    ) dev ON dev.producto_id = vp.producto_id AND dev.paquete_id <=> vp.paquete_id
-                    WHERE v.venta_id = ?
-                    GROUP BY v.venta_id
-                ");
-                $stmtVComision->execute([$venta_id, $venta_id]);
-                $comData            = $stmtVComision->fetch(PDO::FETCH_ASSOC);
-                $comisionTotal      = $comData ? floatval($comData['comision_terminal'])      : 0.0;
-                $sumaRestanteFinal  = $comData ? floatval($comData['suma_restante_final'])    : 0.0;
+                // de la que el cliente en realidad habia pagado. Se agrego paquete_id en ese
+                // momento.
+                // [FIX-DEVOLUCION-LINEA-DUPLICADA] Ese mismo fan-out seguía ocurriendo entre DOS
+                // líneas sueltas del mismo producto (ajuste por daño parcial: "sana"+"dañada").
+                // Se reemplaza el JOIN SQL por el mismo cálculo en PHP, reutilizando
+                // obtenerTotalesDevueltos() (ya corregido) y las filas de venta_productos ya
+                // leídas arriba, para que ambos cálculos usen siempre la misma fuente de verdad.
+                $sumaRestanteFinal = 0.0;
+                foreach ($filasVentaProductos as $fp) {
+                    $pidC   = intval($fp['producto_id']);
+                    $vpIdC  = intval($fp['venta_productos_id']);
+                    $paqIdC = !empty($fp['paquete_id']) ? intval($fp['paquete_id']) : null;
+                    if ($paqIdC !== null) {
+                        $devueltaC = $cantidadesDevueltas[$pidC . ':' . $paqIdC] ?? 0;
+                    } else {
+                        $devueltaC = ($cantidadesDevueltas[$pidC . ':L' . $vpIdC] ?? 0) + ($cantidadesDevueltas[$pidC . ':'] ?? 0);
+                    }
+                    $restanteC = max(0.0, floatval($fp['cantidad']) - $devueltaC);
+                    $sumaRestanteFinal += floatval($fp['precio_final']) * $restanteC;
+                }
+                $stmtVComisionTotal = $pdo->prepare("SELECT comision_terminal FROM ventas WHERE venta_id = ?");
+                $stmtVComisionTotal->execute([$venta_id]);
+                $comisionTotal      = floatval($stmtVComisionTotal->fetchColumn());
                 $comisionDevuelta   = ($sumaRestanteFinal > 0.001 && $comisionTotal > 0.001)
                     ? round($comisionTotal * min(1.0, $subtotalFinalDevuelto / $sumaRestanteFinal), 2)
                     : 0.0;
@@ -750,6 +810,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // [AUTOFIX] Guardar paquete_id en movimiento para poder hacer JOIN correcto en historial.
                     $paqId = isset($prod['paquete_id']) && $prod['paquete_id'] !== null && $prod['paquete_id'] !== ''
                              ? intval($prod['paquete_id']) : null;
+                    // [FIX-DEVOLUCION-LINEA-DUPLICADA] Guardar también venta_productos_id (solo
+                    // se conoce para líneas sueltas devueltas con la clave precisa).
+                    $vpIdMov = !empty($prod['venta_productos_id']) ? intval($prod['venta_productos_id']) : null;
                     if ($cantidad <= 0) continue;
 
                     $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
@@ -770,8 +833,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         VALUES (?, ?, ?, 0, 0, 1)
                         ON DUPLICATE KEY UPDATE stock_actual = VALUES(stock_actual)
                     ")->execute([$producto_id, $sucursalVista, $stockNuevo]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id,paquete_id) VALUES (?,?,?,'Entrada',?,?,?,?,?,?)")
-                        ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id, $paqId]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id,paquete_id,venta_productos_id) VALUES (?,?,?,'Entrada',?,?,?,?,?,?,?)")
+                        ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id, $paqId, $vpIdMov]);
                 }
 
                 // [AUTOFIX] Bug B: actualizar con bases correctas por campo
@@ -1304,7 +1367,7 @@ function buscarVenta() {
                             ${precioHtml}
                         </span>
                         <span style="color:#aaa;font-size:11px;padding-top:2px;white-space:nowrap;">Restante: ${esDecimal ? restante.toFixed(2).replace(/\.?0+$/, '') : restante.toFixed(0)}</span>
-                        <input type="number" data-producto-id="${p.producto_id}" data-precio="${p.precio_final}" data-precio-orig="${p.precio_unitario}" data-restante="${restante}"
+                        <input type="number" data-producto-id="${p.producto_id}" data-venta-productos-id="${p.venta_productos_id}" data-precio="${p.precio_final}" data-precio-orig="${p.precio_unitario}" data-restante="${restante}"
                             placeholder="0" step="${esDecimal ? 'any' : '1'}" min="0" max="${restante}" value=""
                             oninput="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();"
                             onchange="const mx=parseFloat(this.dataset.restante);if(parseFloat(this.value)>mx)this.value=mx.toString();">
@@ -1420,18 +1483,12 @@ function actualizarResumen() {
     const tieneComisionTerminal = (metodo === 'Terminal' || metodo === 'Mixto');
     const comisionTotal = tieneComisionTerminal ? parseFloat(ventaActual.comision_terminal || 0) : 0;
 
-    // Total ya devuelto por producto_id (ignora paquete_id, igual que la subconsulta SQL
-    // del servidor: "GROUP BY mi.producto_id"). Cada fila de ventaActual.productos ya trae
-    // su propio cantidad_devuelta calculado por clave compuesta producto+paquete; sumarlos
-    // por producto_id reproduce el mismo total que agrupar directamente por producto_id.
-    const devueltaPorProductoId = {};
-    (ventaActual.productos || []).forEach(p => {
-        const pid = parseInt(p.producto_id);
-        devueltaPorProductoId[pid] = (devueltaPorProductoId[pid] || 0) + (parseFloat(p.cantidad_devuelta) || 0);
-    });
+    // [FIX-DEVOLUCION-LINEA-DUPLICADA] Antes se re-agregaba "ya devuelto" por producto_id aquí
+    // en JS para imitar el SQL del servidor. Ya no hace falta: el servidor ahora manda
+    // cantidad_restante correcto POR LÍNEA en cada p de ventaActual.productos, así que se usa
+    // directo en vez de recalcularlo con una lógica que podía divergir de la real.
     const sumaRestanteFinal = (ventaActual.productos || []).reduce((s, p) => {
-        const pid      = parseInt(p.producto_id);
-        const restante = Math.max(0, parseFloat(p.cantidad || 0) - (devueltaPorProductoId[pid] || 0));
+        const restante = Math.max(0, parseFloat(p.cantidad_restante ?? p.cantidad ?? 0));
         return s + parseFloat(p.precio_final || 0) * restante;
     }, 0);
 
@@ -1512,7 +1569,9 @@ function prepararDevolucion() {
                 return;
             }
             // [AUTOFIX] paquete_id = null para productos sueltos (clave compuesta en backend).
-            prods.push({ producto_id: inp.dataset.productoId, cantidad: qty, precio_unitario: inp.dataset.precio, paquete_id: null });
+            // [FIX-DEVOLUCION-LINEA-DUPLICADA] venta_productos_id identifica esta línea suelta
+            // de forma precisa cuando el mismo producto aparece en más de una línea de la venta.
+            prods.push({ producto_id: inp.dataset.productoId, venta_productos_id: inp.dataset.ventaProductosId, cantidad: qty, precio_unitario: inp.dataset.precio, paquete_id: null });
         }
     });
 

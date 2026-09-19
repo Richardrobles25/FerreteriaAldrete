@@ -30,6 +30,15 @@ $dtSabado = (clone $dtLunes)->modify('+5 days');
 $lunes  = $dtLunes->format('Y-m-d');
 $sabado = $dtSabado->format('Y-m-d');
 $hoy    = date('Y-m-d');
+// [FIX-DOMINGO-TRABAJADO] Domingo no cae en ningun rango "BETWEEN lunes AND sabado", asi que
+// las horas que se trabajaran ese dia (si se captura Asistencia con horario, aunque nadie
+// deberia trabajar domingo por regla del negocio) nunca se contaban en la nomina de NINGUNA
+// semana -- ni la que termina el sabado anterior ni la que empieza el lunes siguiente.
+// Confirmado con el usuario: un domingo trabajado pertenece a la semana que empieza al dia
+// siguiente (mismo criterio que ya usa lunesDeLaSemana() para decidir de que semana es un
+// domingo). Se guarda el domingo inmediato anterior a este lunes para sumar sus horas extra
+// mas abajo, sin contarlo como uno de los 6 dias laborales de la semana.
+$domingoAnterior = (clone $dtLunes)->modify('-1 day')->format('Y-m-d');
 
 // Corte: hasta hoy si estamos en la semana activa, hasta sabado si es semana pasada
 $esSemanaActual = ($hoy >= $lunes && $hoy <= $sabado);
@@ -66,7 +75,10 @@ $stmtEmp = $pdo->prepare("
     WHERE e.activo = 1 OR a.asistencia_id IS NOT NULL OR pn.pago_id IS NOT NULL OR ad.adelanto_id IS NOT NULL
     ORDER BY e.activo DESC, e.nombre
 ");
-$stmtEmp->execute([$lunes, $fechaCorte, $lunes]);
+// [FIX-DOMINGO-TRABAJADO] Rango arranca en $domingoAnterior (no $lunes) para que un empleado
+// inactivo cuyo unico registro de este ciclo sea ese domingo (con horas extra que ahora si
+// cuentan para esta semana, ver mas abajo) no desaparezca de la lista.
+$stmtEmp->execute([$domingoAnterior, $fechaCorte, $lunes]);
 $empleados = $stmtEmp->fetchAll(PDO::FETCH_ASSOC);
 
 // [FIX-HORARIO-PERSONALIZADO] horasEsperadasDia() ahora requiere el horas_por_dia de CADA
@@ -121,6 +133,31 @@ foreach ($stmtA->fetchAll(PDO::FETCH_ASSOC) as $row) {
     }
     if ($row['tipo'] === 'Asistencia normal') $asistenciaMap[$eid]['dias_normales']++;
     if ($row['tipo'] === 'Falta')             $asistenciaMap[$eid]['dias_falta']++;
+}
+
+// [FIX-DOMINGO-TRABAJADO] Horas extra del domingo anterior a este lunes: se suman al total de
+// la semana (compensan horas debidas primero, el resto se paga a 1.5x igual que cualquier otra
+// hora extra) pero SIN tocar total_registros/dias_normales/dias_falta/total_esperadas -- esos
+// campos son la base de "cuantos de los 6 dias laborales ya tienen registro" (ver
+// $diasFaltantes mas abajo), y domingo no es, ni debe volverse, un dia laboral exigido.
+// horas_no_trabajadas de un registro de domingo siempre es 0.00 (horasEsperadasDia() ya regresa
+// 0 esperadas para domingo, asi que nunca puede "deber" horas ese dia) -- no hace falta sumarla.
+$stmtDom = $pdo->prepare("SELECT empleado_id, horas_extra FROM asistencia WHERE fecha = ?");
+$stmtDom->execute([$domingoAnterior]);
+foreach ($stmtDom->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $eid = $row['empleado_id'];
+    if (!isset($asistenciaMap[$eid])) {
+        $asistenciaMap[$eid] = [
+            'total_no_trabajadas'    => 0.0,
+            'total_extra'            => 0.0,
+            'total_registros'        => 0,
+            'total_horas_trabajadas' => 0.0,
+            'total_esperadas'        => 0.0,
+            'dias_normales'          => 0,
+            'dias_falta'             => 0,
+        ];
+    }
+    $asistenciaMap[$eid]['total_extra'] += floatval($row['horas_extra']);
 }
 
 // Armar tabla

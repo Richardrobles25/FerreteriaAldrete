@@ -259,6 +259,10 @@
     );
 
     -- 15. MOVIMIENTOS_INVENTARIO
+    -- [FIX-DEVOLUCION-LINEA-DUPLICADA 2026-09-19] venta_productos_id: identifica a que renglon
+    -- especifico de venta_productos apunto una devolucion, para distinguir dos lineas sueltas
+    -- del mismo producto en una misma venta (p.ej. una "sana" y otra con ajuste por daño). NULL
+    -- en movimientos anteriores a este fix -- ver obtenerTotalesDevueltos() en devoluciones.php.
     CREATE TABLE movimientos_inventario (
         movimientos_inventario_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         producto_id   INT UNSIGNED NOT NULL,
@@ -269,6 +273,7 @@
         stock_anterior DECIMAL(10,3) NOT NULL,
         stock_nuevo   DECIMAL(10,3) NOT NULL,
         paquete_id INT NULL,
+        venta_productos_id INT UNSIGNED NULL DEFAULT NULL,
         motivo        VARCHAR(255),
         proveedor_id  INT NULL DEFAULT NULL,
         created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

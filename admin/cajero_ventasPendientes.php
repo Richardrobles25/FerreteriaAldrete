@@ -216,7 +216,7 @@ if (isset($_GET['cancelar'])) {
             $stockNvoC = $stockAntC + floatval($itC['cantidad']);
             $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                 ->execute([$stockNvoC, $itC['producto_id'], $sucursalVista]);
-            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,'Cancelación de venta pendiente')")
+            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,'Cancelación de venta a domicilio')")
                 ->execute([$itC['producto_id'], $_SESSION['usuario_id'], $sucursalVista, floatval($itC['cantidad']), $stockAntC, $stockNvoC]);
         }
 
@@ -673,7 +673,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stockNvoPend = max(0, $stockActual - $cantidadItem);
                     $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                         ->execute([$stockNvoPend, $item['producto_id'], $sucursalVista]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta pendiente (envío a domicilio)')")
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta a domicilio')")
                         ->execute([$item['producto_id'], $_SESSION['usuario_id'], $sucursalVista, $cantidadItem, $stockActual, $stockNvoPend]);
 
                     $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal, paquete_id) VALUES (?,?,?,?,?,?,?)")
@@ -803,7 +803,7 @@ if (!$cajaActualId) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ventas Pendientes — Ferretería Aldrete</title>
+    <title>Ventas a Domicilio — Ferretería Aldrete</title>
 </head>
 <body>
 <style>
@@ -871,7 +871,7 @@ if (!$cajaActualId) {
     <div class="topbar">
         <div class="topbar-left">
             <button class="toggle-btn" onclick="toggleSidebar()"><?= icono('menu') ?></button>
-            <h2>Ventas pendientes — <?= htmlspecialchars($nombreSucursalVista) ?></h2>
+            <h2>Ventas a Domicilio — <?= htmlspecialchars($nombreSucursalVista) ?></h2>
         </div>
         <div class="topbar-right">
             <span><?= htmlspecialchars($_SESSION['nombre_completo']) ?> <span style="opacity:.75;font-size:12px;">— <?= htmlspecialchars($nombreSucursal) ?></span></span>
@@ -886,7 +886,7 @@ if (!$cajaActualId) {
                 <?php
                 // [AUTOFIX] BUG-06: Agregar todos los mensajes posibles con su clase correcta
                 $msgsExito = [
-                    'creado'    => 'Venta pendiente registrada.',
+                    'creado'    => 'Venta a domicilio registrada.',
                     'liquidado' => 'Venta liquidada correctamente.',
                     'cancelado' => 'Venta cancelada y stock devuelto.',
                 ];
@@ -983,11 +983,11 @@ if (!$cajaActualId) {
                 </div>
                 <?php endforeach; ?>
             <?php else: ?>
-                <div class="sin-pendientes">No hay ventas pendientes.</div>
+                <div class="sin-pendientes">No hay ventas a domicilio.</div>
             <?php endif; ?>
         </div>
 
-        <!-- Nueva venta pendiente -->
+        <!-- Nueva venta a domicilio -->
         <div>
             <div class="card">
                 <h3>Nueva venta a domicilio</h3>
@@ -1166,7 +1166,7 @@ if (!$cajaActualId) {
                         <input type="text" name="notas" id="notasPend" placeholder="Ej. Calle Morelos #45, Col. Centro" oninput="guardarEstadoPendiente()">
                     </div>
 
-                    <button class="btn-guardar" type="submit" onclick="return prepararPendiente()">Registrar venta pendiente</button>
+                    <button class="btn-guardar" type="submit" onclick="return prepararPendiente()">Registrar venta a domicilio</button>
                     <button type="button" onclick="limpiarFormularioPendiente()" style="width:100%;margin-top:8px;background:white;color:#666;border:1px solid #ddd;padding:10px;border-radius:6px;font-size:13px;cursor:pointer;">Limpiar formulario</button>
                 </form>
             </div>
@@ -1174,7 +1174,7 @@ if (!$cajaActualId) {
     </div>
 </div>
 
-<!-- Modal: Ticket venta pendiente -->
+<!-- Modal: Ticket venta a domicilio -->
 <div class="modal-overlay" id="modalTicketVentaPend" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;padding:20px;z-index:999;" aria-hidden="true">
     <div style="background:white;border-radius:8px;padding:24px;max-width:90mm;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e8e8e8;">
@@ -1944,7 +1944,7 @@ function prepararPendiente() {
     return true;
 }
 
-/* ── Ticket de venta pendiente ── */
+/* ── Ticket de venta a domicilio ── */
 function fmt(n) { return parseFloat(n||0).toFixed(2); }
 function esc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');

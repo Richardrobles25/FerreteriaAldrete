@@ -301,7 +301,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <?php $msgs = ['creado'=>'Cliente registrado.','editado'=>'Cliente actualizado.','eliminado'=>'Cliente eliminado.']; ?>
                 <div class="msg msg-exito"><?= $msgs[$_GET['msg']] ?></div>
             <?php elseif (($_GET['msg'] ?? '') === 'error_tiene_pendientes'): ?>
-                <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar: el cliente tiene ventas pendientes.</div>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar: el cliente tiene ventas a domicilio pendientes.</div>
             <?php elseif (($_GET['msg'] ?? '') === 'error_credito_pendiente'): ?>
                 <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar este cliente porque tiene un crédito pendiente de pago.</div>
             <?php elseif (($_GET['msg'] ?? '') === 'no_encontrado'): ?>

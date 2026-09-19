@@ -228,7 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="menu-label">Ventas</div>
         <a class="menu-item" href="nuevaVenta.php">Nueva venta</a>
         <a class="menu-item" href="historialVentas.php">Historial de ventas</a>
-        <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
+        <a class="menu-item" href="ventasPendientes.php">Ventas a Domicilio</a>
         <a class="menu-item" href="devoluciones.php">Devoluciones</a>
         <div class="divider"></div>
 
@@ -306,7 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <?php if ($ventasPendientes > 0): ?>
                 <div class="alerta-pend">
-                    <?= icono('triangle-alert') ?> Tienes <strong><?= $ventasPendientes ?></strong> venta(s) pendiente(s) sin liquidar.
+                    <?= icono('triangle-alert') ?> Tienes <strong><?= $ventasPendientes ?></strong> venta(s) a domicilio sin liquidar.
                     <a href="ventasPendientes.php" style="color:#1565c0;font-weight:700;margin-left:6px;">Ver</a>
                 </div>
                 <?php endif; ?>

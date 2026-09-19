@@ -299,7 +299,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="menu-label">Ventas</div>
         <a class="menu-item" href="nuevaVenta.php">Nueva venta</a>
         <a class="menu-item" href="historialVentas.php">Historial de ventas</a>
-        <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
+        <a class="menu-item" href="ventasPendientes.php">Ventas a Domicilio</a>
         <a class="menu-item" href="devoluciones.php">Devoluciones</a>
         <div class="divider"></div>
 
@@ -376,7 +376,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 // [FIX-CLIENTE-EDITAR-FANTASMA] "no_encontrado" es una condicion de error (el
                 // cliente ya no existe) — antes vivia en $msgsExito y se pintaba en verde como si
                 // fuera un exito, tanto aqui como al editar un cliente_id inexistente por GET.
-                $msgsError = ['error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas pendientes de entrega.', 'error_credito_pendiente' => 'No se puede desactivar este cliente porque tiene un crédito pendiente de pago.', 'no_encontrado' => 'Cliente no encontrado.'];
+                $msgsError = ['error_tiene_pendientes' => 'No se puede eliminar: el cliente tiene ventas a domicilio pendientes de entrega.', 'error_credito_pendiente' => 'No se puede desactivar este cliente porque tiene un crédito pendiente de pago.', 'no_encontrado' => 'Cliente no encontrado.'];
                 $msgKey = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : '';
                 if (isset($msgsExito[$msgKey])):
                 ?>

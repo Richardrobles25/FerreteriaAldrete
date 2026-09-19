@@ -1303,7 +1303,7 @@ if (!$caja) {
         <div class="menu-label">Ventas</div>
         <a class="menu-item active" href="nuevaVenta.php">Nueva venta</a>
         <a class="menu-item" href="historialVentas.php">Historial de ventas</a>
-        <a class="menu-item" href="ventasPendientes.php">Ventas pendientes</a>
+        <a class="menu-item" href="ventasPendientes.php">Ventas a Domicilio</a>
         <a class="menu-item" href="devoluciones.php">Devoluciones</a>
         <div class="divider"></div>
 

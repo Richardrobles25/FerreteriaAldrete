@@ -76,7 +76,7 @@ function renderAdminSidebar(string $activeKey): void
                 <a class="menu-item<?= $isActive('cajero_historial_cortes') ?>" href="cajero_historialCortes.php" style="padding-left:28px;">Historial cortes</a>
                 <a class="menu-item<?= $isActive('cajero_clientes') ?>" href="cajero_clientes.php" style="padding-left:28px;">Clientes cajero</a>
                 <a class="menu-item<?= $isActive('cajero_creditos') ?>" href="cajero_creditos.php" style="padding-left:28px;">Creditos cajero</a>
-                <a class="menu-item<?= $isActive('cajero_ventas_pendientes') ?>" href="cajero_ventasPendientes.php" style="padding-left:28px;">Ventas pendientes</a>
+                <a class="menu-item<?= $isActive('cajero_ventas_pendientes') ?>" href="cajero_ventasPendientes.php" style="padding-left:28px;">Ventas a Domicilio</a>
                 <a class="menu-item<?= $isActive('cajero_devoluciones') ?>" href="cajero_devoluciones.php" style="padding-left:28px;">Devoluciones</a>
             </div>
         </div>

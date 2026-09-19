@@ -243,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <?php if ($ventasPendientes > 0): ?>
                 <div class="alerta-pend">
-                    <?= icono('triangle-alert') ?> Tienes <strong><?= $ventasPendientes ?></strong> venta(s) pendiente(s) sin liquidar.
+                    <?= icono('triangle-alert') ?> Tienes <strong><?= $ventasPendientes ?></strong> venta(s) a domicilio sin liquidar.
                     <a href="cajero_ventasPendientes.php" style="color:#1565c0;font-weight:700;margin-left:6px;">Ver</a>
                 </div>
                 <?php endif; ?>

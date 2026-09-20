@@ -36,7 +36,11 @@ if (isset($_GET['eliminar'])) {
     $u->execute([$id]);
     $row = $u->fetch(PDO::FETCH_ASSOC);
     if ($row) {
-        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ? AND activo = 1");
+        // [FIX-UNIDAD-PRODUCTO-INACTIVO] (mismo patron que categorias.php, FIX-ALTO-B-08):
+        // antes solo se contaban productos activos, asi que una unidad usada solo por
+        // productos desactivados se dejaba eliminar; al reactivar ese producto despues,
+        // su unidad_medida ya no existia en el catalogo (quedaba huerfana).
+        $check = $pdo->prepare("SELECT COUNT(*) FROM productos WHERE unidad_medida = ?");
         $check->execute([$row['nombre']]);
         if ($check->fetchColumn() > 0) {
             header('Location: unidades.php?msg=error_productos');

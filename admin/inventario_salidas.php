@@ -30,10 +30,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
 
     if (empty($errores)) {
+        // [FIX-ACTIVO-NO-REVALIDADO] (espejo de cajeroInventario/salidas.php) "activo=1" antes
+        // no se revisaba aqui.
         $stmtP = $pdo->prepare("
             SELECT p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo
             FROM productos p
-            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
             WHERE p.producto_id = ?
         ");
         $stmtP->execute([$sucursalVista, $producto_id]);
@@ -51,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($errores)) {
             // ya se agregó el error de cantidad no entera; no continuar con el registro.
         } elseif (!$prod) {
-            $errores[] = 'Producto no encontrado.';
+            $errores[] = 'Este producto ya no está disponible en esta sucursal. Recarga la página e intenta de nuevo.';
         } elseif ($cantidad > $prod['stock_actual']) {
             $errores[] = 'La cantidad no puede ser mayor al stock actual (' . floatval($prod['stock_actual']) . ' disponibles).';
         } else {
@@ -59,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // valor más reciente: dos salidas simultáneas del mismo producto podían pisarse
             // o dejar stock negativo si ambas pasaban el chequeo de arriba con el mismo valor.
             $pdo->beginTransaction();
-            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? AND activo = 1 FOR UPDATE");
             $stmtLockStock->execute([$producto_id, $sucursalVista]);
             $stockAnterior = floatval($stmtLockStock->fetchColumn());
 

@@ -74,6 +74,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
 
     if ($sucursalVista === 0) $errores[] = 'Selecciona una sucursal específica para registrar una compra.';
     if (!$proveedor_id)    $errores[] = 'Selecciona un proveedor.';
+    // [FIX-ACTIVO-NO-REVALIDADO] (espejo de cajeroInventario/compras.php) el proveedor solo se
+    // filtra por activo=1 en la lista del buscador (cosmetico).
+    if ($proveedor_id) {
+        $stmtProvActivo = $pdo->prepare("SELECT activo FROM proveedores WHERE proveedor_id = ?");
+        $stmtProvActivo->execute([$proveedor_id]);
+        if (!$stmtProvActivo->fetchColumn()) {
+            $errores[] = 'El proveedor seleccionado ya no está activo. Recarga la página e intenta de nuevo.';
+        }
+    }
     if (!is_array($items) || empty($items)) $errores[] = 'Agrega al menos un producto.';
 
     // [FIX] Validar cada item ANTES de escribir nada en la base de datos.
@@ -171,11 +180,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$verDetalle) {
                 $pdo->prepare("INSERT INTO compra_productos (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)")
                     ->execute([$compra_id, $prodId, $cantidad, $precio, $subtotal]);
 
-                $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                // [FIX-ACTIVO-NO-REVALIDADO] (espejo de cajeroInventario/compras.php)
+                // "activo=1" antes no se revisaba aqui.
+                $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? AND activo = 1 FOR UPDATE");
                 $stmtS->execute([$prodId, $sucursalVista]);
                 $stockActualRow = $stmtS->fetchColumn();
                 if ($stockActualRow === false) {
-                    throw new Exception('Uno de los productos no tiene inventario configurado en esta sucursal.');
+                    throw new Exception('Uno de los productos ya no está disponible en esta sucursal (fue dado de baja). Recarga la página e intenta de nuevo.');
                 }
                 $stockAnterior = floatval($stockActualRow);
                 $stockNuevo    = $stockAnterior + $cantidad;

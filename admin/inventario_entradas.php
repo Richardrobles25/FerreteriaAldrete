@@ -38,17 +38,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errores)) {
         // [FIX] Los productos tipo "Suelto" (granel) aceptan decimales (2.5 kg) —
         // antes se usaba intval() para todos, lo que truncaba 2.5 a 2.
+        // [FIX-ACTIVO-NO-REVALIDADO] (espejo de cajeroInventario/entradas.php) "activo=1"
+        // antes no se revisaba aqui.
         $stmtP = $pdo->prepare("
             SELECT p.nombre_producto, p.tipo_venta, ss.stock_actual
             FROM productos p
-            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
             WHERE p.producto_id = ?
         ");
         $stmtP->execute([$sucursalVista, $producto_id]);
         $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
 
         if (!$prod) {
-            $errores[] = 'Producto no encontrado.';
+            $errores[] = 'Este producto ya no está disponible en esta sucursal. Recarga la página e intenta de nuevo.';
         } else {
             $esSuelto = ($prod['tipo_venta'] === 'Suelto');
             // [FIX-ENTRADA-DECIMAL-TRUNCADO] Antes, para un producto que NO es "Suelto",
@@ -79,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // [FIX] Bloquear la fila de stock dentro de una transacción para evitar que
             // dos entradas simultáneas del mismo producto se pisen (pérdida de actualización).
             $pdo->beginTransaction();
-            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? AND activo = 1 FOR UPDATE");
             $stmtLockStock->execute([$producto_id, $sucursalVista]);
             $stockAnterior = floatval($stmtLockStock->fetchColumn());
             $stockNuevo    = $stockAnterior + $cantidad;

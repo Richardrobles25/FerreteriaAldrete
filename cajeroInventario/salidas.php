@@ -28,10 +28,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errores)) {
         // [AUTOFIX] INFO-3E-1: Incluir stock_minimo para detectar si queda bajo el mínimo
+        // [FIX-ACTIVO-NO-REVALIDADO] "activo=1" antes no se revisaba aqui -- un producto dado
+        // de baja de esta sucursal DESPUES de seleccionarlo en el formulario (ej. otra pestana)
+        // seguia aceptando la salida y restandole stock. Confirmado en vivo.
         $stmtP = $pdo->prepare("
             SELECT p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo
             FROM productos p
-            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
             WHERE p.producto_id = ?
         ");
         $stmtP->execute([$_SESSION['sucursal_id'], $producto_id]);
@@ -48,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($errores)) {
             // ya se agrego el error de cantidad no entera; no continuar con el registro.
         } elseif (!$prod) {
-            $errores[] = 'Producto no encontrado.';
+            $errores[] = 'Este producto ya no está disponible en tu sucursal. Recarga la página e intenta de nuevo.';
         } elseif ($cantidad > $prod['stock_actual']) {
             $errores[] = 'La cantidad no puede ser mayor al stock actual (' . floatval($prod['stock_actual']) . ' disponibles).';
         } else {
@@ -57,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // (perdida de actualizacion) o dejar stock negativo si ambas pasaban el chequeo
             // de arriba con el mismo valor leido antes de escribir.
             $pdo->beginTransaction();
-            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtLockStock = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? AND activo = 1 FOR UPDATE");
             $stmtLockStock->execute([$producto_id, $_SESSION['sucursal_id']]);
             $stockAnterior = floatval($stmtLockStock->fetchColumn());
 

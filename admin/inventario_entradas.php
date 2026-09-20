@@ -138,14 +138,20 @@ $productos = [];
 if ($sucursalVista !== 0) {
     $stmtProds = $pdo->prepare("
         SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
-               MIN(pp.proveedor_id) AS proveedor_default_id,
-               MIN(prov.nombre)     AS proveedor_default_nombre
+               pdef.proveedor_id AS proveedor_default_id,
+               provdef.nombre    AS proveedor_default_nombre
         FROM productos p
         INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
-        LEFT JOIN producto_proveedor pp ON p.producto_id = pp.producto_id
-        LEFT JOIN proveedores prov      ON pp.proveedor_id = prov.proveedor_id
+        -- [FIX-PROVEEDOR-DEFAULT-DESAJUSTE] Ver cajeroInventario/entradas.php: MIN(proveedor_id)
+        -- y MIN(nombre) por separado podian venir de proveedores distintos para un producto con
+        -- 2+ proveedores vinculados. Se resuelve el minimo en una subconsulta y se junta una vez.
+        LEFT JOIN (
+            SELECT producto_id, MIN(proveedor_id) AS proveedor_id
+            FROM producto_proveedor
+            GROUP BY producto_id
+        ) pdef ON pdef.producto_id = p.producto_id
+        LEFT JOIN proveedores provdef ON provdef.proveedor_id = pdef.proveedor_id
         WHERE p.activo = 1
-        GROUP BY p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
         ORDER BY p.nombre_producto ASC
     ");
     $stmtProds->execute([$sucursalVista]);

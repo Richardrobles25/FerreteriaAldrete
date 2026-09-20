@@ -56,6 +56,14 @@ if (isset($_GET['toggle'])) {
             header('Location: cajero_clientes.php?msg=error_credito_pendiente');
             exit();
         }
+        // [FIX-TOGGLE-VENTA-PENDIENTE] (espejo de cajeroInventario/clientes.php) "eliminar"
+        // (arriba) SI revisaba ventas a domicilio pendientes; "toggle" nunca lo revisaba.
+        $stmtPendToggle = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
+        $stmtPendToggle->execute([$id]);
+        if ($stmtPendToggle->fetchColumn() > 0) {
+            header('Location: cajero_clientes.php?msg=error_tiene_pendientes');
+            exit();
+        }
     }
 
     $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$id]);

@@ -60,6 +60,16 @@ if (isset($_GET['toggle'])) {
             header('Location: clientes.php?msg=error_credito_pendiente');
             exit();
         }
+        // [FIX-TOGGLE-VENTA-PENDIENTE] "eliminar" (arriba) SI revisaba ventas a domicilio
+        // pendientes antes de desactivar, pero "toggle" (alcanzable directo por URL, no solo
+        // desde "Reactivar") nunca lo revisaba -- un cliente con un pedido en curso se podia
+        // desactivar igual por esta ruta. Confirmado en vivo.
+        $stmtPendToggle = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
+        $stmtPendToggle->execute([$id]);
+        if ($stmtPendToggle->fetchColumn() > 0) {
+            header('Location: clientes.php?msg=error_tiene_pendientes');
+            exit();
+        }
     }
 
     $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$id]);

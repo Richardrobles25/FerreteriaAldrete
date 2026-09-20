@@ -30,6 +30,17 @@ if (isset($_GET['toggle'])) {
             header('Location: clientes.php?error=credito_pendiente');
             exit();
         }
+        // [FIX-TOGGLE-VENTA-PENDIENTE] (espejo de cajeroInventario/clientes.php y
+        // admin/cajero_clientes.php) esta pantalla nunca revisaba ventas a domicilio
+        // pendientes antes de desactivar -- a diferencia de las otras dos, aqui "toggle" es
+        // la UNICA forma de desactivar un cliente (no existe un "eliminar" aparte), y el
+        // boton "Desactivar" de la lista normal apunta directo aqui.
+        $ventaPend = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
+        $ventaPend->execute([$cid]);
+        if ($ventaPend->fetchColumn() > 0) {
+            header('Location: clientes.php?error=tiene_pendientes');
+            exit();
+        }
     }
 
     $pdo->prepare("UPDATE clientes SET activo = NOT activo WHERE cliente_id = ?")->execute([$cid]);
@@ -458,6 +469,9 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <?php endif; ?>
             <?php if (($_GET['error'] ?? '') === 'credito_pendiente'): ?>
                 <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar este cliente porque tiene un crédito pendiente de pago.</div>
+            <?php endif; ?>
+            <?php if (($_GET['error'] ?? '') === 'tiene_pendientes'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede desactivar este cliente porque tiene ventas a domicilio pendientes de entrega.</div>
             <?php endif; ?>
 
             <div class="stats">

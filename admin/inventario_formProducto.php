@@ -158,6 +158,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmtCheck->fetch()) $errores[] = 'Ya existe un producto con ese código en el catálogo.';
     }
 
+    // [FIX-UNIDAD-DESYNC 2026-09-20] (portado de cajeroInventario/formProducto.php)
+    // unidad_medida_nueva solo llega en '1' cuando el usuario usó "Escribir otra" (ver JS del
+    // submit, mas abajo) -- es la unica ruta legitima para crear una unidad nueva en el
+    // catalogo global. Si el valor NO vino de ahi, debe existir YA en el catalogo actual
+    // (lectura fresca, no la que trae el <select> desde que se cargo la pagina). Sin este
+    // candado, un <select> que quedo con la unidad VIEJA seleccionada (renombrada por otro
+    // usuario mientras este formulario seguia abierto) volvia a crear esa unidad vieja como
+    // fila nueva y separada del catalogo al guardar -- reproducido en vivo (D1, rol
+    // cajeroInventario): "pieza" -> "pieza2026" mientras un formulario seguia abierto con
+    // "pieza" seleccionada; al guardar, "pieza" reaparecio como unidad nueva con 1 producto,
+    // separada de "pieza2026" con los otros 6. Este archivo comparte el mismo <select>/INSERT
+    // IGNORE, asi que le aplica igual.
+    $unidadEsNueva = ($_POST['unidad_medida_nueva'] ?? '') === '1';
+    if ($unidad_medida !== '' && !$unidadEsNueva) {
+        $stmtUnidadExiste = $pdo->prepare("SELECT COUNT(*) FROM unidades_medida WHERE nombre = ?");
+        $stmtUnidadExiste->execute([$unidad_medida]);
+        if (!$stmtUnidadExiste->fetchColumn()) {
+            $errores[] = 'La unidad de medida seleccionada ya no existe en el catálogo (probablemente fue renombrada). Recarga la página e inténtalo de nuevo.';
+        }
+    }
+
     // [FIX-MEDIO-H-07] Guardar un producto es una secuencia de varias escrituras (catalogo,
     // stock_sucursal, movimiento de inventario inicial, y borrar+re-insertar sus proveedores)
     // que antes corria sin transaccion: una falla a mitad de la secuencia podia dejar, por
@@ -168,7 +189,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->beginTransaction();
         try {
         // [CAMBIO-UNIDAD-GLOBAL 2026-09-09] unidades_medida ya es catalogo global.
-        if ($unidad_medida !== '') {
+        // [FIX-UNIDAD-DESYNC 2026-09-20] Solo se crea si de verdad es nueva (ver validacion
+        // arriba) -- si no lo es, ya se confirmo que el nombre existe en el catalogo actual.
+        if ($unidad_medida !== '' && $unidadEsNueva) {
             $pdo->prepare("INSERT IGNORE INTO unidades_medida (nombre) VALUES (?)")->execute([$unidad_medida]);
         }
 
@@ -932,6 +955,14 @@ document.getElementById('formProducto').addEventListener('submit', function() {
         h.value = inp.value.trim();
         this.appendChild(h);
         sel.name = ''; // Deshabilitar el select para que no envíe "__otra__"
+        // [FIX-UNIDAD-DESYNC] marca explicita: solo "Escribir otra" puede crear una unidad
+        // nueva en el catalogo -- distingue eso de un <select> con un valor viejo que quedo
+        // seleccionado desde antes de que alguien mas renombrara esa unidad.
+        const flag = document.createElement('input');
+        flag.type  = 'hidden';
+        flag.name  = 'unidad_medida_nueva';
+        flag.value = '1';
+        this.appendChild(flag);
     }
     inp.name = ''; // Evitar duplicar
 });

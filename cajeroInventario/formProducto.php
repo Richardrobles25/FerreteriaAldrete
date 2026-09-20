@@ -16,6 +16,11 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 // archivo es EDIT-ONLY (ver candado de $producto_id abajo) y solo encuentra productos que
 // ya tienen fila en stock_sucursal para $_SESSION['sucursal_id'], así que nunca se toca un
 // producto que la sucursal no tenga ya.
+// [FIX-ACTIVO-NO-REVALIDADO] La afirmación de arriba no distinguía activo de inactivo: la
+// fila de stock_sucursal existe aunque el producto ya haya sido dado de baja de esta
+// sucursal (activo=0) — antes se podía entrar directo por URL (o con la pestaña ya abierta
+// desde antes de la baja) y seguir editando el catálogo global de un producto que ya no
+// debería estar disponible aquí. Confirmado en vivo.
 
 $editando  = null;
 $errores   = [];
@@ -48,12 +53,12 @@ if ($esEdicion) {
     $stmt = $pdo->prepare("
         SELECT p.*, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
         FROM productos p
-        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
         WHERE p.producto_id = ?
     ");
     $stmt->execute([$_SESSION['sucursal_id'], intval(is_scalar($_GET['id'] ?? null) ? $_GET['id'] : 0)]);
     $editando = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$editando) { header('Location: productos.php'); exit(); }
+    if (!$editando) { header('Location: productos.php?msg=producto_no_disponible'); exit(); }
 
     $stmtPP = $pdo->prepare("
         SELECT pp.proveedor_id, pp.codigo_proveedor, p.nombre AS nombre_proveedor

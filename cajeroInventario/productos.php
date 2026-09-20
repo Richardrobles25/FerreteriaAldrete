@@ -992,6 +992,9 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_stock_decimal'): ?>
             <div class="msg msg-error">Uno de los productos se vende por pieza entera (no "Suelto") — el stock inicial/mínimo/máximo debe ser un número entero.</div>
         <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'producto_no_disponible'): ?>
+            <div class="msg msg-error">Ese producto ya no está disponible en tu sucursal (fue dado de baja).</div>
+        <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'solo_catalogo'): ?>
             <div class="msg msg-error" style="background:#fff8e1;color:#795548;border-left-color:#f9a825;">
                 Para agregar un producto nuevo al catálogo global, contacta al administrador. Usa el botón <strong>"+ Agregar del catálogo"</strong> para activar productos ya existentes en tu sucursal.

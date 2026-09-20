@@ -88,6 +88,20 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
         header('Location: inventario_transferencias.php?msg=rechazar_modificacion'); exit();
 
     } elseif ($accion === 'aprobar') {
+        // [FIX-TRANSF-ACTIVO-NO-REVALIDADO 2026-09-20] (portado de cajeroInventario/transferencias.php)
+        // Ni el listado ni las acciones de esta seccion revisaban que el producto siguiera
+        // activo en la sucursal origen. Confirmado en vivo.
+        $stmtProdTAprob = $pdo->prepare("SELECT producto_id FROM transferencias WHERE transferencias_id = ? AND estado = 'Pendiente' AND sucursal_origen_id = ?");
+        $stmtProdTAprob->execute([$id, $miSucursal]);
+        $prodIdAprob = $stmtProdTAprob->fetchColumn();
+        if ($prodIdAprob) {
+            $stmtActivoAprob = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+            $stmtActivoAprob->execute([$prodIdAprob, $miSucursal]);
+            if (!$stmtActivoAprob->fetchColumn()) {
+                header('Location: inventario_transferencias.php?msg=error_producto_inactivo_transf'); exit();
+            }
+        }
+
         // [FIX-MEDIO-C-07] Antes se caia siempre al mensaje generico de exito al final
         // (linea ~202) sin comprobar si el UPDATE realmente afecto una fila — si alguien
         // mas ya habia aprobado/rechazado la misma solicitud (o no era el origen), el
@@ -179,6 +193,14 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                     header('Location: inventario_transferencias.php?msg=error_ya_no_aprobada'); exit();
                 }
 
+                // [FIX-TRANSF-ACTIVO-NO-REVALIDADO 2026-09-20] (portado de cajeroInventario/transferencias.php)
+                $stmtActivoEnv = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+                $stmtActivoEnv->execute([$transf['producto_id'], $miSucursal]);
+                if (!$stmtActivoEnv->fetchColumn()) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_producto_inactivo_transf'); exit();
+                }
+
                 $stmtOr = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
                 $stmtOr->execute([$transf['producto_id'], $miSucursal]);
                 $stockOr = $stmtOr->fetchColumn();
@@ -254,6 +276,17 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                         ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
                 }
 
+                // [FIX-TRANSF-ACTIVO-NO-REVALIDADO 2026-09-20] (portado de cajeroInventario/transferencias.php)
+                // Solo bloquea si YA existe una fila inactiva; si el producto nunca ha llegado
+                // a esta sucursal (sin fila todavia), abajo se crea una nueva activa, como siempre.
+                $stmtActivoRec = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+                $stmtActivoRec->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
+                $activoDestRec = $stmtActivoRec->fetchColumn();
+                if ($activoDestRec !== false && !intval($activoDestRec)) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_producto_inactivo_transf'); exit();
+                }
+
                 $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
                 $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
                 $stockDest = $stmtDest->fetchColumn();
@@ -325,16 +358,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         foreach ($items as $item) {
             $prodId   = intval($item['id']);
             $cantidad = floatval($item['cantidad']);
-            $stmtTV2 = $pdo->prepare("SELECT p.tipo_venta, p.nombre_producto, ss.stock_actual FROM productos p LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
+            $stmtTV2 = $pdo->prepare("SELECT p.tipo_venta, p.nombre_producto, ss.stock_actual, ss.activo AS ss_activo FROM productos p LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
             $stmtTV2->execute([$sucursal_origen_id, $prodId]);
             $tvRow2 = $stmtTV2->fetch(PDO::FETCH_ASSOC);
-            if ($tvRow2 && $tvRow2['tipo_venta'] !== 'Suelto') {
+            // [FIX-TRANSF-CREACION-ACTIVO 2026-09-20] (portado de cajeroInventario/transferencias.php)
+            if (!$tvRow2 || !intval($tvRow2['ss_activo'] ?? 0)) {
+                $nombreProd = $tvRow2['nombre_producto'] ?? "Producto #$prodId";
+                $errores[] = "\"$nombreProd\": ya no está disponible en la sucursal origen (fue dado de baja). Recarga la página e intenta de nuevo.";
+                continue;
+            }
+            if ($tvRow2['tipo_venta'] !== 'Suelto') {
                 $cantidad = floor($cantidad);
             }
             if ($cantidad <= 0) continue;
-            $stockOrigen = $tvRow2 ? floatval($tvRow2['stock_actual']) : 0;
+            $stockOrigen = floatval($tvRow2['stock_actual']);
             if ($cantidad > $stockOrigen) {
-                $nombreProd  = $tvRow2['nombre_producto'] ?? "Producto #$prodId";
+                $nombreProd  = $tvRow2['nombre_producto'];
                 $errores[] = "\"$nombreProd\": se solicitaron " . number_format($cantidad, 2) . " pero la sucursal origen solo tiene " . number_format($stockOrigen, 2) . " disponibles.";
             }
         }
@@ -658,6 +697,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                     'error_ya_no_pendiente' => 'No se pudo completar: la solicitud ya no está pendiente (alguien más ya la aprobó, rechazó, o no eres la sucursal origen).',
                     'error_ya_no_aprobada'  => 'No se pudo completar: la transferencia ya no está "Aprobada" (alguien más ya la modificó, o no eres la sucursal origen).',
                     'error_ya_no_modificada' => 'No se pudo completar: la transferencia ya no tiene un cambio de cantidad pendiente de confirmar (alguien más ya lo aceptó/rechazó, o no eres la sucursal destino).',
+                    'error_producto_inactivo_transf' => 'No se pudo completar: el producto ya no está activo en la sucursal correspondiente (fue dado de baja). Revísalo antes de continuar.',
                 ]; ?>
                 <?php $msgKeyTransf = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
                 <?php $esMsgError = str_starts_with($msgKeyTransf, 'error'); ?>

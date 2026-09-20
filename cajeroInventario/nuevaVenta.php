@@ -565,6 +565,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         $errorVenta = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
     }
 
+    // [FIX-REFERENCIA-TRANSFERENCIA-LARGA] ventas.referencia_transferencia es VARCHAR(100) sin
+    // ningun validador de longitud aqui — una referencia mas larga (algunos bancos generan
+    // folios de 100+ caracteres) tronaba el INSERT con un error crudo de MySQL ("Data too long
+    // for column") mostrado directo al cajero. Confirmado en vivo (mismo bug en
+    // ventasPendientes.php).
+    if (!$errorVenta && $metodo_pago === 'Transferencia' && mb_strlen($referencia_transferencia) > 100) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'La referencia bancaria no puede tener más de 100 caracteres.']);
+            exit();
+        }
+        $errorVenta = 'La referencia bancaria no puede tener más de 100 caracteres.';
+    }
+
     // [AUTOFIX] V-05: Validar que items sea un array valido antes de procesar
     if (!$errorVenta && (!is_array($items) || empty($items))) {
         if (!empty($_POST['_ajax'])) {

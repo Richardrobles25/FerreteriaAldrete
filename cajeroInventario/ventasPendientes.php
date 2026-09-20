@@ -346,6 +346,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($errores) && $metodo_pago === 'Transferencia' && empty($ref_transf)) {
             $errores[] = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
         }
+        // [FIX-REFERENCIA-TRANSFERENCIA-LARGA] ventas.referencia_transferencia es VARCHAR(100)
+        // sin ningun validador de longitud aqui — una referencia mas larga (algunos bancos
+        // generan folios de 100+ caracteres) tronaba el INSERT con un error crudo de MySQL
+        // ("Data too long for column") mostrado directo al cajero. Confirmado en vivo contra
+        // el servidor. Mismo patron ya corregido en formProducto.php para unidad_medida.
+        if (empty($errores) && $metodo_pago === 'Transferencia' && mb_strlen($ref_transf) > 100) {
+            $errores[] = 'La referencia bancaria no puede tener más de 100 caracteres.';
+        }
 
         // [FIX-CREDITO-SIN-CLIENTE] Igual que cajero_nuevaVenta.php (AUTOFIX N-03): sin este
         // candado, "Credito" + cliente_id vacio se colaba hasta el INSERT sin pasar por

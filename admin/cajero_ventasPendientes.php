@@ -359,6 +359,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($errores) && $metodo_pago === 'Transferencia' && empty($ref_transf)) {
             $errores[] = 'El número de referencia bancaria es obligatorio para pago por Transferencia.';
         }
+        // [FIX-REFERENCIA-TRANSFERENCIA-LARGA] (espejo de cajeroInventario/ventasPendientes.php)
+        // ventas.referencia_transferencia es VARCHAR(100) sin ningun validador de longitud —
+        // tronaba el INSERT con un error crudo de MySQL mostrado directo al cajero.
+        if (empty($errores) && $metodo_pago === 'Transferencia' && mb_strlen($ref_transf) > 100) {
+            $errores[] = 'La referencia bancaria no puede tener más de 100 caracteres.';
+        }
 
         // [FIX-CREDITO-SIN-CLIENTE] Igual que cajero_nuevaVenta.php (AUTOFIX N-03): sin este
         // candado, "Credito" + cliente_id vacio se colaba hasta el INSERT sin pasar por

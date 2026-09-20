@@ -34,6 +34,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // es VARCHAR(255) sin ningun tope en el servidor — se truncaba en silencio y se guardaba
     // como "entrada registrada", sin ningun aviso.
     if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
+    // [FIX-ENTRADA-PROVEEDOR-NO-REVALIDADO 2026-09-20] (portado de cajeroInventario/entradas.php,
+    // mismo candado ya aplicado a compras.php en la ronda 3) El proveedor llega de un campo
+    // oculto cargado sin filtrar por activo y nunca se revalidaba al guardar.
+    if ($proveedor_entrada) {
+        $stmtProvActivoEnt = $pdo->prepare("SELECT activo FROM proveedores WHERE proveedor_id = ?");
+        $stmtProvActivoEnt->execute([$proveedor_entrada]);
+        if (!$stmtProvActivoEnt->fetchColumn()) {
+            $errores[] = 'El proveedor seleccionado ya no está activo. Recarga la página e intenta de nuevo.';
+        }
+    }
 
     if (empty($errores)) {
         // [FIX] Los productos tipo "Suelto" (granel) aceptan decimales (2.5 kg) —

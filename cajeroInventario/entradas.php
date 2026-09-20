@@ -43,6 +43,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // se guardaba como "entrada registrada", sin ningun aviso de que el texto capturado no
     // era el que quedo en el historial.
     if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
+    // [FIX-ENTRADA-PROVEEDOR-NO-REVALIDADO 2026-09-20] (mismo candado ya aplicado a
+    // compras.php en la ronda 3) El proveedor llega de un campo oculto que el JS llena al
+    // seleccionar el producto (proveedor_default_id, cargado SIN filtrar por activo) y nunca
+    // se revalidaba al guardar. Confirmado en vivo: con el producto ya elegido en una
+    // pestaña (proveedor cargado), desactivar ese proveedor desde otra pestaña y guardar la
+    // entrada igual la aceptaba, guardando el proveedor_id de uno ya inactivo sin aviso.
+    if ($proveedor_entrada) {
+        $stmtProvActivoEnt = $pdo->prepare("SELECT activo FROM proveedores WHERE proveedor_id = ?");
+        $stmtProvActivoEnt->execute([$proveedor_entrada]);
+        if (!$stmtProvActivoEnt->fetchColumn()) {
+            $errores[] = 'El proveedor seleccionado ya no está activo. Recarga la página e intenta de nuevo.';
+        }
+    }
 
     if (empty($errores)) {
         // [FIX] Consultar tipo_venta ANTES de validar la cantidad: los productos tipo

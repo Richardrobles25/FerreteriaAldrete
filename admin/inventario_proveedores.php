@@ -14,7 +14,25 @@ require_once '../includes/topbar_info.php';
 // confundia al dar a entender que uno si eliminaba. El toggle de abajo ya cubre ambos casos.
 if (isset($_GET['toggle'])) {
     requerirCSRF($_GET['_token'] ?? '', 'inventario_proveedores.php');
-    $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0)]);
+    $idToggle = intval(is_scalar($_GET['toggle'] ?? null) ? $_GET['toggle'] : 0);
+
+    // [FIX-PROVEEDOR-TOGGLE-SIN-CANDADO 2026-09-20] (portado de cajeroInventario/proveedores.php)
+    // Este toggle nunca revisaba nada antes del UPDATE -- a diferencia de unidades.php/
+    // categorias.php, que si bloquean si el registro tiene productos asociados. Confirmado en
+    // vivo: un proveedor que seguia siendo "Proveedor 1" de un producto activo se desactivaba
+    // con un clic, sin ningun aviso. Mismo candado, aplicado solo al desactivar.
+    $actualToggle = $pdo->prepare("SELECT activo FROM proveedores WHERE proveedor_id = ?");
+    $actualToggle->execute([$idToggle]);
+    if ($actualToggle->fetchColumn()) {
+        $stmtProdLigados = $pdo->prepare("SELECT COUNT(*) FROM producto_proveedor WHERE proveedor_id = ?");
+        $stmtProdLigados->execute([$idToggle]);
+        if ($stmtProdLigados->fetchColumn() > 0) {
+            header('Location: inventario_proveedores.php?msg=error_productos_ligados');
+            exit();
+        }
+    }
+
+    $pdo->prepare("UPDATE proveedores SET activo = NOT activo WHERE proveedor_id = ?")->execute([$idToggle]);
     header('Location: inventario_proveedores.php'); exit();
 }
 
@@ -52,6 +70,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
     if (mb_strlen($direccion) > 255) $errores[] = 'La dirección no puede tener más de 255 caracteres.';
 
+    // [FIX-PROVEEDOR-NOMBRE-RACE 2026-09-20] (portado de cajeroInventario/proveedores.php)
+    // proveedores no tiene UNIQUE en nombre -- el check-then-insert de abajo es la misma
+    // condicion de carrera ya corregida en clientes.php (duplicado de telefono) con GET_LOCK.
+    $lockNombreProv     = null;
+    $lockNombreProvOk   = true;
+    if ($nombre !== '') {
+        $lockNombreProv   = 'proveedor_nombre_' . mb_strtolower($nombre);
+        $lockNombreProvOk = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockNombreProv) . ", 5)")->fetchColumn();
+        if (!$lockNombreProvOk) {
+            $errores[] = 'Otro usuario está guardando un proveedor con este mismo nombre en este momento. Intenta de nuevo.';
+        }
+    }
     if ($nombre && empty($errores)) {
         $stmtDup = $pdo->prepare("SELECT proveedor_id FROM proveedores WHERE LOWER(nombre) = LOWER(?) AND proveedor_id != ? AND activo = 1");
         $stmtDup->execute([$nombre, $id]);
@@ -81,6 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtExisteProv->execute([$id]);
             if (!$stmtExisteProv->fetchColumn()) {
                 $pdo->rollBack();
+                if ($lockNombreProv) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockNombreProv) . ")");
                 header('Location: inventario_proveedores.php?msg=no_encontrado');
                 exit();
             }
@@ -102,12 +133,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->commit();
             header('Location: inventario_proveedores.php?msg=creado');
         }
+        if ($lockNombreProv) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockNombreProv) . ")");
         exit();
         } catch (\PDOException $e) {
             $pdo->rollBack();
             $errores[] = 'No se pudo guardar el proveedor. Intenta de nuevo.';
         }
     }
+    if ($lockNombreProv && $lockNombreProvOk && !empty($errores)) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockNombreProv) . ")");
 }
 
 $busqueda  = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
@@ -291,6 +324,8 @@ if ($editando) {
                 <?php $msgKeyProv = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
                 <?php if ($msgKeyProv === 'no_encontrado'): ?>
                     <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">Ese proveedor ya no existe (puede que otra sesión lo haya eliminado). Recarga la página.</div>
+                <?php elseif ($msgKeyProv === 'error_productos_ligados'): ?>
+                    <div class="msg" style="background:#fdecea;color:#c0392b;border-left:3px solid #c0392b;">No puedes desactivar este proveedor porque sigue ligado a uno o más productos. Quítalo de esos productos primero.</div>
                 <?php elseif (isset($msgs[$msgKeyProv])): ?>
                     <div class="msg msg-exito"><?= $msgs[$msgKeyProv] ?></div>
                 <?php endif; ?>

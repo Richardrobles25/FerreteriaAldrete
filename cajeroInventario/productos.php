@@ -452,6 +452,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
         if ($productoEliminar) {
+            // [FIX-PRODUCTO-ELIMINAR-VENTA-PENDIENTE 2026-09-20] (mismo candado que
+            // clientes.php ya aplica al desactivar un cliente) "Eliminar" nunca revisaba si
+            // el producto seguia formando parte de una venta a domicilio pendiente de
+            // entregar. Confirmado en vivo: se podia dar de baja un producto con una venta
+            // pendiente sin liquidar, sin ningun aviso -- y al cancelar despues esa venta,
+            // el stock devuelto se sumaba en silencio a una fila ya inactiva (invisible en
+            // el listado normal, que filtra activo=1).
+            $stmtPendProd = $pdo->prepare("
+                SELECT COUNT(*) FROM venta_productos vp
+                INNER JOIN ventas v ON v.venta_id = vp.venta_id
+                INNER JOIN cajas c ON c.caja_id = v.caja_id
+                WHERE vp.producto_id = ? AND v.estado = 'Pendiente' AND c.sucursal_id = ?
+            ");
+            $stmtPendProd->execute([$id, $_SESSION['sucursal_id']]);
+            if ($stmtPendProd->fetchColumn() > 0) {
+                header('Location: productos.php?msg=error_producto_pendiente');
+                exit();
+            }
             // [FIX-ELIMINAR-CHK-01] (portado de admin/inventario_productos.php): la base de
             // datos tiene una restriccion CHECK (chk_movimientos_inv_cantidad) que no permite
             // cantidad = 0 en movimientos_inventario. Aqui se insertaba stock_actual como
@@ -979,6 +997,9 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_eliminar'): ?>
             <div class="msg msg-error">No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.</div>
+        <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_producto_pendiente'): ?>
+            <div class="msg msg-error">No puedes eliminar este producto: tiene una venta a domicilio pendiente de entregar.</div>
         <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'agregado_catalogo'): ?>
             <div class="msg msg-exito">Producto agregado a tu sucursal correctamente.</div>

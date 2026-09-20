@@ -698,6 +698,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
         $productoEliminar = $stmtProd->fetch(PDO::FETCH_ASSOC);
 
         if ($productoEliminar) {
+            // [FIX-PRODUCTO-ELIMINAR-VENTA-PENDIENTE 2026-09-20] (portado de
+            // cajeroInventario/productos.php, mismo candado que clientes.php ya aplica al
+            // desactivar un cliente) Nunca revisaba si el producto seguia formando parte de
+            // una venta a domicilio pendiente de entregar EN ESTA SUCURSAL.
+            $stmtPendProd = $pdo->prepare("
+                SELECT COUNT(*) FROM venta_productos vp
+                INNER JOIN ventas v ON v.venta_id = vp.venta_id
+                INNER JOIN cajas c ON c.caja_id = v.caja_id
+                WHERE vp.producto_id = ? AND v.estado = 'Pendiente' AND c.sucursal_id = ?
+            ");
+            $stmtPendProd->execute([$id, $sucursalVista]);
+            if ($stmtPendProd->fetchColumn() > 0) {
+                header('Location: inventario_productos.php?msg=error_producto_pendiente');
+                exit();
+            }
             // [FIX-ELIMINAR-CHK-01] La base de datos tiene una restriccion CHECK
             // (chk_movimientos_inv_cantidad) que no permite cantidad = 0 en
             // movimientos_inventario. El registro de "Ajuste" que se intentaba insertar
@@ -745,6 +760,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto_glo
         $stmtProd = $pdo->prepare("SELECT producto_id FROM productos WHERE producto_id = ? AND activo = 1");
         $stmtProd->execute([$id]);
         if ($stmtProd->fetch()) {
+            // [FIX-PRODUCTO-ELIMINAR-VENTA-PENDIENTE 2026-09-20] Esta baja es GLOBAL (afecta
+            // todas las sucursales a la vez), asi que el candado tambien revisa pendientes
+            // en CUALQUIER sucursal, sin filtrar por c.sucursal_id.
+            $stmtPendProdGlobal = $pdo->prepare("
+                SELECT COUNT(*) FROM venta_productos vp
+                INNER JOIN ventas v ON v.venta_id = vp.venta_id
+                WHERE vp.producto_id = ? AND v.estado = 'Pendiente'
+            ");
+            $stmtPendProdGlobal->execute([$id]);
+            if ($stmtPendProdGlobal->fetchColumn() > 0) {
+                header('Location: inventario_productos.php?msg=error_producto_pendiente');
+                exit();
+            }
             $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ?")->execute([$id]);
             error_log('[inventario_productos.php] Producto ELIMINADO DEL CATALOGO GLOBAL producto_id=' . $id . ' por usuario_id=' . $_SESSION['usuario_id'] . ' motivo: ' . $motivo);
             header('Location: inventario_productos.php?msg=eliminado_global');
@@ -1221,6 +1249,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             'error_stock_max' => icono('circle-x') . ' El stock inicial/mínimo/máximo no puede ser mayor a 999,999. Verifica la cantidad capturada.',
             'error_stock_decimal' => icono('circle-x') . ' Uno de los productos se vende por pieza entera (no "Suelto") — el stock inicial/mínimo/máximo debe ser un número entero.',
             'error_eliminar'   => icono('circle-x') . ' No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
+            'error_producto_pendiente' => icono('circle-x') . ' No puedes eliminar este producto: tiene una venta a domicilio pendiente de entregar.',
             'error_sin_sucursal' => icono('circle-x') . ' Selecciona una sucursal específica no "Todas las sucursales" para eliminar un producto de su stock.',
             'error_token'      => icono('circle-x') . ' La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
             'no_autorizado_import' => icono('circle-x') . ' Tu rol no puede importar productos por Excel. Usa "+ Agregar del catálogo" para activar productos ya existentes en tu sucursal.',

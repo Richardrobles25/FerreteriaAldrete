@@ -108,10 +108,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtP->execute([$productoId]);
             $prod = $stmtP->fetch(PDO::FETCH_ASSOC);
             $sucNombre = null;
+            $stockActivoSuc = true;
             if (!$esAmbas) {
                 $stmtSuc = $pdo->prepare("SELECT nombre FROM sucursales WHERE sucursal_id = ? AND activo = 1");
                 $stmtSuc->execute([$sucursalId]);
                 $sucNombre = $stmtSuc->fetchColumn();
+                // [FIX-PROMO-PRODUCTO-ACTIVO 2026-09-20] El buscador de productos ("Buscar
+                // producto") solo ofrece productos con stock activo en la sucursal elegida,
+                // pero eso es cosmetico -- este POST nunca lo revalidaba antes de crear la
+                // promocion. Confirmado en vivo: se armo la promocion con un producto activo,
+                // se dio de baja ese producto de la sucursal desde otra pestana, y al guardar
+                // se acepto igual, dejando una promocion activa colgada de un producto ya
+                // inactivo ahi. Mismo patron ya corregido en entradas.php/compras.php.
+                $stmtStockActivoProm = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+                $stmtStockActivoProm->execute([$productoId, $sucursalId]);
+                $stockActivoSuc = (bool) $stmtStockActivoProm->fetchColumn();
             }
             // [FEATURE-PROMO-AMBAS-SUCURSALES] El buscador ya solo ofrece productos con stock
             // en TODAS las sucursales activas cuando se elige "Ambas sucursales", pero eso es
@@ -134,12 +145,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (!$prod) { $error = 'Producto no encontrado.'; }
             elseif (!$esAmbas && $sucNombre === false) { $error = 'La sucursal seleccionada no existe o está inactiva.'; }
+            elseif (!$esAmbas && !$stockActivoSuc) { $error = 'El producto ya no está activo en esa sucursal (fue dado de baja). Recarga la página e intenta de nuevo.'; }
             elseif ($esAmbas && !$tieneEnTodas) {
                 $error = 'El producto no tiene stock activo en todas las sucursales -- no se puede crear una promoción para "Ambas sucursales".';
             }
             elseif ($precioPromo >= $prod['precio_venta']) {
                 $error = 'El precio promocional ($' . number_format($precioPromo,2) . ') debe ser menor al precio normal ($' . number_format($prod['precio_venta'],2) . ').';
             } else {
+                // [FIX-PROMO-TRASLAPE-RACE 2026-09-20] El candado de traslape de abajo es un
+                // check-then-insert sin transaccion, sin FOR UPDATE y sin GET_LOCK -- ni
+                // siquiera hay un UNIQUE de respaldo en la base de datos. Mismo patron de
+                // condicion de carrera ya visto en proveedores.php (ronda 4) y ya resuelto en
+                // creditos.php con esta misma tecnica. Intentado en vivo con dos peticiones en
+                // paralelo: no se reprodujo (el lock de sesion de PHP las serializa), pero el
+                // hueco de fondo sigue siendo real bajo concurrencia genuina.
+                $lockPromo   = 'promo_producto_' . $productoId;
+                $lockPromoOk = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockPromo) . ", 5)")->fetchColumn();
+                if (!$lockPromoOk) {
+                    $error = 'Otro usuario está creando una promoción para este producto en este momento. Intenta de nuevo.';
+                } else {
                 // [FIX] No permitir crear una promoción que se traslape en fechas con otra
                 // promoción YA ACTIVA del mismo producto. Antes se podían tener dos promos
                 // vigentes al mismo tiempo (ej. 30% y 50%) y el módulo de ventas terminaba
@@ -190,6 +214,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // [FIX-DOBLE-ESCAPE-PROMO] mismo fix que en el error de traslape de arriba
                     // -- $msg tambien se escapa completo al mostrarse.
                     $msg = 'Promoción creada para "' . $prod['nombre_producto'] . '" en ' . ($esAmbas ? 'ambas sucursales' : $sucNombre) . '.';
+                }
+                $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockPromo) . ")");
                 }
             }
         }

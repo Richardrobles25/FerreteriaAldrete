@@ -110,6 +110,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // capturado. Mismo patron ya corregido en categorias.php/unidades.php/formEmpleado.php.
     if (mb_strlen($codigo) > 50) $errores[] = 'El código no puede tener más de 50 caracteres.';
     if (mb_strlen($nombre_producto) > 150) $errores[] = 'El nombre del producto no puede tener más de 150 caracteres.';
+    // [FIX-UNIDAD-PERSONALIZADA-LARGA] La opcion "Escribir otra" del selector de unidad usa el
+    // mismo campo unidad_medida (productos.unidad_medida es VARCHAR(30)) sin ningun tope, a
+    // diferencia de unidades.php que ya limita a 30 caracteres por la misma razon. Un nombre
+    // mas largo (pero que si cabe en unidades_medida.nombre, VARCHAR(50)) tronaba el UPDATE con
+    // un error de MySQL en modo estricto ("Data too long"), mostrando solo el generico "No se
+    // pudo guardar el producto" sin explicar por que. Probado en vivo contra el servidor.
+    if (mb_strlen($unidad_medida) > 30) $errores[] = 'La unidad de medida no puede tener más de 30 caracteres.';
     if ($precio_venta <= 0) $errores[] = 'El precio de venta debe ser mayor a 0.';
     // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope tecnico
     // 99,999,999.99), pero ningun producto real de una ferreteria cuesta eso — un tope de

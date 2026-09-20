@@ -117,6 +117,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // largo se truncaba en silencio y se guardaba como "editado correctamente".
     if (mb_strlen($codigo) > 50) $errores[] = 'El código no puede tener más de 50 caracteres.';
     if (mb_strlen($nombre_producto) > 150) $errores[] = 'El nombre del producto no puede tener más de 150 caracteres.';
+    // [FIX-UNIDAD-PERSONALIZADA-LARGA] (espejo de cajeroInventario/formProducto.php) la opcion
+    // "Escribir otra" usa el mismo campo unidad_medida (VARCHAR(30)) sin ningun tope, a
+    // diferencia de inventario_unidades.php que ya limita a 30 caracteres por la misma razon —
+    // un nombre mas largo tronaba el UPDATE con un error de MySQL en modo estricto.
+    if (mb_strlen($unidad_medida) > 30) $errores[] = 'La unidad de medida no puede tener más de 30 caracteres.';
     if ($precio_venta <= 0) $errores[] = 'El precio de venta debe ser mayor a 0.';
     // [FIX-PRECIO-MAX-01] precio_compra/venta/mayoreo son DECIMAL(10,2) (tope tecnico
     // 99,999,999.99), pero ningun producto real de una ferreteria cuesta eso — un tope de

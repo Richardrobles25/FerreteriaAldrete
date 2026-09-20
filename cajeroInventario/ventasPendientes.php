@@ -569,9 +569,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $descMaxPct = 0.0;
                 if ($cliente_id) {
-                    $stmtDescCli = $pdo->prepare("SELECT COALESCE(descuento_fijo, 0) FROM clientes WHERE cliente_id = ?");
+                    // [FIX-CLIENTE-INACTIVO-EFECTIVO-TRANSFERENCIA] El camino de Credito ya exige
+                    // "AND activo = 1" al releer al cliente; este releia descuento_fijo sin ese
+                    // filtro. Un cliente desactivado A MEDIO PROCESO (borrador ya armado en el
+                    // navegador antes de que alguien mas lo desactivara) seguia aplicando su
+                    // descuento normalmente. Confirmado en vivo contra el servidor.
+                    $stmtDescCli = $pdo->prepare("SELECT COALESCE(descuento_fijo, 0) FROM clientes WHERE cliente_id = ? AND activo = 1");
                     $stmtDescCli->execute([$cliente_id]);
-                    $descMaxPct = floatval($stmtDescCli->fetchColumn());
+                    $descCliRow = $stmtDescCli->fetchColumn();
+                    if ($descCliRow === false) {
+                        throw new Exception('El cliente seleccionado ya no está activo. Recarga la página e intenta de nuevo.');
+                    }
+                    $descMaxPct = floatval($descCliRow);
                 }
                 if ($descuentoCliente > round($sumaItems * $descMaxPct / 100, 2) + 0.05) {
                     throw new Exception('El descuento excede el autorizado para el cliente.');

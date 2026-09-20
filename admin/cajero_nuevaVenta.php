@@ -794,9 +794,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             // Tope: el descuento de cliente no puede exceder su porcentaje autorizado
             $descMaxPct = 0.0;
             if ($cliente_id) {
-                $stmtDescCli = $pdo->prepare("SELECT COALESCE(descuento_fijo, 0) FROM clientes WHERE cliente_id = ?");
+                // [FIX-CLIENTE-INACTIVO-EFECTIVO-TRANSFERENCIA] (espejo de
+                // cajeroInventario/nuevaVenta.php) el camino de Credito ya exige
+                // "AND activo = 1" al releer al cliente; este no lo tenia.
+                $stmtDescCli = $pdo->prepare("SELECT COALESCE(descuento_fijo, 0) FROM clientes WHERE cliente_id = ? AND activo = 1");
                 $stmtDescCli->execute([$cliente_id]);
-                $descMaxPct = floatval($stmtDescCli->fetchColumn());
+                $descCliRow = $stmtDescCli->fetchColumn();
+                if ($descCliRow === false) {
+                    throw new Exception('El cliente seleccionado ya no está activo. Recarga la página e intenta de nuevo.');
+                }
+                $descMaxPct = floatval($descCliRow);
             }
             if ($descuentoCliente > round($sumaItems * $descMaxPct / 100, 2) + 0.05) {
                 throw new Exception('El descuento excede el autorizado para el cliente.');

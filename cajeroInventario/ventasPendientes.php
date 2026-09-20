@@ -609,6 +609,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtDeuda = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
                     $stmtDeuda->execute([$cliente_id]);
                     $deudaActual = floatval($stmtDeuda->fetchColumn());
+                    // [FIX-CREDITO-DOMICILIO-CONCURRENTE] Un credito de venta a domicilio solo se
+                    // inserta en `creditos` AL LIQUIDAR, no al crear el pedido -- dos pedidos a
+                    // credito del mismo cliente, creados antes de liquidar cualquiera de los dos,
+                    // pasaban esta validacion cada uno por separado (ninguno veia la deuda del
+                    // otro), pudiendo juntos comprometer mas credito del autorizado. El segundo ya
+                    // se rechaza al liquidar (ver bloque de "liquidar" arriba), pero el pedido
+                    // queda creado con stock ya descontado, atorado sin poder liquidarse a
+                    // credito. Se suman tambien los pedidos 'Pendiente' a credito de este cliente.
+                    $stmtDeudaPend = $pdo->prepare("SELECT COALESCE(SUM(total), 0) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente' AND metodo_pago = 'Credito'");
+                    $stmtDeudaPend->execute([$cliente_id]);
+                    $deudaActual += floatval($stmtDeudaPend->fetchColumn());
                     $disponible  = floatval($clienteCredito['limite_credito']) - $deudaActual;
                     if ($deudaActual + $total > floatval($clienteCredito['limite_credito']) + 0.005) {
                         throw new Exception('La venta excede el límite de crédito. Disponible: $' . number_format(max(0, $disponible), 2));

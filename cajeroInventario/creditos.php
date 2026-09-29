@@ -14,17 +14,29 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 // clientes (asi es como realmente se cobra). Si el corte cae en domingo (la tienda cierra ese
 // dia), se recorre al lunes siguiente para que el cliente sí tenga oportunidad de ir a pagar
 // antes de que se le considere vencido.
-// [FIX-MORA-CADA-SABADO 2026-09-21] Reemplaza a siguienteCorteQuincenal(). La fecha_limite de
-// un credito ya vencido ahora avanza al siguiente SABADO (no al siguiente 15/fin de mes) --
-// el cobro recurrente de mora se revisa cada sabado. Siempre avanza al menos 1 dia (nunca
-// regresa la misma fecha si ya cae en sabado), para que el while de mas abajo no se quede
-// pegado si $fechaDesde ya es sabado.
-function siguienteSabado(string $fechaDesde): string {
-    $ts = strtotime($fechaDesde);
-    do {
-        $ts = strtotime('+1 day', $ts);
-    } while ((int)date('N', $ts) !== 6); // ISO-8601: 6 = sabado
-    return date('Y-m-d', $ts);
+// [FIX-MORA-QUINCENA-FIJA 2026-09-29] Revierte [FIX-MORA-CADA-SABADO 2026-09-21] -- ese cambio
+// fue un error, la mora recurrente NO se cobra cada sabado. La politica real de la ferreteria
+// es cortes FIJOS de calendario: dia 15 y ultimo dia de cada mes, iguales para TODOS los
+// clientes (no cada quien con su propio conteo). Si el corte cae domingo (la tienda cierra
+// ese dia) se recorre al lunes siguiente para que el cliente si tenga oportunidad de pagar.
+function siguienteCorteQuincenal(string $fechaDesde): string {
+    $ts   = strtotime($fechaDesde);
+    $dia  = (int)date('j', $ts);
+    $mes  = (int)date('n', $ts);
+    $anio = (int)date('Y', $ts);
+    $ultimoDiaMes = (int)date('t', $ts);
+
+    if ($dia < 15) {
+        $corte = mktime(0, 0, 0, $mes, 15, $anio);
+    } elseif ($dia < $ultimoDiaMes) {
+        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
+    } else {
+        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
+    }
+    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
+        $corte = strtotime('+1 day', $corte);
+    }
+    return date('Y-m-d', $corte);
 }
 
 // Datos bancarios de la sucursal
@@ -116,7 +128,7 @@ try {
             // corte (no "hoy"), para que el historial de mora no muestre la misma fecha repetida
             // cuando se ponen al dia varios sabados atrasados en una sola carga de pagina.
             $fechaEstaMora     = $fechaLimiteActual;
-            $fechaLimiteActual = siguienteSabado($fechaLimiteActual);
+            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
             $ultimaMora        = $moraAmt;
             $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
                 ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);

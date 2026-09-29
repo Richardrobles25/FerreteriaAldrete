@@ -26,7 +26,7 @@ if ($sucursalVista === 0) {
 // COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
 // clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una
 // vez que el credito ya esta vencido) si sigue un corte fijo, pero ahora es "cada sabado" en vez
-// de "dia 15/fin de mes": ver siguienteSabado() en cajero_creditos.php/abonos.php.
+// de "dia 15/fin de mes": ver siguienteCorteQuincenal() en cajero_creditos.php/abonos.php.
 
 $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
 $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);

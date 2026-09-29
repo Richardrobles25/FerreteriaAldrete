@@ -20,7 +20,7 @@ if ($sucursalVista === 0) {
 // COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
 // clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una
 // vez que el credito ya esta vencido) si sigue un corte fijo, pero ahora es "cada sabado" en vez
-// de "dia 15/fin de mes": ver siguienteSabado() en cajero_creditos.php/abonos.php.
+// de "dia 15/fin de mes": ver siguienteCorteQuincenal() en cajero_creditos.php/abonos.php.
 
 // Caja abierta en la sucursal elegida (se usa al liquidar). [FIX-CAJA-REDIRECT-AJAX] El
 // redirect por falta de caja ya NO vive aqui arriba — "liquidar"/"cancelar" son GET

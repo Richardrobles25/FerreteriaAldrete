@@ -13,7 +13,7 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 // COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
 // clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una
 // vez que el credito ya esta vencido) si sigue un corte fijo, pero ahora es "cada sabado" en vez
-// de "dia 15/fin de mes": ver siguienteSabado() en creditos.php/abonos.php.
+// de "dia 15/fin de mes": ver siguienteCorteQuincenal() en creditos.php/abonos.php.
 
 // Caja abierta del usuario (se usa al liquidar). [FIX-CAJA-REDIRECT-AJAX] (portado de
 // admin/cajero_ventasPendientes.php) El redirect por falta de caja ya NO es incondicional

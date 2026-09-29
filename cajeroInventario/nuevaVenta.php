@@ -9,6 +9,15 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
+// [FIX-SESSION-LOCK] De aqui en adelante el script solo LEE $_SESSION, nunca escribe --
+// se libera el candado exclusivo del archivo de sesion (que PHP mantiene por defecto hasta
+// que el script completo termina) para que otra peticion de la MISMA sesion (otra pestaña
+// de venta, el refresco de catalogo, un reintento del cajero) no se quede haciendo fila
+// mientras esta venta hace todo su trabajo pesado (validar carrito, stock, GET_LOCK del
+// folio, crear la venta). No afecta los candados de MySQL (FOR UPDATE, GET_LOCK) que
+// protegen el stock y el folio -- esos son independientes y siguen igual.
+session_write_close();
+
 // [FIX-PLAZO-15-DIAS 2026-09-21] El plazo de un credito fiado es 15 dias desde la fecha de
 // COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
 // clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una

@@ -11,6 +11,12 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
+// [FIX-SESSION-LOCK] Ver nota en cajeroInventario/nuevaVenta.php. Se libera hasta despues
+// de _admin_sucursal_filtro.php porque ese archivo SI escribe en la sesion
+// (admin_sucursal_filtro) cuando el administrador cambia la sucursal que esta viendo -- de
+// aqui en adelante el script solo LEE $_SESSION.
+session_write_close();
+
 if ($sucursalVista === 0) {
     header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();

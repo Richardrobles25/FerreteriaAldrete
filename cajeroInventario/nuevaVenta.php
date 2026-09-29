@@ -3100,12 +3100,19 @@ function seleccionarMetodo(metodo, btn) {
 // [FEATURE-PESTAÑAS-CARRITO] Vuelca la pestaña activa (snapshotPestañaActiva) y persiste
 // TODAS las pestañas a localStorage de una vez -- reemplaza al guardado por separado de
 // 'carrito'/'ventaExtra' que existia cuando solo habia una venta en curso.
+// [FIX-PESTAÑAS-POR-SUCURSAL] La llave ahora incluye el id de sucursal ('pestañasVenta_N')
+// en vez de una sola llave compartida + una bandera aparte diciendo de quien era. Con la
+// bandera, cambiar de sucursal y guardar aqui SOBREESCRIBIA por completo el carrito que
+// hubiera quedado de la sucursal anterior -- verificado en vivo (rol Admin, que si puede
+// cambiar de sucursal): dejar un carrito en Barrio de los Indios, trabajar en Pinar y volver
+// perdia los DOS carritos, sin ningun aviso. Con una llave por sucursal cada una guarda la
+// suya de forma independiente, sin pisarse.
 function guardarEstadoVenta() {
     snapshotPestañaActiva();
     try {
-        localStorage.setItem('pestañasVenta', JSON.stringify(pestañas));
-        localStorage.setItem('pestañasVenta_sucursal_id', String(<?= intval($_SESSION['sucursal_id']) ?>));
-        localStorage.setItem('pestañaActivaIdx', String(pestañaActivaIdx));
+        const _sucKey = <?= intval($_SESSION['sucursal_id']) ?>;
+        localStorage.setItem('pestañasVenta_' + _sucKey, JSON.stringify(pestañas));
+        localStorage.setItem('pestañaActivaIdx_' + _sucKey, String(pestañaActivaIdx));
     } catch (e) {}
     renderPestañas();
 }
@@ -3826,13 +3833,33 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
 (function iniciarPestañasVenta() {
     const miSuc = <?= intval($_SESSION['sucursal_id']) ?>;
     let cargadas = null;
+    let idxMigrado = null;
     try {
-        const sucGuardada = parseInt(localStorage.getItem('pestañasVenta_sucursal_id'));
-        if (sucGuardada === miSuc) {
-            const guardado = JSON.parse(localStorage.getItem('pestañasVenta'));
-            if (Array.isArray(guardado) && guardado.length) cargadas = guardado;
-        }
+        const guardado = JSON.parse(localStorage.getItem('pestañasVenta_' + miSuc));
+        if (Array.isArray(guardado) && guardado.length) cargadas = guardado;
     } catch (e) {}
+
+    if (!cargadas) {
+        // [FIX-PESTAÑAS-POR-SUCURSAL] Migracion, una sola vez, desde la llave compartida
+        // vieja ('pestañasVenta' + bandera 'pestañasVenta_sucursal_id') a la nueva llave por
+        // sucursal -- para no perder un carrito que haya quedado guardado ahi justo el dia
+        // que se despliega este fix. Se limpia siempre que se revisa, la haya reclamado esta
+        // sucursal o no, porque ninguna pagina vuelve a escribir en esa llave vieja.
+        try {
+            const sucVieja = parseInt(localStorage.getItem('pestañasVenta_sucursal_id'));
+            if (sucVieja === miSuc) {
+                const viejoCompartido = JSON.parse(localStorage.getItem('pestañasVenta'));
+                if (Array.isArray(viejoCompartido) && viejoCompartido.length) {
+                    cargadas = viejoCompartido;
+                    const idxViejo = parseInt(localStorage.getItem('pestañaActivaIdx'));
+                    if (!isNaN(idxViejo)) idxMigrado = idxViejo;
+                }
+            }
+        } catch (e) {}
+        localStorage.removeItem('pestañasVenta');
+        localStorage.removeItem('pestañasVenta_sucursal_id');
+        localStorage.removeItem('pestañaActivaIdx');
+    }
 
     if (!cargadas) {
         // Migracion desde el formato de una sola venta en curso (anterior a esta feature).
@@ -3866,7 +3893,7 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
 
     pestañas = cargadas && cargadas.length ? cargadas : [crearPestañaVacia()];
     pestañaIdCounter = Math.max(0, ...pestañas.map(p => p.id || 0));
-    let idxGuardado = parseInt(localStorage.getItem('pestañaActivaIdx'));
+    let idxGuardado = idxMigrado !== null ? idxMigrado : parseInt(localStorage.getItem('pestañaActivaIdx_' + miSuc));
     if (isNaN(idxGuardado) || idxGuardado < 0 || idxGuardado >= pestañas.length) idxGuardado = 0;
 
     pestañaActivaIdx  = idxGuardado;

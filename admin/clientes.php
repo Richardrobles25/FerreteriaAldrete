@@ -367,6 +367,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['clientes_excel'])) {
                         $telsEnLote[$telefonoCli] = $fila;
                     }
 
+                    // [FIX-IMPORT-DESACTIVAR-BYPASS 2026-09-30] La reimportacion actualizaba
+                    // "activo" directo desde el archivo sin pasar por la misma revision que ya
+                    // hace el boton manual "Desactivar" (?toggle= mas arriba en este archivo) --
+                    // un Excel con Activo=No podia desactivar en bloque a un cliente con credito
+                    // pendiente o una venta a domicilio pendiente, sin ningun aviso. Se revalida
+                    // aqui, igual que el toggle manual, antes de aceptar la fila. Solo aplica si
+                    // el cliente EXISTE y esta actualmente activo (nada que revalidar en un alta
+                    // nueva, ni si ya estaba inactivo de antes).
+                    if ($clienteIdDestino > 0 && !$activoCli) {
+                        $stmtActivoActualCli = $pdo->prepare("SELECT activo FROM clientes WHERE cliente_id = ?");
+                        $stmtActivoActualCli->execute([$clienteIdDestino]);
+                        if ($stmtActivoActualCli->fetchColumn()) {
+                            $stmtCredPendCli = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+                            $stmtCredPendCli->execute([$clienteIdDestino]);
+                            if ($stmtCredPendCli->fetchColumn() > 0) {
+                                throw new Exception('No se puede desactivar: tiene un crédito pendiente de pago.');
+                            }
+                            $stmtVentaPendCli = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
+                            $stmtVentaPendCli->execute([$clienteIdDestino]);
+                            if ($stmtVentaPendCli->fetchColumn() > 0) {
+                                throw new Exception('No se puede desactivar: tiene ventas a domicilio pendientes de entrega.');
+                            }
+                        }
+                    }
+
                     if ($clienteIdDestino > 0) {
                         $pdo->prepare("
                             UPDATE clientes

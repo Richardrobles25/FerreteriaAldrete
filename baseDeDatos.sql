@@ -24,6 +24,13 @@
         numero_cuenta      VARCHAR(30)   NULL DEFAULT NULL,
         clabe_interbancaria CHAR(18)     NULL DEFAULT NULL,
         alias_tarjeta      VARCHAR(60)   NULL DEFAULT NULL,
+        -- [FEATURE-DATOS-FACTURACION 2026-09-21] datos bancarios separados para facturacion
+        -- (cuenta distinta a la de cobro normal) -- ver migracion_datos_facturacion.sql
+        banco_fact              VARCHAR(100) NULL DEFAULT NULL,
+        titular_cuenta_fact     VARCHAR(150) NULL DEFAULT NULL,
+        numero_cuenta_fact      VARCHAR(30)  NULL DEFAULT NULL,
+        clabe_interbancaria_fact CHAR(18)    NULL DEFAULT NULL,
+        alias_tarjeta_fact      VARCHAR(60)  NULL DEFAULT NULL,
         comision_terminal_pct DECIMAL(5,2) DEFAULT 0
     );
 
@@ -146,6 +153,12 @@
         notas varchar(255),
         activo boolean DEFAULT true,
         credito_autorizado boolean default false,
+        -- [FEATURE-IMPORTAR-CLIENTES 2026-09-22] Si es 0, este cliente nunca acumula mora en
+        -- ninguno de sus creditos, sin importar cuanto se atrase -- independiente del boton
+        -- "Cancelar mora" (que solo cancela la ya acumulada de un credito puntual). Los
+        -- clientes importados desde el sistema anterior nacen en 0 (no se les cobra recargo
+        -- retroactivo por una deuda heredada); un cliente nuevo capturado a mano nace en 1.
+        cobrar_mora boolean NOT NULL DEFAULT true,
         limite_credito DECIMAL(10,2) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -214,10 +227,14 @@
     );
 
     -- 13. CREDITOS
+    -- [FEATURE-IMPORTAR-CLIENTES 2026-09-22] venta_id ahora acepta NULL: un credito importado
+    -- desde el sistema anterior (saldo heredado del cliente) no tiene una venta real detras --
+    -- crear una venta falsa solo para satisfacer la FK contaminaria los reportes de
+    -- Ventas/Corte de Caja con dinero que nunca fue una venta nueva en este sistema.
     CREATE TABLE creditos (
         credito_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         cliente_id INT UNSIGNED NOT NULL,
-        venta_id INT UNSIGNED NOT NULL,
+        venta_id INT UNSIGNED NULL,
         monto_total DECIMAL(10,2) NOT NULL,
         saldo_pendiente DECIMAL(10,2) NOT NULL,
         estado ENUM('Activo', 'Liquidado', 'Vencido') DEFAULT 'Activo',

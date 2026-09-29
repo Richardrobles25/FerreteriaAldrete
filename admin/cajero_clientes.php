@@ -100,6 +100,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notas              = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
     $credito_autorizado = isset($_POST['credito_autorizado']) ? 1 : 0;
     $limite_credito     = floatval(is_scalar($_POST['limite_credito'] ?? null) ? $_POST['limite_credito'] : 0);
+    // [FEATURE-COBRAR-MORA 2026-09-22] (espejo de admin/clientes.php) Si se desmarca, este
+    // cliente NUNCA acumula mora en ninguno de sus creditos (permanente, distinto de
+    // "Cancelar mora" en creditos.php que solo perdona la ya acumulada de un credito puntual).
+    $cobrar_mora        = isset($_POST['cobrar_mora']) ? 1 : 0;
     // [FIX-LIMITE-FANTASMA] (espejo de cajeroInventario/clientes.php): admin/clientes.php ya
     // reseteaba limite_credito a 0 cuando el credito no esta autorizado; aqui faltaba.
     if (!$credito_autorizado) $limite_credito = 0;
@@ -148,7 +152,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores) && $telefono !== '') {
-        $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ?");
+        // [FIX-TEL-INACTIVO 2026-09-25] Un cliente desactivado no debe bloquear su telefono
+        // para siempre (pasa seguido: se reasigna a otra persona real despues).
+        $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ? AND activo = 1");
         $stmtDupTel->execute([$telefono, $cliente_id]);
         $dupTel = $stmtDupTel->fetchColumn();
         if ($dupTel !== false) {
@@ -163,8 +169,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // rowCount() por si solo no basta (PDO/MySQL reporta filas MODIFICADAS, no
             // encontradas — guardar sin cambios tambien da 0), asi que se verifica existencia
             // por separado en vez de confiar en rowCount().
-            $stmtUpdCliente = $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=? WHERE cliente_id=?");
-            $stmtUpdCliente->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cliente_id]);
+            $stmtUpdCliente = $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=?, cobrar_mora=? WHERE cliente_id=?");
+            $stmtUpdCliente->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cobrar_mora, $cliente_id]);
             if ($stmtUpdCliente->rowCount() === 0) {
                 $stmtExisteCliente = $pdo->prepare("SELECT 1 FROM clientes WHERE cliente_id = ?");
                 $stmtExisteCliente->execute([$cliente_id]);
@@ -176,8 +182,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             header('Location: cajero_clientes.php?msg=editado');
         } else {
-            $pdo->prepare("INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, activo) VALUES (?,?,?,?,?,?,?,?,1)")
-                ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito]);
+            $pdo->prepare("INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, cobrar_mora, activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
+                ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cobrar_mora]);
             header('Location: cajero_clientes.php?msg=creado');
         }
         if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
@@ -318,7 +324,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             <form method="GET" action="cajero_clientes.php">
                 <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar por nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
+                    <input type="text" name="buscar" placeholder="Buscar por nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                     <button class="btn-buscar" type="submit">Buscar</button>
                     <?php if ($busqueda): ?><a class="btn-limpiar" href="cajero_clientes.php">Limpiar</a><?php endif; ?>
                     <?php if ($verInactivos): ?>
@@ -357,6 +363,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <?php if ($c['credito_autorizado']): ?>
                                     <span class="badge-credito">Autorizado</span>
                                     <div style="font-size:11px;color:#aaa;">Límite: $<?= number_format($c['limite_credito'],2) ?></div>
+                                    <?php if (!$c['cobrar_mora']): ?><div style="font-size:11px;color:#e65100;font-weight:600;">Sin mora</div><?php endif; ?>
                                 <?php else: ?>
                                     <span style="color:#aaa;font-size:12px;">No</span>
                                 <?php endif; ?>
@@ -406,6 +413,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     $vNotasCC     = $esPostCliCajero ? $notas              : ($editando['notas']           ?? '');
                     $vCredAutCC   = $esPostCliCajero ? $credito_autorizado : ($editando['credito_autorizado'] ?? 0);
                     $vLimiteCC    = $esPostCliCajero ? $limite_credito     : ($editando['limite_credito']  ?? 0);
+                    $vCobrarMoraCC = $esPostCliCajero ? $cobrar_mora       : ($editando['cobrar_mora']     ?? 1);
                 ?>
                 <form method="POST">
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
@@ -441,6 +449,12 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <label>Notas</label>
                         <input type="text" name="notas" maxlength="255" value="<?= htmlspecialchars($vNotasCC) ?>" placeholder="Observaciones del cliente">
                     </div>
+
+                    <div class="check-row">
+                        <input type="checkbox" name="cobrar_mora" id="chkCobrarMora" <?= $vCobrarMoraCC ? 'checked' : '' ?>>
+                        <label for="chkCobrarMora">Cobrar mora a este cliente si se atrasa</label>
+                    </div>
+                    <div style="font-size:11px;color:#aaa;margin:-8px 0 13px;">Si la desmarcas, nunca se le acumulará recargo por atraso, aunque se pase de su fecha límite.</div>
 
                     <div class="check-row">
                         <input type="checkbox" name="credito_autorizado" id="chkCredito"

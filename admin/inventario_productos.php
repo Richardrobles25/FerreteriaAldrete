@@ -990,16 +990,32 @@ $vistaGlobal = $esAdmin && $sucursalVista === 0;
 $verInactivos = $vistaGlobal && isset($_GET['ver_inactivos']);
 
 if ($vistaGlobal) {
-    // Vista global: catálogo puro, sin JOIN a stock_sucursal
+    // [FEATURE-STOCK-GLOBAL 2026-09-20] La vista global es el catalogo puro (sin
+    // JOIN a stock_sucursal), pero el usuario pidio poder ver desde aqui mismo
+    // cuanto stock suma un producto entre TODAS las sucursales activas, sin
+    // tener que cambiar de vista una por una. Se agrega como subconsulta
+    // aparte (no INNER/LEFT JOIN directo a stock_sucursal) para no multiplicar
+    // filas del catalogo por cada sucursal que tenga el producto.
     $where   = "WHERE p.activo = " . ($verInactivos ? '0' : '1');
     $params  = [];
     $orderBy = "p.nombre_producto ASC";
     if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
     $stmt = $pdo->prepare("
-        SELECT p.*, c.nombre as nombre_categoria
+        SELECT p.*, c.nombre as nombre_categoria,
+               COALESCE(st.stock_total, 0) AS stock_total_sucursales,
+               st.desglose AS stock_desglose_sucursales
         FROM productos p
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        LEFT JOIN (
+            SELECT ss.producto_id,
+                   SUM(ss.stock_actual) AS stock_total,
+                   GROUP_CONCAT(CONCAT(s.nombre, ': ', ss.stock_actual) ORDER BY s.nombre SEPARATOR ' · ') AS desglose
+            FROM stock_sucursal ss
+            INNER JOIN sucursales s ON s.sucursal_id = ss.sucursal_id AND s.activo = 1
+            WHERE ss.activo = 1
+            GROUP BY ss.producto_id
+        ) st ON st.producto_id = p.producto_id
         {$where}
         ORDER BY {$orderBy}
     ");
@@ -1269,7 +1285,17 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;" oninput="filtrarTabla(this.value)">
+                    <?php /* [FIX-BUSCAR-ENTER-RECARGA 2026-09-20] Este campo ya filtra en vivo con
+                    oninput -- no necesita enviar el formulario para nada, pero dos mecanismos
+                    distintos lo hacian de todas formas: (1) includes/auto_filter.js reenvia
+                    AUTOMATICAMENTE el formulario 600ms despues de cualquier tecla en un input de
+                    .filtros, sin necesitar Enter -- por eso "escribir una letra y esperar" ya
+                    bastaba para recargar la pagina a medio escribir y tirar el foco. Se corrige
+                    con data-no-auto, el mismo escape hatch que ya usaba reporteProductos.php para
+                    este mismo problema. (2) Ademas, estar dentro de un <form> sin bloquear Enter
+                    hacia que Enter tecleado por costumbre disparara el submit nativo del
+                    navegador -- se corrige aparte con el onkeydown de abajo. */ ?>
+                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -1308,6 +1334,8 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                         <th>Tipo</th>
                         <?php if (!$vistaGlobal): ?>
                         <th>Stock</th>
+                        <?php else: ?>
+                        <th>Stock (todas las sucursales)</th>
                         <?php endif; ?>
                         <th>P. Venta</th>
                         <th>P. Mayoreo</th>
@@ -1336,6 +1364,11 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                         <td class="<?= $esStockBajo?'stock-alerta':'stock-ok' ?>">
                             <?= number_format($p['stock_actual'],2) ?>
                             <span style="font-size:11px;color:#aaa;">/ mín <?= number_format($p['stock_minimo'],2) ?></span>
+                        </td>
+                        <?php else: ?>
+                        <td class="stock-ok" title="<?= htmlspecialchars($p['stock_desglose_sucursales'] ?? 'Sin stock registrado en ninguna sucursal') ?>">
+                            <?= number_format($p['stock_total_sucursales'],2) ?>
+                            <span style="font-size:11px;color:#aaa;">(pasa el cursor para ver por sucursal)</span>
                         </td>
                         <?php endif; ?>
                         <td>$<?= number_format($p['precio_venta'],2) ?></td>

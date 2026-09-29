@@ -18,29 +18,17 @@ if ($sucursalVista === 0) {
     exit();
 }
 
-// [FIX-QUINCENA-FIJA] Los cortes de credito NO son "15 dias despues de hoy" (rodante) sino
-// fechas fijas de calendario: el dia 15 y el ultimo dia de cada mes, iguales para todos los
-// clientes (asi es como realmente se cobra). Si el corte cae en domingo (la tienda cierra ese
-// dia), se recorre al lunes siguiente para que el cliente sí tenga oportunidad de ir a pagar
-// antes de que se le considere vencido.
-function siguienteCorteQuincenal(string $fechaDesde): string {
-    $ts   = strtotime($fechaDesde);
-    $dia  = (int)date('j', $ts);
-    $mes  = (int)date('n', $ts);
-    $anio = (int)date('Y', $ts);
-    $ultimoDiaMes = (int)date('t', $ts);
-
-    if ($dia < 15) {
-        $corte = mktime(0, 0, 0, $mes, 15, $anio);
-    } elseif ($dia < $ultimoDiaMes) {
-        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
-    } else {
-        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
-    }
-    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
-        $corte = strtotime('+1 day', $corte);
-    }
-    return date('Y-m-d', $corte);
+// [FIX-MORA-CADA-SABADO 2026-09-21] Reemplaza a siguienteCorteQuincenal(). La fecha_limite de
+// un credito ya vencido ahora avanza al siguiente SABADO (no al siguiente 15/fin de mes) --
+// el cobro recurrente de mora se revisa cada sabado. Siempre avanza al menos 1 dia (nunca
+// regresa la misma fecha si ya cae en sabado), para que el while de mas abajo no se quede
+// pegado si $fechaDesde ya es sabado.
+function siguienteSabado(string $fechaDesde): string {
+    $ts = strtotime($fechaDesde);
+    do {
+        $ts = strtotime('+1 day', $ts);
+    } while ((int)date('N', $ts) !== 6); // ISO-8601: 6 = sabado
+    return date('Y-m-d', $ts);
 }
 
 // Datos bancarios de la sucursal
@@ -68,13 +56,25 @@ try {
 // vencida, compuesta sobre el saldo que ya trae mora anterior).
 try {
     $pdo->beginTransaction();
+    // [FEATURE-IMPORTAR-CLIENTES 2026-09-22] Los JOIN hacia venta/caja/sucursal ahora son LEFT:
+    // un credito importado (venta_id NULL, saldo heredado del sistema anterior) no tiene una
+    // venta real detras, y aun asi debe poder recibir mora si algun dia se le activa -- se usa
+    // el % global (todas las sucursales comparten el mismo valor, ver admin/formSucursal.php)
+    // como respaldo cuando no hay una sucursal real ligada. "cli.cobrar_mora = 0" excluye por
+    // completo a los clientes marcados como exentos, sin importar su saldo o cuanto se atrasen.
+    // [FIX-MORA-CLIENTE-INACTIVO 2026-09-25] "cli.activo = 1" congela la mora cuando el cliente
+    // esta desactivado -- verificado en vivo que sin esto, un cliente inactivo seguia acumulando
+    // recargo cada sabado exactamente igual que uno activo. La deuda ya acumulada no se toca,
+    // solo deja de crecer mientras el cliente siga inactivo (igual que cobrar_mora=0).
     $stmtMoraList = $pdo->query("
-        SELECT cr.credito_id, s.porcentaje_mora
+        SELECT cr.credito_id, COALESCE(s.porcentaje_mora, (SELECT porcentaje_mora FROM sucursales LIMIT 1)) AS porcentaje_mora
         FROM creditos cr
-        JOIN ventas v     ON cr.venta_id     = v.venta_id
-        JOIN cajas  ca    ON v.caja_id       = ca.caja_id
-        JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
-        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND s.porcentaje_mora > 0
+        JOIN clientes cli      ON cr.cliente_id = cli.cliente_id
+        LEFT JOIN ventas v     ON cr.venta_id    = v.venta_id
+        LEFT JOIN cajas  ca    ON v.caja_id      = ca.caja_id
+        LEFT JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND cli.cobrar_mora = 1 AND cli.activo = 1
+          AND COALESCE(s.porcentaje_mora, (SELECT porcentaje_mora FROM sucursales LIMIT 1)) > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
         $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, fecha_limite, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
@@ -91,10 +91,10 @@ try {
             $moraAmt           = round($saldoActual * $pct / 100, 2);
             $saldoBase         = $saldoActual;
             $saldoActual       = round($saldoActual + $moraAmt, 2);
-            // Se registra con la fecha real en que vencio esa quincena (no "hoy"), para que
+            // Se registra con la fecha real en que vencio ese plazo (no "hoy"), para que
             // el historial no muestre la misma fecha repetida al ponerse al dia de golpe.
             $fechaEstaMora     = $fechaLimiteActual;
-            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
+            $fechaLimiteActual = siguienteSabado($fechaLimiteActual);
             $ultimaMora        = $moraAmt;
             $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
                 ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);
@@ -334,7 +334,7 @@ if (isset($_GET['get_creditos_cliente'])) {
                        ORDER BY p.nombre_producto SEPARATOR ';;'
                    ) AS prods_raw
             FROM creditos cr
-            JOIN ventas v ON cr.venta_id = v.venta_id
+            LEFT JOIN ventas v ON cr.venta_id = v.venta_id
             LEFT JOIN venta_productos vp ON cr.venta_id = vp.venta_id
             LEFT JOIN productos p ON vp.producto_id = p.producto_id
             LEFT JOIN (
@@ -928,7 +928,7 @@ function abrirDetalles(clienteId, nombre) {
             let totalPend = 0;
             creditos.forEach(cr => {
                 const badgeClass = cr.estado === 'Vencido' ? 'badge-vencido2' : 'badge-activo';
-                const folio = cr.folio ? 'Folio ' + esc(cr.folio) : 'Venta #' + intval(cr.credito_id);
+                const folio = cr.folio ? 'Folio ' + esc(cr.folio) : 'Crédito #' + intval(cr.credito_id);
                 const saldo = parseFloat(cr.saldo_pendiente);
                 totalPend += saldo;
                 html += `<div class="credito-det">

@@ -16,28 +16,11 @@ if ($sucursalVista === 0) {
     exit();
 }
 
-// [FIX-QUINCENA-FIJA] El plazo de un credito fiado es un corte fijo de calendario (dia 15 o
-// ultimo dia del mes, igual para todos los clientes), no "15 dias desde hoy". Si el corte cae
-// en domingo (la tienda cierra ese dia) se recorre al lunes siguiente.
-function siguienteCorteQuincenal(string $fechaDesde): string {
-    $ts   = strtotime($fechaDesde);
-    $dia  = (int)date('j', $ts);
-    $mes  = (int)date('n', $ts);
-    $anio = (int)date('Y', $ts);
-    $ultimoDiaMes = (int)date('t', $ts);
-
-    if ($dia < 15) {
-        $corte = mktime(0, 0, 0, $mes, 15, $anio);
-    } elseif ($dia < $ultimoDiaMes) {
-        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
-    } else {
-        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
-    }
-    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
-        $corte = strtotime('+1 day', $corte);
-    }
-    return date('Y-m-d', $corte);
-}
+// [FIX-PLAZO-15-DIAS 2026-09-21] El plazo de un credito fiado es 15 dias desde la fecha de
+// COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
+// clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una
+// vez que el credito ya esta vencido) si sigue un corte fijo, pero ahora es "cada sabado" en vez
+// de "dia 15/fin de mes": ver siguienteSabado() en cajero_creditos.php/abonos.php.
 
 $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
 $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
@@ -1032,9 +1015,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             }
 
             if ($metodo_pago === 'Credito' && $cliente_id) {
-                // [FIX-QUINCENA-FIJA] La primera fecha limite es el proximo corte fijo (15 o
-                // fin de mes), no "15 dias desde hoy".
-                $primerCorte = siguienteCorteQuincenal(date('Y-m-d'));
+                // [FIX-PLAZO-15-DIAS 2026-09-21] La fecha limite es 15 dias desde HOY (fecha de
+                // la compra) -- ya no un corte fijo de calendario compartido.
+                $primerCorte = date('Y-m-d', strtotime('+15 days'));
                 $pdo->prepare("INSERT INTO creditos (cliente_id,venta_id,monto_total,saldo_pendiente,estado,fecha_limite) VALUES (?,?,?,?,'Activo',?)")
                     ->execute([$cliente_id,$venta_id,$total,$total,$primerCorte]);
             }
@@ -1131,6 +1114,23 @@ if (!$caja) {
     .scanner-row input:focus { outline: none; border-color: #2e7d32; border-width: 2px; }
     .btn-scan-mode { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
     .btn-scan-mode.activo { background: #2e7d32; color: white; border-color: #2e7d32; }
+    /* [FEATURE-PESTAÑAS-CARRITO] Pestañas de ventas en curso */
+    .pestañas-venta-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 2px; }
+    .pestaña-venta { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 12px; border-radius: 8px; background: #eef1f4; color: #667; font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid #e0e3e6; max-width: 180px; transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s; }
+    .pestaña-venta:hover { background: #e4e9ee; }
+    /* [AUTOFIX-PESTAÑAS-CONTRASTE 2026-09-22] La version anterior (fondo blanco + una linea
+    de 1px) casi no se distinguia de las demas pestañas. Ahora la activa se rellena por
+    completo con el color de acento para que sea obvia de un vistazo. */
+    .pestaña-venta.activa { background: #14ace7; color: white; border-color: #0f96c9; box-shadow: 0 2px 6px rgba(20,172,231,0.4); font-weight: 700; }
+    .pestaña-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pestaña-badge { background: #14ace7; color: white; border-radius: 99px; font-size: 10px; font-weight: 700; padding: 1px 6px; flex-shrink: 0; }
+    .pestaña-venta.activa .pestaña-badge { background: rgba(255,255,255,0.28); color: white; }
+    .pestaña-cerrar { border: none; background: transparent; color: #999; font-size: 15px; line-height: 1; cursor: pointer; padding: 0 2px; flex-shrink: 0; }
+    .pestaña-cerrar:hover { color: #c0392b; }
+    .pestaña-venta.activa .pestaña-cerrar { color: rgba(255,255,255,0.8); }
+    .pestaña-venta.activa .pestaña-cerrar:hover { color: white; }
+    .pestaña-nueva { border: 1px dashed #ccd2d8; background: white; color: #888; border-radius: 8px; padding: 7px 14px; font-size: 15px; font-weight: 700; cursor: pointer; line-height: 1; }
+    .pestaña-nueva:hover { border-color: #14ace7; color: #14ace7; }
     .scan-feedback { font-size: 12px; padding: 4px 10px; border-radius: 99px; display: none; }
     .scan-ok { background: #e8f5e9; color: #2e7d32; }
     .scan-err { background: #fdecea; color: #c0392b; }
@@ -1390,6 +1390,9 @@ if (!$caja) {
                 </div>
             </div>
 
+            <!-- [FEATURE-PESTAÑAS-CARRITO] Varias ventas en curso a la vez -->
+            <div class="pestañas-venta-wrap" id="pestañasVentaBar"></div>
+
             <!-- Carrito -->
             <div class="card" style="flex:1;">
                 <h3>Carrito</h3>
@@ -1474,6 +1477,12 @@ if (!$caja) {
                             $tc = trim($sucursalTicket['numero_cuenta']       ?? '');
                             $tl = trim($sucursalTicket['clabe_interbancaria'] ?? '');
                             $ta = trim($sucursalTicket['alias_tarjeta']       ?? '');
+                            // [FEATURE-DATOS-FACTURACION 2026-09-21] segunda cuenta, solo para facturacion.
+                            $tbF = trim($sucursalTicket['banco_fact']               ?? '');
+                            $ttF = trim($sucursalTicket['titular_cuenta_fact']      ?? '');
+                            $tcF = trim($sucursalTicket['numero_cuenta_fact']       ?? '');
+                            $tlF = trim($sucursalTicket['clabe_interbancaria_fact'] ?? '');
+                            $taF = trim($sucursalTicket['alias_tarjeta_fact']       ?? '');
                             ?>
                             <div style="font-size:12px;line-height:1.8;background:#f0f8ff;border:1px solid #b3e0f7;border-radius:6px;padding:10px 12px;color:#333;">
                                 <?php if ($tb || $tt || $tc || $tl): ?>
@@ -1486,6 +1495,16 @@ if (!$caja) {
                                     <span style="color:#aaa;">Sin datos bancarios configurados.<br>Agrégalos en Configuración → Sucursal.</span>
                                 <?php endif; ?>
                             </div>
+                            <?php if ($tbF || $ttF || $tcF || $tlF): ?>
+                            <div style="font-size:12px;line-height:1.8;background:#fff8e1;border:1px solid #f0d68a;border-radius:6px;padding:10px 12px;color:#333;margin-top:6px;">
+                                <div style="font-size:11px;font-weight:700;color:#8a6d00;margin-bottom:2px;text-transform:uppercase;letter-spacing:.4px;">Datos para facturación</div>
+                                <?php if ($tbF): ?><div><strong>Banco:</strong> <?= htmlspecialchars($tbF) ?></div><?php endif; ?>
+                                <?php if ($ttF): ?><div><strong>Titular:</strong> <?= htmlspecialchars($ttF) ?></div><?php endif; ?>
+                                <?php if ($tcF): ?><div><strong>No. cuenta:</strong> <?= htmlspecialchars($tcF) ?></div><?php endif; ?>
+                                <?php if ($tlF): ?><div><strong>CLABE:</strong> <?= htmlspecialchars($tlF) ?></div><?php endif; ?>
+                                <?php if ($taF): ?><div><strong>Alias:</strong> <?= htmlspecialchars($taF) ?></div><?php endif; ?>
+                            </div>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -1685,28 +1704,34 @@ function mostrarNotifTemporal(mensajeHtml, tipo = 'exito', duracionMs = 4000) {
 }
 
 // ── Estado global ────────────────────────────────────────────────────────────
-let carrito           = (function() {
-    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] El borrador de localStorage no distinguia
-    // sucursal -- un cajero normal nunca puede cambiar de sucursal a medio carrito (la suya es
-    // fija), pero el Administrador SI puede (selector de sucursal), y esta misma clave
-    // "carrito" tambien la usa cajeroInventario/nuevaVenta.php en el mismo origen. Sin este
-    // candado, cambiar de sucursal (o entrar como Administrador justo despues de un cajero en
-    // el mismo navegador) restauraba productos con el precio/promocion/stock de la sucursal
-    // VIEJA -- reproducido en vivo: un producto con promocion exclusiva de Pinar se quedo
-    // marcado "Promoción" con el precio de Pinar al cambiar la vista a otra sucursal. El
-    // servidor solo exige que el precio no baje del piso (precio_compra), asi que una promo
-    // vieja mas barata que el piso de la sucursal nueva se habria cobrado de menos sin que
-    // nadie lo notara. Se guarda la sucursal junto con el carrito y se descarta si no coincide.
-    try {
-        const miSuc = <?= intval($sucursalVista) ?>;
-        const sucGuardada = parseInt(localStorage.getItem('carrito_sucursal_id'));
-        if (sucGuardada !== miSuc) return [];
-        const guardado = JSON.parse(localStorage.getItem('carrito'));
-        return Array.isArray(guardado) ? guardado : [];
-    } catch (e) {
-        return [];
-    }
-})();
+// [FEATURE-PESTAÑAS-CARRITO 2026-09-22] (espejo de cajeroInventario/nuevaVenta.php) Varias
+// ventas en curso a la vez (un cliente deja su carrito armado y se atiende a otro mientras
+// regresa). Cada pestaña guarda una "foto" completa de una venta en curso: carrito, cliente,
+// metodo de pago, campos de pago y su propio estado de modo scanner. Las variables
+// `carrito`, `clienteActual`, `metodoPago` y `modoScannerActivo` de abajo SIGUEN siendo las
+// mismas de siempre y el resto del archivo (agregarProducto, renderCarrito, prepararVenta,
+// etc.) no cambia: son el "alias" de trabajo de la pestaña ACTIVA nada mas. Cambiar de
+// pestaña = volcar el alias actual a su pestaña (snapshotPestañaActiva) y cargar los datos
+// de la otra (cargarPestaña) — ver mas abajo.
+let pestañas          = [];
+let pestañaActivaIdx  = 0;
+let pestañaIdCounter  = 0;
+const PESTAÑAS_MAX    = 6;
+
+function crearPestañaVacia() {
+    return {
+        id: ++pestañaIdCounter,
+        carrito: [],
+        clienteActual: null,
+        metodoPago: null,
+        modoScannerActivo: false,
+        descCliente: { aplicar: false, porc: '' },
+        ajusteDanoActivo: false,
+        pago: { montoEfectivo: '', transferReferencia: '', mixtoEfectivo: '', mixtoRecibido: '' }
+    };
+}
+
+let carrito           = [];
 let clienteActual     = null;
 let metodoPago        = null;
 let paquetesGlobales  = [];
@@ -1733,6 +1758,248 @@ const datosTicket  = <?= json_encode([
     'ticket_nota_credito' => $sucursalTicket['ticket_nota_credito'] ?? '',
 ]) ?>;
 const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
+
+// ── [FEATURE-PESTAÑAS-CARRITO] Reserva de stock entre pestañas ──────────────────────
+// Cuanto de un producto ya esta "apartado" en el carrito de OTRAS pestañas abiertas (no
+// la activa: su carrito vive en la variable `carrito`, no en su propia foto dentro de
+// `pestañas`, que solo se actualiza al salir de ella — ver snapshotPestañaActiva). Cuenta
+// tanto filas sueltas como paquetes (por cada componente que el paquete consume).
+function reservadoEnOtrasPestañas(productoId) {
+    let total = 0;
+    pestañas.forEach((p, idx) => {
+        if (idx === pestañaActivaIdx) return;
+        (p.carrito || []).forEach(item => {
+            if (item.tipo === 'paquete') {
+                (item.productos_paquete || []).forEach(comp => {
+                    if (parseInt(comp.producto_id) === productoId) {
+                        total += parseFloat(comp.cantidad_requerida) * parseFloat(item.cantidad);
+                    }
+                });
+            } else if (parseInt(item.producto_id) === productoId) {
+                total += parseFloat(item.cantidad);
+            }
+        });
+    });
+    return total;
+}
+// Stock real (de la sucursal) menos lo apartado en otras pestañas = lo que esta pestaña
+// puede usar de verdad ahora mismo.
+function stockDisponibleReal(productoId, stockBruto) {
+    return Math.max(0, parseFloat(stockBruto || 0) - reservadoEnOtrasPestañas(productoId));
+}
+// Igual que calcularStockCombo() pero descontando primero, por cada componente, lo que
+// otras pestañas ya tienen apartado de ese mismo producto.
+function calcularStockComboAjustado(productos) {
+    const ajustados = (productos || []).map(p => ({
+        ...p,
+        stock_actual: stockDisponibleReal(parseInt(p.producto_id), parseFloat(p.stock_actual ?? p.stock ?? 0))
+    }));
+    return calcularStockCombo(ajustados);
+}
+// Techo TOTAL (no por renglon del carrito) de cuanto se puede tener de este producto o
+// paquete en la pestaña activa ahora mismo: stock real de la sucursal (fresco, desde
+// productosGlobales) menos lo que otras pestañas tengan reservado en este momento. Lo
+// usan renderCarrito() (para que el numero de "Disp." en pantalla no quede viejo) y
+// cambiarCantidad() (para el tope real al editar la cantidad de un renglon).
+function techoDisponibleParaItem(item) {
+    if (item.tipo === 'paquete') {
+        const productosConStock = (item.productos_paquete || []).map(p => {
+            const prodGlobal = productosGlobales.find(pg => pg.producto_id === parseInt(p.producto_id));
+            return {
+                producto_id: p.producto_id,
+                cantidad_requerida: p.cantidad_requerida,
+                stock_actual: prodGlobal ? parseFloat(prodGlobal.stock_actual) : 0
+            };
+        });
+        return calcularStockComboAjustado(productosConStock);
+    }
+    const prodGlobal = productosGlobales.find(pg => pg.producto_id === parseInt(item.producto_id));
+    const stockBruto = prodGlobal ? parseFloat(prodGlobal.stock_actual) : parseFloat(item.stock || 0);
+    return stockDisponibleReal(item.producto_id, stockBruto);
+}
+
+// ── [FEATURE-PESTAÑAS-CARRITO] Guardar/cargar el estado de una pestaña ──────────────
+// Vuelca el alias de trabajo actual (carrito, clienteActual, metodoPago, modo scanner y
+// los campos de pago del DOM) dentro de pestañas[pestañaActivaIdx]. Se llama SIEMPRE
+// antes de cambiar de pestaña o de persistir a localStorage, para que la foto de la
+// pestaña que se deja quede al dia.
+function snapshotPestañaActiva() {
+    if (!pestañas[pestañaActivaIdx]) return;
+    pestañas[pestañaActivaIdx] = {
+        ...pestañas[pestañaActivaIdx],
+        carrito,
+        clienteActual,
+        metodoPago,
+        modoScannerActivo,
+        descCliente: {
+            aplicar: document.getElementById('aplicarDescCliente')?.checked || false,
+            porc:    document.getElementById('porcDescCliente')?.value || ''
+        },
+        ajusteDanoActivo: document.getElementById('chkAjusteDano')?.checked || false,
+        pago: {
+            montoEfectivo:      document.getElementById('montoEfectivo')?.value || '',
+            transferReferencia: document.getElementById('transferReferencia')?.value || '',
+            mixtoEfectivo:      document.getElementById('mixtoEfectivo')?.value || '',
+            mixtoRecibido:      document.getElementById('mixtoRecibido')?.value || ''
+        }
+    };
+}
+
+// Aplica el estado de pago/cliente/checkboxes de una pestaña al DOM (reutiliza
+// seleccionarCliente/seleccionarMetodo, que ya disparan sus propios efectos visuales).
+// No toca `carrito` — eso ya lo dejo listo cargarPestaña() antes de llamar a esto.
+function aplicarPestañaAlDOM(p) {
+    document.querySelectorAll('.metodo-btn').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.campos-pago').forEach(c => c.classList.remove('visible'));
+    document.getElementById('montoEfectivo').value      = '';
+    document.getElementById('resCambio').textContent    = '$0.00';
+    document.getElementById('transferReferencia').value = '';
+    document.getElementById('mixtoEfectivo').value      = '';
+    document.getElementById('mixtoTerminal').value      = '';
+    document.getElementById('mixtoRecibido').value      = '';
+    document.getElementById('inputCliente').value       = '';
+    document.getElementById('chkAjusteDano').checked    = false;
+    document.getElementById('panelAjusteDano').style.display  = 'none';
+    document.getElementById('panelCamposAjuste').style.display = 'none';
+    idxAjusteActual = -1;
+
+    if (p.clienteActual) {
+        const c = p.clienteActual;
+        seleccionarCliente(c.id, c.nombre, c.telefono, c.descuento, c.credito);
+    } else {
+        quitarCliente();
+    }
+
+    if (p.metodoPago) {
+        const labelMap = { Efectivo: 'Efectivo', Terminal: 'Terminal', Transferencia: 'Transferencia', Mixto: 'Mixto', Credito: 'Crédito' };
+        const btnMetodo = Array.from(document.querySelectorAll('.metodo-btn'))
+            .find(b => b.textContent.trim() === labelMap[p.metodoPago]);
+        if (btnMetodo) seleccionarMetodo(p.metodoPago, btnMetodo);
+    }
+
+    if (p.pago) {
+        if (p.pago.montoEfectivo)      document.getElementById('montoEfectivo').value      = p.pago.montoEfectivo;
+        if (p.pago.transferReferencia) document.getElementById('transferReferencia').value = p.pago.transferReferencia;
+        if (p.pago.mixtoEfectivo)      document.getElementById('mixtoEfectivo').value      = p.pago.mixtoEfectivo;
+        if (p.pago.mixtoRecibido)      document.getElementById('mixtoRecibido').value      = p.pago.mixtoRecibido;
+    }
+
+    function forzarRepaintCheckbox(el) {
+        const displayOriginal = el.style.display;
+        el.style.display = 'none';
+        void el.offsetHeight;
+        el.style.display = displayOriginal;
+    }
+
+    if (p.clienteActual && p.descCliente) {
+        const chkDescCliente = document.getElementById('aplicarDescCliente');
+        chkDescCliente.checked = !!p.descCliente.aplicar;
+        forzarRepaintCheckbox(chkDescCliente);
+        if (p.descCliente.porc !== '') document.getElementById('porcDescCliente').value = p.descCliente.porc;
+    }
+
+    if (p.ajusteDanoActivo) {
+        const chkDano = document.getElementById('chkAjusteDano');
+        chkDano.checked = true;
+        forzarRepaintCheckbox(chkDano);
+        const idxDanado = carrito.findIndex(item => item.ajuste_activo);
+        if (idxDanado >= 0) idxAjusteActual = idxDanado;
+        togglePanelAjuste(true);
+    }
+
+    aplicarModoScannerAlDOM(!!p.modoScannerActivo);
+    recalcularTodo();
+}
+
+// Cambia la pestaña activa: primero guarda una foto de la que se deja, luego vuelca los
+// datos de la elegida en el alias de trabajo (carrito/clienteActual/metodoPago/...) y al
+// DOM. idx debe existir en `pestañas`.
+function cargarPestaña(idx) {
+    if (!pestañas[idx]) return;
+    if (idx !== pestañaActivaIdx) snapshotPestañaActiva();
+    pestañaActivaIdx  = idx;
+    const p           = pestañas[idx];
+    carrito           = p.carrito || [];
+    clienteActual     = p.clienteActual || null;
+    metodoPago        = p.metodoPago || null;
+    modoScannerActivo = !!p.modoScannerActivo;
+    // [FIX-PESTAÑAS-ORDEN] aplicarPestañaAlDOM() DEBE correr antes de renderCarrito(): esta
+    // ultima dispara guardarEstadoVenta()->snapshotPestañaActiva(), que lee los campos de
+    // pago DIRECTO del DOM -- si el DOM todavia trae los valores de la pestaña que se deja
+    // (p.ej. "montoEfectivo" de la venta anterior), esos valores viejos quedarian escritos
+    // por error dentro de la pestaña recien cargada.
+    aplicarPestañaAlDOM(p);
+    renderPestañas();
+    renderCarrito();
+}
+
+function nuevaPestaña() {
+    if (pestañas.length >= PESTAÑAS_MAX) {
+        alert('Ya tienes ' + PESTAÑAS_MAX + ' ventas abiertas a la vez. Cobra o cierra alguna antes de abrir otra.');
+        return;
+    }
+    snapshotPestañaActiva();
+    pestañas.push(crearPestañaVacia());
+    cargarPestaña(pestañas.length - 1);
+}
+
+// Cierra una pestaña (si tiene productos, pide confirmacion). Si es la unica pestaña
+// abierta, en vez de desaparecer simplemente se vacia (no puede quedar cero pestañas).
+function cerrarPestaña(idx) {
+    const p = pestañas[idx];
+    if (!p) return;
+    if ((p.carrito || []).length > 0 && !confirm('¿Cancelar esta venta?')) return;
+
+    if (pestañas.length === 1) {
+        pestañas[0] = crearPestañaVacia();
+        cargarPestaña(0);
+        return;
+    }
+
+    pestañas.splice(idx, 1);
+    let nuevoIdx = pestañaActivaIdx;
+    if (idx === pestañaActivaIdx) {
+        nuevoIdx = Math.min(idx, pestañas.length - 1);
+    } else if (idx < pestañaActivaIdx) {
+        nuevoIdx = pestañaActivaIdx - 1;
+    }
+    // pestañaActivaIdx ya no corresponde a la pestaña que se estaba viendo tras el splice
+    // -- no hacer snapshot de una pestaña que ya no existe en ese indice.
+    pestañaActivaIdx = nuevoIdx;
+    carrito           = pestañas[nuevoIdx].carrito || [];
+    clienteActual     = pestañas[nuevoIdx].clienteActual || null;
+    metodoPago        = pestañas[nuevoIdx].metodoPago || null;
+    modoScannerActivo = !!pestañas[nuevoIdx].modoScannerActivo;
+    // (mismo orden que cargarPestaña -- ver comentario [FIX-PESTAÑAS-ORDEN] ahi)
+    aplicarPestañaAlDOM(pestañas[nuevoIdx]);
+    renderPestañas();
+    renderCarrito();
+}
+
+function nombrePestaña(p) {
+    if (p.clienteActual && p.clienteActual.nombre) {
+        const n = p.clienteActual.nombre;
+        return n.length > 16 ? n.slice(0, 15) + '…' : n;
+    }
+    return null;
+}
+
+function renderPestañas() {
+    const cont = document.getElementById('pestañasVentaBar');
+    if (!cont) return;
+    cont.innerHTML = pestañas.map((p, idx) => {
+        const activa   = idx === pestañaActivaIdx;
+        const nombre   = nombrePestaña(p) || ('Venta ' + (idx + 1));
+        const nItems   = (p.carrito || []).length;
+        const badge    = nItems > 0 ? `<span class="pestaña-badge">${nItems}</span>` : '';
+        return `<div class="pestaña-venta ${activa ? 'activa' : ''}" onclick="cargarPestaña(${idx})">
+            <span class="pestaña-nombre">${esc(nombre)}</span>${badge}
+            <button type="button" class="pestaña-cerrar" onclick="event.stopPropagation();cerrarPestaña(${idx})" title="Cerrar">×</button>
+        </div>`;
+    }).join('') + (pestañas.length < PESTAÑAS_MAX
+        ? `<button type="button" class="pestaña-nueva" onclick="nuevaPestaña()" title="Nueva venta">+</button>`
+        : '');
+}
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
@@ -1842,7 +2109,16 @@ function normalizar(str) {
 
 // ── Modo scanner ─────────────────────────────────────────────────────────────
 function toggleModoScanner() {
-    modoScannerActivo = !modoScannerActivo;
+    aplicarModoScannerAlDOM(!modoScannerActivo);
+    guardarEstadoVenta();
+}
+
+// [FEATURE-PESTAÑAS-CARRITO] Fija (no alterna) el modo scanner de la pestaña activa y
+// sincroniza el DOM -- lo usa tanto toggleModoScanner() (clic del cajero) como
+// cargarPestaña()/cerrarPestaña() al cambiar a una pestaña que ya traia su propio modo
+// scanner encendido o apagado.
+function aplicarModoScannerAlDOM(activo) {
+    modoScannerActivo = activo;
     document.getElementById('modoNormal').style.display  = modoScannerActivo ? 'none' : 'block';
     document.getElementById('modoScanner').style.display = modoScannerActivo ? 'block' : 'none';
     document.getElementById('btnModoScanner').classList.toggle('activo', modoScannerActivo);
@@ -1850,6 +2126,29 @@ function toggleModoScanner() {
         document.getElementById('inputScanner').focus();
     }
 }
+
+// [FIX-SCANNER-FOCO 2026-09-20] (portado de cajeroInventario/nuevaVenta.php)
+// En una demo real, el lector fisico a veces "perdia" caracteres a mitad de
+// una racha de escaneos. Causa: nada garantizaba que el foco siguiera en
+// inputScanner entre un escaneo y el siguiente -- un alert() bloqueante (sin
+// stock / stock maximo), un clic accidental en cualquier otra parte de la
+// pantalla, o simplemente el re-render del carrito podian dejar el foco en
+// otro lado, y el lector (que solo simula tecleo rapido) mandaba el siguiente
+// codigo a donde fuera que el navegador tuviera el foco en ese momento -- no
+// necesariamente a inputScanner.
+//
+// Mientras modoScannerActivo es true, el input se "reclama" de vuelta cada vez
+// que pierde el foco, salvo que el foco se haya ido a un modal de verdad
+// (Ver inventario / Movimiento de caja) o el propio modo scanner ya se haya
+// apagado (ej. al dar clic en el boton "Scanner" para salir).
+document.getElementById('inputScanner').addEventListener('blur', function() {
+    if (!modoScannerActivo) return;
+    setTimeout(() => {
+        if (!modoScannerActivo) return;
+        if (document.querySelector('.modal-overlay.visible, .modal-mov-overlay.visible')) return;
+        document.getElementById('inputScanner').focus();
+    }, 30);
+});
 
 // Scanner: detecta Enter (mayoría de lectores envían Enter al final)
 document.getElementById('inputScanner').addEventListener('keydown', function(e) {
@@ -1876,7 +2175,19 @@ document.getElementById('inputScanner').addEventListener('input', function() {
     }, 450);
 });
 
+// [FIX-SCANNER-FOCO 2026-09-20] (portado de cajeroInventario/nuevaVenta.php)
+function mostrarFeedbackScanner(texto, esError) {
+    const feedback = document.getElementById('scanFeedback');
+    feedback.style.display = 'inline';
+    feedback.className     = esError ? 'scan-feedback scan-err' : 'scan-feedback scan-ok';
+    feedback.textContent   = texto;
+    setTimeout(() => { feedback.style.display = 'none'; }, 2000);
+}
+
 function procesarScan(codigo) {
+    // Estado neutral "Buscando..." -- no usa mostrarFeedbackScanner() porque esa
+    // siempre marca ok/err (verde/rojo) y agrega un auto-ocultado que aqui no
+    // aplica (este texto se reemplaza de inmediato al resolver el fetch).
     const feedback = document.getElementById('scanFeedback');
     feedback.style.display = 'inline';
     feedback.className     = 'scan-feedback';
@@ -1886,26 +2197,24 @@ function procesarScan(codigo) {
         .then(r => r.json())
         .then(prod => {
             if (!prod) {
-                feedback.className   = 'scan-feedback scan-err';
-                feedback.textContent = `❌ No encontrado: ${codigo}`;
-                setTimeout(() => { feedback.style.display = 'none'; }, 2000);
+                mostrarFeedbackScanner(`❌ No encontrado: ${codigo}`, true);
                 return;
             }
             if (prod.stock_actual <= 0) {
-                feedback.className   = 'scan-feedback scan-err';
-                feedback.textContent = `❌ Sin stock: ${prod.nombre_producto}`;
-                setTimeout(() => { feedback.style.display = 'none'; }, 2000);
+                mostrarFeedbackScanner(`❌ Sin stock: ${prod.nombre_producto}`, true);
                 return;
             }
             agregarProducto(prod.producto_id, prod.nombre_producto, prod.precio_venta, prod.stock_actual, prod.tipo_venta);
-            feedback.className   = 'scan-feedback scan-ok';
-            feedback.textContent = `✅ ${prod.nombre_producto}`;
-            setTimeout(() => { feedback.style.display = 'none'; }, 1500);
+            mostrarFeedbackScanner(`✅ ${prod.nombre_producto}`, false);
         })
         .catch(() => {
-            feedback.className   = 'scan-feedback scan-err';
-            feedback.textContent = '❌ Error de conexión';
-            setTimeout(() => { feedback.style.display = 'none'; }, 2000);
+            mostrarFeedbackScanner('❌ Error de conexión', true);
+        })
+        .finally(() => {
+            // [FIX-SCANNER-FOCO] Garantiza el foco tras CADA escaneo (exito, error,
+            // sin stock, o fallo de red) -- antes solo el blur-guard de arriba lo
+            // intentaba recuperar, y solo despues de que el foco ya se hubiera ido.
+            if (modoScannerActivo) document.getElementById('inputScanner').focus();
         });
 }
 
@@ -1929,7 +2238,7 @@ document.getElementById('inputProducto').addEventListener('input', function() {
         const paquetes = paquetesGlobales
             .filter(paq => normalizar(paq.codigo).includes(q) || normalizar(paq.nombre).includes(q))
             .map(paq => {
-                const maxCombos = calcularStockCombo(paq.productos);
+                const maxCombos = calcularStockComboAjustado(paq.productos);
                 return {
                     ...paq,
                     disponible: maxCombos > 0,
@@ -1953,10 +2262,16 @@ function mostrarResultadosCombinados(productos, paquetes) {
             : 'Sin stock';
         // [AUTOFIX] OBS-01: Pasar solo el paquete_id (numerico) en lugar de JSON serializado con comillas
         // para evitar que un nombre con apostrofe (ej. "Tornillo 3/4'") rompa el parse en agregarPaquete()
+        // [FIX-PESTAÑAS-ONCLICK-ROTO 2026-09-22] La rama "sin stock" generaba
+        // onclick="alert(\"Stock insuficiente\")" -- las comillas dobles escapadas DENTRO de un
+        // atributo YA delimitado por comillas dobles cerraban el atributo a la mitad, dejando
+        // HTML/JS roto (error real: "Uncaught SyntaxError: Unexpected end of input" al hacer
+        // clic). Con la reserva de stock entre pestañas un paquete llega a "sin stock" mucho
+        // mas seguido que antes, asi que esta rama ahora se dispara de verdad.
         html += `<div class="resultado-item" style="background:#fffde7;"
             onclick="${paq.disponible
                 ? `agregarPaquete(${paq.paquete_id})`
-                : 'alert(\"Stock insuficiente\")'}" >
+                : "alert('Stock insuficiente')"}" >
             <div>
                 <div class="resultado-nombre">${ICONS.package} ${esc(paq.nombre)}</div>
                 <div class="resultado-codigo">${esc(paq.codigo)} · ${paq.productos.length} productos</div>
@@ -1969,8 +2284,12 @@ function mostrarResultadosCombinados(productos, paquetes) {
     });
 
     productos.forEach(p => {
-        const cls   = p.stock_actual > 0 ? 'stock-ok' : 'stock-bajo';
-        const label = p.stock_actual > 0 ? `Stock: ${parseFloat(p.stock_actual).toFixed(p.tipo_venta==='Suelto'?3:0)}` : 'Sin stock';
+        // [FEATURE-PESTAÑAS-CARRITO] El badge muestra lo que ESTA pestaña puede usar de
+        // verdad (stock real menos lo reservado en otras pestañas); agregarProducto()
+        // recibe el stock BRUTO tal cual y hace su propio ajuste, para no descontar dos veces.
+        const stockAjustado = stockDisponibleReal(p.producto_id, p.stock_actual);
+        const cls   = stockAjustado > 0 ? 'stock-ok' : 'stock-bajo';
+        const label = stockAjustado > 0 ? `Stock: ${parseFloat(stockAjustado).toFixed(p.tipo_venta==='Suelto'?3:0)}` : 'Sin stock';
         html += `<div class="resultado-item"
             onclick="agregarProducto(${p.producto_id},'${escAtribJs(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${escAtribJs(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)})">
             <div>
@@ -1992,9 +2311,30 @@ function mostrarResultadosCombinados(productos, paquetes) {
 // ── Agregar producto ─────────────────────────────────────────────────────────
 function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, precioMayoreo) {
     id    = parseInt(id);
-    stock = parseFloat(stock);
+    // [FEATURE-PESTAÑAS-CARRITO] `stock` es el stock BRUTO de la sucursal (tal cual llega
+    // del catalogo/scanner/inventario); antes de usarlo se descuenta lo que YA esta
+    // apartado en el carrito de otras pestañas abiertas, para no vender lo mismo dos veces
+    // solo porque esta pestaña "no lo sabia".
+    const stockBruto = parseFloat(stock);
+    stock = stockDisponibleReal(id, stockBruto);
     // Bug #6: Mensaje claro al hacer click en producto sin stock en el catálogo
-    if (stock <= 0) { alert('No hay stock disponible para este producto.'); return; }
+    // [FIX-SCANNER-FOCO 2026-09-20] En modo scanner, alert() bloqueaba la pagina
+    // y no devolvia el foco a inputScanner al cerrarse -- el lector fisico
+    // apuntaba a otro lado en el siguiente escaneo.
+    if (stock <= 0) {
+        // Distinguir "no hay stock en la sucursal" de "el stock ya esta apartado en otra
+        // pestaña que tienes abierta" -- son causas distintas y el cajero necesita saberlo
+        // para decidir si puede vender de todos modos (cobrando esa otra venta primero).
+        const msg = stockBruto > 0
+            ? '❌ Ya apartado en otra pestaña'
+            : '❌ Sin stock disponible';
+        const msgAlert = stockBruto > 0
+            ? 'Ese stock ya está apartado en otra pestaña de venta abierta. Cobra o cierra esa pestaña primero.'
+            : 'No hay stock disponible para este producto.';
+        if (modoScannerActivo) { mostrarFeedbackScanner(msg, true); }
+        else { alert(msgAlert); }
+        return;
+    }
 
     // Aplicar promoción si existe
     const promo         = promoByProdId[id] || null;
@@ -2004,7 +2344,12 @@ function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, 
     // Stock total ya ocupado por todas las filas de este producto en el carrito
     const totalEnCarrito = carrito.reduce((sum, it) =>
         it.producto_id === id ? sum + parseFloat(it.cantidad) : sum, 0);
-    if (totalEnCarrito >= stock) { alert(`Stock máximo: ${stock}`); return; }
+    // [FIX-SCANNER-FOCO 2026-09-20] mismo motivo que el alert() de sin-stock arriba.
+    if (totalEnCarrito >= stock) {
+        if (modoScannerActivo) { mostrarFeedbackScanner(`❌ Stock máximo: ${stock}`, true); }
+        else { alert(`Stock máximo: ${stock}`); }
+        return;
+    }
 
     // Incrementar solo una fila sin ajuste de daño; si todas están dañadas, crear fila nueva limpia
     const existeLimpio = carrito.find(it => it.producto_id === id && !it.ajuste_activo);
@@ -2059,7 +2404,7 @@ function agregarPaquete(paq) {
     if (typeof paq === 'string') {
         try { paq = JSON.parse(paq.replace(/'/g, '"')); } catch(e) { return; }
     }
-    const maxCombos = calcularStockCombo(paq.productos);
+    const maxCombos = calcularStockComboAjustado(paq.productos);
     if (maxCombos < 1) {
         alert('No hay stock suficiente para armar ni un combo de "' + paq.nombre + '".');
         return;
@@ -2108,8 +2453,9 @@ function agregarPaquete(paq) {
 
 // ── Render carrito ───────────────────────────────────────────────────────────
 function renderCarrito() {
-    localStorage.setItem('carrito', JSON.stringify(carrito));
-    localStorage.setItem('carrito_sucursal_id', String(<?= intval($sucursalVista) ?>));
+    // [FEATURE-PESTAÑAS-CARRITO] El carrito ya se persiste como parte de la pestaña
+    // activa (ver guardarEstadoVenta/snapshotPestañaActiva), no como clave suelta.
+    guardarEstadoVenta();
 
     const body  = document.getElementById('carritoBody');
     const tabla = document.getElementById('carritoTabla');
@@ -2120,6 +2466,12 @@ function renderCarrito() {
     vacio.style.display = 'none';
 
     body.innerHTML = carrito.map((item, i) => {
+        // [FEATURE-PESTAÑAS-CARRITO] Refrescar el techo de "disponible" mostrado en cada
+        // renglon con lo que otras pestañas tienen reservado AHORA (puede haber cambiado
+        // desde que se agrego este renglon, sin que nadie tocara este carrito). El
+        // encierre real (cuanto se deja vender) sigue viviendo en agregarProducto()/
+        // cambiarCantidad(); esto es solo para que el numero en pantalla no quede viejo.
+        item.stock = techoDisponibleParaItem(item);
         if (item.tipo === 'paquete') {
             const subNames  = item.productos_paquete.map(p => `${p.nombre_producto}×${p.cantidad_requerida}`).join(', ');
             const stockBadgeClass = item.cantidad >= item.stock ? 'stock-bajo' : 'stock-ok';
@@ -2404,11 +2756,21 @@ function cambiarCantidad(i, val) {
     const esSuelto = item.tipo === 'Suelto';
     let qty = esSuelto ? parseFloat(val) : parseInt(val);
     const minQty = esSuelto ? 0.001 : 1;
-    // Stock libre = stock total menos lo que ya ocupan otras filas del mismo producto
-    const usadoOtros = carrito.reduce((sum, it, idx) =>
-        idx !== i && it.producto_id === item.producto_id ? sum + parseFloat(it.cantidad) : sum, 0);
-    const stockLibre = parseFloat((item.stock - usadoOtros).toFixed(3));
-    const maxQty = esSuelto ? stockLibre : Math.floor(stockLibre);
+    // [FEATURE-PESTAÑAS-CARRITO] Techo recalculado EN VIVO (stock real de la sucursal
+    // menos lo reservado en otras pestañas), no el `item.stock` congelado desde que se
+    // agrego -- puede haber cambiado si otra pestaña movio su carrito mientras tanto.
+    let maxQty;
+    if (item.tipo === 'paquete') {
+        maxQty = techoDisponibleParaItem(item);
+    } else {
+        const techoTotal = techoDisponibleParaItem(item);
+        // Stock libre = techo total menos lo que ya ocupan otras filas del mismo producto
+        // EN ESTE MISMO carrito (paquetes aparte, ya cubiertos arriba).
+        const usadoOtros = carrito.reduce((sum, it, idx) =>
+            idx !== i && it.tipo !== 'paquete' && it.producto_id === item.producto_id ? sum + parseFloat(it.cantidad) : sum, 0);
+        maxQty = parseFloat((techoTotal - usadoOtros).toFixed(3));
+        if (!esSuelto) maxQty = Math.floor(maxQty);
+    }
     if (isNaN(qty) || qty < minQty) qty = minQty;
     if (qty > maxQty) {
         const dispMax = esSuelto ? maxQty.toFixed(3).replace(/\.?0+$/,'') : maxQty;
@@ -2664,23 +3026,17 @@ function seleccionarMetodo(metodo, btn) {
 }
 
 // ── Persistencia de cliente/método de pago/campos de pago (carrito ya se guarda en renderCarrito) ──
+// [FEATURE-PESTAÑAS-CARRITO] Vuelca la pestaña activa (snapshotPestañaActiva) y persiste
+// TODAS las pestañas a localStorage de una vez -- reemplaza al guardado por separado de
+// 'carrito'/'ventaExtra' que existia cuando solo habia una venta en curso.
 function guardarEstadoVenta() {
-    const extra = {
-        clienteActual,
-        metodoPago,
-        descCliente: {
-            aplicar: document.getElementById('aplicarDescCliente')?.checked || false,
-            porc:    document.getElementById('porcDescCliente')?.value || ''
-        },
-        ajusteDanoActivo: document.getElementById('chkAjusteDano')?.checked || false,
-        pago: {
-            montoEfectivo:       document.getElementById('montoEfectivo')?.value || '',
-            transferReferencia:  document.getElementById('transferReferencia')?.value || '',
-            mixtoEfectivo:       document.getElementById('mixtoEfectivo')?.value || '',
-            mixtoRecibido:       document.getElementById('mixtoRecibido')?.value || ''
-        }
-    };
-    localStorage.setItem('ventaExtra', JSON.stringify(extra));
+    snapshotPestañaActiva();
+    try {
+        localStorage.setItem('pestañasVenta', JSON.stringify(pestañas));
+        localStorage.setItem('pestañasVenta_sucursal_id', String(<?= intval($sucursalVista) ?>));
+        localStorage.setItem('pestañaActivaIdx', String(pestañaActivaIdx));
+    } catch (e) {}
+    renderPestañas();
 }
 
 // ── Cálculos ─────────────────────────────────────────────────────────────────
@@ -3330,11 +3686,15 @@ function renderInventario(productos) {
     div.innerHTML = `<table class="inv-tabla">
         <thead><tr><th>Código</th><th>Producto</th><th>Stock</th><th>Precio</th><th></th></tr></thead>
         <tbody>${productos.map(p => {
-            const sinStock = p.stock_actual <= 0;
+            // [FEATURE-PESTAÑAS-CARRITO] Solo tiene sentido ajustar por reserva cruzada el
+            // stock de ESTA sucursal (la unica que esta pestaña podria realmente vender);
+            // el de "otra sucursal" es solo informativo y el boton ya viene deshabilitado.
+            const stockMostrado = esDif ? parseFloat(p.stock_actual) : stockDisponibleReal(p.producto_id, p.stock_actual);
+            const sinStock = stockMostrado <= 0;
             return `<tr>
                 <td style="color:#aaa;font-size:12px;">${esc(p.codigo)}</td>
                 <td>${esc(p.nombre_producto)}${esDif?'<span class="sucursal-diferente">Otra sucursal</span>':''}</td>
-                <td><span class="stock-badge ${sinStock?'stock-bajo':'stock-ok'}">${parseFloat(p.stock_actual).toFixed(p.tipo_venta==='Suelto'?3:0)}</span></td>
+                <td><span class="stock-badge ${sinStock?'stock-bajo':'stock-ok'}">${parseFloat(stockMostrado).toFixed(p.tipo_venta==='Suelto'?3:0)}</span></td>
                 <td>$${parseFloat(p.precio_venta).toFixed(2)}</td>
                 <td>${!esDif && !sinStock
                     ? `<button class="btn-agregar-inv" onclick="agregarProducto(${p.producto_id},'${escAtribJs(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${escAtribJs(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)});cerrarInventario()">Agregar</button>`
@@ -3389,62 +3749,65 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
 });
 
 // ── Restaurar venta en curso (carrito, cliente, método de pago y campos) ─────
-(function restaurarEstadoVenta() {
+// [FEATURE-PESTAÑAS-CARRITO] Arranque: carga las pestañas guardadas para esta sucursal,
+// o migra la venta suelta de antes de esta funcion (una sola, formato viejo 'carrito'/
+// 'ventaExtra') a una primera pestaña, para que nadie pierda un carrito en curso el dia
+// que esto se despliega. Si no hay nada guardado, arranca con una pestaña vacia.
+(function iniciarPestañasVenta() {
+    const miSuc = <?= intval($sucursalVista) ?>;
+    let cargadas = null;
+    try {
+        const sucGuardada = parseInt(localStorage.getItem('pestañasVenta_sucursal_id'));
+        if (sucGuardada === miSuc) {
+            const guardado = JSON.parse(localStorage.getItem('pestañasVenta'));
+            if (Array.isArray(guardado) && guardado.length) cargadas = guardado;
+        }
+    } catch (e) {}
+
+    if (!cargadas) {
+        // Migracion desde el formato de una sola venta en curso (anterior a esta feature).
+        let carritoViejo = [];
+        let extraViejo    = null;
+        try {
+            const sucViejaGuardada = parseInt(localStorage.getItem('carrito_sucursal_id'));
+            if (sucViejaGuardada === miSuc) {
+                const g = JSON.parse(localStorage.getItem('carrito'));
+                if (Array.isArray(g)) carritoViejo = g;
+            }
+            extraViejo = JSON.parse(localStorage.getItem('ventaExtra'));
+        } catch (e) {}
+
+        if (carritoViejo.length || extraViejo) {
+            const migrada = crearPestañaVacia();
+            migrada.carrito = carritoViejo;
+            if (extraViejo) {
+                migrada.clienteActual     = extraViejo.clienteActual     || null;
+                migrada.metodoPago        = extraViejo.metodoPago        || null;
+                migrada.descCliente       = extraViejo.descCliente       || { aplicar: false, porc: '' };
+                migrada.ajusteDanoActivo  = extraViejo.ajusteDanoActivo  || false;
+                migrada.pago              = extraViejo.pago              || migrada.pago;
+            }
+            cargadas = [migrada];
+        }
+        localStorage.removeItem('carrito');
+        localStorage.removeItem('carrito_sucursal_id');
+        localStorage.removeItem('ventaExtra');
+    }
+
+    pestañas = cargadas && cargadas.length ? cargadas : [crearPestañaVacia()];
+    pestañaIdCounter = Math.max(0, ...pestañas.map(p => p.id || 0));
+    let idxGuardado = parseInt(localStorage.getItem('pestañaActivaIdx'));
+    if (isNaN(idxGuardado) || idxGuardado < 0 || idxGuardado >= pestañas.length) idxGuardado = 0;
+
+    pestañaActivaIdx  = idxGuardado;
+    const p           = pestañas[idxGuardado];
+    carrito           = p.carrito || [];
+    clienteActual     = p.clienteActual || null;
+    metodoPago        = p.metodoPago || null;
+    modoScannerActivo = !!p.modoScannerActivo;
+    aplicarPestañaAlDOM(p);
+    renderPestañas();
     renderCarrito();
-
-    let extra = null;
-    try { extra = JSON.parse(localStorage.getItem('ventaExtra')); } catch (e) {}
-    if (!extra) { recalcularTodo(); return; }
-
-    if (extra.clienteActual) {
-        const c = extra.clienteActual;
-        seleccionarCliente(c.id, c.nombre, c.telefono, c.descuento, c.credito);
-    }
-
-    if (extra.metodoPago) {
-        const labelMap = { Efectivo: 'Efectivo', Terminal: 'Terminal', Transferencia: 'Transferencia', Mixto: 'Mixto', Credito: 'Crédito' };
-        const btnMetodo = Array.from(document.querySelectorAll('.metodo-btn'))
-            .find(b => b.textContent.trim() === labelMap[extra.metodoPago]);
-        if (btnMetodo) seleccionarMetodo(extra.metodoPago, btnMetodo);
-    }
-
-    if (extra.pago) {
-        if (extra.pago.montoEfectivo)      document.getElementById('montoEfectivo').value      = extra.pago.montoEfectivo;
-        if (extra.pago.transferReferencia) document.getElementById('transferReferencia').value = extra.pago.transferReferencia;
-        if (extra.pago.mixtoEfectivo)      document.getElementById('mixtoEfectivo').value      = extra.pago.mixtoEfectivo;
-        if (extra.pago.mixtoRecibido)      document.getElementById('mixtoRecibido').value      = extra.pago.mixtoRecibido;
-    }
-
-    // Forzar repintado real de un checkbox: leer offsetHeight solo recalcula layout,
-    // pero el widget nativo a veces no se repinta si el cambio viene solo de script.
-    // Sacarlo del flujo (display:none) y reinsertarlo obliga al navegador a redibujarlo.
-    function forzarRepaintCheckbox(el) {
-        const displayOriginal = el.style.display;
-        el.style.display = 'none';
-        void el.offsetHeight;
-        el.style.display = displayOriginal;
-    }
-
-    // El checkbox/porcentaje de descuento se restauran al final para que nada
-    // de lo anterior (seleccionarCliente, seleccionarMetodo) lo pise con su valor por defecto.
-    if (extra.clienteActual && extra.descCliente) {
-        const chkDescCliente = document.getElementById('aplicarDescCliente');
-        chkDescCliente.checked = !!extra.descCliente.aplicar;
-        forzarRepaintCheckbox(chkDescCliente);
-        if (extra.descCliente.porc !== '') document.getElementById('porcDescCliente').value = extra.descCliente.porc;
-    }
-
-    if (extra.ajusteDanoActivo) {
-        const chkDano = document.getElementById('chkAjusteDano');
-        chkDano.checked = true;
-        forzarRepaintCheckbox(chkDano);
-        // Si algún producto del carrito ya tiene un ajuste aplicado, dejarlo preseleccionado
-        const idxDanado = carrito.findIndex(item => item.ajuste_activo);
-        if (idxDanado >= 0) idxAjusteActual = idxDanado;
-        togglePanelAjuste(true);
-    }
-
-    recalcularTodo();
 })();
 </script>
 <script src="../includes/dropdown_keynav.js"></script>

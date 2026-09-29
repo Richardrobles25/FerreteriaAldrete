@@ -111,6 +111,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // listo para reaparecer si alguien reactiva el credito despues sin volver a capturarlo.
     // admin/clientes.php ya hacia este reset; aqui y en admin/cajero_clientes.php faltaba.
     if (!$credito_autorizado) $limite_credito = 0;
+    // [FEATURE-COBRAR-MORA 2026-09-22] (espejo de admin/clientes.php) Si se desmarca, este
+    // cliente NUNCA acumula mora en ninguno de sus creditos (permanente, distinto de
+    // "Cancelar mora" en creditos.php que solo perdona la ya acumulada de un credito puntual).
+    $cobrar_mora        = isset($_POST['cobrar_mora']) ? 1 : 0;
     // [FIX-CLIENTE-ID-DESINCRONIZADO] (mismo patron ya corregido en admin/clientes.php y
     // admin/cajero_clientes.php) Antes $cliente_id salia directo del campo oculto del
     // POST, sin relacion con el "?editar=" de la URL -- un POST manipulado podia editar
@@ -155,7 +159,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores) && $telefono !== '') {
-        $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ?");
+        // [FIX-TEL-INACTIVO 2026-09-25] Un cliente desactivado no debe bloquear su telefono
+        // para siempre (pasa seguido: se reasigna a otra persona real despues).
+        $stmtDupTel = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE telefono = ? AND cliente_id != ? AND activo = 1");
         $stmtDupTel->execute([$telefono, $cliente_id]);
         $dupTel = $stmtDupTel->fetchColumn();
         if ($dupTel !== false) {
@@ -173,8 +179,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // filas encontradas — guardar sin cambiar ningun campo tambien da rowCount()=0 y NO
             // debe tratarse como "no encontrado". Por eso se verifica existencia por separado en
             // vez de confiar en rowCount().
-            $stmtUpdCliente = $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=? WHERE cliente_id=?");
-            $stmtUpdCliente->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cliente_id]);
+            $stmtUpdCliente = $pdo->prepare("UPDATE clientes SET nombre_completo=?, telefono=?, direccion=?, correo=?, descuento_fijo=?, notas=?, credito_autorizado=?, limite_credito=?, cobrar_mora=? WHERE cliente_id=?");
+            $stmtUpdCliente->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cobrar_mora, $cliente_id]);
             if ($stmtUpdCliente->rowCount() === 0) {
                 $stmtExisteCliente = $pdo->prepare("SELECT 1 FROM clientes WHERE cliente_id = ?");
                 $stmtExisteCliente->execute([$cliente_id]);
@@ -186,8 +192,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             header('Location: clientes.php?msg=editado');
         } else {
-            $pdo->prepare("INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, activo) VALUES (?,?,?,?,?,?,?,?,1)")
-                ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito]);
+            $pdo->prepare("INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, cobrar_mora, activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
+                ->execute([$nombre_completo, $telefono, $direccion, $correo, $descuento_fijo, $notas, $credito_autorizado, $limite_credito, $cobrar_mora]);
             header('Location: clientes.php?msg=creado');
         }
         if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
@@ -437,6 +443,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <?php if ($c['credito_autorizado']): ?>
                                     <span class="badge-credito">Autorizado</span>
                                     <div style="font-size:11px;color:#aaa;">Límite: $<?= number_format($c['limite_credito'],2) ?></div>
+                                    <?php if (!$c['cobrar_mora']): ?><div style="font-size:11px;color:#e65100;font-weight:600;">Sin mora</div><?php endif; ?>
                                 <?php else: ?>
                                     <span style="color:#aaa;font-size:12px;">No</span>
                                 <?php endif; ?>
@@ -489,6 +496,7 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     $vNotasCI     = $esPostCliInv ? $notas              : ($editando['notas']           ?? '');
                     $vCredAutCI   = $esPostCliInv ? $credito_autorizado : ($editando['credito_autorizado'] ?? 0);
                     $vLimiteCI    = $esPostCliInv ? $limite_credito     : ($editando['limite_credito']  ?? '');
+                    $vCobrarMoraCI = $esPostCliInv ? $cobrar_mora       : ($editando['cobrar_mora']     ?? 1);
                 ?>
                 <form method="POST">
                     <!-- [AUTOFIX] BUG-01: Token CSRF para proteger el form de crear/editar -->
@@ -527,6 +535,12 @@ $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <label>Notas</label>
                         <input type="text" name="notas" maxlength="255" value="<?= htmlspecialchars($vNotasCI) ?>" placeholder="Observaciones del cliente">
                     </div>
+
+                    <div class="check-row">
+                        <input type="checkbox" name="cobrar_mora" id="chkCobrarMora" <?= $vCobrarMoraCI ? 'checked' : '' ?>>
+                        <label for="chkCobrarMora">Cobrar mora a este cliente si se atrasa</label>
+                    </div>
+                    <div style="font-size:11px;color:#aaa;margin:-8px 0 13px;">Si la desmarcas, nunca se le acumulará recargo por atraso, aunque se pase de su fecha límite.</div>
 
                     <div class="check-row">
                         <input type="checkbox" name="credito_autorizado" id="chkCredito"

@@ -9,28 +9,11 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-// [FIX-QUINCENA-FIJA] El plazo de un credito fiado es un corte fijo de calendario (dia 15 o
-// ultimo dia del mes, igual para todos los clientes), no "15 dias desde hoy". Si el corte cae
-// en domingo (la tienda cierra ese dia) se recorre al lunes siguiente.
-function siguienteCorteQuincenal(string $fechaDesde): string {
-    $ts   = strtotime($fechaDesde);
-    $dia  = (int)date('j', $ts);
-    $mes  = (int)date('n', $ts);
-    $anio = (int)date('Y', $ts);
-    $ultimoDiaMes = (int)date('t', $ts);
-
-    if ($dia < 15) {
-        $corte = mktime(0, 0, 0, $mes, 15, $anio);
-    } elseif ($dia < $ultimoDiaMes) {
-        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
-    } else {
-        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
-    }
-    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
-        $corte = strtotime('+1 day', $corte);
-    }
-    return date('Y-m-d', $corte);
-}
+// [FIX-PLAZO-15-DIAS 2026-09-21] El plazo de un credito fiado es 15 dias desde la fecha de
+// COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
+// clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una
+// vez que el credito ya esta vencido) si sigue un corte fijo, pero ahora es "cada sabado" en vez
+// de "dia 15/fin de mes": ver siguienteSabado() en creditos.php/abonos.php.
 
 // Caja abierta del usuario (se usa al liquidar). [FIX-CAJA-REDIRECT-AJAX] (portado de
 // admin/cajero_ventasPendientes.php) El redirect por falta de caja ya NO es incondicional
@@ -132,9 +115,9 @@ if (isset($_GET['liquidar'])) {
                     if ($deudaActualLiq + floatval($ventaLiq['total']) > floatval($clienteCreditoLiq['limite_credito']) + 0.005) {
                         throw new Exception('credito_excede_limite');
                     }
-                    // [FIX-QUINCENA-FIJA] La primera fecha limite es el proximo corte fijo
-                    // (15 o fin de mes), no "15 dias desde hoy".
-                    $primerCorteLiq = siguienteCorteQuincenal(date('Y-m-d'));
+                    // [FIX-PLAZO-15-DIAS 2026-09-21] La fecha limite es 15 dias desde HOY
+                    // (fecha en que se liquida a credito) -- ya no un corte fijo compartido.
+                    $primerCorteLiq = date('Y-m-d', strtotime('+15 days'));
                     $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', ?)")
                         ->execute([$ventaLiq['cliente_id'], $venta_id, $ventaLiq['total'], $ventaLiq['total'], $primerCorteLiq]);
                 }
@@ -1223,6 +1206,12 @@ if (!$cajaActualId) {
                             $tc = trim($sucursalTicket['numero_cuenta']       ?? '');
                             $tl = trim($sucursalTicket['clabe_interbancaria'] ?? '');
                             $ta = trim($sucursalTicket['alias_tarjeta']       ?? '');
+                            // [FEATURE-DATOS-FACTURACION 2026-09-21] segunda cuenta, solo para facturacion.
+                            $tbF = trim($sucursalTicket['banco_fact']               ?? '');
+                            $ttF = trim($sucursalTicket['titular_cuenta_fact']      ?? '');
+                            $tcF = trim($sucursalTicket['numero_cuenta_fact']       ?? '');
+                            $tlF = trim($sucursalTicket['clabe_interbancaria_fact'] ?? '');
+                            $taF = trim($sucursalTicket['alias_tarjeta_fact']       ?? '');
                         ?>
                         <div style="font-size:12px;line-height:1.9;background:#f0f8ff;border:1px solid #b3e0f7;border-radius:6px;padding:10px 12px;color:#333;margin-bottom:13px;">
                             <div style="font-size:11px;font-weight:700;color:#1565c0;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">Datos para la transferencia</div>
@@ -1236,6 +1225,16 @@ if (!$cajaActualId) {
                                 <span style="color:#aaa;">Sin datos bancarios configurados.<br>Agrégalos en Configuración → Sucursal.</span>
                             <?php endif; ?>
                         </div>
+                        <?php if ($tbF || $ttF || $tcF || $tlF): ?>
+                        <div style="font-size:12px;line-height:1.9;background:#fff8e1;border:1px solid #f0d68a;border-radius:6px;padding:10px 12px;color:#333;margin-bottom:13px;">
+                            <div style="font-size:11px;font-weight:700;color:#8a6d00;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;">Datos para facturación</div>
+                            <?php if ($tbF): ?><div><strong>Banco:</strong> <?= htmlspecialchars($tbF) ?></div><?php endif; ?>
+                            <?php if ($ttF): ?><div><strong>Titular:</strong> <?= htmlspecialchars($ttF) ?></div><?php endif; ?>
+                            <?php if ($tcF): ?><div><strong>No. cuenta:</strong> <?= htmlspecialchars($tcF) ?></div><?php endif; ?>
+                            <?php if ($tlF): ?><div><strong>CLABE:</strong> <?= htmlspecialchars($tlF) ?></div><?php endif; ?>
+                            <?php if ($taF): ?><div><strong>Alias:</strong> <?= htmlspecialchars($taF) ?></div><?php endif; ?>
+                        </div>
+                        <?php endif; ?>
                     </div>
 
                     <div class="form-group">

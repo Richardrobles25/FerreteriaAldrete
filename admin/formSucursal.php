@@ -22,6 +22,12 @@ if ($esEdicion) {
     if (!$editando) { header('Location: sucursales.php'); exit(); }
 }
 
+// [FEATURE-MORA-GLOBAL 2026-09-22] Una sucursal nueva (formulario de alta, sin $editando)
+// debe mostrar el % de mora que YA rige para todas las demas, no un campo en blanco que
+// parezca "0" por default -- se toma de cualquier sucursal existente porque todas comparten
+// el mismo valor.
+$porcentajeMoraGlobalActual = $pdo->query("SELECT porcentaje_mora FROM sucursales LIMIT 1")->fetchColumn();
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-MEDIO] CSRF ausente en este formulario (a diferencia de los demás formularios
     // admin, que ya lo tienen) — un POST desde cualquier página con la sesión del
@@ -38,6 +44,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $numero_cuenta         = trim(is_scalar($_POST['numero_cuenta'] ?? null) ? (string)$_POST['numero_cuenta'] : '');
     $clabe_interbancaria   = trim(is_scalar($_POST['clabe_interbancaria'] ?? null) ? (string)$_POST['clabe_interbancaria'] : '');
     $alias_tarjeta         = trim(is_scalar($_POST['alias_tarjeta'] ?? null) ? (string)$_POST['alias_tarjeta'] : '');
+    // [FEATURE-DATOS-FACTURACION 2026-09-21] Segundo juego de datos bancarios, exclusivo para
+    // facturacion -- una cuenta distinta a la que se usa para cobrar transferencias normales.
+    $banco_fact               = trim(is_scalar($_POST['banco_fact'] ?? null) ? (string)$_POST['banco_fact'] : '');
+    $titular_cuenta_fact      = trim(is_scalar($_POST['titular_cuenta_fact'] ?? null) ? (string)$_POST['titular_cuenta_fact'] : '');
+    $numero_cuenta_fact       = trim(is_scalar($_POST['numero_cuenta_fact'] ?? null) ? (string)$_POST['numero_cuenta_fact'] : '');
+    $clabe_interbancaria_fact = trim(is_scalar($_POST['clabe_interbancaria_fact'] ?? null) ? (string)$_POST['clabe_interbancaria_fact'] : '');
+    $alias_tarjeta_fact       = trim(is_scalar($_POST['alias_tarjeta_fact'] ?? null) ? (string)$_POST['alias_tarjeta_fact'] : '');
     // [FIX-SUCURSAL-ID-DESINCRONIZADO] Igual que clientes.php: el ID real de edicion debe
     // anclarse al que ya vino validado por la URL (?id=), no al <input hidden> del POST —
     // ese hidden se puede alterar para que la edicion de la sucursal mostrada en pantalla
@@ -67,6 +80,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errores[] = 'El número de cuenta debe contener solo dígitos (máximo 10).';
     if ($clabe_interbancaria && strlen($clabe_interbancaria) !== 18)
         $errores[] = 'La CLABE interbancaria debe tener exactamente 18 dígitos.';
+    // [FEATURE-DATOS-FACTURACION 2026-09-21] mismas validaciones que los datos bancarios normales.
+    if ($numero_cuenta_fact !== '' && !preg_match('/^\d{1,10}$/', $numero_cuenta_fact))
+        $errores[] = 'El número de cuenta de facturación debe contener solo dígitos (máximo 10).';
+    if ($clabe_interbancaria_fact && strlen($clabe_interbancaria_fact) !== 18)
+        $errores[] = 'La CLABE interbancaria de facturación debe tener exactamente 18 dígitos.';
     // [FIX-MEDIO-A-13] El rango 0-100 solo se validaba con min/max de HTML5 (se salta con
     // DevTools o un POST directo); la columna es DECIMAL(5,2), asi que sin tope real
     // aceptaba hasta 999.99% de comision o de mora.
@@ -134,6 +152,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'numero_cuenta'        => $numero_cuenta ?: null,
                 'clabe_interbancaria'  => $clabe_interbancaria ?: null,
                 'alias_tarjeta'        => $alias_tarjeta ?: null,
+                'banco_fact'               => $banco_fact ?: null,
+                'titular_cuenta_fact'      => $titular_cuenta_fact ?: null,
+                'numero_cuenta_fact'       => $numero_cuenta_fact ?: null,
+                'clabe_interbancaria_fact' => $clabe_interbancaria_fact ?: null,
+                'alias_tarjeta_fact'       => $alias_tarjeta_fact ?: null,
                 'ticket_font_size'     => $ticket_font_size,
                 'ticket_ancho_mm'      => $ticket_ancho_mm,
                 'ticket_pie'           => $ticket_pie ?: null,
@@ -142,7 +165,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'ticket_pie_terminal'  => $ticket_pie_terminal ?: null,
                 'ticket_nota_credito'  => $ticket_nota_credito ?: null,
                 'ticket_logo'          => $ticket_logo,
-                'porcentaje_mora'      => $porcentaje_mora,
+                // [FEATURE-MORA-GLOBAL 2026-09-22] porcentaje_mora se quita de aqui a
+                // proposito: ya NO es un dato por-sucursal, se aplica a TODAS de un jalon justo
+                // abajo (ver el UPDATE sin WHERE tras guardar). Incluirlo en $campos solo
+                // actualizaria la fila de la sucursal que se esta editando/creando, dejando
+                // a las demas con el valor viejo.
             ];
 
             // [FIX-MEDIO-A-11] Antes una PDOException aquí (dato que no cabe en su columna,
@@ -187,6 +214,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     header('Location: sucursales.php?msg=creado');
                 }
+
+                // [FEATURE-MORA-GLOBAL 2026-09-22] El % de mora ya no es un valor por sucursal
+                // -- se guarda en la fila de cada una (no se le quito la columna a la tabla)
+                // pero SIEMPRE se mantiene identico entre todas. Editar el campo desde el
+                // formulario de CUALQUIER sucursal actualiza el valor para todas de un jalon;
+                // una sucursal nueva tambien lo recibe aqui (nace con la columna en su default
+                // y este UPDATE sin WHERE la alcanza igual que a las demas).
+                $pdo->prepare("UPDATE sucursales SET porcentaje_mora = ?")->execute([$porcentaje_mora]);
+
                 exit();
             } catch (PDOException $e) {
                 $errores[] = 'No se pudo guardar la sucursal. Verifica los datos e intenta de nuevo.';
@@ -397,14 +433,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
 
+                <!-- [FEATURE-DATOS-FACTURACION 2026-09-21] Segunda cuenta bancaria, exclusiva
+                para facturacion -- misma estructura que la seccion de arriba. -->
+                <div style="border-top:1px solid #eee;margin:20px 0 18px;padding-top:18px;">
+                    <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px;">Datos bancarios para facturación</div>
+                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">Cuenta distinta a la de arriba, usada solo cuando el cliente pide factura. Se muestra junto con los datos normales en todos los módulos donde se cobra por transferencia.</div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Banco</label>
+                            <input type="text" name="banco_fact"
+                                value="<?= htmlspecialchars(is_scalar($_POST['banco_fact'] ?? null) ? $_POST['banco_fact'] : ($editando['banco_fact'] ?? '')) ?>"
+                                placeholder="Ej. BBVA, Banorte">
+                        </div>
+                        <div class="form-group">
+                            <label>Titular de la cuenta</label>
+                            <input type="text" name="titular_cuenta_fact"
+                                value="<?= htmlspecialchars(is_scalar($_POST['titular_cuenta_fact'] ?? null) ? $_POST['titular_cuenta_fact'] : ($editando['titular_cuenta_fact'] ?? '')) ?>"
+                                placeholder="Nombre del titular (ej. razón social)">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Número de cuenta</label>
+                            <input type="text" name="numero_cuenta_fact"
+                                value="<?= htmlspecialchars(is_scalar($_POST['numero_cuenta_fact'] ?? null) ? $_POST['numero_cuenta_fact'] : ($editando['numero_cuenta_fact'] ?? '')) ?>"
+                                placeholder="10 dígitos"
+                                maxlength="10"
+                                inputmode="numeric"
+                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"
+                                title="Solo dígitos, máximo 10">
+                        </div>
+                        <div class="form-group">
+                            <label>CLABE interbancaria</label>
+                            <input type="text" name="clabe_interbancaria_fact"
+                                value="<?= htmlspecialchars(is_scalar($_POST['clabe_interbancaria_fact'] ?? null) ? $_POST['clabe_interbancaria_fact'] : ($editando['clabe_interbancaria_fact'] ?? '')) ?>"
+                                placeholder="18 dígitos"
+                                maxlength="18"
+                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,18)"
+                                id="inputClabeFact">
+                            <div class="hint" id="hintClabeFact"><?= strlen($_POST['clabe_interbancaria_fact'] ?? $editando['clabe_interbancaria_fact'] ?? '') ?>/18 dígitos</div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Alias / nombre de la tarjeta <span style="font-weight:400;color:#aaa;">(opcional)</span></label>
+                        <input type="text" name="alias_tarjeta_fact"
+                            value="<?= htmlspecialchars(is_scalar($_POST['alias_tarjeta_fact'] ?? null) ? $_POST['alias_tarjeta_fact'] : ($editando['alias_tarjeta_fact'] ?? '')) ?>"
+                            placeholder="Ej. Cuenta fiscal BBVA">
+                    </div>
+                </div>
+
                 <!-- Seccion: Creditos -->
                 <div style="border-top:1px solid #eee;margin:20px 0 18px;padding-top:18px;">
                     <div style="font-size:13px;font-weight:700;color:#333;margin-bottom:4px;">Créditos</div>
-                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">Configura el recargo por vencimiento de crédito para esta sucursal.</div>
+                    <div style="font-size:12px;color:#aaa;margin-bottom:14px;">
+                        Recargo por vencimiento de crédito.
+                        <strong style="color:#e65100;">Este valor es único para todo el negocio</strong> — cambiarlo aquí lo actualiza en todas las sucursales, no solo en esta.
+                    </div>
                     <div class="form-group">
-                        <label>% Mora por vencimiento</label>
+                        <label>% Mora por vencimiento (global)</label>
                         <input type="number" name="porcentaje_mora" step="0.01" min="0" max="100"
-                            value="<?= htmlspecialchars(is_scalar($_POST['porcentaje_mora'] ?? null) ? $_POST['porcentaje_mora'] : ($editando['porcentaje_mora'] ?? '')) ?>"
+                            value="<?= htmlspecialchars(is_scalar($_POST['porcentaje_mora'] ?? null) ? $_POST['porcentaje_mora'] : ($editando['porcentaje_mora'] ?? $porcentajeMoraGlobalActual ?? '')) ?>"
                             placeholder="Ej. 5 (dejar en 0 para no cobrar mora)">
                         <div class="hint">Se aplica una sola vez sobre el saldo pendiente de cada crédito cuando vence. Dejar en 0 para no cobrar.</div>
                     </div>
@@ -741,6 +832,13 @@ td { padding:1px 0; }
 document.getElementById('inputClabe').addEventListener('input', function() {
     const n = this.value.length;
     const hint = document.getElementById('hintClabe');
+    hint.textContent = n + '/18 dígitos';
+    hint.style.color = n === 18 ? '#2e7d32' : n > 0 ? '#e65100' : '#aaa';
+});
+// [FEATURE-DATOS-FACTURACION 2026-09-21] mismo comportamiento que inputClabe de arriba.
+document.getElementById('inputClabeFact').addEventListener('input', function() {
+    const n = this.value.length;
+    const hint = document.getElementById('hintClabeFact');
     hint.textContent = n + '/18 dígitos';
     hint.style.color = n === 18 ? '#2e7d32' : n > 0 ? '#e65100' : '#aaa';
 });

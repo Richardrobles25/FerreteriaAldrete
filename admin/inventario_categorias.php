@@ -243,7 +243,7 @@ if (isset($_GET['editar'])) {
 
             <form method="GET" action="inventario_categorias.php">
                 <div class="barra-busqueda">
-                    <input type="text" name="buscar" placeholder="Buscar categoría..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
+                    <input type="text" name="buscar" placeholder="Buscar categoría..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                     <button class="btn-buscar" type="submit">Buscar</button>
                     <?php if ($busqueda): ?>
                         <a class="btn-limpiar" href="inventario_categorias.php">Limpiar</a>

@@ -227,7 +227,7 @@ $resumen = $stmtRes->fetch(PDO::FETCH_ASSOC);
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar producto</label>
-                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" style="width:160px;">
+                    <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:160px;" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Fecha</label>

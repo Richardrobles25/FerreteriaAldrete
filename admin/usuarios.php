@@ -275,7 +275,7 @@ $totales = $stmtTot->fetch(PDO::FETCH_ASSOC);
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" placeholder="Nombre o usuario..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;" oninput="filtrarTabla(this.value)">
+                    <input type="text" name="buscar" placeholder="Nombre o usuario..." value="<?= htmlspecialchars($busqueda) ?>" style="width:160px;" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Rol</label>

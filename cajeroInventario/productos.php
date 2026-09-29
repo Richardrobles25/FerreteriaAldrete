@@ -1031,7 +1031,11 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" style="width:180px;">
+                    <?php /* [FIX-BUSCAR-ENTER-RECARGA 2026-09-20] (mismo fix que admin/inventario_productos.php)
+                    Este campo ya filtra en vivo con oninput -- Enter tecleado por costumbre a
+                    mitad de la busqueda disparaba el submit nativo del formulario, recargando
+                    toda la pagina a medio escribir y tirando el foco del campo. */ ?>
+                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:180px;" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>

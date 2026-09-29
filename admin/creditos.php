@@ -10,29 +10,17 @@ verificarSesion();
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
-// [FIX-QUINCENA-FIJA] Los cortes de credito NO son "15 dias despues de hoy" (rodante) sino
-// fechas fijas de calendario: el dia 15 y el ultimo dia de cada mes, iguales para todos los
-// clientes (asi es como realmente se cobra). Si el corte cae en domingo (la tienda cierra ese
-// dia), se recorre al lunes siguiente para que el cliente sí tenga oportunidad de ir a pagar
-// antes de que se le considere vencido.
-function siguienteCorteQuincenal(string $fechaDesde): string {
-    $ts   = strtotime($fechaDesde);
-    $dia  = (int)date('j', $ts);
-    $mes  = (int)date('n', $ts);
-    $anio = (int)date('Y', $ts);
-    $ultimoDiaMes = (int)date('t', $ts);
-
-    if ($dia < 15) {
-        $corte = mktime(0, 0, 0, $mes, 15, $anio);
-    } elseif ($dia < $ultimoDiaMes) {
-        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
-    } else {
-        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
-    }
-    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
-        $corte = strtotime('+1 day', $corte);
-    }
-    return date('Y-m-d', $corte);
+// [FIX-MORA-CADA-SABADO 2026-09-21] Reemplaza a siguienteCorteQuincenal(). La fecha_limite de
+// un credito ya vencido ahora avanza al siguiente SABADO (no al siguiente 15/fin de mes) --
+// el cobro recurrente de mora se revisa cada sabado. Siempre avanza al menos 1 dia (nunca
+// regresa la misma fecha si ya cae en sabado), para que el while de mas abajo no se quede
+// pegado si $fechaDesde ya es sabado.
+function siguienteSabado(string $fechaDesde): string {
+    $ts = strtotime($fechaDesde);
+    do {
+        $ts = strtotime('+1 day', $ts);
+    } while ((int)date('N', $ts) !== 6); // ISO-8601: 6 = sabado
+    return date('Y-m-d', $ts);
 }
 
 try {
@@ -59,13 +47,25 @@ try {
 // vencida, compuesta sobre el saldo que ya trae mora anterior).
 try {
     $pdo->beginTransaction();
+    // [FEATURE-IMPORTAR-CLIENTES 2026-09-22] Los JOIN hacia venta/caja/sucursal ahora son LEFT:
+    // un credito importado (venta_id NULL, saldo heredado del sistema anterior) no tiene una
+    // venta real detras, y aun asi debe poder recibir mora si algun dia se le activa -- se usa
+    // el % global (todas las sucursales comparten el mismo valor, ver admin/formSucursal.php)
+    // como respaldo cuando no hay una sucursal real ligada. "cli.cobrar_mora = 0" excluye por
+    // completo a los clientes marcados como exentos, sin importar su saldo o cuanto se atrasen.
+    // [FIX-MORA-CLIENTE-INACTIVO 2026-09-25] "cli.activo = 1" congela la mora cuando el cliente
+    // esta desactivado -- verificado en vivo que sin esto, un cliente inactivo seguia acumulando
+    // recargo cada sabado exactamente igual que uno activo. La deuda ya acumulada no se toca,
+    // solo deja de crecer mientras el cliente siga inactivo (igual que cobrar_mora=0).
     $stmtMoraList = $pdo->query("
-        SELECT cr.credito_id, s.porcentaje_mora
+        SELECT cr.credito_id, COALESCE(s.porcentaje_mora, (SELECT porcentaje_mora FROM sucursales LIMIT 1)) AS porcentaje_mora
         FROM creditos cr
-        JOIN ventas v     ON cr.venta_id     = v.venta_id
-        JOIN cajas  ca    ON v.caja_id       = ca.caja_id
-        JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
-        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND s.porcentaje_mora > 0
+        JOIN clientes cli      ON cr.cliente_id = cli.cliente_id
+        LEFT JOIN ventas v     ON cr.venta_id    = v.venta_id
+        LEFT JOIN cajas  ca    ON v.caja_id      = ca.caja_id
+        LEFT JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND cli.cobrar_mora = 1 AND cli.activo = 1
+          AND COALESCE(s.porcentaje_mora, (SELECT porcentaje_mora FROM sucursales LIMIT 1)) > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
         $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, fecha_limite, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
@@ -97,11 +97,11 @@ try {
             $moraAmt           = round($saldoActual * $pct / 100, 2);
             $saldoBase         = $saldoActual;
             $saldoActual       = round($saldoActual + $moraAmt, 2);
-            // [FIX-MORA-QUINCENAL] Se registra con la fecha real en que venció esa quincena
+            // [FIX-MORA-CADA-SABADO] Se registra con la fecha real en que venció ese plazo
             // (no "hoy"), para que el historial de mora no muestre la misma fecha repetida
-            // cuando se ponen al día varias quincenas atrasadas en una sola carga de pagina.
+            // cuando se ponen al día varios sabados atrasados en una sola carga de pagina.
             $fechaEstaMora     = $fechaLimiteActual;
-            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
+            $fechaLimiteActual = siguienteSabado($fechaLimiteActual);
             $ultimaMora        = $moraAmt;
             $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
                 ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);
@@ -155,9 +155,9 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                COALESCE(SUM(a.monto),0) AS total_abonado
         FROM creditos cr
         JOIN clientes c ON cr.cliente_id = c.cliente_id
-        JOIN ventas v ON cr.venta_id = v.venta_id
-        JOIN cajas ca ON v.caja_id = ca.caja_id
-        JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+        LEFT JOIN ventas v ON cr.venta_id = v.venta_id
+        LEFT JOIN cajas ca ON v.caja_id = ca.caja_id
+        LEFT JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
         LEFT JOIN abonos a ON cr.credito_id = a.credito_id
         $where
         GROUP BY cr.credito_id, c.nombre_completo, c.telefono, cr.monto_total, cr.saldo_pendiente, cr.estado, cr.fecha_limite, cr.created_at, s.nombre
@@ -183,7 +183,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
         $r['estado'],
         $r['fecha_limite'] ? date('d/m/Y', strtotime($r['fecha_limite'])) : '—',
         date('d/m/Y', strtotime($r['created_at'])),
-        $r['sucursal'],
+        $r['sucursal'] ?? 'Saldo importado',
     ], $expData);
 
     // Calcular resumen rápido
@@ -220,9 +220,9 @@ $stmt = $pdo->prepare("
         MAX(a.created_at) AS ultimo_abono
     FROM creditos cr
     JOIN clientes c ON cr.cliente_id = c.cliente_id
-    JOIN ventas v ON cr.venta_id = v.venta_id
-    JOIN cajas ca ON v.caja_id = ca.caja_id
-    JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+    LEFT JOIN ventas v ON cr.venta_id = v.venta_id
+    LEFT JOIN cajas ca ON v.caja_id = ca.caja_id
+    LEFT JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
     LEFT JOIN abonos a ON cr.credito_id = a.credito_id
     $where
     GROUP BY cr.credito_id, c.nombre_completo, c.telefono, c.limite_credito, v.created_at, s.nombre
@@ -357,7 +357,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 
         <form method="GET">
             <div class="filtros">
-                <div class="filtro-group"><label>Buscar cliente</label><input type="text" name="buscar" placeholder="Nombre o telefono..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)"></div>
+                <div class="filtro-group"><label>Buscar cliente</label><input type="text" name="buscar" placeholder="Nombre o telefono..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto></div>
                 <div class="filtro-group">
                     <label>Estado</label>
                     <select name="estado">
@@ -395,8 +395,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         <?php foreach ($creditos as $credito): ?>
                             <tr>
                                 <td><strong><?= htmlspecialchars($credito['nombre_completo']) ?></strong><div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($credito['telefono'] ?: 'Sin telefono') ?></div><div style="font-size:11px;color:#aaa;">Limite: $<?= number_format($credito['limite_credito'], 2) ?></div></td>
-                                <td><?= htmlspecialchars($credito['sucursal']) ?></td>
-                                <td><strong>$<?= number_format($credito['monto_total'], 2) ?></strong><div style="font-size:11px;color:#aaa;">Venta #<?= intval($credito['venta_id']) ?> - <?= date('d/m/Y', strtotime($credito['fecha_venta'])) ?></div></td>
+                                <td><?= $credito['sucursal'] !== null ? htmlspecialchars($credito['sucursal']) : '<span style="color:#aaa;">Saldo importado</span>' ?></td>
+                                <td><strong>$<?= number_format($credito['monto_total'], 2) ?></strong><div style="font-size:11px;color:#aaa;"><?= $credito['venta_id'] ? 'Venta #' . intval($credito['venta_id']) . ' - ' . date('d/m/Y', strtotime($credito['fecha_venta'])) : 'Saldo importado' ?></div></td>
                                 <td><strong>$<?= number_format($credito['total_abonado'], 2) ?></strong><div style="font-size:11px;color:#aaa;"><?= intval($credito['numero_abonos']) ?> abonos</div><div style="font-size:11px;color:#aaa;"><?= $credito['ultimo_abono'] ? 'Ultimo: ' . date('d/m/Y', strtotime($credito['ultimo_abono'])) : 'Sin abonos' ?></div></td>
                                 <td style="font-weight:700;color:<?= $credito['saldo_pendiente'] > 0 ? '#c0392b' : '#2e7d32' ?>;">$<?= number_format($credito['saldo_pendiente'], 2) ?></td>
                                 <td style="font-size:12px;"><?= $credito['fecha_limite'] ? date('d/m/Y', strtotime($credito['fecha_limite'])) : '-' ?></td>

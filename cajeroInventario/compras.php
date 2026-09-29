@@ -481,7 +481,7 @@ unset($prodConProv);
                 <div class="filtros">
                     <div class="filtro-group">
                         <label>Proveedor</label>
-                        <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
+                        <input type="text" name="buscar" placeholder="Nombre..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                     </div>
                     <div class="filtro-group">
                         <label>Fecha</label>

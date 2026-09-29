@@ -325,7 +325,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 <div class="filtro-group">
                     <label>Buscar</label>
                     <div style="display:flex;gap:6px;">
-                        <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Producto o codigo" oninput="filtrarTabla(this.value)" data-no-auto>
+                        <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Producto o codigo" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                         <button type="submit" style="background:#14ace7;color:white;border:none;padding:7px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">Buscar</button>
                     </div>
                 </div>

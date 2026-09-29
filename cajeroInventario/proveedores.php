@@ -371,7 +371,7 @@ if ($editando) {
                 <div class="filtros">
                     <div class="filtro-group">
                         <label>Buscar</label>
-                        <input type="text" name="buscar" placeholder="Nombre del proveedor..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)">
+                        <input type="text" name="buscar" placeholder="Nombre del proveedor..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                     </div>
                     <div class="filtro-group">
                         <label>Filtrar por área</label>

@@ -16,33 +16,21 @@ require_once __DIR__ . '/_admin_sucursal_filtro.php';
 // abajo, junto con el redirect por falta de caja abierta, DESPUES de los bloques AJAX. Ver el
 // comentario junto a ese redirect para el detalle completo del bug que esto corrige.
 
-// [FIX-QUINCENA-FIJA] Los cortes de credito NO son "15 dias despues de hoy" (rodante) sino
-// fechas fijas de calendario: el dia 15 y el ultimo dia de cada mes, iguales para todos los
-// clientes (asi es como realmente se cobra). Si el corte cae en domingo (la tienda cierra ese
-// dia), se recorre al lunes siguiente para que el cliente sí tenga oportunidad de ir a pagar
-// antes de que se le considere vencido.
-function siguienteCorteQuincenal(string $fechaDesde): string {
-    $ts   = strtotime($fechaDesde);
-    $dia  = (int)date('j', $ts);
-    $mes  = (int)date('n', $ts);
-    $anio = (int)date('Y', $ts);
-    $ultimoDiaMes = (int)date('t', $ts);
-
-    if ($dia < 15) {
-        $corte = mktime(0, 0, 0, $mes, 15, $anio);
-    } elseif ($dia < $ultimoDiaMes) {
-        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
-    } else {
-        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
-    }
-    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
-        $corte = strtotime('+1 day', $corte);
-    }
-    return date('Y-m-d', $corte);
+// [FIX-MORA-CADA-SABADO 2026-09-21] Reemplaza a siguienteCorteQuincenal(). La fecha_limite de
+// un credito ya vencido ahora avanza al siguiente SABADO (no al siguiente 15/fin de mes) --
+// el cobro recurrente de mora se revisa cada sabado. Siempre avanza al menos 1 dia (nunca
+// regresa la misma fecha si ya cae en sabado), para que el while de mas abajo no se quede
+// pegado si $fechaDesde ya es sabado.
+function siguienteSabado(string $fechaDesde): string {
+    $ts = strtotime($fechaDesde);
+    do {
+        $ts = strtotime('+1 day', $ts);
+    } while ((int)date('N', $ts) !== 6); // ISO-8601: 6 = sabado
+    return date('Y-m-d', $ts);
 }
 
 // Datos bancarios de la sucursal
-$sucursalInfo = $pdo->prepare("SELECT banco, titular_cuenta, numero_cuenta, clabe_interbancaria, alias_tarjeta, comision_terminal_pct, porcentaje_mora FROM sucursales WHERE sucursal_id = ?");
+$sucursalInfo = $pdo->prepare("SELECT banco, titular_cuenta, numero_cuenta, clabe_interbancaria, alias_tarjeta, banco_fact, titular_cuenta_fact, numero_cuenta_fact, clabe_interbancaria_fact, alias_tarjeta_fact, comision_terminal_pct, porcentaje_mora FROM sucursales WHERE sucursal_id = ?");
 $sucursalInfo->execute([$sucursalVista]);
 $datosBanco  = $sucursalInfo->fetch(PDO::FETCH_ASSOC);
 $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
@@ -75,13 +63,25 @@ try {
 // veces, o pisar un abono hecho justo en medio.
 try {
     $pdo->beginTransaction();
+    // [FEATURE-IMPORTAR-CLIENTES 2026-09-22] Los JOIN hacia venta/caja/sucursal ahora son LEFT:
+    // un credito importado (venta_id NULL, saldo heredado del sistema anterior) no tiene una
+    // venta real detras, y aun asi debe poder recibir mora si algun dia se le activa -- se usa
+    // el % global (todas las sucursales comparten el mismo valor, ver admin/formSucursal.php)
+    // como respaldo cuando no hay una sucursal real ligada. "cli.cobrar_mora = 0" excluye por
+    // completo a los clientes marcados como exentos, sin importar su saldo o cuanto se atrasen.
+    // [FIX-MORA-CLIENTE-INACTIVO 2026-09-25] "cli.activo = 1" congela la mora cuando el cliente
+    // esta desactivado -- verificado en vivo que sin esto, un cliente inactivo seguia acumulando
+    // recargo cada sabado exactamente igual que uno activo. La deuda ya acumulada no se toca,
+    // solo deja de crecer mientras el cliente siga inactivo (igual que cobrar_mora=0).
     $stmtMoraList = $pdo->query("
-        SELECT cr.credito_id, s.porcentaje_mora
+        SELECT cr.credito_id, COALESCE(s.porcentaje_mora, (SELECT porcentaje_mora FROM sucursales LIMIT 1)) AS porcentaje_mora
         FROM creditos cr
-        JOIN ventas v     ON cr.venta_id     = v.venta_id
-        JOIN cajas  ca    ON v.caja_id       = ca.caja_id
-        JOIN sucursales s ON ca.sucursal_id  = s.sucursal_id
-        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND s.porcentaje_mora > 0
+        JOIN clientes cli      ON cr.cliente_id = cli.cliente_id
+        LEFT JOIN ventas v     ON cr.venta_id    = v.venta_id
+        LEFT JOIN cajas  ca    ON v.caja_id      = ca.caja_id
+        LEFT JOIN sucursales s ON ca.sucursal_id = s.sucursal_id
+        WHERE cr.estado = 'Vencido' AND cr.fecha_limite < CURDATE() AND cli.cobrar_mora = 1 AND cli.activo = 1
+          AND COALESCE(s.porcentaje_mora, (SELECT porcentaje_mora FROM sucursales LIMIT 1)) > 0
     ");
     foreach ($stmtMoraList->fetchAll(PDO::FETCH_ASSOC) as $cm) {
         $stmtLockCred = $pdo->prepare("SELECT saldo_pendiente, fecha_limite, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
@@ -113,11 +113,11 @@ try {
             $moraAmt           = round($saldoActual * $pct / 100, 2);
             $saldoBase         = $saldoActual;
             $saldoActual       = round($saldoActual + $moraAmt, 2);
-            // [FIX-MORA-QUINCENAL] Se registra con la fecha real en que venció esa quincena
+            // [FIX-MORA-CADA-SABADO] Se registra con la fecha real en que venció ese plazo
             // (no "hoy"), para que el historial de mora no muestre la misma fecha repetida
-            // cuando se ponen al día varias quincenas atrasadas en una sola carga de pagina.
+            // cuando se ponen al día varios sabados atrasados en una sola carga de pagina.
             $fechaEstaMora     = $fechaLimiteActual;
-            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
+            $fechaLimiteActual = siguienteSabado($fechaLimiteActual);
             $ultimaMora        = $moraAmt;
             $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
                 ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);
@@ -179,6 +179,7 @@ if (isset($_GET['ticket_abono'])) {
                    a.monto_efectivo, a.monto_terminal, a.referencia_transferencia, a.saldo_despues,
                    a.monto_recibido,
                    a.created_at, u.nombre_completo AS cajero, cl.nombre_completo AS cliente,
+                   cl.cliente_id,
                    COALESCE(v.folio, CONCAT('Crédito #', cr.credito_id)) AS folio_venta
             FROM abonos a
             JOIN creditos cr ON a.credito_id = cr.credito_id
@@ -198,6 +199,10 @@ if (isset($_GET['ticket_abono'])) {
         // monto_recibido se guarda igual en cada fila del mismo folio (es el total entregado
         // por el pago completo, no por credito) -- basta con leerlo de la primera fila.
         $recibidoTA = $primeraTA['monto_recibido'] !== null ? floatval($primeraTA['monto_recibido']) : null;
+        // [FEATURE-TICKET-ABONO-SALDO-TOTAL 2026-09-20] (portado de cajeroInventario/creditos.php)
+        $stmtSaldoTotalTA = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+        $stmtSaldoTotalTA->execute([$primeraTA['cliente_id']]);
+        $saldoTotalPendienteTA = round(floatval($stmtSaldoTotalTA->fetchColumn()), 2);
         echo json_encode([
             'folio'                    => $folioPago,
             'fecha_formateada'         => date('d/m/Y H:i', strtotime($primeraTA['created_at'])),
@@ -212,6 +217,7 @@ if (isset($_GET['ticket_abono'])) {
             'monto_recibido'           => $recibidoTA,
             'cambio'                   => $recibidoTA !== null ? round($recibidoTA - $montoTotalTA, 2) : 0,
             'notas'                    => $primeraTA['notas'],
+            'saldo_total_pendiente'    => $saldoTotalPendienteTA,
             'detalle'                  => array_map(fn($f) => [
                 'folio_venta'    => $f['folio_venta'],
                 'monto'          => floatval($f['monto']),
@@ -465,7 +471,7 @@ if (isset($_GET['get_creditos_cliente'])) {
                        ORDER BY p.nombre_producto SEPARATOR ';;'
                    ) AS prods_raw
             FROM creditos cr
-            JOIN ventas v ON cr.venta_id = v.venta_id
+            LEFT JOIN ventas v ON cr.venta_id = v.venta_id
             LEFT JOIN venta_productos vp ON cr.venta_id = vp.venta_id
             LEFT JOIN productos p ON vp.producto_id = p.producto_id
             -- Subquery: cantidad total devuelta por producto en esta venta (devoluciones no canceladas)
@@ -1030,6 +1036,30 @@ $totales = $pdo->query("
                             <div class="ab-dato"><span>Alias / tarjeta</span><span><?= htmlspecialchars($datosBanco['alias_tarjeta']) ?></span></div>
                         <?php endif; ?>
                     </div>
+                    <?php // [FEATURE-DATOS-FACTURACION 2026-09-21] segunda cuenta, solo para facturacion.
+                    $hayDatosFactAb = !empty($datosBanco['banco_fact']) || !empty($datosBanco['titular_cuenta_fact'])
+                        || !empty($datosBanco['numero_cuenta_fact']) || !empty($datosBanco['clabe_interbancaria_fact']);
+                    ?>
+                    <?php if ($hayDatosFactAb): ?>
+                    <div class="ab-panel-trans" style="border-radius:8px;padding:11px 14px;margin-bottom:10px;background:#fff8e1;border-color:#f0d68a;">
+                        <h4 style="color:#8a6d00;"><?= icono('clipboard-list') ?> Datos para facturación</h4>
+                        <?php if (!empty($datosBanco['banco_fact'])): ?>
+                            <div class="ab-dato"><span>Banco</span><span><?= htmlspecialchars($datosBanco['banco_fact']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['titular_cuenta_fact'])): ?>
+                            <div class="ab-dato"><span>Titular</span><span><?= htmlspecialchars($datosBanco['titular_cuenta_fact']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['numero_cuenta_fact'])): ?>
+                            <div class="ab-dato"><span>N° cuenta</span><span><?= htmlspecialchars($datosBanco['numero_cuenta_fact']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['clabe_interbancaria_fact'])): ?>
+                            <div class="ab-dato"><span>CLABE</span><span><?= htmlspecialchars($datosBanco['clabe_interbancaria_fact']) ?></span></div>
+                        <?php endif; ?>
+                        <?php if (!empty($datosBanco['alias_tarjeta_fact'])): ?>
+                            <div class="ab-dato"><span>Alias / tarjeta</span><span><?= htmlspecialchars($datosBanco['alias_tarjeta_fact']) ?></span></div>
+                        <?php endif; ?>
+                    </div>
+                    <?php endif; ?>
                     <div class="ab-fg">
                         <label>Referencia de transferencia *</label>
                         <input type="text" name="referencia" id="abCampoRef" placeholder="Número de folio o referencia..." oninput="verificarPagoAb()">
@@ -1118,7 +1148,7 @@ function abrirDetalles(clienteId, nombre) {
             creditos.forEach(cr => {
                 // [AUTOFIX] BUG-01: usar esc() en todos los valores de BD que van a innerHTML
                 const badgeClass = cr.estado === 'Vencido' ? 'badge-vencido2' : 'badge-activo';
-                const folio = cr.folio ? 'Folio ' + esc(cr.folio) : 'Venta #' + intval(cr.credito_id);
+                const folio = cr.folio ? 'Folio ' + esc(cr.folio) : 'Crédito #' + intval(cr.credito_id);
                 const saldo = parseFloat(cr.saldo_pendiente);
                 totalPend += saldo;
                 html += `<div class="credito-det">
@@ -1406,6 +1436,14 @@ function generarTicketAbonoHTML(pago) {
         <div class="t-fila"><span>Efectivo</span><span>$${parseFloat(pago.monto_efectivo).toFixed(2)}</span></div>
         <div class="t-fila"><span>Terminal</span><span>$${parseFloat(pago.monto_terminal).toFixed(2)}</span></div>`;
     }
+
+    // [FEATURE-TICKET-ABONO-SALDO-TOTAL 2026-09-20] (portado de cajeroInventario/creditos.php)
+    // Saldo que el cliente sigue debiendo en TODOS sus creditos activos/vencidos, no solo el/los
+    // que este pago toco. Se muestra siempre, incluso en $0.00.
+    const saldoTotalTA = parseFloat(pago.saldo_total_pendiente || 0);
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>SALDO TOTAL PENDIENTE</span><span>$${saldoTotalTA.toFixed(2)}</span></div>`;
 
     const pieTexto = datosTicket.ticket_pie || '¡Gracias por su pago!';
     html += `

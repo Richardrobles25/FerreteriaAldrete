@@ -188,30 +188,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores)) {
-        // Calculate hours
-        // [FIX-ALTO-G-05] Antes domingo (N=7) caia en el "else" y se trataba como jornada
-        // normal de 9h: una Falta en domingo descontaba 9 horas de sueldo por un dia que no
-        // era obligatorio, y horas trabajadas en domingo se comparaban contra una jornada
-        // esperada de 9h en vez de contar completas como extra. Coincide con que
-        // semanaLaboral.php ya modela la semana de paga como lunes-sabado (51 hrs), sin
-        // domingo: domingo pasa a 0 horas esperadas, asi que una Falta ahi no descuenta
-        // nada y cualquier hora trabajada cuenta entera como horas extra.
-        // [FIX-HORARIO-PERSONALIZADO] horasEsperadasDia() ya no usa un valor fijo del sistema
-        // -- necesita el horas_por_dia de ESTE empleado. Se consulta fresco en la BD (no
-        // desde el <select>, que un cliente podria alterar) para no confiar en un valor que
-        // el navegador mande.
-        $stmtHorasEmp = $pdo->prepare("SELECT horas_por_dia FROM empleados WHERE empleado_id = ?");
-        $stmtHorasEmp->execute([$empleado_id]);
-        $horasPorDiaEmp = floatval($stmtHorasEmp->fetchColumn() ?: 9);
-        $horasEsperadas = horasEsperadasDia($fecha, $horasPorDiaEmp);
+        // [FEATURE-HORAS-SEMANALES 2026-09-30] Ya no se compara contra una jornada esperada
+        // POR DIA (ese era el mecanismo que hacia que cualquier hora trabajada en domingo
+        // contara de inmediato como extra, al forzar la jornada esperada de ese dia a 0). Aqui
+        // solo se calculan las horas REALES trabajadas este dia -- la comparacion contra el
+        // limite semanal del empleado (horas_esperadas_semana) se hace abajo, en
+        // recalcularHorasExtraSemana(), sobre el acumulado de toda la semana.
+        $horasNoTrabajadas = 0.0; // en desuso para registros nuevos -- ver comentario de columna
 
         if ($tipo === 'Falta') {
-            $horasNoTrabajadas = $horasEsperadas;
-            $horasExtra        = 0.0;
+            $horasTrabajadas = 0.0;
         } elseif ($tipo === 'Asistencia normal' && !$hora_entrada && !$hora_salida) {
-            // Dia completo sin especificar horario — se asume que trabajo sus horas completas
-            $horasNoTrabajadas = 0.0;
-            $horasExtra        = 0.0;
+            // Dia completo sin especificar horario — se asume que trabajo su jornada normal.
+            $stmtHorasEmp = $pdo->prepare("SELECT horas_por_dia FROM empleados WHERE empleado_id = ?");
+            $stmtHorasEmp->execute([$empleado_id]);
+            $horasTrabajadas = floatval($stmtHorasEmp->fetchColumn() ?: 9);
         } else {
             $minEntrada    = timeToMinutes($hora_entrada);
             $minSalida     = timeToMinutes($hora_salida);
@@ -226,10 +217,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // [FIX-CRIT-G-03] Defensa adicional: minutos trabajados nunca negativos.
             $minTrabajados = max(0, $minTrabajados);
 
-            $horasTrabajadas   = $minTrabajados / 60.0;
-            $horasNoTrabajadas = round(max(0.0, $horasEsperadas - $horasTrabajadas), 2);
-            $horasExtra        = round(max(0.0, $horasTrabajadas - $horasEsperadas), 2);
+            $horasTrabajadas = round($minTrabajados / 60.0, 2);
         }
+        // horas_extra se recalcula para TODA la semana justo despues de guardar (ver mas abajo,
+        // recalcularHorasExtraSemana()) -- este valor inicial es solo un placeholder mientras
+        // tanto, nunca es el que se queda.
+        $horasExtra = 0.0;
 
         $horaEntradaDB = ($tipo !== 'Falta' && $hora_entrada) ? $hora_entrada : null;
         $horaSalidaDB  = ($tipo !== 'Falta' && $hora_salida)  ? $hora_salida  : null;
@@ -248,12 +241,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmtUpdAsis = $pdo->prepare("
                     UPDATE asistencia
                     SET empleado_id=?, fecha=?, tipo=?, hora_entrada=?, hora_salida=?,
-                        horas_no_trabajadas=?, horas_extra=?, razon=?, resolucion=?, notas=?
+                        horas_trabajadas=?, horas_no_trabajadas=?, horas_extra=?, razon=?, resolucion=?, notas=?
                     WHERE asistencia_id=?
                 ");
                 $stmtUpdAsis->execute([
                     $empleado_id, $fecha, $tipo, $horaEntradaDB, $horaSalidaDB,
-                    $horasNoTrabajadas, $horasExtra,
+                    $horasTrabajadas, $horasNoTrabajadas, $horasExtra,
                     $razon ?: null, $resolucion, $notas ?: null,
                     $asistencia_id
                 ]);
@@ -281,11 +274,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $pdo->prepare("
                     INSERT INTO asistencia (empleado_id, fecha, tipo, hora_entrada, hora_salida,
-                        horas_no_trabajadas, horas_extra, razon, resolucion, notas)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                        horas_trabajadas, horas_no_trabajadas, horas_extra, razon, resolucion, notas)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 ")->execute([
                     $empleado_id, $fecha, $tipo, $horaEntradaDB, $horaSalidaDB,
-                    $horasNoTrabajadas, $horasExtra,
+                    $horasTrabajadas, $horasNoTrabajadas, $horasExtra,
                     $razon ?: null, $resolucion, $notas ?: null
                 ]);
                 $asistencia_id = $pdo->lastInsertId();
@@ -301,6 +294,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if (empty($errores)) {
                 $pdo->commit();
+
+                // [FEATURE-HORAS-SEMANALES 2026-09-30] Recalcula el acumulado semanal de este
+                // empleado ahora que su horas_trabajadas ya quedo guardada. Si al editar se
+                // cambio la fecha a OTRA semana, tambien hay que recalcular la semana vieja --
+                // ese dia ya no esta ahi, asi que el acumulado de los dias que le seguian
+                // cambia igual.
+                $stmtHEsem = $pdo->prepare("SELECT horas_esperadas_semana FROM empleados WHERE empleado_id = ?");
+                $stmtHEsem->execute([$empleado_id]);
+                $horasEsperadasSemanaEmp = floatval($stmtHEsem->fetchColumn() ?: 51);
+                recalcularHorasExtraSemana($pdo, $empleado_id, $fecha, $horasEsperadasSemanaEmp);
+                if ($editando && $editando['fecha'] !== $fecha && lunesDeLaSemana($editando['fecha']) !== lunesDeLaSemana($fecha)) {
+                    recalcularHorasExtraSemana($pdo, $empleado_id, $editando['fecha'], $horasEsperadasSemanaEmp);
+                }
+
                 header('Location: asistencia.php?msg=registrado');
                 exit();
             }
@@ -541,25 +548,20 @@ foreach ($pdo->query("SELECT empleado_id, fecha, asistencia_id FROM asistencia")
                 </div>
 
                 <!-- Calculo en tiempo real -->
+                <!-- [FEATURE-HORAS-SEMANALES 2026-09-30] Ya no se puede mostrar "extra" o "no
+                trabajadas" en vivo aqui: eso depende del acumulado de TODA la semana de este
+                empleado (los demas dias ya guardados), no solo de este registro. Se muestra
+                unicamente lo que este formulario si puede calcular por su cuenta: las horas
+                trabajadas de este dia. El desglose extra/faltante final se ve en Asistencia
+                (acumulado corriendo) y en Semana Laboral (el total contra el limite semanal). -->
                 <div class="section-label">Calculo automatico</div>
                 <div class="calc-box">
                     <div class="calc-item">
-                        <p>Horas esperadas</p>
-                        <span id="calcEsperadas">—</span>
-                    </div>
-                    <div class="calc-item">
-                        <p>Horas trabajadas</p>
+                        <p>Horas trabajadas este dia</p>
                         <span id="calcTrabajadas">—</span>
                     </div>
-                    <div class="calc-item rojo">
-                        <p>Horas no trabajadas</p>
-                        <span id="calcNoTrabajadas">—</span>
-                    </div>
-                    <div class="calc-item verde">
-                        <p>Horas extra</p>
-                        <span id="calcExtra">—</span>
-                    </div>
                 </div>
+                <p style="font-size:12px;color:#999;margin-top:6px;">Si esto empuja el acumulado de la semana por encima del limite del empleado, el excedente se vera reflejado como "Horas extra" en la lista de Asistencia despues de guardar.</p>
 
                 <div class="form-group" id="grupoRazon">
                     <label id="lblRazon">Razon</label>
@@ -603,7 +605,7 @@ var tipoConfig = {
         entrada: '',                       salida: '',
         razon: 'Notas del dia',           razonPh: 'Ej. Sin novedad (opcional)',
         infoColor: { bg:'#f0fff0', border:'#b7dfb8', text:'#1e8449' },
-        info: function() { return 'Dia completo sin incidente: se registran las ' + horasEmpleadoActual() + ' hrs esperadas de este empleado (0 hrs domingo).'; }
+        info: function() { return 'Dia completo sin incidente: se registran las ' + horasEmpleadoActual() + ' hrs de la jornada normal de este empleado.'; }
     },
     'Tardanza': {
         tiempos: true,  intervalos: false, required: true,
@@ -617,7 +619,7 @@ var tipoConfig = {
         entrada: '',                       salida: '',
         razon: 'Motivo de la falta',      razonPh: 'Ej. Enfermedad, permiso sin goce...',
         infoColor: { bg:'#fff0f0', border:'#fdd', text:'#c0392b' },
-        info: function() { return 'Se contara el dia completo como no trabajado (' + horasEmpleadoActual() + ' hrs esperadas de este empleado; 0 hrs domingo).'; }
+        info: 'Se contara el dia completo como no trabajado (0 horas). Si otro dia de la misma semana trabaja horas de mas, se compensan solas al sumar el total semanal.'
     },
     'Salida temprana': {
         tiempos: true,  intervalos: false, required: true,
@@ -694,11 +696,9 @@ function timeToMin(t) {
     return parseInt(parts[0]) * 60 + parseInt(parts[1]);
 }
 
-// [FIX-HORARIO-PERSONALIZADO] Antes esta regla (9h/6h/0h) era un unico valor fijo para todos
-// los empleados, leido de jornadaConfig() (ya eliminada de includes/rh_helpers.php). Ahora
-// cada empleado tiene su propio horas_por_dia (mismo valor lunes-sabado); se embebe aqui como
-// mapa empleado_id -> horas_por_dia para que el JS calcule con el mismo criterio que
-// horasEsperadasDia() en PHP (domingo = 0 para todos, fijo).
+// [FEATURE-HORAS-SEMANALES 2026-09-30] Ya no hay "0 hrs domingo" ni jornada esperada por dia --
+// horas_por_dia solo sirve como relleno para "Asistencia normal" sin horario explicito (dia
+// completo se asume trabajado con esta cantidad de horas).
 var HORAS_POR_DIA = <?= json_encode(array_column($empleados, 'horas_por_dia', 'empleado_id')) ?>;
 
 function horasEmpleadoActual() {
@@ -708,40 +708,23 @@ function horasEmpleadoActual() {
 
 function calcular() {
     var tipo    = document.getElementById('selectTipo').value;
-    var fecha   = document.getElementById('inputFecha').value;
     var entrada = document.getElementById('horaEntrada').value;
     var salida  = document.getElementById('horaSalida').value;
 
-    // Determine expected hours: horas_por_dia del empleado seleccionado, 0 en domingo
-    var esperadas = horasEmpleadoActual();
-    if (fecha) {
-        var d = new Date(fecha + 'T12:00:00');
-        var dow = d.getDay(); // 0=Sun ... 6=Sat
-        if (dow === 0) esperadas = 0;
-    }
-
-    document.getElementById('calcEsperadas').textContent = esperadas + ' h';
-
     if (tipo === 'Falta') {
-        document.getElementById('calcTrabajadas').textContent   = '0 h';
-        document.getElementById('calcNoTrabajadas').textContent = esperadas + ' h';
-        document.getElementById('calcExtra').textContent        = '0 h';
+        document.getElementById('calcTrabajadas').textContent = '0 h';
         return;
     }
 
-    if (tipo === 'Asistencia normal') {
-        document.getElementById('calcTrabajadas').textContent   = esperadas + ' h';
-        document.getElementById('calcNoTrabajadas').textContent = '0 h';
-        document.getElementById('calcExtra').textContent        = '0 h';
+    if (tipo === 'Asistencia normal' && !entrada && !salida) {
+        document.getElementById('calcTrabajadas').textContent = horasEmpleadoActual() + ' h';
         return;
     }
 
     var mEnt = timeToMin(entrada);
     var mSal = timeToMin(salida);
     if (mEnt === null || mSal === null || mSal <= mEnt) {
-        document.getElementById('calcTrabajadas').textContent   = '—';
-        document.getElementById('calcNoTrabajadas').textContent = '—';
-        document.getElementById('calcExtra').textContent        = '—';
+        document.getElementById('calcTrabajadas').textContent = '—';
         return;
     }
 
@@ -758,12 +741,7 @@ function calcular() {
     });
 
     var horasTrab = minTrabajados / 60;
-    var noTrab    = Math.max(0, esperadas - horasTrab);
-    var extra     = Math.max(0, horasTrab - esperadas);
-
-    document.getElementById('calcTrabajadas').textContent   = horasTrab.toFixed(2) + ' h';
-    document.getElementById('calcNoTrabajadas').textContent = noTrab > 0 ? noTrab.toFixed(2) + ' h' : '0 h';
-    document.getElementById('calcExtra').textContent        = extra > 0 ? '+' + extra.toFixed(2) + ' h' : '0 h';
+    document.getElementById('calcTrabajadas').textContent = horasTrab.toFixed(2) + ' h';
 }
 
 function agregarTF() {

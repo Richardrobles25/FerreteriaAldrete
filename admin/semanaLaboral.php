@@ -81,83 +81,37 @@ $stmtEmp = $pdo->prepare("
 $stmtEmp->execute([$domingoAnterior, $fechaCorte, $lunes]);
 $empleados = $stmtEmp->fetchAll(PDO::FETCH_ASSOC);
 
-// [FIX-HORARIO-PERSONALIZADO] horasEsperadasDia() ahora requiere el horas_por_dia de CADA
-// empleado (ya no es un valor unico del sistema) -- se arma un mapa empleado_id -> horas_por_dia
-// a partir de $empleados (que ya trae la columna via "SELECT DISTINCT e.*") para usarlo en la
-// agregacion de asistencia de abajo, sin volver a consultar la BD por cada renglon.
-$horasPorDiaMap = array_column($empleados, 'horas_por_dia', 'empleado_id');
-
-// [FIX-MEDIO-G-25] Antes la regla de "horas esperadas por dia" estaba repetida aqui como un
-// CASE SQL propio (y, por venir de DAYOFWEEK(), en realidad trataba domingo igual que un dia
-// entre semana -- 9h -- en vez de las 0h que ya establecio el fix G-05 en formAsistencia.php).
-// Se trae el registro crudo y se agrega en PHP usando horasEsperadasDia(), la misma fuente de
-// verdad que ya usa formAsistencia.php y que ahora tambien lee el JS del navegador ahi mismo.
+// [FEATURE-HORAS-SEMANALES 2026-09-30] Reemplaza el viejo esquema de "horas esperadas POR DIA"
+// (horasEsperadasDia(), que fijaba domingo en 0 y hacia que trabajar ese dia contara de
+// inmediato como extra). Ahora solo importa el total de horas REALES trabajadas en toda la
+// semana (domingo anterior incluido, ver $domingoAnterior arriba) contra horas_esperadas_semana
+// del empleado -- esa comparacion unica se hace mas abajo, por empleado. Aqui solo se suma.
+// dias_normales/dias_falta/total_registros se siguen contando SOLO de lunes a sabado (nunca del
+// domingo anterior): son la base de $diasFaltantes, y domingo no es, ni debe volverse, un dia
+// laboral exigido.
 $stmtA = $pdo->prepare("
-    SELECT empleado_id, fecha, tipo, horas_no_trabajadas, horas_extra
+    SELECT empleado_id, fecha, tipo, horas_trabajadas
     FROM asistencia
     WHERE fecha BETWEEN ? AND ?
 ");
-$stmtA->execute([$lunes, $fechaCorte]);
+$stmtA->execute([$domingoAnterior, $fechaCorte]);
 $asistenciaMap = [];
 foreach ($stmtA->fetchAll(PDO::FETCH_ASSOC) as $row) {
     $eid = $row['empleado_id'];
     if (!isset($asistenciaMap[$eid])) {
         $asistenciaMap[$eid] = [
-            'total_no_trabajadas'    => 0.0,
-            'total_extra'            => 0.0,
-            'total_registros'        => 0,
             'total_horas_trabajadas' => 0.0,
-            'total_esperadas'        => 0.0,
+            'total_registros'        => 0,
             'dias_normales'          => 0,
             'dias_falta'             => 0,
         ];
     }
-    $hnt = floatval($row['horas_no_trabajadas']);
-    $he  = floatval($row['horas_extra']);
-    $horasPorDiaEid = floatval($horasPorDiaMap[$eid] ?? 9);
-    $esperadaDia    = horasEsperadasDia($row['fecha'], $horasPorDiaEid);
-    $asistenciaMap[$eid]['total_no_trabajadas'] += $hnt;
-    $asistenciaMap[$eid]['total_extra']         += $he;
-    $asistenciaMap[$eid]['total_registros']++;
-    // total_esperadas se acumula para TODOS los registros (incluyendo Falta): es la suma de
-    // "lo que se esperaba trabajar" en cada dia que ya tiene registro, y es el punto de
-    // comparacion real para saber si el empleado ya supero o no su jornada -- NO
-    // horas_esperadas_semana, que solo sirve como divisor para la tarifa por hora (ver
-    // tarifa mas abajo). Un empleado sin ningun incidente (todo "Asistencia normal") siempre
-    // cierra con total_horas_trabajadas === total_esperadas, sin importar que tan distinto
-    // sea horas_esperadas_semana de horas_por_dia*6 -- por eso pagoFinal = sueldo exacto en
-    // una semana sin incidentes pase lo que pase con esos dos campos.
-    $asistenciaMap[$eid]['total_esperadas'] += $esperadaDia;
-    if ($row['tipo'] !== 'Falta') {
-        $asistenciaMap[$eid]['total_horas_trabajadas'] += $esperadaDia - $hnt + $he;
+    $asistenciaMap[$eid]['total_horas_trabajadas'] += floatval($row['horas_trabajadas']);
+    if ($row['fecha'] >= $lunes) {
+        $asistenciaMap[$eid]['total_registros']++;
+        if ($row['tipo'] === 'Asistencia normal') $asistenciaMap[$eid]['dias_normales']++;
+        if ($row['tipo'] === 'Falta')             $asistenciaMap[$eid]['dias_falta']++;
     }
-    if ($row['tipo'] === 'Asistencia normal') $asistenciaMap[$eid]['dias_normales']++;
-    if ($row['tipo'] === 'Falta')             $asistenciaMap[$eid]['dias_falta']++;
-}
-
-// [FIX-DOMINGO-TRABAJADO] Horas extra del domingo anterior a este lunes: se suman al total de
-// la semana (compensan horas debidas primero, el resto se paga a 1.5x igual que cualquier otra
-// hora extra) pero SIN tocar total_registros/dias_normales/dias_falta/total_esperadas -- esos
-// campos son la base de "cuantos de los 6 dias laborales ya tienen registro" (ver
-// $diasFaltantes mas abajo), y domingo no es, ni debe volverse, un dia laboral exigido.
-// horas_no_trabajadas de un registro de domingo siempre es 0.00 (horasEsperadasDia() ya regresa
-// 0 esperadas para domingo, asi que nunca puede "deber" horas ese dia) -- no hace falta sumarla.
-$stmtDom = $pdo->prepare("SELECT empleado_id, horas_extra FROM asistencia WHERE fecha = ?");
-$stmtDom->execute([$domingoAnterior]);
-foreach ($stmtDom->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $eid = $row['empleado_id'];
-    if (!isset($asistenciaMap[$eid])) {
-        $asistenciaMap[$eid] = [
-            'total_no_trabajadas'    => 0.0,
-            'total_extra'            => 0.0,
-            'total_registros'        => 0,
-            'total_horas_trabajadas' => 0.0,
-            'total_esperadas'        => 0.0,
-            'dias_normales'          => 0,
-            'dias_falta'             => 0,
-        ];
-    }
-    $asistenciaMap[$eid]['total_extra'] += floatval($row['horas_extra']);
 }
 
 // Armar tabla
@@ -177,31 +131,24 @@ foreach ($empleados as $emp) {
     $horasEsperadasSemana = floatval($emp['horas_esperadas_semana']);
     $tarifa = $horasEsperadasSemana > 0 ? $sueldo / $horasEsperadasSemana : 0.0;
 
-    $horasNT         = floatval($asistenciaMap[$eid]['total_no_trabajadas']  ?? 0);
-    $horasExtra      = floatval($asistenciaMap[$eid]['total_extra']          ?? 0);
     $horasTrabajadas = floatval($asistenciaMap[$eid]['total_horas_trabajadas'] ?? 0);
-    $horasEsperadasAcum = floatval($asistenciaMap[$eid]['total_esperadas']   ?? 0);
     $diasNormales    = intval($asistenciaMap[$eid]['dias_normales']          ?? 0);
     $diasFalta       = intval($asistenciaMap[$eid]['dias_falta']             ?? 0);
     $totalReg        = intval($asistenciaMap[$eid]['total_registros']        ?? 0);
 
-    $horasCompensadas   = min($horasNT, $horasExtra);
-    $horasNetaDeducir   = round($horasNT    - $horasCompensadas, 2);
-    $horasExtraNeta     = round($horasExtra - $horasCompensadas, 2);
+    // [FEATURE-HORAS-SEMANALES 2026-09-30] Una sola comparacion contra el total de la semana en
+    // vez de sumar deficits/excedentes ya decididos dia por dia -- si un dia faltaron horas y
+    // otro dia se repusieron de mas, se cancelan solas aqui al comparar el TOTAL, sin necesitar
+    // ningun "compensada" aparte (antes horasCompensadas existia justo para reconciliar esos dos
+    // numeros ya calculados por separado; con el total unico ya no puede haber los dos a la vez).
+    $horasNetaDeducir = round(max(0.0, $horasEsperadasSemana - $horasTrabajadas), 2);
+    $horasExtraNeta   = round(max(0.0, $horasTrabajadas - $horasEsperadasSemana), 2);
 
-    // [FIX-MEDIO-G-17] "Pagar" a mitad de semana (antes de llegar a sabado) tomaba SIEMPRE
-    // el sueldo semanal COMPLETO como base, aunque los dias que faltan por transcurrir no
-    // tuvieran ningun registro de asistencia (y por lo tanto ninguna deduccion) todavia — se
-    // le pagaba por adelantado dias que ni siquiera habian pasado. En su momento esto se
-    // arreglo prorrateando una deduccion por los dias restantes de la semana.
-    // [FIX-PREVIEW-DIAS-FUTUROS] Esa prorrateo ya es redundante como candado de seguridad —
-    // "Pagar" esta bloqueado por completo hasta $semanaCompleta (sabado) sin importar este
-    // calculo (ver el "if (!$semanaCompleta)" mas abajo), y un dia YA transcurrido sin
-    // registro lo bloquea por separado $diasFaltantes. Su unico efecto real era mostrar un
-    // "Ajuste" en rojo por dias que literalmente no han ocurrido todavia -- si un empleado ya
-    // cumplio (o compenso con horas extra) todo lo que se le pidio en los dias YA registrados,
-    // igual aparecia como si "le quedara debiendo dinero" por dias futuros que ni siquiera ha
-    // tenido oportunidad de trabajar. Confirmado con el usuario: no debe mostrarse como deuda.
+    // [FIX-MEDIO-G-17] / [FIX-PREVIEW-DIAS-FUTUROS] "Pagar" esta bloqueado por completo hasta
+    // $semanaCompleta (sabado, ver el "if (!$semanaCompleta)" mas abajo) y un dia YA
+    // transcurrido sin registro lo bloquea por separado ($diasFaltantes) -- un preview a mitad
+    // de semana simplemente mostrara menos horas trabajadas de las que aun le tocan, sin que eso
+    // bloquee ni afecte nada hasta que la semana realmente cierre.
     $deduccion  = round($horasNetaDeducir * $tarifa,       2);
     $bono       = round($horasExtraNeta   * $tarifa * 1.5, 2);
     $pagoFinal  = round($sueldo - $deduccion + $bono,      2);
@@ -228,14 +175,10 @@ foreach ($empleados as $emp) {
         'activo'           => intval($emp['activo']),
         'sueldo'           => $sueldo,
         'horas_esperadas_semana' => $horasEsperadasSemana,
-        'horas_esperadas_acum' => round($horasEsperadasAcum, 2),
         'horas_trabajadas' => round($horasTrabajadas, 2),
         'dias_normales'    => $diasNormales,
         'dias_falta'       => $diasFalta,
         'total_reg'        => $totalReg,
-        'horas_nt'         => $horasNT,
-        'horas_extra'      => $horasExtra,
-        'horas_comp'       => $horasCompensadas,
         'horas_neta_ded'   => $horasNetaDeducir,
         'horas_extra_neta' => $horasExtraNeta,
         'deduccion'        => $deduccion,
@@ -593,7 +536,7 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                     <td>
                         <?php if ($f['total_reg'] > 0): ?>
                             <span style="font-weight:700;color:#222;"><?= number_format($f['horas_trabajadas'], 2) ?> h</span>
-                            <span style="font-size:10px;color:#999;" title="Suma de las horas esperadas (segun horas/dia del empleado) de los dias ya registrados esta semana"> / <?= number_format($f['horas_esperadas_acum'], 2) ?> h esperadas</span>
+                            <span style="font-size:10px;color:#999;" title="Limite semanal de este empleado, antes de pagarse a 1.5x"> / <?= number_format($f['horas_esperadas_semana'], 2) ?> h</span>
                             <div style="font-size:10px;color:#aaa;margin-top:2px;">
                                 <?= $f['total_reg'] ?> d&iacute;a<?= $f['total_reg'] != 1 ? 's' : '' ?> registrados
                                 <?= $f['dias_falta'] > 0 ? ' · <span style="color:#c0392b;">' . $f['dias_falta'] . ' falta' . ($f['dias_falta'] > 1 ? 's' : '') . '</span>' : '' ?>
@@ -602,8 +545,8 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                             <span class="sin-inc">Sin registros</span>
                         <?php endif; ?>
                     </td>
-                    <td><?= $f['horas_nt'] > 0 ? '<span class="num-rojo">' . number_format($f['horas_nt'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
-                    <td><?= $f['horas_extra'] > 0 ? '<span class="num-verde">+' . number_format($f['horas_extra'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
+                    <td><?= $f['horas_neta_ded'] > 0 ? '<span class="num-rojo">' . number_format($f['horas_neta_ded'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
+                    <td><?= $f['horas_extra_neta'] > 0 ? '<span class="num-verde">+' . number_format($f['horas_extra_neta'], 2) . ' h</span>' : '<span class="sin-inc">0</span>' ?></td>
                     <td>
                         <?php $ajuste = $f['bono'] - $f['deduccion']; ?>
                         <?php if ($ajuste < 0): ?>
@@ -612,9 +555,6 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                             <span class="num-verde">+$<?= number_format($ajuste, 2) ?></span>
                         <?php else: ?>
                             <span class="sin-inc">—</span>
-                        <?php endif; ?>
-                        <?php if ($f['horas_comp'] > 0): ?>
-                            <div style="font-size:10px;color:#1a7db5;margin-top:2px;"><?= number_format($f['horas_comp'], 2) ?> h compensadas</div>
                         <?php endif; ?>
                     </td>
                     <td>
@@ -690,7 +630,7 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
         </div>
 
         <div style="margin-top:12px;font-size:11px;color:#aaa;padding:0 4px;">
-            * Semana de lunes a sabado. Cada empleado tiene su propia meta de horas semanales (columna "Horas esperadas" en su ficha) que define su tarifa por hora. El ajuste se calcula asi: las horas extra primero recuperan las horas debidas (compensadas); si aun debe horas se descuentan (sueldo &divide; horas esperadas semanales del empleado) y si le sobran extras sobre su meta se pagan a 1.5x esa tarifa.
+            * Semana de domingo a sabado (un domingo trabajado cuenta para la semana que empieza el lunes siguiente). Cada empleado tiene su propia meta de horas semanales (columna "Horas esperadas" en su ficha), que define su tarifa por hora (sueldo &divide; horas esperadas) y el limite antes de pagarse a 1.5x. El ajuste se calcula sobre el TOTAL de horas trabajadas en toda la semana: si no llega a la meta se descuenta la diferencia a esa tarifa; si la supera, el excedente se paga a 1.5x esa tarifa.
         </div>
     </div>
 </div>

@@ -92,24 +92,45 @@ function calcSaldoVacaciones(PDO $pdo, int $empleadoId, string $fechaIngreso, ?s
     return $saldo;
 }
 
-// Cuenta los dias del periodo excluyendo domingos (no son dia laboral)
-// [FIX-MEDIO-G-25] La regla de "cuantas horas se esperan segun el dia de la semana" estaba
-// repetida por separado en formAsistencia.php (PHP del servidor), formAsistencia.php (JS del
-// navegador) y semanaLaboral.php (CASE SQL) — tres copias independientes que un cambio futuro
-// tendria que actualizar a mano en las tres, con alto riesgo de dejarlas desincronizadas otra
-// vez. Se deja UNA sola fuente de verdad en PHP: formAsistencia.php y semanaLaboral.php la
-// consumen directamente, y se le pasa al navegador via json_encode() para que el JS de
-// formAsistencia.php tambien la lea en vez de tener su propia copia hardcodeada.
-// [FIX-HORARIO-PERSONALIZADO] Antes esta jornada era UN SOLO valor fijo para TODOS los
-// empleados (9h entre semana, 6h sabado). Ahora cada empleado tiene su propio "horas_por_dia"
-// (columna en empleados) que aplica igual de lunes a sabado -- si alguien trabaja un horario
-// distinto entre semana vs sabado, se captura ese dia en particular con horario explicito en
-// vez de depender del relleno automatico. Domingo se queda en 0 para todos, fijo: es una regla
-// de negocio confirmada (nadie trabaja domingo), no algo que dependa del empleado.
-function horasEsperadasDia(string $fecha, float $horasPorDia): float {
-    $diaSemana = intval(date('N', strtotime($fecha))); // 1=Lun ... 6=Sab, 7=Dom
-    if ($diaSemana === 7) return 0.0;
-    return $horasPorDia;
+// [FEATURE-HORAS-SEMANALES 2026-09-30] Reemplaza a la antigua horasEsperadasDia(), que fijaba
+// el domingo en 0 horas esperadas para todos los empleados -- cualquier hora trabajada ese dia
+// se contaba de inmediato como extra, sin importar cuanto hubiera trabajado el resto de la
+// semana. El usuario pidio manejarlo SOLO por el total semanal: domingo deja de tener cualquier
+// trato especial, es un dia mas dentro de su semana (domingo a sabado, el mismo agrupamiento
+// que ya usaba lunesDeLaSemana()).
+//
+// Cada registro de asistencia ahora guarda "horas_trabajadas" crudas (sin comparar contra
+// nada). Esta funcion recorre TODOS los registros de la semana de un empleado en orden
+// cronologico y le asigna a cada uno el excedente que su acumulado corriente le hizo cruzar por
+// encima de horas_esperadas_semana -- por eso "horas_extra" en Asistencia empieza en 0 cada
+// semana y solo sube una vez que el acumulado ya paso el limite (visible dia por dia segun se
+// va capturando asistencia). Se debe volver a llamar cada vez que se guarda, edita o borra
+// CUALQUIER registro de esa semana: cambiar un dia recorre el acumulado de todos los dias
+// posteriores de la misma semana.
+function recalcularHorasExtraSemana(PDO $pdo, int $empleadoId, string $fecha, float $horasEsperadasSemana): void {
+    $lunes           = lunesDeLaSemana($fecha);
+    $domingoAnterior = (new DateTime($lunes))->modify('-1 day')->format('Y-m-d');
+    $sabado          = (new DateTime($lunes))->modify('+5 days')->format('Y-m-d');
+
+    $stmt = $pdo->prepare("
+        SELECT asistencia_id, horas_trabajadas
+        FROM asistencia
+        WHERE empleado_id = ? AND fecha BETWEEN ? AND ?
+        ORDER BY fecha ASC, asistencia_id ASC
+    ");
+    $stmt->execute([$empleadoId, $domingoAnterior, $sabado]);
+
+    $acumulado = 0.0;
+    $stmtUpd   = $pdo->prepare("UPDATE asistencia SET horas_extra = ? WHERE asistencia_id = ?");
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $acumuladoAntes = $acumulado;
+        $acumulado     += floatval($r['horas_trabajadas']);
+        $extraDelDia    = round(
+            max(0.0, $acumulado - $horasEsperadasSemana) - max(0.0, $acumuladoAntes - $horasEsperadasSemana),
+            2
+        );
+        $stmtUpd->execute([$extraDelDia, $r['asistencia_id']]);
+    }
 }
 
 // [FIX-ADELANTO-LIMITE-SEMANA] Devuelve el lunes de la semana de nomina (lunes-sabado) a la

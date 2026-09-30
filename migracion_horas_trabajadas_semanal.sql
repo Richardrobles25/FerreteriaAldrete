@@ -1,0 +1,13 @@
+-- [FEATURE-HORAS-SEMANALES] El negocio decidio dejar de tratar el domingo como un dia especial
+-- (0 horas esperadas -> cualquier hora ahi contaba automaticamente como extra). Ahora la
+-- jornada se maneja SOLO por total de horas trabajadas en la semana contra
+-- horas_esperadas_semana del empleado: si el total se pasa, esas horas de mas se pagan a 1.5x;
+-- si no lo alcanza, se descuenta la diferencia. Domingo ya no tiene ningun trato especial -- es
+-- un dia mas dentro de su semana (domingo a sabado, igual que ya agrupaba lunesDeLaSemana()).
+--
+-- Esta columna guarda las horas REALES trabajadas ese dia (0 para Falta), sin comparar contra
+-- nada -- la comparacion contra el limite semanal se hace en semanaLaboral.php sobre la SUMA de
+-- la semana completa, no por dia. horas_no_trabajadas queda en desuso para registros nuevos
+-- (siempre se guarda en 0) pero no se borra la columna: los registros historicos de semanas ya
+-- pagadas la conservan tal cual, como estaban cuando se pagaron.
+ALTER TABLE asistencia ADD COLUMN horas_trabajadas DECIMAL(5,2) NOT NULL DEFAULT 0.00 AFTER hora_salida;

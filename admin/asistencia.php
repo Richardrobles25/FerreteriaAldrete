@@ -41,6 +41,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     }
 
     $pdo->prepare("DELETE FROM asistencia WHERE asistencia_id = ?")->execute([$idElim]);
+
+    // [FEATURE-HORAS-SEMANALES 2026-09-30] Borrar un dia corre el acumulado de todos los dias
+    // que le seguian en esa misma semana -- hay que recalcularlos, igual que al guardar/editar
+    // en formAsistencia.php.
+    if ($rowElim) {
+        require_once __DIR__ . '/../includes/rh_helpers.php';
+        $stmtHEsemElim = $pdo->prepare("SELECT horas_esperadas_semana FROM empleados WHERE empleado_id = ?");
+        $stmtHEsemElim->execute([$rowElim['empleado_id']]);
+        $horasEsperadasSemanaElim = floatval($stmtHEsemElim->fetchColumn() ?: 51);
+        recalcularHorasExtraSemana($pdo, intval($rowElim['empleado_id']), $rowElim['fecha'], $horasEsperadasSemanaElim);
+    }
+
     header('Location: ' . $_SERVER['REQUEST_URI'] . $sep . 'msg=eliminado');
     exit();
 }

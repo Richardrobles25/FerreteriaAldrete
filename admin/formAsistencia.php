@@ -108,7 +108,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     elseif ($fecha > date('Y-m-d'))             $errores[] = 'La fecha no puede ser en el futuro.';
 
     // Un solo registro por empleado por fecha (al editar se excluye el registro actual)
-    if ($empleado_id && $fecha) {
+    // [FIX-ASISTENCIA-FECHA-INVALIDA-500] Esta consulta comparaba fecha=? directo contra la
+    // columna DATE sin revisar primero si $fecha ya habia fallado la validacion de arriba --
+    // con MySQL en modo estricto, un valor imposible como "2026-02-30" no llega ni a comparar:
+    // el bind truena con "SQLSTATE[HY000]: 1525 Incorrect DATE value", sin try/catch alrededor,
+    // asi que el usuario veia un 500 crudo en vez de "La fecha no es valida." (el mensaje que
+    // el chequeo de arriba ya tenia listo). Se agrega "empty($errores)" -- si la fecha ya es
+    // invalida no tiene caso (ni es seguro) buscar duplicados con ella.
+    if ($empleado_id && $fecha && empty($errores)) {
         $stmtDup = $pdo->prepare("SELECT COUNT(*) FROM asistencia WHERE empleado_id = ? AND fecha = ? AND asistencia_id != ?");
         $stmtDup->execute([$empleado_id, $fecha, $asistencia_id]);
         if ($stmtDup->fetchColumn() > 0) {

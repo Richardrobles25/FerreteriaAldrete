@@ -802,6 +802,125 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reactivar_producto_gl
     exit();
 }
 
+// [FEATURE-ELIMINAR-TODOS] Desactivar DE GOLPE todos los productos de la sucursal que se esta
+// viendo -- pensado como valvula de seguridad si se importo por Excel una lista equivocada
+// (precios/codigos mal, categoria incorrecta, etc.) y conviene dejar la sucursal en blanco para
+// volver a importar limpio, en vez de desactivar producto por producto. Mismo patron de baja
+// logica que "eliminar_producto" (UPDATE stock_sucursal SET activo=0, nunca DELETE fisico, para
+// no romper el historial de ventas/movimientos ya ligado por FK) -- solo que aplicado a TODOS
+// los productos activos de esta sucursal en un solo POST. Administrador unicamente: a diferencia
+// del borrado de un solo producto (que Inventario/Inventario-Cajero si puede hacer sobre su
+// propia sucursal), el alcance de esta accion es demasiado grande para dejarla sin ese candado
+// extra. Cada producto con una venta a domicilio pendiente se OMITE (no se desactiva) en vez de
+// bloquear la operacion completa -- igual que el candado de "eliminar_producto" individual, pero
+// sin dejar que un solo pendiente trabe el resto de la limpieza.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todos_sucursal'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: inventario_productos.php?msg=no_autorizado_import');
+        exit();
+    }
+    $motivo      = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
+    $confirmacion = trim(is_scalar($_POST['confirmacion'] ?? null) ? (string)$_POST['confirmacion'] : '');
+
+    if ($sucursalVista === 0) {
+        header('Location: inventario_productos.php?msg=error_sin_sucursal');
+        exit();
+    }
+    if ($motivo === '' || strtoupper($confirmacion) !== 'ELIMINAR TODO') {
+        header('Location: inventario_productos.php?msg=error_eliminar_todos');
+        exit();
+    }
+
+    $stmtIds = $pdo->prepare("
+        SELECT ss.producto_id FROM stock_sucursal ss
+        INNER JOIN productos p ON p.producto_id = ss.producto_id
+        WHERE ss.sucursal_id = ? AND ss.activo = 1 AND p.activo = 1
+    ");
+    $stmtIds->execute([$sucursalVista]);
+    $ids = $stmtIds->fetchAll(PDO::FETCH_COLUMN);
+
+    $desactivados = 0;
+    $omitidos     = 0;
+    $pdo->beginTransaction();
+    try {
+        $stmtPendProd = $pdo->prepare("
+            SELECT COUNT(*) FROM venta_productos vp
+            INNER JOIN ventas v ON v.venta_id = vp.venta_id
+            INNER JOIN cajas c ON c.caja_id = v.caja_id
+            WHERE vp.producto_id = ? AND v.estado = 'Pendiente' AND c.sucursal_id = ?
+        ");
+        $stmtDesact = $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ? AND sucursal_id = ?");
+        foreach ($ids as $id) {
+            $stmtPendProd->execute([$id, $sucursalVista]);
+            if ($stmtPendProd->fetchColumn() > 0) {
+                $omitidos++;
+                continue;
+            }
+            $stmtDesact->execute([$id, $sucursalVista]);
+            $desactivados++;
+        }
+        $pdo->commit();
+        error_log('[inventario_productos.php] ELIMINACION MASIVA sucursal=' . $sucursalVista . ' desactivados=' . $desactivados . ' omitidos=' . $omitidos . ' por usuario_id=' . $_SESSION['usuario_id'] . ' motivo: ' . $motivo);
+        header('Location: inventario_productos.php?msg=eliminados_todos&n_desactivados=' . $desactivados . '&n_omitidos=' . $omitidos);
+    } catch (\PDOException $e) {
+        $pdo->rollBack();
+        error_log('[inventario_productos.php] Error en eliminacion masiva sucursal=' . $sucursalVista . ': ' . $e->getMessage());
+        header('Location: inventario_productos.php?msg=error_eliminar');
+    }
+    exit();
+}
+
+// [FEATURE-ELIMINAR-TODOS] Misma valvula de seguridad que el bloque de arriba, pero para el
+// CATALOGO GLOBAL completo (vista "Todas las sucursales") -- desactiva productos.activo para
+// cada producto, afectando a todas las sucursales a la vez (mismo alcance que
+// "eliminar_producto_global" de un solo producto, aplicado a todos).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todo_catalogo_global'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
+    if (($_SESSION['rol'] ?? '') !== 'Administrador') {
+        header('Location: inventario_productos.php?msg=no_autorizado_import');
+        exit();
+    }
+    $motivo       = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
+    $confirmacion = trim(is_scalar($_POST['confirmacion'] ?? null) ? (string)$_POST['confirmacion'] : '');
+
+    if ($motivo === '' || strtoupper($confirmacion) !== 'ELIMINAR TODO') {
+        header('Location: inventario_productos.php?msg=error_eliminar_todos');
+        exit();
+    }
+
+    $ids = $pdo->query("SELECT producto_id FROM productos WHERE activo = 1")->fetchAll(PDO::FETCH_COLUMN);
+
+    $desactivados = 0;
+    $omitidos     = 0;
+    $pdo->beginTransaction();
+    try {
+        $stmtPendGlobal = $pdo->prepare("
+            SELECT COUNT(*) FROM venta_productos vp
+            INNER JOIN ventas v ON v.venta_id = vp.venta_id
+            WHERE vp.producto_id = ? AND v.estado = 'Pendiente'
+        ");
+        $stmtDesactGlobal = $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ?");
+        foreach ($ids as $id) {
+            $stmtPendGlobal->execute([$id]);
+            if ($stmtPendGlobal->fetchColumn() > 0) {
+                $omitidos++;
+                continue;
+            }
+            $stmtDesactGlobal->execute([$id]);
+            $desactivados++;
+        }
+        $pdo->commit();
+        error_log('[inventario_productos.php] ELIMINACION MASIVA CATALOGO GLOBAL desactivados=' . $desactivados . ' omitidos=' . $omitidos . ' por usuario_id=' . $_SESSION['usuario_id'] . ' motivo: ' . $motivo);
+        header('Location: inventario_productos.php?msg=eliminados_todos&n_desactivados=' . $desactivados . '&n_omitidos=' . $omitidos);
+    } catch (\PDOException $e) {
+        $pdo->rollBack();
+        error_log('[inventario_productos.php] Error en eliminacion masiva catalogo global: ' . $e->getMessage());
+        header('Location: inventario_productos.php?msg=error_eliminar');
+    }
+    exit();
+}
+
 // AJAX: catálogo global — productos que la sucursal seleccionada aún no tiene
 if (isset($_GET['catalogo_disponible'])) {
     header('Content-Type: application/json');
@@ -982,6 +1101,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admi
 // Filtros
 $categoria   = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo  = isset($_GET['stock_bajo']);
+// [FEATURE-OCULTAR-STOCK-BAJO] Opuesto del filtro de arriba: "Stock bajo" ya muestra SOLO los
+// productos en ese estado; este checkbox es para el caso contrario, revisar el catalogo sin que
+// los de stock bajo (ya marcados con su propia alerta visual en cada fila) distraigan de la
+// lista. Solo tiene sentido por sucursal -- en la vista global no existe un stock_minimo por
+// producto (el stock mostrado ahi es la suma entre todas las sucursales).
+$ocultarStockBajo = !$stock_bajo && isset($_GET['ocultar_stock_bajo']);
 $esAdmin     = $_SESSION['rol'] === 'Administrador';
 $vistaGlobal = $esAdmin && $sucursalVista === 0;
 // [FEATURE-ELIMINAR-CATALOGO-GLOBAL] Solo tiene sentido en vista global -- por sucursal, los
@@ -1025,6 +1150,7 @@ if ($vistaGlobal) {
     $orderBy = "ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC";
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
     if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
+    if ($ocultarStockBajo) { $where .= " AND ss.stock_actual > ss.stock_minimo"; }
     $stmt = $pdo->prepare("
         SELECT p.*, c.nombre as nombre_categoria, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
         FROM productos p
@@ -1192,6 +1318,15 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 <?php endif; ?>
                 <a style="background:#c0392b;color:white;border:none;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;" href="inventario_productos.php?exportar=pdf"><?= icono('download') ?> PDF</a>
                 <a class="btn-excel-export" href="inventario_productos.php?exportar=excel"><?= icono('download') ?> Excel</a>
+                <?php /* [FEATURE-ELIMINAR-TODOS] Valvula de seguridad para una importacion de Excel
+                equivocada -- solo Administrador, sin importar el rol que normalmente puede borrar un
+                producto individual, porque el alcance (toda una sucursal o el catalogo global entero)
+                es demasiado grande para dejarlo con el mismo candado que un solo producto. */ ?>
+                <?php if ($puedeImportarExcel): ?>
+                <button type="button" style="background:#fdecea;color:#c0392b;border:1px solid #f5c6cb;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;" onclick="abrirModalEliminarTodos(<?= $vistaGlobal ? 'true' : 'false' ?>, <?= json_encode($vistaGlobal ? 'todo el catálogo global' : $nombreSucursalVista) ?>)">
+                    <?= $vistaGlobal ? 'Eliminar todo el catálogo' : 'Eliminar todos (esta sucursal)' ?>
+                </button>
+                <?php endif; ?>
                 <?php if ($vistaGlobal): ?>
                     <a class="btn-agregar" href="inventario_formProducto.php?todas=1">+ Nuevo producto (todas las sucursales)</a>
                 <?php else: ?>
@@ -1251,17 +1386,27 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
         <?php endif; ?>
 
         <?php
+        // [FEATURE-ELIMINAR-TODOS] "eliminados_todos" necesita los contadores reales (cuantos se
+        // desactivaron, cuantos se omitieron por tener una venta pendiente), asi que su texto se
+        // arma aparte en vez de ser un string fijo como el resto de $msgTextos.
+        $nDesactivadosMsg = intval(is_scalar($_GET['n_desactivados'] ?? null) ? $_GET['n_desactivados'] : 0);
+        $nOmitidosMsg     = intval(is_scalar($_GET['n_omitidos'] ?? null) ? $_GET['n_omitidos'] : 0);
+        $msgEliminadosTodos = icono('circle-check-big') . ' Se desactivaron ' . $nDesactivadosMsg . ' producto(s).'
+            . ($nOmitidosMsg > 0 ? ' ' . $nOmitidosMsg . ' se omitieron por tener una venta a domicilio pendiente de entregar.' : '')
+            . ' Puedes reactivarlos uno por uno desde "Ver productos inactivos" si fue un error.';
         $msgTextos = [
             'creado'           => icono('circle-check-big') . ' Producto registrado correctamente en el catálogo.',
             'editado'          => icono('circle-check-big') . ' Producto actualizado correctamente.',
             'eliminado'        => icono('circle-check-big') . ' Producto eliminado correctamente.',
             'eliminado_global' => icono('circle-check-big') . ' Producto eliminado del catálogo global — ya no aparece en ninguna sucursal. Puedes reactivarlo desde "Ver productos inactivos".',
+            'eliminados_todos' => $msgEliminadosTodos,
             'reactivado'       => icono('circle-check-big') . ' Producto reactivado en el catálogo global.',
             'agregado_catalogo'=> icono('circle-check-big') . ' Producto(s) agregado(s) a la sucursal correctamente.',
             'error_agregar_catalogo' => icono('circle-x') . ' No se pudo completar el alta de productos. No se guardó ningún cambio, intenta de nuevo.',
             'error_stock_max' => icono('circle-x') . ' El stock inicial/mínimo/máximo no puede ser mayor a 999,999. Verifica la cantidad capturada.',
             'error_stock_decimal' => icono('circle-x') . ' Uno de los productos se vende por pieza entera (no "Suelto") — el stock inicial/mínimo/máximo debe ser un número entero.',
             'error_eliminar'   => icono('circle-x') . ' No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
+            'error_eliminar_todos' => icono('circle-x') . ' No se completó la eliminación masiva: captura un motivo y escribe exactamente "ELIMINAR TODO" para confirmar.',
             'error_producto_pendiente' => icono('circle-x') . ' No puedes eliminar este producto: tiene una venta a domicilio pendiente de entregar.',
             'error_sin_sucursal' => icono('circle-x') . ' Selecciona una sucursal específica no "Todas las sucursales" para eliminar un producto de su stock.',
             'error_token'      => icono('circle-x') . ' La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
@@ -1322,6 +1467,15 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                     </select>
                 </div>
                 <?php if ($stock_bajo): ?><input type="hidden" name="stock_bajo" value="1"><?php endif; ?>
+                <?php if (!$vistaGlobal && !$stock_bajo): ?>
+                <div class="filtro-group">
+                    <label style="visibility:hidden;">.</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;">
+                        <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
+                        Ocultar stock bajo
+                    </label>
+                </div>
+                <?php endif; ?>
                 <?php renderSucursalSwitcher(); ?>
                 <a class="btn-limpiar" href="inventario_productos.php">Limpiar</a>
                 <?php if (!$vistaGlobal): ?>
@@ -1484,6 +1638,31 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     <input type="hidden" name="producto_id" id="inputReactivarProductoId">
 </form>
 <?php endif; ?>
+<?php if ($puedeImportarExcel): ?>
+<form method="POST" id="formEliminarTodos" style="display:none;">
+    <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+    <input type="hidden" name="<?= $vistaGlobal ? 'eliminar_todo_catalogo_global' : 'eliminar_todos_sucursal' ?>" value="1">
+    <input type="hidden" name="motivo_eliminacion" id="inputEliminarTodosMotivo">
+    <input type="hidden" name="confirmacion" id="inputEliminarTodosConfirmacion">
+</form>
+<div class="modal-overlay" id="modalEliminarTodos" aria-hidden="true">
+    <div class="modal-card">
+        <h3 id="tituloEliminarTodos">Eliminar todos los productos</h3>
+        <p id="textoEliminarTodos"></p>
+        <textarea id="textareaEliminarTodosMotivo" placeholder="Escribe el motivo de la eliminación masiva (ej. se importó una lista equivocada)"></textarea>
+        <div class="modal-error" id="errorEliminarTodosMotivo">Necesitas capturar un motivo para continuar.</div>
+        <label style="display:block;font-size:12px;color:#666;font-weight:600;margin:12px 0 5px;">
+            Escribe <strong>ELIMINAR TODO</strong> para confirmar
+        </label>
+        <input type="text" id="inputEliminarTodosConfirmTexto" placeholder="ELIMINAR TODO" style="width:100%;padding:9px 11px;border:1px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box;">
+        <div class="modal-error" id="errorEliminarTodosConfirm">Escribe exactamente "ELIMINAR TODO" (mayúsculas o minúsculas) para continuar.</div>
+        <div class="modal-acciones">
+            <button type="button" class="btn-modal-cancelar" onclick="cerrarModalEliminarTodos()">Cancelar</button>
+            <button type="button" class="btn-modal-confirmar" onclick="enviarEliminacionTodos()">Eliminar todos</button>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 <div class="modal-overlay" id="modalEliminarProducto" aria-hidden="true">
     <div class="modal-card">
         <h3 id="tituloEliminarProducto">Eliminar producto</h3>
@@ -1580,6 +1759,54 @@ function enviarEliminacionProducto() {
 document.getElementById('modalEliminarProducto').addEventListener('click', function(e) {
     if (e.target === this) cerrarModalEliminacion();
 });
+// [FEATURE-ELIMINAR-TODOS] Modal aparte del de un solo producto -- ademas del motivo (mismo
+// candado que ya usa el modal de arriba), exige escribir "ELIMINAR TODO" porque el alcance
+// (toda una sucursal o el catalogo global entero) es demasiado grande para solo un textarea.
+function abrirModalEliminarTodos(esGlobal, nombreSucursalOCatalogo) {
+    document.getElementById('tituloEliminarTodos').textContent = esGlobal ? 'Eliminar todo el catálogo global' : 'Eliminar todos los productos de esta sucursal';
+    document.getElementById('textoEliminarTodos').innerHTML = esGlobal
+        ? '<strong>⚠ Esto afecta TODAS las sucursales:</strong> se desactivará el catálogo global completo (Pinar y Barrio de los Indios). El historial de ventas ya registradas no se toca. Cada producto se puede reactivar despues, uno por uno, desde "Ver productos inactivos".'
+        : '<strong>⚠ Esto afecta solo "' + nombreSucursalOCatalogo + '":</strong> se desactivará el stock de TODOS los productos de esta sucursal (no se borra del catálogo global ni se desactiva en otras sucursales). Útil si se importó por Excel una lista equivocada. Cada producto se puede reactivar despues desde "+ Agregar del catálogo".';
+    document.getElementById('textareaEliminarTodosMotivo').value = '';
+    document.getElementById('inputEliminarTodosConfirmTexto').value = '';
+    document.getElementById('errorEliminarTodosMotivo').style.display = 'none';
+    document.getElementById('errorEliminarTodosConfirm').style.display = 'none';
+    document.getElementById('modalEliminarTodos').classList.add('visible');
+    document.getElementById('modalEliminarTodos').setAttribute('aria-hidden', 'false');
+    setTimeout(() => document.getElementById('textareaEliminarTodosMotivo').focus(), 0);
+}
+function cerrarModalEliminarTodos() {
+    document.getElementById('modalEliminarTodos').classList.remove('visible');
+    document.getElementById('modalEliminarTodos').setAttribute('aria-hidden', 'true');
+}
+function enviarEliminacionTodos() {
+    const motivo = document.getElementById('textareaEliminarTodosMotivo').value.trim();
+    const confirmTexto = document.getElementById('inputEliminarTodosConfirmTexto').value.trim();
+    let ok = true;
+    if (!motivo) {
+        document.getElementById('errorEliminarTodosMotivo').style.display = 'block';
+        ok = false;
+    } else {
+        document.getElementById('errorEliminarTodosMotivo').style.display = 'none';
+    }
+    if (confirmTexto.toUpperCase() !== 'ELIMINAR TODO') {
+        document.getElementById('errorEliminarTodosConfirm').style.display = 'block';
+        ok = false;
+    } else {
+        document.getElementById('errorEliminarTodosConfirm').style.display = 'none';
+    }
+    if (!ok) return;
+    document.getElementById('inputEliminarTodosMotivo').value = motivo;
+    document.getElementById('inputEliminarTodosConfirmacion').value = confirmTexto;
+    cerrarModalEliminarTodos();
+    document.getElementById('formEliminarTodos').submit();
+}
+const modalEliminarTodosEl = document.getElementById('modalEliminarTodos');
+if (modalEliminarTodosEl) {
+    modalEliminarTodosEl.addEventListener('click', function(e) {
+        if (e.target === this) cerrarModalEliminarTodos();
+    });
+}
 // [FIX-CRIT-B-01] Listener delegado: ya no se interpola el nombre del producto dentro de un
 // atributo onclick (ver comentario junto al botón "Eliminar" más arriba).
 document.querySelectorAll('.btn-eliminar[data-producto-id]').forEach(function(btn) {

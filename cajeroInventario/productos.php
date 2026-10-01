@@ -662,6 +662,10 @@ if (!in_array($sucursal_consulta, $idsSucursales, true)) {
 // Filtros
 $categoria  = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo = isset($_GET['stock_bajo']);
+// [FEATURE-OCULTAR-STOCK-BAJO] (mismo fix que admin/inventario_productos.php) opuesto del
+// filtro de arriba: "Stock bajo" ya muestra SOLO esos productos; este checkbox es para el caso
+// contrario, revisar el catalogo sin que los de stock bajo distraigan de la lista.
+$ocultarStockBajo = !$stock_bajo && isset($_GET['ocultar_stock_bajo']);
 
 $where  = "WHERE ss.sucursal_id = ? AND p.activo = 1 AND ss.activo = 1";
 $params = [$sucursal_consulta];
@@ -677,6 +681,7 @@ $params = [$sucursal_consulta];
 // $busqueda por completo y se le quita el name="buscar" al input mas abajo.
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
 if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
+if ($ocultarStockBajo) { $where .= " AND ss.stock_actual > ss.stock_minimo"; }
 
 $stmt = $pdo->prepare("
     SELECT p.*, ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
@@ -1069,6 +1074,15 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                     </select>
                 </div>
                 <?php if ($stock_bajo): ?><input type="hidden" name="stock_bajo" value="1"><?php endif; ?>
+                <?php if (!$stock_bajo): ?>
+                <div class="filtro-group">
+                    <label style="visibility:hidden;">.</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;">
+                        <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
+                        Ocultar stock bajo
+                    </label>
+                </div>
+                <?php endif; ?>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
                 <?php if ($categoria || $stock_bajo || $sucursal_consulta !== intval($_SESSION['sucursal_id'])): ?>
                     <a class="btn-limpiar" href="productos.php">Limpiar</a>

@@ -5,6 +5,7 @@ session_start();
 require_once '../includes/auth.php';
 require_once '../includes/icons.php';
 require_once '../config/database.php';
+require_once '../includes/rh_helpers.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
 verificarRol(['Administrador']);
@@ -164,6 +165,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         saldo_vacaciones_ajuste=?, saldo_vacaciones_ajuste_fecha=?
                     WHERE empleado_id=?
                 ")->execute([$nombre, $fecha_ingreso, $sueldo_semanal, $activo, $horas_esperadas_semana, $horas_por_dia, $saldoVacAjuste, $saldoVacAjusteFecha, $empleado_id]);
+
+                // [FIX-HORAS-ESPERADAS-CACHE-OBSOLETA 2026-10-01] formAsistencia.php calcula y
+                // GUARDA "horas_extra" por registro en el momento de capturar asistencia (via
+                // recalcularHorasExtraSemana(), que compara el acumulado contra
+                // horas_esperadas_semana del empleado EN ESE MOMENTO). Si despues se cambia
+                // horas_esperadas_semana aqui sin volver a tocar esos registros, la columna
+                // guardada se queda con el numero viejo indefinidamente -- nadie mas la
+                // recalcula. semanaLaboral.php nunca se ve afectado (sí recalcula todo en vivo
+                // cada vez, no lee esta columna), pero la lista de Asistencia mostraba un
+                // "Horas extra" incorrecto hasta que alguien editara/borrara un registro de esa
+                // semana por otro motivo. Encontrado en vivo 2026-10-01. Se recalculan aqui
+                // todas las semanas que ya tengan asistencia de este empleado, solo si el
+                // limite realmente cambio (evita trabajo de mas en una edicion que no lo toca).
+                if (abs($horas_esperadas_semana - floatval($editando['horas_esperadas_semana'])) > 0.001) {
+                    $stmtFechasEmp = $pdo->prepare("SELECT DISTINCT fecha FROM asistencia WHERE empleado_id = ?");
+                    $stmtFechasEmp->execute([$empleado_id]);
+                    $semanasTocar = [];
+                    foreach ($stmtFechasEmp->fetchAll(PDO::FETCH_COLUMN) as $fechaReg) {
+                        $semanasTocar[lunesDeLaSemana($fechaReg)] = true;
+                    }
+                    foreach (array_keys($semanasTocar) as $lunesSemanaReg) {
+                        recalcularHorasExtraSemana($pdo, $empleado_id, $lunesSemanaReg, $horas_esperadas_semana);
+                    }
+                }
+
                 header('Location: empleados.php?msg=actualizado');
             } else {
                 $pdo->prepare("

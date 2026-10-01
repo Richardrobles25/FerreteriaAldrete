@@ -114,6 +114,25 @@ foreach ($stmtA->fetchAll(PDO::FETCH_ASSOC) as $row) {
     }
 }
 
+// Pagos ya registrados de esta semana
+// [FIX-SEMANA-PAGADA-RECALCULO-VIVO] Se adelanta esta consulta (antes iba hasta el final del
+// archivo) porque el armado de $filas, justo abajo, la necesita: un empleado cuyo
+// sueldo_semanal se edita DESPUES de que su semana ya se pago (frecuente, ver
+// formEmpleado.php) seguia mostrando en esta tabla el "Sueldo base" y "Pago final" RECALCULADOS
+// con el sueldo NUEVO, junto al chip "Pagado $X" (que si usa el monto congelado real) -- dos
+// cifras distintas en la misma fila sin ninguna explicacion, dando la falsa impresion de que se
+// le debe (o se le pago de mas) al empleado. Probado en vivo: subir el sueldo de $3,000 a
+// $5,000 de un empleado ya pagado esa semana cambiaba su fila a "$5,000.00" junto a "Pagado
+// $3,000.00". El dinero real nunca estuvo en riesgo (pagos_nomina siempre se quedo en $3,000),
+// solo la vista.
+$stmtPagos = $pdo->prepare("SELECT * FROM pagos_nomina WHERE semana_inicio = ?");
+$stmtPagos->execute([$lunes]);
+$pagosMap = [];
+foreach ($stmtPagos->fetchAll(PDO::FETCH_ASSOC) as $pg) {
+    $pagosMap[$pg['empleado_id']] = $pg;
+}
+$totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']), $pagosMap));
+
 // Armar tabla
 $filas = [];
 $totalSueldos = 0;
@@ -153,6 +172,21 @@ foreach ($empleados as $emp) {
     $bono       = round($horasExtraNeta   * $tarifa * 1.5, 2);
     $pagoFinal  = round($sueldo - $deduccion + $bono,      2);
 
+    // [FIX-SEMANA-PAGADA-RECALCULO-VIVO] Si esta semana ya tiene un pago registrado para este
+    // empleado, se reemplazan sueldo/deduccion/bono/pago_final por los valores congelados que
+    // de verdad se pagaron -- nunca por lo que el sueldo/horario ACTUAL del empleado daria si
+    // se recalculara hoy. Lo unico que puede cambiar despues de pagada una semana es el sueldo
+    // o las horas esperadas del empleado (la asistencia misma ya esta bloqueada por
+    // formAsistencia.php en cuanto existe el pago), y ese cambio nunca debe reescribir, ni en
+    // pantalla, una semana que ya se cerro y se entrego.
+    $yaPagadaEstaFila = isset($pagosMap[$eid]);
+    if ($yaPagadaEstaFila) {
+        $sueldo     = floatval($pagosMap[$eid]['sueldo_base']);
+        $deduccion  = floatval($pagosMap[$eid]['deduccion']);
+        $bono       = floatval($pagosMap[$eid]['bono']);
+        $pagoFinal  = round($sueldo - $deduccion + $bono, 2);
+    }
+
     // [FIX-ASISTENCIA-FALTANTE] Si un dia no tiene NINGUN registro (ni siquiera "Asistencia
     // normal"), antes no se restaba nada por el -- el default era pagar como si el dia se
     // hubiera trabajado perfecto. Confirmado con el usuario: todo dia laboral debe tener un
@@ -185,6 +219,7 @@ foreach ($empleados as $emp) {
         'bono'             => $bono,
         'pago_final'       => $pagoFinal,
         'dias_faltantes'   => $diasFaltantes,
+        'ya_pagado_frozen' => $yaPagadaEstaFila,
     ];
 }
 
@@ -334,14 +369,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pagar_empleado'])) {
     exit();
 }
 
-// Pagos ya registrados de esta semana
-$stmtPagos = $pdo->prepare("SELECT * FROM pagos_nomina WHERE semana_inicio = ?");
-$stmtPagos->execute([$lunes]);
-$pagosMap = [];
-foreach ($stmtPagos->fetchAll(PDO::FETCH_ASSOC) as $pg) {
-    $pagosMap[$pg['empleado_id']] = $pg;
-}
-$totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']), $pagosMap));
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -562,13 +589,31 @@ $totalPagadoSemana = array_sum(array_map(fn($pg) => floatval($pg['monto_pagado']
                             $<?= number_format($f['pago_final'], 2) ?>
                         </span>
                         <?php
-                            $adelantoPend = $adelantosMap[$f['empleado_id']] ?? 0;
-                            if ($adelantoPend > 0):
-                                $pagoReal = max(0, $f['pago_final'] - $adelantoPend);
+                            // [FIX-SEMANA-PAGADA-RECALCULO-VIVO] Una vez pagada la fila, el descuento
+                            // de adelanto que importa es el que de verdad se aplico en ese pago
+                            // (pagos_nomina.adelanto_descontado) -- no el saldo de adelantos
+                            // "Pendiente" de HOY, que ya pertenece a semanas futuras y no tiene nada
+                            // que ver con este pago ya cerrado.
+                            if ($f['ya_pagado_frozen']):
+                                $adelantoHistorico = floatval($pagosMap[$f['empleado_id']]['adelanto_descontado'] ?? 0);
+                                $montoPagadoHistorico = floatval($pagosMap[$f['empleado_id']]['monto_pagado'] ?? $f['pago_final']);
+                                if ($adelantoHistorico > 0):
+                        ?>
+                            <div style="font-size:10px;color:#c0392b;margin-top:3px;">- $<?= number_format($adelantoHistorico, 2) ?> adelanto (ya descontado)</div>
+                            <div style="font-size:12px;font-weight:700;color:#222;border-top:1px solid #eee;margin-top:2px;padding-top:2px;">= $<?= number_format($montoPagadoHistorico, 2) ?></div>
+                        <?php
+                                endif;
+                            else:
+                                $adelantoPend = $adelantosMap[$f['empleado_id']] ?? 0;
+                                if ($adelantoPend > 0):
+                                    $pagoReal = max(0, $f['pago_final'] - $adelantoPend);
                         ?>
                             <div style="font-size:10px;color:#c0392b;margin-top:3px;">- $<?= number_format($adelantoPend, 2) ?> adelanto</div>
                             <div style="font-size:12px;font-weight:700;color:#222;border-top:1px solid #eee;margin-top:2px;padding-top:2px;">= $<?= number_format($pagoReal, 2) ?></div>
-                        <?php endif; ?>
+                        <?php
+                                endif;
+                            endif;
+                        ?>
                     </td>
                     <td>
                         <?php

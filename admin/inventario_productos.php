@@ -980,7 +980,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admi
 }
 
 // Filtros
-$busqueda    = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 $categoria   = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo  = isset($_GET['stock_bajo']);
 $esAdmin     = $_SESSION['rol'] === 'Administrador';
@@ -999,7 +998,6 @@ if ($vistaGlobal) {
     $where   = "WHERE p.activo = " . ($verInactivos ? '0' : '1');
     $params  = [];
     $orderBy = "p.nombre_producto ASC";
-    if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
     $stmt = $pdo->prepare("
         SELECT p.*, c.nombre as nombre_categoria,
@@ -1025,7 +1023,6 @@ if ($vistaGlobal) {
     $where   = "WHERE p.activo = 1";
     $params  = [$sucursalVista];
     $orderBy = "ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC";
-    if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
     if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
     $stmt = $pdo->prepare("
@@ -1294,8 +1291,24 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                     con data-no-auto, el mismo escape hatch que ya usaba reporteProductos.php para
                     este mismo problema. (2) Ademas, estar dentro de un <form> sin bloquear Enter
                     hacia que Enter tecleado por costumbre disparara el submit nativo del
-                    navegador -- se corrige aparte con el onkeydown de abajo. */ ?>
-                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" style="width:180px;" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
+                    navegador -- se corrige aparte con el onkeydown de abajo.
+                    [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] Aun con esos 2 arreglos, el campo seguia
+                    teniendo name="buscar" dentro del MISMO <form> que categoria/sucursal -- asi
+                    que aunque el campo en si nunca se auto-enviaba, cambiar CUALQUIER OTRO control
+                    del formulario (categoria, sucursal) si lo hacia, y ese envio arrastraba el
+                    texto que hubiera en la caja como un filtro de SERVIDOR real y permanente
+                    (?buscar=...), sin que el usuario lo supiera. Confirmado en vivo: escribir
+                    "omega" (solo para ver el filtrado en vivo) y luego cambiar de categoria dejaba
+                    la URL en "?buscar=omega&categoria=X" -- y a partir de ahi, borrar la caja de
+                    texto solo volvia a mostrar el subconjunto que el servidor ya habia limitado a
+                    "omega", nunca el catalogo completo, porque el filtro de cliente no puede
+                    mostrar filas que el servidor nunca mando al DOM. La consulta SQL nunca tuvo
+                    ningun LIMIT (siempre trae todo el catalogo), asi que ese filtro de servidor
+                    era enteramente redundante con el filtro de cliente -- se quita el filtro SQL
+                    de $busqueda por completo y se le quita el name="buscar" al input para que
+                    nunca viaje como parametro GET al cambiar otro control: este campo ahora es
+                    100% en vivo en el navegador, sin ningun efecto en el servidor. */ ?>
+                    <input type="text" placeholder="Nombre o código..." style="width:180px;" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -1488,8 +1501,14 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
 const ICONS = <?= json_encode([
     'checkBig' => icono('circle-check-big', '', 12),
 ]) ?>;
+// [FIX-BUSCAR-ESPACIOS-DOBLES] Varios nombres reales del catalogo (residuo del import de Excel)
+// traen espacios dobles entre palabras (ej. "ABRAZADERA OMEGA  U\u00d1A 1/2", confirmado en vivo) --
+// buscar ese mismo nombre tecleado normalmente (un solo espacio) nunca hacia match porque
+// includes() exige coincidencia exacta de caracteres, espacios incluidos. Se colapsa cualquier
+// corrida de espacios/saltos de linea a uno solo antes de comparar, tanto en lo que se escribe
+// como en el texto de cada fila.
 function normalizar(str) {
-    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 }
 function filtrarTabla(q) {
     q = normalizar(q);

@@ -55,14 +55,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado'])) {
 $empleadoFiltro = intval(is_scalar($_GET['empleado'] ?? null) ? $_GET['empleado'] : 0);
 $anioFiltro     = intval(is_scalar($_GET['anio'] ?? null) ? $_GET['anio'] : date('Y'));
 
-// [TEMP-SIMULACION-FECHA] Solo para verificar en vivo que el tope/acreditacion de vacaciones
-// funciona correctamente con el paso del tiempo, sin tener que cambiar el reloj del sistema.
-// QUITAR este bloque despues de la verificacion.
-$simFecha = null;
-if (isset($_GET['simular_fecha']) && is_scalar($_GET['simular_fecha']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $_GET['simular_fecha'])) {
-    $simFecha = $_GET['simular_fecha'];
-}
-
 $where  = "WHERE 1=1";
 $params = [];
 if ($empleadoFiltro) { $where .= " AND v.empleado_id=?"; $params[] = $empleadoFiltro; }
@@ -230,12 +222,6 @@ rsort($aniosList);
             <a class="btn-nuevo" href="formVacacion.php">+ Registrar vacaciones</a>
         </div>
 
-        <?php if ($simFecha): ?>
-            <div class="msg" style="background:#4a3b1a;color:#f0c060;border:1px solid #8a6a20;">
-                Vista SIMULADA a fecha <b><?= htmlspecialchars($simFecha) ?></b> (el reloj real del sistema sigue en <?= date('Y-m-d') ?>). Solo para verificacion, quita <code>?simular_fecha=</code> de la URL para ver el saldo real de hoy.
-            </div>
-        <?php endif; ?>
-
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'eliminado'): ?>
             <div class="msg msg-exito">Registro eliminado correctamente.</div>
         <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'actualizado'): ?>
@@ -247,8 +233,8 @@ rsort($aniosList);
         <!-- Resumen por empleado -->
         <div class="resumen-grid">
             <?php foreach ($empleados as $emp):
-                $tieneDerecho = tieneDerechoVacaciones($emp['fecha_ingreso'], $simFecha);
-                $diasRest = $tieneDerecho ? calcSaldoVacaciones($pdo, $emp['empleado_id'], $emp['fecha_ingreso'], $simFecha) : 0;
+                $tieneDerecho = tieneDerechoVacaciones($emp['fecha_ingreso']);
+                $diasRest = $tieneDerecho ? calcSaldoVacaciones($pdo, $emp['empleado_id'], $emp['fecha_ingreso']) : 0;
                 $diasTom  = intval($diasTomadosMap[$emp['empleado_id']] ?? 0);
                 $pct      = round(($diasRest / 12) * 100);
             ?>

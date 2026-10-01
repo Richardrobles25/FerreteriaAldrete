@@ -660,14 +660,21 @@ if (!in_array($sucursal_consulta, $idsSucursales, true)) {
 }
 
 // Filtros
-$busqueda   = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
 $categoria  = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo = isset($_GET['stock_bajo']);
 
 $where  = "WHERE ss.sucursal_id = ? AND p.activo = 1 AND ss.activo = 1";
 $params = [$sucursal_consulta];
 
-if ($busqueda) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+// [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] Ver el mismo fix en admin/inventario_productos.php: el
+// campo de busqueda de texto ya filtra 100% en vivo con oninput/filtrarTabla() del lado del
+// navegador (sin ningun LIMIT que lo justifique en esta consulta, siempre trae todo el
+// catalogo de la sucursal) -- pero compartia name="buscar" con el MISMO <form> que
+// categoria/stock_bajo, asi que cambiar cualquiera de esos otros controles arrastraba el texto
+// de la caja como un filtro de SERVIDOR real y permanente, sin que el usuario lo supiera: borrar
+// despues la caja de texto solo volvia a filtrar (en cliente) sobre el subconjunto que el
+// servidor ya habia limitado, nunca sobre el catalogo completo. Se quita el filtro SQL de
+// $busqueda por completo y se le quita el name="buscar" al input mas abajo.
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
 if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
 
@@ -1034,8 +1041,11 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                     <?php /* [FIX-BUSCAR-ENTER-RECARGA 2026-09-20] (mismo fix que admin/inventario_productos.php)
                     Este campo ya filtra en vivo con oninput -- Enter tecleado por costumbre a
                     mitad de la busqueda disparaba el submit nativo del formulario, recargando
-                    toda la pagina a medio escribir y tirando el foco del campo. */ ?>
-                    <input type="text" name="buscar" placeholder="Nombre o código..." value="<?= htmlspecialchars($busqueda) ?>" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:180px;" data-no-auto>
+                    toda la pagina a medio escribir y tirando el foco del campo.
+                    [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] (mismo fix que admin/inventario_productos.php)
+                    se quita name="buscar" para que el texto nunca viaje al servidor cuando cambia
+                    otro control del mismo <form> (categoria, stock_bajo). */ ?>
+                    <input type="text" placeholder="Nombre o código..." oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:180px;" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -1060,7 +1070,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 </div>
                 <?php if ($stock_bajo): ?><input type="hidden" name="stock_bajo" value="1"><?php endif; ?>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
-                <?php if ($busqueda || $categoria || $stock_bajo || $sucursal_consulta !== intval($_SESSION['sucursal_id'])): ?>
+                <?php if ($categoria || $stock_bajo || $sucursal_consulta !== intval($_SESSION['sucursal_id'])): ?>
                     <a class="btn-limpiar" href="productos.php">Limpiar</a>
                 <?php endif; ?>
                 <a class="btn-stock-bajo <?= $stock_bajo?'activo':'' ?>" href="productos.php?stock_bajo=1">
@@ -1189,8 +1199,10 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 const ICONS = <?= json_encode([
     'checkBig' => icono('circle-check-big', '', 12),
 ]) ?>;
+// [FIX-BUSCAR-ESPACIOS-DOBLES] (mismo fix que admin/inventario_productos.php) nombres reales del
+// catalogo con espacios dobles entre palabras rompian una busqueda tecleada con un solo espacio.
 function normalizar(str) {
-    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 }
 function filtrarTabla(q) {
     q = normalizar(q);

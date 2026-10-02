@@ -1125,6 +1125,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admi
     exit();
 }
 
+// [FIX-RENDIMIENTO-PAGINACION] La tabla cargaba TODO el catalogo de golpe en el navegador (hasta
+// ~2700 productos en vista global) -- aunque la paginacion/busqueda de antes ya filtraban lo que
+// se VEIA, el HTML de las ~2700 filas (cada una con varios spans/botones/divs, ~43,000 nodos DOM
+// en total) siempre se generaba y enviaba completo, sin importar cuantas filas terminaran
+// visibles. Eso es lo que se sentia "trabado": el costo real estaba en construir y parsear ese
+// HTML gigante, no en la consulta SQL en si (2700 filas es trivial para MySQL). Se regresa a
+// paginacion y busqueda reales del lado del SERVIDOR (LIMIT/OFFSET + LIKE) para que cada carga
+// de pagina solo traiga y renderice un puñado de productos. La busqueda ya no es instantanea
+// tecla-por-tecla (ahora hace un envio de verdad, con el mismo debounce de 600ms que ya usan los
+// demas filtros de .filtros), pero deja de competir por recursos contra un DOM de decenas de
+// miles de nodos.
+$busqueda    = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$porPagina   = 50;
+$pagina      = max(1, intval(is_scalar($_GET['pagina'] ?? null) ? $_GET['pagina'] : 1));
+
 // Filtros
 $categoria   = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo  = isset($_GET['stock_bajo']);
@@ -1151,6 +1166,13 @@ if ($vistaGlobal) {
     $params  = [];
     $orderBy = "p.nombre_producto ASC";
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
+    if ($busqueda !== '') { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+    $stmtTotal = $pdo->prepare("SELECT COUNT(*) FROM productos p {$where}");
+    $stmtTotal->execute($params);
+    $totalProductos = intval($stmtTotal->fetchColumn());
+    $totalPaginas   = max(1, (int)ceil($totalProductos / $porPagina));
+    $pagina         = min($pagina, $totalPaginas);
+    $offset         = ($pagina - 1) * $porPagina;
     $stmt = $pdo->prepare("
         SELECT p.*, c.nombre as nombre_categoria,
                COALESCE(st.stock_total, 0) AS stock_total_sucursales,
@@ -1168,6 +1190,7 @@ if ($vistaGlobal) {
         ) st ON st.producto_id = p.producto_id
         {$where}
         ORDER BY {$orderBy}
+        LIMIT {$porPagina} OFFSET {$offset}
     ");
     $stmt->execute($params);
     $totalStockBajo = 0;
@@ -1178,6 +1201,17 @@ if ($vistaGlobal) {
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
     if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
     if ($ocultarStockBajo) { $where .= " AND ss.stock_actual > ss.stock_minimo"; }
+    if ($busqueda !== '') { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+    $stmtTotal = $pdo->prepare("
+        SELECT COUNT(*) FROM productos p
+        INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
+        {$where}
+    ");
+    $stmtTotal->execute($params);
+    $totalProductos = intval($stmtTotal->fetchColumn());
+    $totalPaginas   = max(1, (int)ceil($totalProductos / $porPagina));
+    $pagina         = min($pagina, $totalPaginas);
+    $offset         = ($pagina - 1) * $porPagina;
     $stmt = $pdo->prepare("
         SELECT p.*, c.nombre as nombre_categoria, ss.stock_actual, ss.stock_minimo, ss.stock_maximo
         FROM productos p
@@ -1185,6 +1219,7 @@ if ($vistaGlobal) {
         INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
         {$where}
         ORDER BY {$orderBy}
+        LIMIT {$porPagina} OFFSET {$offset}
     ");
     $stmtBajo = $pdo->prepare("
         SELECT COUNT(*) FROM productos p
@@ -1287,7 +1322,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     .btn-reactivar-global:hover { background: #c8e6c9; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
     .paginacion-wrapper { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 14px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; margin-top: 12px; }
-    .btn-pagina { background: #eef8ff; color: #14ace7; border: 1px solid #cce5f7; padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-pagina { background: #eef8ff; color: #14ace7; border: 1px solid #cce5f7; padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
     .btn-pagina:hover:not(:disabled) { background: #d9f0ff; }
     .btn-pagina:disabled { opacity: 0.4; cursor: default; }
     #indicadorPagina { font-size: 13px; color: #666; min-width: 180px; text-align: center; }
@@ -1468,36 +1503,28 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
         <?php endif; ?>
 
         <form method="GET" action="inventario_productos.php">
+            <?php /* [FIX-RENDIMIENTO-PAGINACION] Cualquier envio normal de este formulario
+            (escribir en Buscar, cambiar categoria/sucursal, marcar un checkbox) reinicia a la
+            pagina 1 -- es lo esperado: un filtro nuevo casi nunca sigue teniendo sentido en la
+            misma pagina que se estaba viendo antes de aplicarlo. Los enlaces de "Anterior"/
+            "Siguiente" de mas abajo van POR FUERA de este formulario (son <a> normales que
+            arman su propia URL con el numero de pagina real), asi que no los pisa este campo. */ ?>
+            <input type="hidden" name="pagina" value="1">
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <?php /* [FIX-BUSCAR-ENTER-RECARGA 2026-09-20] Este campo ya filtra en vivo con
-                    oninput -- no necesita enviar el formulario para nada, pero dos mecanismos
-                    distintos lo hacian de todas formas: (1) includes/auto_filter.js reenvia
-                    AUTOMATICAMENTE el formulario 600ms despues de cualquier tecla en un input de
-                    .filtros, sin necesitar Enter -- por eso "escribir una letra y esperar" ya
-                    bastaba para recargar la pagina a medio escribir y tirar el foco. Se corrige
-                    con data-no-auto, el mismo escape hatch que ya usaba reporteProductos.php para
-                    este mismo problema. (2) Ademas, estar dentro de un <form> sin bloquear Enter
-                    hacia que Enter tecleado por costumbre disparara el submit nativo del
-                    navegador -- se corrige aparte con el onkeydown de abajo.
-                    [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] Aun con esos 2 arreglos, el campo seguia
-                    teniendo name="buscar" dentro del MISMO <form> que categoria/sucursal -- asi
-                    que aunque el campo en si nunca se auto-enviaba, cambiar CUALQUIER OTRO control
-                    del formulario (categoria, sucursal) si lo hacia, y ese envio arrastraba el
-                    texto que hubiera en la caja como un filtro de SERVIDOR real y permanente
-                    (?buscar=...), sin que el usuario lo supiera. Confirmado en vivo: escribir
-                    "omega" (solo para ver el filtrado en vivo) y luego cambiar de categoria dejaba
-                    la URL en "?buscar=omega&categoria=X" -- y a partir de ahi, borrar la caja de
-                    texto solo volvia a mostrar el subconjunto que el servidor ya habia limitado a
-                    "omega", nunca el catalogo completo, porque el filtro de cliente no puede
-                    mostrar filas que el servidor nunca mando al DOM. La consulta SQL nunca tuvo
-                    ningun LIMIT (siempre trae todo el catalogo), asi que ese filtro de servidor
-                    era enteramente redundante con el filtro de cliente -- se quita el filtro SQL
-                    de $busqueda por completo y se le quita el name="buscar" al input para que
-                    nunca viaje como parametro GET al cambiar otro control: este campo ahora es
-                    100% en vivo en el navegador, sin ningun efecto en el servidor. */ ?>
-                    <input type="text" placeholder="Nombre o código..." style="width:180px;" oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" data-no-auto>
+                    <?php /* [FIX-RENDIMIENTO-PAGINACION] Antes este campo filtraba 100% en el
+                    navegador (oninput, sin tocar el servidor) para evitar un bug de "filtro de
+                    servidor fantasma" (ver commits anteriores) -- pero eso exigia mandar las
+                    ~2700 filas del catalogo completo al navegador en cada carga, sin importar
+                    cuantas list realmente coincidieran con la busqueda, lo que se sentia lento.
+                    Ahora que la pagina SIEMPRE pagina del lado del servidor (ver $porPagina mas
+                    arriba), la busqueda tambien vuelve a ser del servidor -- ya no hay nada que
+                    "arrastre" un filtro fantasma porque TODO filtro (categoria, sucursal, buscar)
+                    ahora se comporta igual: un envio real y explicito del formulario, nunca una
+                    vista previa silenciosa. Usa el mismo debounce de 600ms de includes/
+                    auto_filter.js que ya usan los demas campos de texto de .filtros. */ ?>
+                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código..." style="width:180px;">
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -1613,18 +1640,30 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 <div class="sin-resultados">No se encontraron productos.</div>
             <?php endif; ?>
         </div>
-        <?php /* [FEATURE-PAGINACION-PRODUCTOS] Con el catalogo completo (miles de productos en
-        vista global) la tabla obligaba a un scroll larguisimo para llegar al final. La
-        paginacion se hace del lado del navegador (sobre las filas que el servidor ya mando, sin
-        re-consultar nada) para no romper el buscador en vivo de arriba, que necesita tener TODAS
-        las filas ya en el DOM para poder encontrar coincidencias que esten fuera de la pagina
-        actual -- mientras se busca algo, la paginacion se desactiva y se muestran todos los
-        resultados que coincidan, sin importar en que "pagina" estarian. */ ?>
-        <?php if (count($productos) > 0): ?>
-        <div class="paginacion-wrapper" id="paginacionProductos">
-            <button type="button" id="btnPagAnterior" class="btn-pagina">&lsaquo; Anterior</button>
-            <span id="indicadorPagina"></span>
-            <button type="button" id="btnPagSiguiente" class="btn-pagina">Siguiente &rsaquo;</button>
+        <?php
+        // [FIX-RENDIMIENTO-PAGINACION] Enlaces reales de pagina (no JS sobre filas ya cargadas) --
+        // reutilizan cualquier filtro ya activo en la URL (categoria, sucursal, buscar,
+        // stock_bajo, ocultar_stock_bajo, ver_inactivos) y solo cambian "pagina".
+        function urlConPaginaProductos(int $nuevaPagina): string {
+            $qs = $_GET;
+            $qs['pagina'] = $nuevaPagina;
+            unset($qs['exportar']);
+            return 'inventario_productos.php?' . http_build_query($qs);
+        }
+        ?>
+        <?php if ($totalProductos > 0): ?>
+        <div class="paginacion-wrapper">
+            <?php if ($pagina > 1): ?>
+                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina - 1)) ?>">&lsaquo; Anterior</a>
+            <?php else: ?>
+                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">&lsaquo; Anterior</span>
+            <?php endif; ?>
+            <span id="indicadorPagina">Página <?= $pagina ?> de <?= $totalPaginas ?> (<?= $totalProductos ?> producto<?= $totalProductos != 1 ? 's' : '' ?>)</span>
+            <?php if ($pagina < $totalPaginas): ?>
+                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina + 1)) ?>">Siguiente &rsaquo;</a>
+            <?php else: ?>
+                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">Siguiente &rsaquo;</span>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
     </div>
@@ -1738,65 +1777,6 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
 const ICONS = <?= json_encode([
     'checkBig' => icono('circle-check-big', '', 12),
 ]) ?>;
-// [FIX-BUSCAR-ESPACIOS-DOBLES] Varios nombres reales del catalogo (residuo del import de Excel)
-// traen espacios dobles entre palabras (ej. "ABRAZADERA OMEGA  U\u00d1A 1/2", confirmado en vivo) --
-// buscar ese mismo nombre tecleado normalmente (un solo espacio) nunca hacia match porque
-// includes() exige coincidencia exacta de caracteres, espacios incluidos. Se colapsa cualquier
-// corrida de espacios/saltos de linea a uno solo antes de comparar, tanto en lo que se escribe
-// como en el texto de cada fila.
-function normalizar(str) {
-    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
-}
-// [FEATURE-PAGINACION-PRODUCTOS] Paginacion 100% del lado del navegador, sobre las filas que el
-// servidor ya mando -- se cachean una sola vez (el querySelectorAll real solo corre aqui) para
-// no recorrer el DOM completo en cada click de "Siguiente"/"Anterior".
-const FILAS_POR_PAGINA_PRODUCTOS = 50;
-const todasLasFilasProductos = Array.from(document.querySelectorAll('#tablaFiltrable tr'));
-let paginaActualProductos = 1;
-function totalPaginasProductos() {
-    return Math.max(1, Math.ceil(todasLasFilasProductos.length / FILAS_POR_PAGINA_PRODUCTOS));
-}
-function mostrarPaginaProductos(n) {
-    const total = totalPaginasProductos();
-    paginaActualProductos = Math.min(Math.max(1, n), total);
-    const inicio = (paginaActualProductos - 1) * FILAS_POR_PAGINA_PRODUCTOS;
-    const fin = inicio + FILAS_POR_PAGINA_PRODUCTOS;
-    todasLasFilasProductos.forEach(function(tr, i) {
-        tr.style.display = (i >= inicio && i < fin) ? '' : 'none';
-    });
-    const indicador = document.getElementById('indicadorPagina');
-    if (indicador) indicador.textContent = 'P\u00e1gina ' + paginaActualProductos + ' de ' + total + ' (' + todasLasFilasProductos.length + ' productos)';
-    const btnAnt = document.getElementById('btnPagAnterior');
-    const btnSig = document.getElementById('btnPagSiguiente');
-    if (btnAnt) btnAnt.disabled = paginaActualProductos <= 1;
-    if (btnSig) btnSig.disabled = paginaActualProductos >= total;
-}
-document.getElementById('btnPagAnterior')?.addEventListener('click', function() {
-    mostrarPaginaProductos(paginaActualProductos - 1);
-    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
-document.getElementById('btnPagSiguiente')?.addEventListener('click', function() {
-    mostrarPaginaProductos(paginaActualProductos + 1);
-    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
-if (todasLasFilasProductos.length > 0) mostrarPaginaProductos(1);
-// [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] Mientras se busca algo, la paginacion se desactiva por
-// completo y se muestran TODAS las filas que coincidan (sin importar en que "pagina" caerian) --
-// ocultar resultados reales de busqueda detras de la paginacion seria peor que el problema que
-// la paginacion intenta resolver.
-function filtrarTabla(q) {
-    q = normalizar(q);
-    const pagWrap = document.getElementById('paginacionProductos');
-    if (!q) {
-        if (pagWrap) pagWrap.style.display = '';
-        mostrarPaginaProductos(1);
-        return;
-    }
-    if (pagWrap) pagWrap.style.display = 'none';
-    todasLasFilasProductos.forEach(function(tr) {
-        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
-    });
-}
 function confirmarEliminacion(id, nombre) {
     const seguro = confirm('Se va a desactivar el stock de "' + nombre + '" solo en esta sucursal (no en el catalogo global ni en otras sucursales). Este movimiento se guardara en historial. ¿Deseas continuar?');
     if (!seguro) return;

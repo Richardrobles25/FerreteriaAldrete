@@ -665,6 +665,14 @@ if (!in_array($sucursal_consulta, $idsSucursales, true)) {
     $sucursal_consulta = intval($_SESSION['sucursal_id']);
 }
 
+// [FIX-RENDIMIENTO-PAGINACION] (mismo fix que admin/inventario_productos.php) cargar el
+// catalogo completo de la sucursal de golpe (hasta ~2700 filas, cada una con varios nodos DOM)
+// es lo que hacia sentir la pagina "trabada" -- se regresa a paginacion y busqueda reales del
+// lado del servidor (LIMIT/OFFSET + LIKE) para que cada carga solo traiga un puñado real.
+$busqueda  = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+$porPagina = 50;
+$pagina    = max(1, intval(is_scalar($_GET['pagina'] ?? null) ? $_GET['pagina'] : 1));
+
 // Filtros
 $categoria  = intval(is_scalar($_GET['categoria'] ?? null) ? $_GET['categoria'] : 0);
 $stock_bajo = isset($_GET['stock_bajo']);
@@ -676,18 +684,21 @@ $ocultarStockBajo = !$stock_bajo && isset($_GET['ocultar_stock_bajo']);
 $where  = "WHERE ss.sucursal_id = ? AND p.activo = 1 AND ss.activo = 1";
 $params = [$sucursal_consulta];
 
-// [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] Ver el mismo fix en admin/inventario_productos.php: el
-// campo de busqueda de texto ya filtra 100% en vivo con oninput/filtrarTabla() del lado del
-// navegador (sin ningun LIMIT que lo justifique en esta consulta, siempre trae todo el
-// catalogo de la sucursal) -- pero compartia name="buscar" con el MISMO <form> que
-// categoria/stock_bajo, asi que cambiar cualquiera de esos otros controles arrastraba el texto
-// de la caja como un filtro de SERVIDOR real y permanente, sin que el usuario lo supiera: borrar
-// despues la caja de texto solo volvia a filtrar (en cliente) sobre el subconjunto que el
-// servidor ya habia limitado, nunca sobre el catalogo completo. Se quita el filtro SQL de
-// $busqueda por completo y se le quita el name="buscar" al input mas abajo.
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
 if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
 if ($ocultarStockBajo) { $where .= " AND ss.stock_actual > ss.stock_minimo"; }
+if ($busqueda !== '') { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+
+$stmtTotal = $pdo->prepare("
+    SELECT COUNT(*) FROM productos p
+    INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
+    $where
+");
+$stmtTotal->execute($params);
+$totalProductos = intval($stmtTotal->fetchColumn());
+$totalPaginas   = max(1, (int)ceil($totalProductos / $porPagina));
+$pagina         = min($pagina, $totalPaginas);
+$offset         = ($pagina - 1) * $porPagina;
 
 $stmt = $pdo->prepare("
     SELECT p.*, ss.stock_actual, ss.stock_minimo, ss.stock_maximo,
@@ -697,6 +708,7 @@ $stmt = $pdo->prepare("
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
     $where
     ORDER BY ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC
+    LIMIT {$porPagina} OFFSET {$offset}
 ");
 $stmt->execute($params);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -834,7 +846,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
     .btn-eliminar:hover { background: #ffcdd2; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
     .paginacion-wrapper { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 14px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; margin-top: 12px; }
-    .btn-pagina { background: #eef8ff; color: #14ace7; border: 1px solid #cce5f7; padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-pagina { background: #eef8ff; color: #14ace7; border: 1px solid #cce5f7; padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
     .btn-pagina:hover:not(:disabled) { background: #d9f0ff; }
     .btn-pagina:disabled { opacity: 0.4; cursor: default; }
     #indicadorPagina { font-size: 13px; color: #666; min-width: 180px; text-align: center; }
@@ -1054,17 +1066,17 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <?php endif; ?>
 
         <form method="GET" action="productos.php">
+            <?php /* [FIX-RENDIMIENTO-PAGINACION] (mismo fix que admin/inventario_productos.php)
+            cualquier envio normal de este formulario reinicia a la pagina 1. */ ?>
+            <input type="hidden" name="pagina" value="1">
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <?php /* [FIX-BUSCAR-ENTER-RECARGA 2026-09-20] (mismo fix que admin/inventario_productos.php)
-                    Este campo ya filtra en vivo con oninput -- Enter tecleado por costumbre a
-                    mitad de la busqueda disparaba el submit nativo del formulario, recargando
-                    toda la pagina a medio escribir y tirando el foco del campo.
-                    [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] (mismo fix que admin/inventario_productos.php)
-                    se quita name="buscar" para que el texto nunca viaje al servidor cuando cambia
-                    otro control del mismo <form> (categoria, stock_bajo). */ ?>
-                    <input type="text" placeholder="Nombre o código..." oninput="filtrarTabla(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:180px;" data-no-auto>
+                    <?php /* [FIX-RENDIMIENTO-PAGINACION] (mismo fix que admin/inventario_productos.php)
+                    la busqueda vuelve a ser del servidor -- con la pagina paginando de verdad,
+                    ya no tiene caso mandar el catalogo completo al navegador para filtrarlo ahi.
+                    Usa el mismo debounce de 600ms de includes/auto_filter.js. */ ?>
+                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código..." style="width:180px;">
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -1166,12 +1178,28 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 <div class="sin-resultados">No se encontraron productos.</div>
             <?php endif; ?>
         </div>
-        <?php /* [FEATURE-PAGINACION-PRODUCTOS] (mismo fix que admin/inventario_productos.php) */ ?>
-        <?php if (count($productos) > 0): ?>
-        <div class="paginacion-wrapper" id="paginacionProductos">
-            <button type="button" id="btnPagAnterior" class="btn-pagina">&lsaquo; Anterior</button>
-            <span id="indicadorPagina"></span>
-            <button type="button" id="btnPagSiguiente" class="btn-pagina">Siguiente &rsaquo;</button>
+        <?php
+        // [FIX-RENDIMIENTO-PAGINACION] (mismo fix que admin/inventario_productos.php)
+        function urlConPaginaProductos(int $nuevaPagina): string {
+            $qs = $_GET;
+            $qs['pagina'] = $nuevaPagina;
+            unset($qs['exportar']);
+            return 'productos.php?' . http_build_query($qs);
+        }
+        ?>
+        <?php if ($totalProductos > 0): ?>
+        <div class="paginacion-wrapper">
+            <?php if ($pagina > 1): ?>
+                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina - 1)) ?>">&lsaquo; Anterior</a>
+            <?php else: ?>
+                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">&lsaquo; Anterior</span>
+            <?php endif; ?>
+            <span id="indicadorPagina">Página <?= $pagina ?> de <?= $totalPaginas ?> (<?= $totalProductos ?> producto<?= $totalProductos != 1 ? 's' : '' ?>)</span>
+            <?php if ($pagina < $totalPaginas): ?>
+                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina + 1)) ?>">Siguiente &rsaquo;</a>
+            <?php else: ?>
+                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">Siguiente &rsaquo;</span>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
     </div>
@@ -1235,56 +1263,6 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 const ICONS = <?= json_encode([
     'checkBig' => icono('circle-check-big', '', 12),
 ]) ?>;
-// [FIX-BUSCAR-ESPACIOS-DOBLES] (mismo fix que admin/inventario_productos.php) nombres reales del
-// catalogo con espacios dobles entre palabras rompian una busqueda tecleada con un solo espacio.
-function normalizar(str) {
-    return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
-}
-// [FEATURE-PAGINACION-PRODUCTOS] (mismo fix que admin/inventario_productos.php) paginacion 100%
-// del lado del navegador sobre las filas ya cargadas, para no romper el buscador en vivo.
-const FILAS_POR_PAGINA_PRODUCTOS = 50;
-const todasLasFilasProductos = Array.from(document.querySelectorAll('#tablaFiltrable tr'));
-let paginaActualProductos = 1;
-function totalPaginasProductos() {
-    return Math.max(1, Math.ceil(todasLasFilasProductos.length / FILAS_POR_PAGINA_PRODUCTOS));
-}
-function mostrarPaginaProductos(n) {
-    const total = totalPaginasProductos();
-    paginaActualProductos = Math.min(Math.max(1, n), total);
-    const inicio = (paginaActualProductos - 1) * FILAS_POR_PAGINA_PRODUCTOS;
-    const fin = inicio + FILAS_POR_PAGINA_PRODUCTOS;
-    todasLasFilasProductos.forEach(function(tr, i) {
-        tr.style.display = (i >= inicio && i < fin) ? '' : 'none';
-    });
-    const indicador = document.getElementById('indicadorPagina');
-    if (indicador) indicador.textContent = 'Página ' + paginaActualProductos + ' de ' + total + ' (' + todasLasFilasProductos.length + ' productos)';
-    const btnAnt = document.getElementById('btnPagAnterior');
-    const btnSig = document.getElementById('btnPagSiguiente');
-    if (btnAnt) btnAnt.disabled = paginaActualProductos <= 1;
-    if (btnSig) btnSig.disabled = paginaActualProductos >= total;
-}
-document.getElementById('btnPagAnterior')?.addEventListener('click', function() {
-    mostrarPaginaProductos(paginaActualProductos - 1);
-    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
-document.getElementById('btnPagSiguiente')?.addEventListener('click', function() {
-    mostrarPaginaProductos(paginaActualProductos + 1);
-    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
-if (todasLasFilasProductos.length > 0) mostrarPaginaProductos(1);
-function filtrarTabla(q) {
-    q = normalizar(q);
-    const pagWrap = document.getElementById('paginacionProductos');
-    if (!q) {
-        if (pagWrap) pagWrap.style.display = '';
-        mostrarPaginaProductos(1);
-        return;
-    }
-    if (pagWrap) pagWrap.style.display = 'none';
-    todasLasFilasProductos.forEach(function(tr) {
-        tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
-    });
-}
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleImport() { document.getElementById('importCard').classList.toggle('visible'); }
 let productoEliminarActual = null;

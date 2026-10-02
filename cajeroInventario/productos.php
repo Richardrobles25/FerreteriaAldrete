@@ -514,7 +514,8 @@ if (isset($_GET['catalogo_disponible'])) {
     $busq = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
     $where = "WHERE p.activo = 1 AND (ss.producto_id IS NULL OR ss.activo = 0)";
     $params = [$_SESSION['sucursal_id']];
-    if ($busq) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busq.'%'; $params[] = '%'.$busq.'%'; }
+    // [FIX-BUSCAR-ESPACIOS-DOBLES-SQL] (mismo fix que admin/inventario_productos.php)
+    if ($busq) { $where .= " AND (REGEXP_REPLACE(p.nombre_producto, ' +', ' ') LIKE ? OR p.codigo LIKE ?)"; $busqNorm = preg_replace('/\s+/', ' ', $busq); $params[] = '%'.$busqNorm.'%'; $params[] = '%'.$busq.'%'; }
     $stmt = $pdo->prepare("
         SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.precio_mayoreo,
                c.nombre AS categoria
@@ -678,6 +679,11 @@ if (!in_array($sucursal_consulta, $idsSucursales, true)) {
 // es lo que hacia sentir la pagina "trabada" -- se regresa a paginacion y busqueda reales del
 // lado del servidor (LIMIT/OFFSET + LIKE) para que cada carga solo traiga un puñado real.
 $busqueda  = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+// [FIX-BUSCAR-ESPACIOS-DOBLES-SQL] (mismo fix que admin/inventario_productos.php) varios nombres
+// reales del catalogo traen espacios dobles (residuo del Excel fuente -- se REVIERTE cada vez
+// que se reimporta ese mismo Excel). LIKE compara caracteres exactos; se colapsa cualquier
+// corrida de espacios a uno solo aqui y con REGEXP_REPLACE() en la columna, antes de comparar.
+$busquedaNorm = $busqueda !== '' ? preg_replace('/\s+/', ' ', $busqueda) : '';
 $porPagina = 50;
 $pagina    = max(1, intval(is_scalar($_GET['pagina'] ?? null) ? $_GET['pagina'] : 1));
 
@@ -695,7 +701,7 @@ $params = [$sucursal_consulta];
 if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
 if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
 if ($ocultarStockBajo) { $where .= " AND ss.stock_actual > ss.stock_minimo"; }
-if ($busqueda !== '') { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+if ($busqueda !== '') { $where .= " AND (REGEXP_REPLACE(p.nombre_producto, ' +', ' ') LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busquedaNorm.'%'; $params[] = '%'.$busqueda.'%'; }
 
 $stmtTotal = $pdo->prepare("
     SELECT COUNT(*) FROM productos p
@@ -721,6 +727,97 @@ $stmt = $pdo->prepare("
 $stmt->execute($params);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Modo solo lectura: cuando se consulta una sucursal diferente a la del usuario
+// [FEATURE-BUSQUEDA-EN-VIVO] Esta linea se adelanto desde mas abajo porque el bloque AJAX
+// (unas lineas despues) ya la necesita para armar el colspan/columnas de las filas.
+$soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
+
+// [FEATURE-BUSQUEDA-EN-VIVO] (mismo fix que admin/inventario_productos.php) filas y paginacion
+// en funciones aparte para reutilizar el mismo marcado en la carga normal y en la respuesta AJAX
+// que el buscador en vivo pide en cada pausa al escribir.
+function renderFilasProductosHtml(array $productos, bool $soloLectura): string {
+    $colspan = $soloLectura ? 6 : 7;
+    if (empty($productos)) {
+        return '<tr><td colspan="' . $colspan . '" class="sin-resultados">No se encontraron productos.</td></tr>';
+    }
+    ob_start();
+    foreach ($productos as $p):
+        $esStockBajo = $p['stock_actual'] <= $p['stock_minimo'];
+    ?>
+        <tr class="<?= $esStockBajo?'stock-bajo':'' ?>">
+            <td style="color:#aaa;font-size:12px;"><?= htmlspecialchars($p['codigo']) ?></td>
+            <td>
+                <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
+                <?php if ($esStockBajo): ?>
+                    <span style="font-size:11px;color:#c0392b;margin-left:5px;"><?= icono('triangle-alert') ?> Stock bajo</span>
+                <?php endif; ?>
+            </td>
+            <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
+            <td>
+                <span class="badge-tipo <?= $p['tipo_venta']==='Unidad'?'tipo-unidad':'tipo-suelto' ?>">
+                    <?= $p['tipo_venta'] ?>
+                </span>
+            </td>
+            <td class="<?= $esStockBajo?'stock-alerta':'stock-ok' ?>">
+                <?= number_format($p['stock_actual'],2) ?>
+                <span style="font-size:11px;color:#aaa;">/ mín <?= number_format($p['stock_minimo'],2) ?></span>
+            </td>
+            <td>$<?= number_format($p['precio_venta'],2) ?></td>
+            <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
+            <?php if (!$soloLectura): ?>
+            <td>
+                <div class="acciones">
+                    <a class="btn-accion btn-editar" href="formProducto.php?id=<?= $p['producto_id'] ?>">Editar</a>
+                    <a class="btn-accion btn-entrada" href="entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
+                    <button class="btn-accion btn-eliminar" type="button"
+                        data-id="<?= $p['producto_id'] ?>"
+                        data-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES) ?>"
+                        onclick="confirmarEliminacion(parseInt(this.dataset.id), this.dataset.nombre)">Eliminar</button>
+                </div>
+            </td>
+            <?php endif; ?>
+        </tr>
+    <?php endforeach;
+    return ob_get_clean();
+}
+
+function urlConPaginaProductos(int $nuevaPagina): string {
+    $qs = $_GET;
+    $qs['pagina'] = $nuevaPagina;
+    unset($qs['exportar'], $qs['ajax']);
+    return 'productos.php?' . http_build_query($qs);
+}
+
+function renderPaginacionHtml(int $pagina, int $totalPaginas, int $totalProductos): string {
+    if ($totalProductos <= 0) return '';
+    ob_start();
+    ?>
+    <div class="paginacion-wrapper" id="paginacionWrapper">
+        <?php if ($pagina > 1): ?>
+            <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina - 1)) ?>">&lsaquo; Anterior</a>
+        <?php else: ?>
+            <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">&lsaquo; Anterior</span>
+        <?php endif; ?>
+        <span id="indicadorPagina">Página <?= $pagina ?> de <?= $totalPaginas ?> (<?= $totalProductos ?> producto<?= $totalProductos != 1 ? 's' : '' ?>)</span>
+        <?php if ($pagina < $totalPaginas): ?>
+            <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina + 1)) ?>">Siguiente &rsaquo;</a>
+        <?php else: ?>
+            <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">Siguiente &rsaquo;</span>
+        <?php endif; ?>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+if (isset($_GET['ajax'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'filas'      => renderFilasProductosHtml($productos, $soloLectura),
+        'paginacion' => renderPaginacionHtml($pagina, $totalPaginas, $totalProductos),
+    ]);
+    exit();
+}
+
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtBajo = $pdo->prepare("
@@ -730,9 +827,6 @@ $stmtBajo = $pdo->prepare("
 ");
 $stmtBajo->execute([$sucursal_consulta]);
 $totalStockBajo = $stmtBajo->fetchColumn();
-
-// Modo solo lectura: cuando se consulta una sucursal diferente a la del usuario
-$soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -1080,13 +1174,10 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <?php /* [FIX-BUSCAR-SUBMIT-SOLO-AL-DISPARARLO] (mismo fix que
-                    admin/inventario_productos.php) dejar que auto_filter.js reenviara el
-                    formulario 600ms despues de CUALQUIER pausa al escribir recargaba la pagina a
-                    medio escribir y tiraba el foco del campo -- se sentia como si Enter se
-                    disparara solo. Se regresa data-no-auto (nunca se auto-envia mientras se
-                    escribe) y se deja que Enter dispare la busqueda normalmente. */ ?>
-                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código... (Enter para buscar)" style="width:180px;" data-no-auto>
+                    <?php /* [FEATURE-BUSQUEDA-EN-VIVO] (mismo fix que admin/inventario_productos.php)
+                    busqueda por AJAX en cada pausa corta al escribir, sin navegar la pagina --
+                    el foco nunca se pierde y el servidor sigue limitando a $porPagina filas. */ ?>
+                    <input type="text" id="inputBuscarProductos" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código..." style="width:180px;" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -1128,7 +1219,6 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         </form>
 
         <div class="tabla-wrapper">
-            <?php if (count($productos) > 0): ?>
             <table>
                 <thead>
                     <tr>
@@ -1142,74 +1232,10 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                         <?php if (!$soloLectura): ?><th>Acciones</th><?php endif; ?>
                     </tr>
                 </thead>
-                <tbody id="tablaFiltrable">
-                    <?php foreach ($productos as $p):
-                        $esStockBajo = $p['stock_actual'] <= $p['stock_minimo'];
-                    ?>
-                    <tr class="<?= $esStockBajo?'stock-bajo':'' ?>">
-                        <td style="color:#aaa;font-size:12px;"><?= htmlspecialchars($p['codigo']) ?></td>
-                        <td>
-                            <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
-                            <?php if ($esStockBajo): ?>
-                                <span style="font-size:11px;color:#c0392b;margin-left:5px;"><?= icono('triangle-alert') ?> Stock bajo</span>
-                            <?php endif; ?>
-                        </td>
-                        <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
-                        <td>
-                            <span class="badge-tipo <?= $p['tipo_venta']==='Unidad'?'tipo-unidad':'tipo-suelto' ?>">
-                                <?= $p['tipo_venta'] ?>
-                            </span>
-                        </td>
-                        <td class="<?= $esStockBajo?'stock-alerta':'stock-ok' ?>">
-                            <?= number_format($p['stock_actual'],2) ?>
-                            <span style="font-size:11px;color:#aaa;">/ mín <?= number_format($p['stock_minimo'],2) ?></span>
-                        </td>
-                        <td>$<?= number_format($p['precio_venta'],2) ?></td>
-                        <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
-                        <?php if (!$soloLectura): ?>
-                        <td>
-                            <div class="acciones">
-                                <a class="btn-accion btn-editar" href="formProducto.php?id=<?= $p['producto_id'] ?>">Editar</a>
-                                <a class="btn-accion btn-entrada" href="entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
-                                <button class="btn-accion btn-eliminar" type="button"
-                                    data-id="<?= $p['producto_id'] ?>"
-                                    data-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES) ?>"
-                                    onclick="confirmarEliminacion(parseInt(this.dataset.id), this.dataset.nombre)">Eliminar</button>
-                            </div>
-                        </td>
-                        <?php endif; ?>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
+                <tbody id="tablaFiltrable"><?= renderFilasProductosHtml($productos, $soloLectura) ?></tbody>
             </table>
-            <?php else: ?>
-                <div class="sin-resultados">No se encontraron productos.</div>
-            <?php endif; ?>
         </div>
-        <?php
-        // [FIX-RENDIMIENTO-PAGINACION] (mismo fix que admin/inventario_productos.php)
-        function urlConPaginaProductos(int $nuevaPagina): string {
-            $qs = $_GET;
-            $qs['pagina'] = $nuevaPagina;
-            unset($qs['exportar']);
-            return 'productos.php?' . http_build_query($qs);
-        }
-        ?>
-        <?php if ($totalProductos > 0): ?>
-        <div class="paginacion-wrapper">
-            <?php if ($pagina > 1): ?>
-                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina - 1)) ?>">&lsaquo; Anterior</a>
-            <?php else: ?>
-                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">&lsaquo; Anterior</span>
-            <?php endif; ?>
-            <span id="indicadorPagina">Página <?= $pagina ?> de <?= $totalPaginas ?> (<?= $totalProductos ?> producto<?= $totalProductos != 1 ? 's' : '' ?>)</span>
-            <?php if ($pagina < $totalPaginas): ?>
-                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina + 1)) ?>">Siguiente &rsaquo;</a>
-            <?php else: ?>
-                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">Siguiente &rsaquo;</span>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
+        <?= renderPaginacionHtml($pagina, $totalPaginas, $totalProductos) ?>
     </div>
 </div>
 
@@ -1273,6 +1299,64 @@ const ICONS = <?= json_encode([
 ]) ?>;
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 function toggleImport() { document.getElementById('importCard').classList.toggle('visible'); }
+// [FEATURE-BUSQUEDA-EN-VIVO] (mismo fix que admin/inventario_productos.php) pide la
+// tabla/paginacion actualizada por fetch() en cada pausa corta al escribir, sin navegar la
+// pagina -- el foco del campo nunca se pierde y el servidor sigue limitando a $porPagina filas.
+(function() {
+    const inputBuscar = document.getElementById('inputBuscarProductos');
+    const form = inputBuscar.closest('form');
+    const tbody = document.getElementById('tablaFiltrable');
+    let timerBuscar = null;
+    let peticionActual = 0;
+
+    function construirUrlAjax(pagina) {
+        const params = new URLSearchParams(new FormData(form));
+        params.set('pagina', pagina);
+        params.set('ajax', '1');
+        return form.action.split('?')[0] + '?' + params.toString();
+    }
+
+    async function cargarProductos(pagina) {
+        const url = construirUrlAjax(pagina);
+        const miPeticion = ++peticionActual;
+        let data;
+        try {
+            const r = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            data = await r.json();
+        } catch (e) {
+            return;
+        }
+        if (miPeticion !== peticionActual) return;
+        tbody.innerHTML = data.filas;
+        const pagActual = document.getElementById('paginacionWrapper');
+        if (pagActual) {
+            pagActual.outerHTML = data.paginacion || '';
+        } else if (data.paginacion) {
+            document.querySelector('.tabla-wrapper').insertAdjacentHTML('afterend', data.paginacion);
+        }
+        history.replaceState(null, '', url.replace(/([?&])ajax=1&?/, '$1').replace(/[?&]$/, ''));
+    }
+
+    inputBuscar.addEventListener('input', function() {
+        clearTimeout(timerBuscar);
+        timerBuscar = setTimeout(() => cargarProductos(1), 350);
+    });
+    inputBuscar.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            clearTimeout(timerBuscar);
+            cargarProductos(1);
+        }
+    });
+    document.addEventListener('click', function(e) {
+        const a = e.target.closest('#paginacionWrapper a.btn-pagina');
+        if (!a) return;
+        e.preventDefault();
+        const pag = new URL(a.href, location.href).searchParams.get('pagina') || '1';
+        cargarProductos(pag);
+        document.querySelector('.tabla-wrapper').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+})();
 let productoEliminarActual = null;
 function confirmarEliminacion(id, nombre) {
     productoEliminarActual = { id, nombre };

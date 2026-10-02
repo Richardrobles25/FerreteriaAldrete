@@ -995,7 +995,13 @@ if (isset($_GET['catalogo_disponible'])) {
     $busq   = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
     $where  = "WHERE p.activo = 1 AND (ss.producto_id IS NULL OR ss.activo = 0)";
     $params = [$sucursalFiltro];
-    if ($busq) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busq.'%'; $params[] = '%'.$busq.'%'; }
+    // [FIX-BUSCAR-ESPACIOS-DOBLES-SQL] Varios nombres reales del catalogo (residuo del Excel
+    // fuente, no solo de un import viejo -- se REVIERTE cada vez que se reimporta ese mismo
+    // Excel) traen espacios dobles entre palabras. LIKE compara caracteres exactos, espacios
+    // incluidos, asi que buscar ese nombre tecleado normalmente (un solo espacio) nunca hacia
+    // match. Se colapsa cualquier corrida de espacios a uno solo en AMBOS lados de la
+    // comparacion (columna y termino de busqueda) antes de comparar.
+    if ($busq) { $where .= " AND (REGEXP_REPLACE(p.nombre_producto, ' +', ' ') LIKE ? OR p.codigo LIKE ?)"; $busqNorm = preg_replace('/\s+/', ' ', $busq); $params[] = '%'.$busqNorm.'%'; $params[] = '%'.$busq.'%'; }
     $stmt = $pdo->prepare("
         SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.precio_mayoreo,
                c.nombre AS categoria
@@ -1172,6 +1178,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agregar_catalogo_admi
 // demas filtros de .filtros), pero deja de competir por recursos contra un DOM de decenas de
 // miles de nodos.
 $busqueda    = trim(is_scalar($_GET['buscar'] ?? null) ? (string)$_GET['buscar'] : '');
+// [FIX-BUSCAR-ESPACIOS-DOBLES-SQL] Varios nombres reales del catalogo (residuo del Excel fuente
+// -- se REVIERTE cada vez que se reimporta ese mismo Excel, no es solo cosa de limpiar la BD una
+// vez) traen espacios dobles entre palabras. LIKE compara caracteres exactos, espacios incluidos,
+// asi que buscar ese nombre tecleado normalmente (un solo espacio) nunca hacia match. Se colapsa
+// cualquier corrida de espacios a uno solo aqui (lado del termino buscado) y con
+// REGEXP_REPLACE() en la columna (ver las 2 consultas de abajo) antes de comparar.
+$busquedaNorm = $busqueda !== '' ? preg_replace('/\s+/', ' ', $busqueda) : '';
 $porPagina   = 50;
 $pagina      = max(1, intval(is_scalar($_GET['pagina'] ?? null) ? $_GET['pagina'] : 1));
 
@@ -1201,7 +1214,7 @@ if ($vistaGlobal) {
     $params  = [];
     $orderBy = "p.nombre_producto ASC";
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
-    if ($busqueda !== '') { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+    if ($busqueda !== '') { $where .= " AND (REGEXP_REPLACE(p.nombre_producto, ' +', ' ') LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busquedaNorm.'%'; $params[] = '%'.$busqueda.'%'; }
     $stmtTotal = $pdo->prepare("SELECT COUNT(*) FROM productos p {$where}");
     $stmtTotal->execute($params);
     $totalProductos = intval($stmtTotal->fetchColumn());
@@ -1236,7 +1249,7 @@ if ($vistaGlobal) {
     if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
     if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
     if ($ocultarStockBajo) { $where .= " AND ss.stock_actual > ss.stock_minimo"; }
-    if ($busqueda !== '') { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busqueda.'%'; $params[] = '%'.$busqueda.'%'; }
+    if ($busqueda !== '') { $where .= " AND (REGEXP_REPLACE(p.nombre_producto, ' +', ' ') LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busquedaNorm.'%'; $params[] = '%'.$busqueda.'%'; }
     $stmtTotal = $pdo->prepare("
         SELECT COUNT(*) FROM productos p
         INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
@@ -1266,6 +1279,107 @@ if ($vistaGlobal) {
 }
 $stmt->execute($params);
 $productos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// [FEATURE-BUSQUEDA-EN-VIVO] Las filas y la barra de paginacion se arman en funciones aparte
+// (en vez de quedar inline en el HTML principal) para poder reutilizar EXACTAMENTE el mismo
+// marcado tanto en la carga normal de la pagina como en la respuesta AJAX que el buscador en
+// vivo pide en cada pausa al escribir -- sin esto, cualquier cambio futuro al marcado de una
+// fila se desincronizaria facilmente entre los dos caminos.
+function renderFilasProductosHtml(array $productos, bool $vistaGlobal, int $sucursalVista, bool $verInactivos): string {
+    if (empty($productos)) {
+        return '<tr><td colspan="8" class="sin-resultados">No se encontraron productos.</td></tr>';
+    }
+    ob_start();
+    foreach ($productos as $p):
+        $esStockBajo = !$vistaGlobal && isset($p['stock_actual']) && $p['stock_actual'] <= $p['stock_minimo'];
+    ?>
+        <tr class="<?= $esStockBajo?'stock-bajo':'' ?>">
+            <td style="color:#aaa;font-size:12px;"><?= htmlspecialchars($p['codigo']) ?></td>
+            <td>
+                <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
+                <?php if ($esStockBajo): ?>
+                    <span style="font-size:11px;color:#c0392b;margin-left:5px;"><?= icono('triangle-alert') ?> Stock bajo</span>
+                <?php endif; ?>
+            </td>
+            <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
+            <td>
+                <span class="badge-tipo <?= $p['tipo_venta']==='Unidad'?'tipo-unidad':'tipo-suelto' ?>">
+                    <?= $p['tipo_venta'] ?>
+                </span>
+            </td>
+            <?php if (!$vistaGlobal): ?>
+            <td class="<?= $esStockBajo?'stock-alerta':'stock-ok' ?>">
+                <?= number_format($p['stock_actual'],2) ?>
+                <span style="font-size:11px;color:#aaa;">/ mín <?= number_format($p['stock_minimo'],2) ?></span>
+            </td>
+            <?php else: ?>
+            <td class="stock-ok" title="<?= htmlspecialchars($p['stock_desglose_sucursales'] ?? 'Sin stock registrado en ninguna sucursal') ?>">
+                <?= number_format($p['stock_total_sucursales'],2) ?>
+                <span style="font-size:11px;color:#aaa;">(pasa el cursor para ver por sucursal)</span>
+            </td>
+            <?php endif; ?>
+            <td>$<?= number_format($p['precio_venta'],2) ?></td>
+            <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
+            <td>
+                <div class="acciones">
+                    <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?><?= $vistaGlobal ? '' : '&sucursal='.$sucursalVista ?>">Editar</a>
+                    <?php if (!$vistaGlobal): ?>
+                    <a class="btn-accion btn-entrada" href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
+                    <?php endif; ?>
+                    <?php if ($verInactivos): ?>
+                    <button class="btn-accion btn-reactivar-global" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>">Reactivar</button>
+                    <?php else: ?>
+                    <button class="btn-accion btn-eliminar" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>" data-global="<?= $vistaGlobal ? '1' : '0' ?>">Eliminar</button>
+                    <?php endif; ?>
+                </div>
+            </td>
+        </tr>
+    <?php endforeach;
+    return ob_get_clean();
+}
+
+function urlConPaginaProductos(int $nuevaPagina): string {
+    $qs = $_GET;
+    $qs['pagina'] = $nuevaPagina;
+    unset($qs['exportar'], $qs['ajax']);
+    return 'inventario_productos.php?' . http_build_query($qs);
+}
+
+function renderPaginacionHtml(int $pagina, int $totalPaginas, int $totalProductos): string {
+    if ($totalProductos <= 0) return '';
+    ob_start();
+    ?>
+    <div class="paginacion-wrapper" id="paginacionWrapper">
+        <?php if ($pagina > 1): ?>
+            <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina - 1)) ?>">&lsaquo; Anterior</a>
+        <?php else: ?>
+            <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">&lsaquo; Anterior</span>
+        <?php endif; ?>
+        <span id="indicadorPagina">Página <?= $pagina ?> de <?= $totalPaginas ?> (<?= $totalProductos ?> producto<?= $totalProductos != 1 ? 's' : '' ?>)</span>
+        <?php if ($pagina < $totalPaginas): ?>
+            <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina + 1)) ?>">Siguiente &rsaquo;</a>
+        <?php else: ?>
+            <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">Siguiente &rsaquo;</span>
+        <?php endif; ?>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+// [FEATURE-BUSQUEDA-EN-VIVO] Respuesta AJAX: el buscador pide esto en cada pausa al escribir
+// (debounce corto, ver el <script> de mas abajo) en vez de navegar la pagina completa -- nunca
+// pierde el foco del campo ni interrumpe lo que se esta escribiendo, y como el servidor sigue
+// limitando a $porPagina filas por respuesta, nunca viaja el catalogo completo. Los enlaces
+// "Anterior"/"Siguiente" tambien pasan por aqui (ver el listener delegado de mas abajo) para
+// evitar la recarga completa en esos clics tambien.
+if (isset($_GET['ajax'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'filas'      => renderFilasProductosHtml($productos, $vistaGlobal, $sucursalVista, $verInactivos),
+        'paginacion' => renderPaginacionHtml($pagina, $totalPaginas, $totalProductos),
+    ]);
+    exit();
+}
 
 $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -1548,18 +1662,18 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <?php /* [FIX-BUSCAR-SUBMIT-SOLO-AL-DISPARARLO] La primera version de este
-                    cambio dejaba que includes/auto_filter.js reenviara el formulario solo 600ms
-                    despues de la ULTIMA tecla -- pero eso dispara con CUALQUIER pausa al escribir
-                    (hasta entre palabras), recargando la pagina a medio escribir y tirando el
-                    foco del campo: se siente exactamente como si el Enter se disparara solo.
-                    Es el mismo problema que ya se habia corregido antes (2026-09-20) con
-                    data-no-auto -- se habia quitado sin pensar en esta consecuencia al traer de
-                    vuelta la busqueda de servidor para la paginacion. Ahora se le regresa
-                    data-no-auto (nunca se auto-envia mientras se escribe) y se deja que Enter
-                    dispare la busqueda de forma normal (ya no se bloquea) -- se escribe toda la
-                    busqueda sin ninguna interrupcion, y se dispara explicitamente al terminar. */ ?>
-                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código... (Enter para buscar)" style="width:180px;" data-no-auto>
+                    <?php /* [FEATURE-BUSQUEDA-EN-VIVO] Version anterior: dejaba que
+                    includes/auto_filter.js reenviara el FORMULARIO COMPLETO (recarga real de
+                    pagina) 600ms despues de la ultima tecla -- eso perdia el foco del campo y se
+                    sentia como si Enter se disparara solo con cualquier pausa al escribir, asi
+                    que se le puso data-no-auto y se dejo que solo Enter buscara. Ahora, en vez de
+                    renunciar al filtrado en vivo, se hace por AJAX (ver el <script> de mas abajo):
+                    cada pausa corta al escribir pide solo la tabla/paginacion actualizada sin
+                    navegar la pagina, asi que el foco nunca se pierde y nunca viaja el catalogo
+                    completo (el servidor sigue limitando a $porPagina filas). data-no-auto se
+                    mantiene para que auto_filter.js no reenvie el formulario completo tambien --
+                    el fetch() de mas abajo es quien controla esto ahora. */ ?>
+                    <input type="text" id="inputBuscarProductos" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código..." style="width:180px;" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>
@@ -1602,7 +1716,6 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
         </form>
 
         <div class="tabla-wrapper">
-            <?php if (count($productos) > 0): ?>
             <table>
                 <thead>
                     <tr>
@@ -1620,92 +1733,10 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                         <th>Acciones</th>
                     </tr>
                 </thead>
-                <tbody id="tablaFiltrable">
-                    <?php foreach ($productos as $p):
-                        $esStockBajo = !$vistaGlobal && isset($p['stock_actual']) && $p['stock_actual'] <= $p['stock_minimo'];
-                    ?>
-                    <tr class="<?= $esStockBajo?'stock-bajo':'' ?>">
-                        <td style="color:#aaa;font-size:12px;"><?= htmlspecialchars($p['codigo']) ?></td>
-                        <td>
-                            <strong><?= htmlspecialchars($p['nombre_producto']) ?></strong>
-                            <?php if ($esStockBajo): ?>
-                                <span style="font-size:11px;color:#c0392b;margin-left:5px;"><?= icono('triangle-alert') ?> Stock bajo</span>
-                            <?php endif; ?>
-                        </td>
-                        <td><?= htmlspecialchars($p['nombre_categoria']??'—') ?></td>
-                        <td>
-                            <span class="badge-tipo <?= $p['tipo_venta']==='Unidad'?'tipo-unidad':'tipo-suelto' ?>">
-                                <?= $p['tipo_venta'] ?>
-                            </span>
-                        </td>
-                        <?php if (!$vistaGlobal): ?>
-                        <td class="<?= $esStockBajo?'stock-alerta':'stock-ok' ?>">
-                            <?= number_format($p['stock_actual'],2) ?>
-                            <span style="font-size:11px;color:#aaa;">/ mín <?= number_format($p['stock_minimo'],2) ?></span>
-                        </td>
-                        <?php else: ?>
-                        <td class="stock-ok" title="<?= htmlspecialchars($p['stock_desglose_sucursales'] ?? 'Sin stock registrado en ninguna sucursal') ?>">
-                            <?= number_format($p['stock_total_sucursales'],2) ?>
-                            <span style="font-size:11px;color:#aaa;">(pasa el cursor para ver por sucursal)</span>
-                        </td>
-                        <?php endif; ?>
-                        <td>$<?= number_format($p['precio_venta'],2) ?></td>
-                        <td>$<?= number_format($p['precio_mayoreo'],2) ?></td>
-                        <td>
-                            <div class="acciones">
-                                <a class="btn-accion btn-editar" href="inventario_formProducto.php?id=<?= $p['producto_id'] ?><?= $vistaGlobal ? '' : '&sucursal='.$sucursalVista ?>">Editar</a>
-                                <?php if (!$vistaGlobal): ?>
-                                <a class="btn-accion btn-entrada" href="inventario_entradas.php?producto_id=<?= $p['producto_id'] ?>">Entrada</a>
-                                <?php endif; ?>
-                                <?php /* [FIX-CRIT-B-01] json_encode() no es un escape de HTML: al interpolarse
-                                dentro de un atributo onclick="...", sus comillas dobles cerraban el atributo
-                                de inmediato y el resto del nombre se parseaba como atributos HTML nuevos —
-                                XSS almacenado ejecutable, y de paso el onclick quedaba roto para TODO
-                                producto (SyntaxError de JS), dejando "Eliminar" sin funcionar nunca. Ahora
-                                el id/nombre van en data-* correctamente escapados con htmlspecialchars, y
-                                un listener delegado (ver el <script> de abajo) llama a la misma función
-                                confirmarEliminacion() de siempre. */ ?>
-                                <?php if ($verInactivos): ?>
-                                <button class="btn-accion btn-reactivar-global" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>">Reactivar</button>
-                                <?php else: ?>
-                                <button class="btn-accion btn-eliminar" type="button" data-producto-id="<?= (int)$p['producto_id'] ?>" data-producto-nombre="<?= htmlspecialchars($p['nombre_producto'], ENT_QUOTES, 'UTF-8') ?>" data-global="<?= $vistaGlobal ? '1' : '0' ?>">Eliminar</button>
-                                <?php endif; ?>
-                            </div>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
+                <tbody id="tablaFiltrable"><?= renderFilasProductosHtml($productos, $vistaGlobal, $sucursalVista, $verInactivos) ?></tbody>
             </table>
-            <?php else: ?>
-                <div class="sin-resultados">No se encontraron productos.</div>
-            <?php endif; ?>
         </div>
-        <?php
-        // [FIX-RENDIMIENTO-PAGINACION] Enlaces reales de pagina (no JS sobre filas ya cargadas) --
-        // reutilizan cualquier filtro ya activo en la URL (categoria, sucursal, buscar,
-        // stock_bajo, ocultar_stock_bajo, ver_inactivos) y solo cambian "pagina".
-        function urlConPaginaProductos(int $nuevaPagina): string {
-            $qs = $_GET;
-            $qs['pagina'] = $nuevaPagina;
-            unset($qs['exportar']);
-            return 'inventario_productos.php?' . http_build_query($qs);
-        }
-        ?>
-        <?php if ($totalProductos > 0): ?>
-        <div class="paginacion-wrapper">
-            <?php if ($pagina > 1): ?>
-                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina - 1)) ?>">&lsaquo; Anterior</a>
-            <?php else: ?>
-                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">&lsaquo; Anterior</span>
-            <?php endif; ?>
-            <span id="indicadorPagina">Página <?= $pagina ?> de <?= $totalPaginas ?> (<?= $totalProductos ?> producto<?= $totalProductos != 1 ? 's' : '' ?>)</span>
-            <?php if ($pagina < $totalPaginas): ?>
-                <a class="btn-pagina" href="<?= htmlspecialchars(urlConPaginaProductos($pagina + 1)) ?>">Siguiente &rsaquo;</a>
-            <?php else: ?>
-                <span class="btn-pagina" style="opacity:0.4;cursor:default;pointer-events:none;">Siguiente &rsaquo;</span>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
+        <?= renderPaginacionHtml($pagina, $totalPaginas, $totalProductos) ?>
     </div>
 </div>
 
@@ -1936,13 +1967,6 @@ if (btnEliminarTodosEl) {
         abrirModalEliminarTodos(this.dataset.esGlobal === '1', this.dataset.nombre);
     });
 }
-// [FIX-CRIT-B-01] Listener delegado: ya no se interpola el nombre del producto dentro de un
-// atributo onclick (ver comentario junto al botón "Eliminar" más arriba).
-document.querySelectorAll('.btn-eliminar[data-producto-id]').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-        confirmarEliminacion(this.dataset.productoId, this.dataset.productoNombre, this.dataset.global === '1');
-    });
-});
 // [FEATURE-ELIMINAR-CATALOGO-GLOBAL] Reactivar: accion reversible y de bajo riesgo (solo
 // vuelve a mostrar el producto), un confirm() nativo es suficiente -- el motivo obligatorio
 // queda reservado para el paso "destructivo" (eliminar), que usa el modal de arriba.
@@ -1951,11 +1975,82 @@ function reactivarProductoGlobal(id, nombre) {
     document.getElementById('inputReactivarProductoId').value = id;
     document.getElementById('formReactivarProductoGlobal').submit();
 }
-document.querySelectorAll('.btn-reactivar-global[data-producto-id]').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-        reactivarProductoGlobal(this.dataset.productoId, this.dataset.productoNombre);
-    });
+// [FIX-CRIT-B-01 / FEATURE-BUSQUEDA-EN-VIVO] Delegado de verdad (un solo listener en un
+// ancestro estable, nunca en cada <button>) -- con la busqueda en vivo reemplazando el <tbody>
+// completo por AJAX, los botones "Eliminar"/"Reactivar" de las filas nuevas nunca existieron al
+// momento de armar los listeners de la carga original, asi que un bind directo (como se hacia
+// antes) los habria dejado sin funcionar despues de la primera busqueda.
+document.getElementById('tablaFiltrable').addEventListener('click', function(e) {
+    const btnElim = e.target.closest('.btn-eliminar[data-producto-id]');
+    if (btnElim) {
+        confirmarEliminacion(btnElim.dataset.productoId, btnElim.dataset.productoNombre, btnElim.dataset.global === '1');
+        return;
+    }
+    const btnReact = e.target.closest('.btn-reactivar-global[data-producto-id]');
+    if (btnReact) {
+        reactivarProductoGlobal(btnReact.dataset.productoId, btnReact.dataset.productoNombre);
+    }
 });
+// [FEATURE-BUSQUEDA-EN-VIVO] Pide la tabla/paginacion actualizada por fetch() en cada pausa
+// corta al escribir, sin navegar la pagina -- el foco del campo nunca se pierde y el servidor
+// sigue limitando a $porPagina filas por respuesta, asi que nunca viaja el catalogo completo.
+// Los enlaces "Anterior"/"Siguiente" tambien pasan por aqui para que la paginacion se sienta
+// igual de instantanea.
+(function() {
+    const inputBuscar = document.getElementById('inputBuscarProductos');
+    const form = inputBuscar.closest('form');
+    const tbody = document.getElementById('tablaFiltrable');
+    let timerBuscar = null;
+    let peticionActual = 0;
+
+    function construirUrlAjax(pagina) {
+        const params = new URLSearchParams(new FormData(form));
+        params.set('pagina', pagina);
+        params.set('ajax', '1');
+        return form.action.split('?')[0] + '?' + params.toString();
+    }
+
+    async function cargarProductos(pagina) {
+        const url = construirUrlAjax(pagina);
+        const miPeticion = ++peticionActual;
+        let data;
+        try {
+            const r = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            data = await r.json();
+        } catch (e) {
+            return; // si falla la red se deja como esta -- Enter vuelve a intentar
+        }
+        if (miPeticion !== peticionActual) return; // respuesta vieja (llego despues de otra mas nueva), descartar
+        tbody.innerHTML = data.filas;
+        const pagActual = document.getElementById('paginacionWrapper');
+        if (pagActual) {
+            pagActual.outerHTML = data.paginacion || '';
+        } else if (data.paginacion) {
+            document.querySelector('.tabla-wrapper').insertAdjacentHTML('afterend', data.paginacion);
+        }
+        history.replaceState(null, '', url.replace(/([?&])ajax=1&?/, '$1').replace(/[?&]$/, ''));
+    }
+
+    inputBuscar.addEventListener('input', function() {
+        clearTimeout(timerBuscar);
+        timerBuscar = setTimeout(() => cargarProductos(1), 350);
+    });
+    inputBuscar.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            clearTimeout(timerBuscar);
+            cargarProductos(1);
+        }
+    });
+    document.addEventListener('click', function(e) {
+        const a = e.target.closest('#paginacionWrapper a.btn-pagina');
+        if (!a) return;
+        e.preventDefault();
+        const pag = new URL(a.href, location.href).searchParams.get('pagina') || '1';
+        cargarProductos(pag);
+        document.querySelector('.tabla-wrapper').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+})();
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         cerrarModalEliminacion();

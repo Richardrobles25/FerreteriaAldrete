@@ -1116,13 +1116,11 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                     Stock bajo (<?= $totalStockBajo ?>)
                 </a>
                 <?php if (!$stock_bajo): ?>
-                <div class="filtro-group" style="margin-left:auto;">
-                    <label style="visibility:hidden;">.</label>
-                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;">
-                        <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
-                        Ocultar stock bajo
-                    </label>
-                </div>
+                <?php /* [FIX-CHECKBOX-DESALINEADO] (mismo fix que admin/inventario_productos.php) */ ?>
+                <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;padding:9px 0;">
+                    <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
+                    Ocultar stock bajo
+                </label>
                 <?php endif; ?>
             </div>
         </form>

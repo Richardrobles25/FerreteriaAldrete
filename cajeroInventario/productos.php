@@ -445,6 +445,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
     requerirCSRF($_POST['_token'] ?? '', 'productos.php');
     $id     = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
     $motivo = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
+    // [FIX-ELIMINAR-TODOS-LARGO-TEXTO] (mismo fix que admin/inventario_productos.php) este motivo
+    // nunca tuvo limite de longitud (solo viaja a error_log(), nunca a una columna).
+    if (mb_strlen($motivo) > 255) {
+        header('Location: productos.php?msg=error_motivo_largo');
+        exit();
+    }
 
     if ($id && $motivo !== '') {
         $stmtProd = $pdo->prepare("SELECT p.producto_id, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
@@ -1010,6 +1016,9 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_eliminar'): ?>
             <div class="msg msg-error">No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.</div>
         <?php endif; ?>
+        <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_motivo_largo'): ?>
+            <div class="msg msg-error">El motivo no puede tener más de 255 caracteres.</div>
+        <?php endif; ?>
         <?php if (isset($_GET['msg']) && $_GET['msg'] === 'error_producto_pendiente'): ?>
             <div class="msg msg-error">No puedes eliminar este producto: tiene una venta a domicilio pendiente de entregar.</div>
         <?php endif; ?>
@@ -1200,7 +1209,7 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
     <div class="modal-card">
         <h3>Eliminar producto</h3>
         <p id="textoEliminarProducto">Se desactivará el producto seleccionado y el motivo se guardará en el historial de movimientos.</p>
-        <textarea id="textareaEliminarProducto" placeholder="Escribe el motivo de la eliminación"></textarea>
+        <textarea id="textareaEliminarProducto" maxlength="255" placeholder="Escribe el motivo de la eliminación"></textarea>
         <div class="modal-error" id="errorEliminarProducto">Necesitas capturar un motivo para continuar.</div>
         <div class="modal-acciones">
             <button type="button" class="btn-modal-cancelar" onclick="cerrarModalEliminacion()">Cancelar</button>

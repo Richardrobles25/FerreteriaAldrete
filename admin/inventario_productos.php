@@ -691,6 +691,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto']))
         header('Location: inventario_productos.php?msg=error_sin_sucursal');
         exit();
     }
+    // [FIX-ELIMINAR-TODOS-LARGO-TEXTO] Mismo tope que se agrego a la eliminacion masiva -- este
+    // motivo nunca tuvo limite de longitud (solo viaja a error_log(), nunca a una columna), pero
+    // no hay razon real para aceptar mas de un parrafo corto aqui tampoco.
+    if (mb_strlen($motivo) > 255) {
+        header('Location: inventario_productos.php?msg=error_eliminar_todos_largo');
+        exit();
+    }
 
     if ($id && $motivo !== '') {
         $stmtProd = $pdo->prepare("SELECT p.producto_id, ss.stock_actual FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? WHERE p.producto_id = ?");
@@ -755,6 +762,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto_glo
     }
     $id     = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
     $motivo = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
+    // [FIX-ELIMINAR-TODOS-LARGO-TEXTO] Mismo tope que el resto de los motivos de este archivo.
+    if (mb_strlen($motivo) > 255) {
+        header('Location: inventario_productos.php?msg=error_eliminar_todos_largo');
+        exit();
+    }
 
     if ($id && $motivo !== '') {
         $stmtProd = $pdo->prepare("SELECT producto_id FROM productos WHERE producto_id = ? AND activo = 1");
@@ -820,11 +832,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todos_sucurs
         header('Location: inventario_productos.php?msg=no_autorizado_import');
         exit();
     }
+    // [FIX-ELIMINAR-TODOS-LARGO-TEXTO] Ninguno de los dos campos tenia tope de longitud -- un
+    // motivo o confirmacion extremadamente largos (pegados por error, o a proposito) no rompian
+    // nada de por si (solo viajan a error_log(), nunca a una columna VARCHAR ni a una consulta
+    // SQL), pero no hay ninguna razon real para aceptar mas de un parrafo corto aqui, y un texto
+    // gigante si puede inflar el log del servidor sin limite. Mismo patron de tope ya usado en
+    // "motivo"/"descripcion" de otros formularios de este proyecto (gastos.php, adelantos.php).
     $motivo      = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
     $confirmacion = trim(is_scalar($_POST['confirmacion'] ?? null) ? (string)$_POST['confirmacion'] : '');
 
     if ($sucursalVista === 0) {
         header('Location: inventario_productos.php?msg=error_sin_sucursal');
+        exit();
+    }
+    if (mb_strlen($motivo) > 255 || mb_strlen($confirmacion) > 30) {
+        header('Location: inventario_productos.php?msg=error_eliminar_todos_largo');
         exit();
     }
     if ($motivo === '' || strtoupper($confirmacion) !== 'ELIMINAR TODO') {
@@ -884,6 +906,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todo_catalog
     $motivo       = trim(is_scalar($_POST['motivo_eliminacion'] ?? null) ? (string)$_POST['motivo_eliminacion'] : '');
     $confirmacion = trim(is_scalar($_POST['confirmacion'] ?? null) ? (string)$_POST['confirmacion'] : '');
 
+    // [FIX-ELIMINAR-TODOS-LARGO-TEXTO] Mismo tope que en "eliminar_todos_sucursal" arriba.
+    if (mb_strlen($motivo) > 255 || mb_strlen($confirmacion) > 30) {
+        header('Location: inventario_productos.php?msg=error_eliminar_todos_largo');
+        exit();
+    }
     if ($motivo === '' || strtoupper($confirmacion) !== 'ELIMINAR TODO') {
         header('Location: inventario_productos.php?msg=error_eliminar_todos');
         exit();
@@ -1418,6 +1445,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             'error_stock_decimal' => icono('circle-x') . ' Uno de los productos se vende por pieza entera (no "Suelto") — el stock inicial/mínimo/máximo debe ser un número entero.',
             'error_eliminar'   => icono('circle-x') . ' No se pudo eliminar el producto. Captura un motivo para dejarlo en historial.',
             'error_eliminar_todos' => icono('circle-x') . ' No se completó la eliminación masiva: captura un motivo y escribe exactamente "ELIMINAR TODO" para confirmar.',
+            'error_eliminar_todos_largo' => icono('circle-x') . ' El motivo no puede tener más de 255 caracteres, ni el texto de confirmación más de 30.',
             'error_producto_pendiente' => icono('circle-x') . ' No puedes eliminar este producto: tiene una venta a domicilio pendiente de entregar.',
             'error_sin_sucursal' => icono('circle-x') . ' Selecciona una sucursal específica no "Todas las sucursales" para eliminar un producto de su stock.',
             'error_token'      => icono('circle-x') . ' La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.',
@@ -1660,12 +1688,12 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     <div class="modal-card">
         <h3 id="tituloEliminarTodos">Eliminar todos los productos</h3>
         <p id="textoEliminarTodos"></p>
-        <textarea id="textareaEliminarTodosMotivo" placeholder="Escribe el motivo de la eliminación masiva (ej. se importó una lista equivocada)"></textarea>
+        <textarea id="textareaEliminarTodosMotivo" maxlength="255" placeholder="Escribe el motivo de la eliminación masiva (ej. se importó una lista equivocada)"></textarea>
         <div class="modal-error" id="errorEliminarTodosMotivo">Necesitas capturar un motivo para continuar.</div>
         <label style="display:block;font-size:12px;color:#666;font-weight:600;margin:12px 0 5px;">
             Escribe <strong>ELIMINAR TODO</strong> para confirmar
         </label>
-        <input type="text" id="inputEliminarTodosConfirmTexto" placeholder="ELIMINAR TODO" style="width:100%;padding:9px 11px;border:1px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box;">
+        <input type="text" id="inputEliminarTodosConfirmTexto" maxlength="30" placeholder="ELIMINAR TODO" style="width:100%;padding:9px 11px;border:1px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box;">
         <div class="modal-error" id="errorEliminarTodosConfirm">Escribe exactamente "ELIMINAR TODO" (mayúsculas o minúsculas) para continuar.</div>
         <div class="modal-acciones">
             <button type="button" class="btn-modal-cancelar" onclick="cerrarModalEliminarTodos()">Cancelar</button>
@@ -1678,7 +1706,7 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     <div class="modal-card">
         <h3 id="tituloEliminarProducto">Eliminar producto</h3>
         <p id="textoEliminarProducto">Se desactivará el stock de este producto <strong>solo en la sucursal que estás viendo</strong> (no se borra del catálogo global ni se desactiva en otras sucursales) y el motivo se guardará en el historial de movimientos.</p>
-        <textarea id="textareaEliminarProducto" placeholder="Escribe el motivo de la eliminación"></textarea>
+        <textarea id="textareaEliminarProducto" maxlength="255" placeholder="Escribe el motivo de la eliminación"></textarea>
         <div class="modal-error" id="errorEliminarProducto">Necesitas capturar un motivo para continuar.</div>
         <div class="modal-acciones">
             <button type="button" class="btn-modal-cancelar" onclick="cerrarModalEliminacion()">Cancelar</button>

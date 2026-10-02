@@ -800,6 +800,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_producto_glo
                 exit();
             }
             $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ?")->execute([$id]);
+            // [FIX-ELIMINAR-TODOS-STOCK-SUCURSAL-HUERFANO] (mismo fix que la eliminacion masiva
+            // de mas abajo) sin esto, el stock de cada sucursal se quedaba "congelado" en
+            // activo=1 de antes de este borrado -- invisible SOLO porque productos.activo=0 lo
+            // tapaba, y listo para reaparecer solo con que algo reactivara el producto despues
+            // (ej. reimportarlo por Excel a UNA sola sucursal), apareciendo de golpe en TODAS
+            // las sucursales con su stock viejo, no solo en la que se estaba reimportando.
+            $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ?")->execute([$id]);
             error_log('[inventario_productos.php] Producto ELIMINADO DEL CATALOGO GLOBAL producto_id=' . $id . ' por usuario_id=' . $_SESSION['usuario_id'] . ' motivo: ' . $motivo);
             header('Location: inventario_productos.php?msg=eliminado_global');
             exit();
@@ -911,6 +918,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todos_sucurs
 // CATALOGO GLOBAL completo (vista "Todas las sucursales") -- desactiva productos.activo para
 // cada producto, afectando a todas las sucursales a la vez (mismo alcance que
 // "eliminar_producto_global" de un solo producto, aplicado a todos).
+// [FIX-ELIMINAR-TODOS-STOCK-SUCURSAL-HUERFANO] Esta accion solo apagaba productos.activo, nunca
+// stock_sucursal.activo -- asi que el stock de cada sucursal se quedaba "congelado" en activo=1
+// de antes del borrado, invisible SOLO porque el candado global (p.activo=1 AND ss.activo=1) lo
+// tapaba. En cuanto CUALQUIER accion volvia a poner productos.activo=1 para un producto (ej.
+// reimportarlo por Excel a UNA sola sucursal, ver el fix de reactivacion de mas arriba), ese
+// producto reaparecia de inmediato en TODAS las sucursales que todavia tuvieran esa fila vieja
+// activa -- no solo en la sucursal que se estaba reimportando. Confirmado en vivo: tras "Eliminar
+// todo el catalogo" + reimportar un producto solo a Pinar, aparecio igual en Barrio de los Indios
+// con su stock VIEJO de antes del borrado. Ahora se desactiva tambien stock_sucursal de TODAS las
+// sucursales para cada producto que se desactiva aqui -- un "Eliminar todo" de verdad deja todo
+// en blanco, listo para reimportar sucursal por sucursal sin que reaparezca nada viejo por su
+// cuenta.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todo_catalogo_global'])) {
     requerirCSRF($_POST['_token'] ?? '', 'inventario_productos.php');
     if (($_SESSION['rol'] ?? '') !== 'Administrador') {
@@ -942,6 +961,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todo_catalog
             WHERE vp.producto_id = ? AND v.estado = 'Pendiente'
         ");
         $stmtDesactGlobal = $pdo->prepare("UPDATE productos SET activo = 0 WHERE producto_id = ?");
+        $stmtDesactStock  = $pdo->prepare("UPDATE stock_sucursal SET activo = 0 WHERE producto_id = ?");
         foreach ($ids as $id) {
             $stmtPendGlobal->execute([$id]);
             if ($stmtPendGlobal->fetchColumn() > 0) {
@@ -949,6 +969,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todo_catalog
                 continue;
             }
             $stmtDesactGlobal->execute([$id]);
+            $stmtDesactStock->execute([$id]);
             $desactivados++;
         }
         $pdo->commit();

@@ -296,9 +296,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             $pdo->exec("SET SESSION sql_mode = ''");
             $pdo->beginTransaction();
 
-            $importados = 0;
-            $omitidos   = 0;
-            $bloqueados = 0;
+            $importados  = 0;
+            $omitidos    = 0;
+            $bloqueados  = 0;
+            $reactivados = 0;
             $categoriasCache  = []; // evita SELECT repetido para misma categoría
             $categoriasCreadas = [];
             $unidadesCache    = []; // evita INSERT repetido para misma unidad
@@ -495,7 +496,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                     }
 
                     // Buscar el producto globalmente por código (catálogo compartido)
-                    $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ?");
+                    // [FIX-IMPORT-REACTIVAR-CATALOGO] Esta busqueda nunca filtro por "activo" --
+                    // asi que encontraba igual un producto DESACTIVADO del catalogo global (ej.
+                    // tras "Eliminar todo el catalogo" o un "Eliminar" individual). El UPDATE de
+                    // abajo actualizaba sus datos pero nunca volvia a poner activo=1, dejandolo
+                    // invisible para siempre (ninguna consulta del sistema muestra p.activo=0) --
+                    // aunque el mensaje final dijera "N actualizado(s)" como si todo hubiera
+                    // salido bien. Reproducido en vivo: "Eliminar todo el catalogo" + reimportar
+                    // el mismo Excel a una sucursal reporto "0 importados, 2759 actualizados" y
+                    // la lista seguia vacia. Ahora se detecta este caso y se reactiva como parte
+                    // del mismo UPDATE -- reimportar datos reales de un producto es, en si, la
+                    // señal de que deberia volver a estar activo.
+                    $check = $pdo->prepare("SELECT producto_id, activo FROM productos WHERE codigo = ?");
                     $check->execute([$codigo]);
                     $productoExistente = $check->fetch(PDO::FETCH_ASSOC);
 
@@ -507,16 +519,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
                     if ($productoExistente) {
                         $prodId = $productoExistente['producto_id'];
+                        if (!intval($productoExistente['activo'])) $reactivados++;
                         // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php: Inventario/Cajero
                         // no puede editar el catalogo global (nombre, precios, categoria) de un
                         // producto que ya existe — solo puede actualizar el stock de su sucursal.
                         if ($puedeCrearCatalogo) {
                             // Actualizar catálogo global (sin stock ni sucursal_id)
                             if ($categoria_id !== null) {
-                                $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                                $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=?, activo=1 WHERE producto_id=?")
                                     ->execute([$nombre, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
                             } else {
-                                $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                                $pdo->prepare("UPDATE productos SET nombre_producto=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=?, activo=1 WHERE producto_id=?")
                                     ->execute([$nombre, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $prodId]);
                             }
                             // [FEATURE-PROVEEDORES-IMPORT] Igual que el formulario manual: si la
@@ -579,7 +592,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             }
 
             $pdo->commit();
-            $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s).";
+            $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
+                . ($reactivados > 0 ? " $reactivados de esos estaban desactivados en el catálogo global y se reactivaron." : '');
             if ($bloqueados > 0) $exitoImport .= " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes.";
             if ($sucursalVista === 0) $exitoImport .= ' Solo se actualizó el catálogo global (nombre, precios, categoría) — el stock del Excel se omitió porque no hay una sucursal específica elegida.';
             if ($categoriasCreadas) $exitoImport .= ' Categorías nuevas: ' . implode(', ', array_unique($categoriasCreadas)) . '.';

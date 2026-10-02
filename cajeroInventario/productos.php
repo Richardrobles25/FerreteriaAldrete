@@ -149,9 +149,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             // Saltar encabezado
             array_shift($rows);
 
-            $importados = 0;
-            $omitidos   = 0;
-            $bloqueados = 0;
+            $importados  = 0;
+            $omitidos    = 0;
+            $bloqueados  = 0;
+            $reactivados = 0;
             $negativos  = 0;
             $proveedoresCache   = []; // nombre => proveedor_id, evita SELECT repetido
             $proveedoresCreados = [];
@@ -298,7 +299,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
                 }
 
                 // Verificar si el código ya existe en el catálogo
-                $check = $pdo->prepare("SELECT producto_id FROM productos WHERE codigo = ?");
+                // [FIX-IMPORT-REACTIVAR-CATALOGO] (mismo fix que admin/inventario_productos.php)
+                // esta busqueda nunca filtro por "activo" -- encontraba igual un producto
+                // DESACTIVADO del catalogo global, y el UPDATE de abajo actualizaba sus datos
+                // pero nunca volvia a poner activo=1, dejandolo invisible para siempre aunque el
+                // mensaje final reportara "actualizado" como si todo hubiera salido bien.
+                $check = $pdo->prepare("SELECT producto_id, activo FROM productos WHERE codigo = ?");
                 $check->execute([$codigo]);
                 $existente = $check->fetch();
 
@@ -310,13 +316,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 
                 if ($existente) {
                     $producto_id = $existente['producto_id'];
+                    if (!intval($existente['activo'])) $reactivados++;
                     // [FIX-CONSISTENCIA] Igual que en inventario_formProducto.php: Inventario/Cajero
                     // no puede editar el catalogo global (nombre, precios, categoria) ni de
                     // productos nuevos ni de los que ya existen — solo puede agregar/actualizar el
                     // stock de su propia sucursal. Antes esta rama actualizaba el catalogo global
                     // completo sin importar el rol.
                     if ($puedeCrearCatalogo) {
-                        $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=? WHERE producto_id=?")
+                        $pdo->prepare("UPDATE productos SET nombre_producto=?, categoria_id=?, precio_compra=?, precio_venta=?, precio_mayoreo=?, tipo_venta=?, descripcion=?, unidad_medida=?, activo=1 WHERE producto_id=?")
                             ->execute([$nombre_producto, $categoria_id, $precio_compra, $precio_venta, $precio_mayoreo, $tipo_venta, $descripcion, $unidad_medida ?: null, $producto_id]);
                         // [FEATURE-PROVEEDORES-IMPORT] Reemplaza la lista completa si la celda
                         // trajo proveedor(es); si vino vacia, no toca los vinculos existentes.
@@ -368,6 +375,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
             }
 
             $exitoImport = "$importados producto(s) importados, $omitidos actualizado(s)."
+                . ($reactivados > 0 ? " $reactivados de esos estaban desactivados en el catálogo global y se reactivaron." : '')
                 . ($bloqueados > 0 ? " $bloqueados fila(s) omitida(s): tu rol no puede dar de alta productos nuevos en el catálogo, solo actualizar los existentes." : '')
                 . ($negativos > 0 ? " $negativos fila(s) omitida(s): precio inválido (negativo, cero, texto o mayor a \$500,000.00) o stock con decimales en un producto por unidad." : '')
                 . ($proveedoresCreados ? ' Proveedores nuevos: ' . implode(', ', array_unique($proveedoresCreados)) . '.' : '');

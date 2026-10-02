@@ -833,6 +833,11 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
     .btn-eliminar { background: #fdecea; color: #c0392b; }
     .btn-eliminar:hover { background: #ffcdd2; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
+    .paginacion-wrapper { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 14px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; margin-top: 12px; }
+    .btn-pagina { background: #eef8ff; color: #14ace7; border: 1px solid #cce5f7; padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-pagina:hover:not(:disabled) { background: #d9f0ff; }
+    .btn-pagina:disabled { opacity: 0.4; cursor: default; }
+    #indicadorPagina { font-size: 13px; color: #666; min-width: 180px; text-align: center; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 999; }
     .modal-overlay.visible { display: flex; }
     .modal-card { width: 100%; max-width: 520px; background: white; border-radius: 10px; border: 1px solid #e8e8e8; box-shadow: 0 20px 45px rgba(0,0,0,0.18); padding: 22px; }
@@ -1161,6 +1166,14 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 <div class="sin-resultados">No se encontraron productos.</div>
             <?php endif; ?>
         </div>
+        <?php /* [FEATURE-PAGINACION-PRODUCTOS] (mismo fix que admin/inventario_productos.php) */ ?>
+        <?php if (count($productos) > 0): ?>
+        <div class="paginacion-wrapper" id="paginacionProductos">
+            <button type="button" id="btnPagAnterior" class="btn-pagina">&lsaquo; Anterior</button>
+            <span id="indicadorPagina"></span>
+            <button type="button" id="btnPagSiguiente" class="btn-pagina">Siguiente &rsaquo;</button>
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -1227,9 +1240,48 @@ const ICONS = <?= json_encode([
 function normalizar(str) {
     return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 }
+// [FEATURE-PAGINACION-PRODUCTOS] (mismo fix que admin/inventario_productos.php) paginacion 100%
+// del lado del navegador sobre las filas ya cargadas, para no romper el buscador en vivo.
+const FILAS_POR_PAGINA_PRODUCTOS = 50;
+const todasLasFilasProductos = Array.from(document.querySelectorAll('#tablaFiltrable tr'));
+let paginaActualProductos = 1;
+function totalPaginasProductos() {
+    return Math.max(1, Math.ceil(todasLasFilasProductos.length / FILAS_POR_PAGINA_PRODUCTOS));
+}
+function mostrarPaginaProductos(n) {
+    const total = totalPaginasProductos();
+    paginaActualProductos = Math.min(Math.max(1, n), total);
+    const inicio = (paginaActualProductos - 1) * FILAS_POR_PAGINA_PRODUCTOS;
+    const fin = inicio + FILAS_POR_PAGINA_PRODUCTOS;
+    todasLasFilasProductos.forEach(function(tr, i) {
+        tr.style.display = (i >= inicio && i < fin) ? '' : 'none';
+    });
+    const indicador = document.getElementById('indicadorPagina');
+    if (indicador) indicador.textContent = 'Página ' + paginaActualProductos + ' de ' + total + ' (' + todasLasFilasProductos.length + ' productos)';
+    const btnAnt = document.getElementById('btnPagAnterior');
+    const btnSig = document.getElementById('btnPagSiguiente');
+    if (btnAnt) btnAnt.disabled = paginaActualProductos <= 1;
+    if (btnSig) btnSig.disabled = paginaActualProductos >= total;
+}
+document.getElementById('btnPagAnterior')?.addEventListener('click', function() {
+    mostrarPaginaProductos(paginaActualProductos - 1);
+    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+document.getElementById('btnPagSiguiente')?.addEventListener('click', function() {
+    mostrarPaginaProductos(paginaActualProductos + 1);
+    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+if (todasLasFilasProductos.length > 0) mostrarPaginaProductos(1);
 function filtrarTabla(q) {
     q = normalizar(q);
-    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+    const pagWrap = document.getElementById('paginacionProductos');
+    if (!q) {
+        if (pagWrap) pagWrap.style.display = '';
+        mostrarPaginaProductos(1);
+        return;
+    }
+    if (pagWrap) pagWrap.style.display = 'none';
+    todasLasFilasProductos.forEach(function(tr) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
 }

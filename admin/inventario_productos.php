@@ -849,7 +849,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todos_sucurs
         header('Location: inventario_productos.php?msg=error_eliminar_todos_largo');
         exit();
     }
-    if ($motivo === '' || strtoupper($confirmacion) !== 'ELIMINAR TODO') {
+    if ($motivo === '' || $confirmacion !== 'ELIMINAR TODO') {
         header('Location: inventario_productos.php?msg=error_eliminar_todos');
         exit();
     }
@@ -911,7 +911,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todo_catalog
         header('Location: inventario_productos.php?msg=error_eliminar_todos_largo');
         exit();
     }
-    if ($motivo === '' || strtoupper($confirmacion) !== 'ELIMINAR TODO') {
+    if ($motivo === '' || $confirmacion !== 'ELIMINAR TODO') {
         header('Location: inventario_productos.php?msg=error_eliminar_todos');
         exit();
     }
@@ -1286,6 +1286,11 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
     .btn-reactivar-global { background: #e8f5e9; color: #2e7d32; }
     .btn-reactivar-global:hover { background: #c8e6c9; }
     .sin-resultados { padding: 40px; text-align: center; color: #aaa; font-size: 14px; }
+    .paginacion-wrapper { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 14px; background: white; border-radius: 8px; border: 0.5px solid #e8e8e8; margin-top: 12px; }
+    .btn-pagina { background: #eef8ff; color: #14ace7; border: 1px solid #cce5f7; padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-pagina:hover:not(:disabled) { background: #d9f0ff; }
+    .btn-pagina:disabled { opacity: 0.4; cursor: default; }
+    #indicadorPagina { font-size: 13px; color: #666; min-width: 180px; text-align: center; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: none; align-items: center; justify-content: center; padding: 20px; z-index: 999; }
     .modal-overlay.visible { display: flex; }
     .modal-card { width: 100%; max-width: 520px; background: white; border-radius: 10px; border: 1px solid #e8e8e8; box-shadow: 0 20px 45px rgba(0,0,0,0.18); padding: 22px; }
@@ -1608,6 +1613,20 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 <div class="sin-resultados">No se encontraron productos.</div>
             <?php endif; ?>
         </div>
+        <?php /* [FEATURE-PAGINACION-PRODUCTOS] Con el catalogo completo (miles de productos en
+        vista global) la tabla obligaba a un scroll larguisimo para llegar al final. La
+        paginacion se hace del lado del navegador (sobre las filas que el servidor ya mando, sin
+        re-consultar nada) para no romper el buscador en vivo de arriba, que necesita tener TODAS
+        las filas ya en el DOM para poder encontrar coincidencias que esten fuera de la pagina
+        actual -- mientras se busca algo, la paginacion se desactiva y se muestran todos los
+        resultados que coincidan, sin importar en que "pagina" estarian. */ ?>
+        <?php if (count($productos) > 0): ?>
+        <div class="paginacion-wrapper" id="paginacionProductos">
+            <button type="button" id="btnPagAnterior" class="btn-pagina">&lsaquo; Anterior</button>
+            <span id="indicadorPagina"></span>
+            <button type="button" id="btnPagSiguiente" class="btn-pagina">Siguiente &rsaquo;</button>
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -1691,10 +1710,10 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
         <textarea id="textareaEliminarTodosMotivo" maxlength="255" placeholder="Escribe el motivo de la eliminación masiva (ej. se importó una lista equivocada)"></textarea>
         <div class="modal-error" id="errorEliminarTodosMotivo">Necesitas capturar un motivo para continuar.</div>
         <label style="display:block;font-size:12px;color:#666;font-weight:600;margin:12px 0 5px;">
-            Escribe <strong>ELIMINAR TODO</strong> para confirmar
+            Escribe <strong>ELIMINAR TODO</strong> (en mayúsculas) para confirmar
         </label>
         <input type="text" id="inputEliminarTodosConfirmTexto" maxlength="30" placeholder="ELIMINAR TODO" style="width:100%;padding:9px 11px;border:1px solid #ddd;border-radius:6px;font-size:13px;box-sizing:border-box;">
-        <div class="modal-error" id="errorEliminarTodosConfirm">Escribe exactamente "ELIMINAR TODO" (mayúsculas o minúsculas) para continuar.</div>
+        <div class="modal-error" id="errorEliminarTodosConfirm">Escribe exactamente "ELIMINAR TODO", en mayúsculas, para continuar.</div>
         <div class="modal-acciones">
             <button type="button" class="btn-modal-cancelar" onclick="cerrarModalEliminarTodos()">Cancelar</button>
             <button type="button" class="btn-modal-confirmar" onclick="enviarEliminacionTodos()">Eliminar todos</button>
@@ -1728,9 +1747,53 @@ const ICONS = <?= json_encode([
 function normalizar(str) {
     return String(str || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 }
+// [FEATURE-PAGINACION-PRODUCTOS] Paginacion 100% del lado del navegador, sobre las filas que el
+// servidor ya mando -- se cachean una sola vez (el querySelectorAll real solo corre aqui) para
+// no recorrer el DOM completo en cada click de "Siguiente"/"Anterior".
+const FILAS_POR_PAGINA_PRODUCTOS = 50;
+const todasLasFilasProductos = Array.from(document.querySelectorAll('#tablaFiltrable tr'));
+let paginaActualProductos = 1;
+function totalPaginasProductos() {
+    return Math.max(1, Math.ceil(todasLasFilasProductos.length / FILAS_POR_PAGINA_PRODUCTOS));
+}
+function mostrarPaginaProductos(n) {
+    const total = totalPaginasProductos();
+    paginaActualProductos = Math.min(Math.max(1, n), total);
+    const inicio = (paginaActualProductos - 1) * FILAS_POR_PAGINA_PRODUCTOS;
+    const fin = inicio + FILAS_POR_PAGINA_PRODUCTOS;
+    todasLasFilasProductos.forEach(function(tr, i) {
+        tr.style.display = (i >= inicio && i < fin) ? '' : 'none';
+    });
+    const indicador = document.getElementById('indicadorPagina');
+    if (indicador) indicador.textContent = 'P\u00e1gina ' + paginaActualProductos + ' de ' + total + ' (' + todasLasFilasProductos.length + ' productos)';
+    const btnAnt = document.getElementById('btnPagAnterior');
+    const btnSig = document.getElementById('btnPagSiguiente');
+    if (btnAnt) btnAnt.disabled = paginaActualProductos <= 1;
+    if (btnSig) btnSig.disabled = paginaActualProductos >= total;
+}
+document.getElementById('btnPagAnterior')?.addEventListener('click', function() {
+    mostrarPaginaProductos(paginaActualProductos - 1);
+    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+document.getElementById('btnPagSiguiente')?.addEventListener('click', function() {
+    mostrarPaginaProductos(paginaActualProductos + 1);
+    document.querySelector('.tabla-wrapper')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+if (todasLasFilasProductos.length > 0) mostrarPaginaProductos(1);
+// [FIX-BUSCAR-FILTRO-SERVIDOR-FANTASMA] Mientras se busca algo, la paginacion se desactiva por
+// completo y se muestran TODAS las filas que coincidan (sin importar en que "pagina" caerian) --
+// ocultar resultados reales de busqueda detras de la paginacion seria peor que el problema que
+// la paginacion intenta resolver.
 function filtrarTabla(q) {
     q = normalizar(q);
-    document.querySelectorAll('#tablaFiltrable tr').forEach(function(tr) {
+    const pagWrap = document.getElementById('paginacionProductos');
+    if (!q) {
+        if (pagWrap) pagWrap.style.display = '';
+        mostrarPaginaProductos(1);
+        return;
+    }
+    if (pagWrap) pagWrap.style.display = 'none';
+    todasLasFilasProductos.forEach(function(tr) {
         tr.style.display = normalizar(tr.textContent).includes(q) ? '' : 'none';
     });
 }
@@ -1828,7 +1891,7 @@ function enviarEliminacionTodos() {
     } else {
         document.getElementById('errorEliminarTodosMotivo').style.display = 'none';
     }
-    if (confirmTexto.toUpperCase() !== 'ELIMINAR TODO') {
+    if (confirmTexto !== 'ELIMINAR TODO') {
         document.getElementById('errorEliminarTodosConfirm').style.display = 'block';
         ok = false;
     } else {

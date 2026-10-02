@@ -1080,11 +1080,13 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <?php /* [FIX-RENDIMIENTO-PAGINACION] (mismo fix que admin/inventario_productos.php)
-                    la busqueda vuelve a ser del servidor -- con la pagina paginando de verdad,
-                    ya no tiene caso mandar el catalogo completo al navegador para filtrarlo ahi.
-                    Usa el mismo debounce de 600ms de includes/auto_filter.js. */ ?>
-                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código..." style="width:180px;">
+                    <?php /* [FIX-BUSCAR-SUBMIT-SOLO-AL-DISPARARLO] (mismo fix que
+                    admin/inventario_productos.php) dejar que auto_filter.js reenviara el
+                    formulario 600ms despues de CUALQUIER pausa al escribir recargaba la pagina a
+                    medio escribir y tiraba el foco del campo -- se sentia como si Enter se
+                    disparara solo. Se regresa data-no-auto (nunca se auto-envia mientras se
+                    escribe) y se deja que Enter dispare la busqueda normalmente. */ ?>
+                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código... (Enter para buscar)" style="width:180px;" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>

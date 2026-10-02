@@ -1527,18 +1527,18 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
             <div class="filtros">
                 <div class="filtro-group">
                     <label>Buscar</label>
-                    <?php /* [FIX-RENDIMIENTO-PAGINACION] Antes este campo filtraba 100% en el
-                    navegador (oninput, sin tocar el servidor) para evitar un bug de "filtro de
-                    servidor fantasma" (ver commits anteriores) -- pero eso exigia mandar las
-                    ~2700 filas del catalogo completo al navegador en cada carga, sin importar
-                    cuantas list realmente coincidieran con la busqueda, lo que se sentia lento.
-                    Ahora que la pagina SIEMPRE pagina del lado del servidor (ver $porPagina mas
-                    arriba), la busqueda tambien vuelve a ser del servidor -- ya no hay nada que
-                    "arrastre" un filtro fantasma porque TODO filtro (categoria, sucursal, buscar)
-                    ahora se comporta igual: un envio real y explicito del formulario, nunca una
-                    vista previa silenciosa. Usa el mismo debounce de 600ms de includes/
-                    auto_filter.js que ya usan los demas campos de texto de .filtros. */ ?>
-                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código..." style="width:180px;">
+                    <?php /* [FIX-BUSCAR-SUBMIT-SOLO-AL-DISPARARLO] La primera version de este
+                    cambio dejaba que includes/auto_filter.js reenviara el formulario solo 600ms
+                    despues de la ULTIMA tecla -- pero eso dispara con CUALQUIER pausa al escribir
+                    (hasta entre palabras), recargando la pagina a medio escribir y tirando el
+                    foco del campo: se siente exactamente como si el Enter se disparara solo.
+                    Es el mismo problema que ya se habia corregido antes (2026-09-20) con
+                    data-no-auto -- se habia quitado sin pensar en esta consecuencia al traer de
+                    vuelta la busqueda de servidor para la paginacion. Ahora se le regresa
+                    data-no-auto (nunca se auto-envia mientras se escribe) y se deja que Enter
+                    dispare la busqueda de forma normal (ya no se bloquea) -- se escribe toda la
+                    busqueda sin ninguna interrupcion, y se dispara explicitamente al terminar. */ ?>
+                    <input type="text" name="buscar" value="<?= htmlspecialchars($busqueda) ?>" placeholder="Nombre o código... (Enter para buscar)" style="width:180px;" data-no-auto>
                 </div>
                 <div class="filtro-group">
                     <label>Categoría</label>

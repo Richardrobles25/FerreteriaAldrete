@@ -1322,8 +1322,19 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 equivocada -- solo Administrador, sin importar el rol que normalmente puede borrar un
                 producto individual, porque el alcance (toda una sucursal o el catalogo global entero)
                 es demasiado grande para dejarlo con el mismo candado que un solo producto. */ ?>
+                <?php /* [FIX-ELIMINAR-TODOS-ONCLICK-ROTO] Igual que el bug ya documentado arriba
+                (FIX-CRIT-B-01) para el boton "Eliminar" de cada fila: json_encode() no es un
+                escape de HTML, asi que interpolarlo dentro de un atributo onclick="..." (tambien
+                delimitado por comillas dobles) cerraba el atributo de inmediato en la primera
+                comilla doble que el propio json_encode() agrega alrededor del string -- el
+                "onclick" quedaba truncado (invalido como JS, el boton no hacia nada al hacer
+                clic) y el resto del nombre de sucursal se parseaba como atributos HTML sueltos en
+                el mismo <button>, con un riesgo real de arrastrar la corrupcion del parser hasta
+                la proxima comilla doble real del documento (lo que de hecho rompio tambien el
+                checkbox "Ocultar stock bajo" que viene despues, confirmado en vivo). Se usa el
+                mismo patron data-* + addEventListener que ya usa el boton "Eliminar" individual. */ ?>
                 <?php if ($puedeImportarExcel): ?>
-                <button type="button" style="background:#fdecea;color:#c0392b;border:1px solid #f5c6cb;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;" onclick="abrirModalEliminarTodos(<?= $vistaGlobal ? 'true' : 'false' ?>, <?= json_encode($vistaGlobal ? 'todo el catálogo global' : $nombreSucursalVista) ?>)">
+                <button type="button" id="btnEliminarTodos" data-es-global="<?= $vistaGlobal ? '1' : '0' ?>" data-nombre="<?= htmlspecialchars($vistaGlobal ? 'todo el catálogo global' : $nombreSucursalVista, ENT_QUOTES, 'UTF-8') ?>" style="background:#fdecea;color:#c0392b;border:1px solid #f5c6cb;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">
                     <?= $vistaGlobal ? 'Eliminar todo el catálogo' : 'Eliminar todos (esta sucursal)' ?>
                 </button>
                 <?php endif; ?>
@@ -1467,15 +1478,6 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                     </select>
                 </div>
                 <?php if ($stock_bajo): ?><input type="hidden" name="stock_bajo" value="1"><?php endif; ?>
-                <?php if (!$vistaGlobal && !$stock_bajo): ?>
-                <div class="filtro-group">
-                    <label style="visibility:hidden;">.</label>
-                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;">
-                        <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
-                        Ocultar stock bajo
-                    </label>
-                </div>
-                <?php endif; ?>
                 <?php renderSucursalSwitcher(); ?>
                 <a class="btn-limpiar" href="inventario_productos.php">Limpiar</a>
                 <?php if (!$vistaGlobal): ?>
@@ -1486,6 +1488,15 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 <a class="btn-stock-bajo <?= $verInactivos?'activo':'' ?>" href="inventario_productos.php?sucursal=0<?= $verInactivos ? '' : '&ver_inactivos=1' ?>">
                     <?= $verInactivos ? 'Ver activos' : 'Ver productos inactivos' ?>
                 </a>
+                <?php endif; ?>
+                <?php if (!$vistaGlobal && !$stock_bajo): ?>
+                <div class="filtro-group" style="margin-left:auto;">
+                    <label style="visibility:hidden;">.</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;">
+                        <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
+                        Ocultar stock bajo
+                    </label>
+                </div>
                 <?php endif; ?>
             </div>
         </form>
@@ -1805,6 +1816,13 @@ const modalEliminarTodosEl = document.getElementById('modalEliminarTodos');
 if (modalEliminarTodosEl) {
     modalEliminarTodosEl.addEventListener('click', function(e) {
         if (e.target === this) cerrarModalEliminarTodos();
+    });
+}
+// [FIX-ELIMINAR-TODOS-ONCLICK-ROTO] Listener delegado (ver comentario junto al botón).
+const btnEliminarTodosEl = document.getElementById('btnEliminarTodos');
+if (btnEliminarTodosEl) {
+    btnEliminarTodosEl.addEventListener('click', function() {
+        abrirModalEliminarTodos(this.dataset.esGlobal === '1', this.dataset.nombre);
     });
 }
 // [FIX-CRIT-B-01] Listener delegado: ya no se interpola el nombre del producto dentro de un

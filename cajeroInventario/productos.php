@@ -1074,15 +1074,6 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                     </select>
                 </div>
                 <?php if ($stock_bajo): ?><input type="hidden" name="stock_bajo" value="1"><?php endif; ?>
-                <?php if (!$stock_bajo): ?>
-                <div class="filtro-group">
-                    <label style="visibility:hidden;">.</label>
-                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;">
-                        <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
-                        Ocultar stock bajo
-                    </label>
-                </div>
-                <?php endif; ?>
                 <button class="btn-filtrar" type="submit">Filtrar</button>
                 <?php if ($categoria || $stock_bajo || $sucursal_consulta !== intval($_SESSION['sucursal_id'])): ?>
                     <a class="btn-limpiar" href="productos.php">Limpiar</a>
@@ -1090,6 +1081,15 @@ $soloLectura = ($sucursal_consulta !== intval($_SESSION['sucursal_id']));
                 <a class="btn-stock-bajo <?= $stock_bajo?'activo':'' ?>" href="productos.php?stock_bajo=1">
                     Stock bajo (<?= $totalStockBajo ?>)
                 </a>
+                <?php if (!$stock_bajo): ?>
+                <div class="filtro-group" style="margin-left:auto;">
+                    <label style="visibility:hidden;">.</label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;color:#555;white-space:nowrap;cursor:pointer;">
+                        <input type="checkbox" name="ocultar_stock_bajo" value="1" <?= $ocultarStockBajo ? 'checked' : '' ?>>
+                        Ocultar stock bajo
+                    </label>
+                </div>
+                <?php endif; ?>
             </div>
         </form>
 

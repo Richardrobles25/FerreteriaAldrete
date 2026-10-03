@@ -187,7 +187,7 @@ if (isset($_GET['ticket_abono'])) {
         $stmtTA = $pdo->prepare("
             SELECT a.abono_id, a.monto, a.comision_terminal, a.metodo_pago, a.notas,
                    a.monto_efectivo, a.monto_terminal, a.referencia_transferencia, a.saldo_despues,
-                   a.monto_recibido,
+                   a.monto_recibido, a.folio_terminal,
                    a.created_at, u.nombre_completo AS cajero, cl.nombre_completo AS cliente,
                    cl.cliente_id,
                    COALESCE(v.folio, CONCAT('Crédito #', cr.credito_id)) AS folio_venta
@@ -229,6 +229,7 @@ if (isset($_GET['ticket_abono'])) {
             'monto_efectivo'           => floatval($primeraTA['monto_efectivo']),
             'monto_terminal'           => floatval($primeraTA['monto_terminal']),
             'referencia_transferencia' => $primeraTA['referencia_transferencia'],
+            'folio_terminal'           => $primeraTA['folio_terminal'],
             'monto_recibido'           => $recibidoTA,
             'cambio'                   => $recibidoTA !== null ? round($recibidoTA - $montoTotalTA, 2) : 0,
             'notas'                    => $primeraTA['notas'],
@@ -273,6 +274,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         $metodo     = is_scalar($_POST['metodo_pago'] ?? null) ? $_POST['metodo_pago'] : '';
         $notas      = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
         $referencia = trim(is_scalar($_POST['referencia'] ?? null) ? (string)$_POST['referencia'] : '');
+        // [FEATURE-FOLIO-TERMINAL] Folio del voucher de la terminal (evidencia del cargo),
+        // obligatorio en Terminal y en la parte de terminal de Mixto.
+        $folio_terminal = in_array($metodo, ['Terminal', 'Mixto'], true)
+            ? trim(is_scalar($_POST['folio_terminal'] ?? null) ? (string)$_POST['folio_terminal'] : '') : '';
         $monto_ef   = floatval(is_scalar($_POST['monto_efectivo'] ?? null) ? $_POST['monto_efectivo'] : 0);
         $monto_term = floatval(is_scalar($_POST['monto_terminal'] ?? null) ? $_POST['monto_terminal'] : 0);
         $monto_recibido = floatval(is_scalar($_POST['monto_recibido'] ?? null) ? $_POST['monto_recibido'] : 0);
@@ -280,6 +285,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         if ($monto <= 0) throw new Exception('El monto debe ser mayor a 0.');
         if (!in_array($metodo, ['Efectivo','Terminal','Transferencia','Mixto'])) throw new Exception('Selecciona el método de pago.');
         if ($metodo === 'Transferencia' && $referencia === '') throw new Exception('Ingresa la referencia de la transferencia.');
+        if (in_array($metodo, ['Terminal', 'Mixto'], true) && $folio_terminal === '') throw new Exception('Ingresa el número de folio de la terminal.');
+        if (mb_strlen($folio_terminal) > 100) throw new Exception('El folio de la terminal no puede tener más de 100 caracteres.');
         // [FEATURE-TICKET-ABONO-CAMBIO 2026-09-12] Igual que "Cantidad recibida" en
         // nuevaVenta.php: la pantalla ya exige recibido >= monto antes de habilitar el boton,
         // pero eso solo era del lado del cliente -- se revalida aqui para que el comprobante
@@ -367,6 +374,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         if ($metodo === 'Transferencia' && $referencia !== '') {
             $notas = 'Ref: ' . $referencia . ($notas !== '' ? ' — ' . $notas : '');
         }
+        if ($folio_terminal !== '') {
+            $notas = 'Folio terminal: ' . $folio_terminal . ($notas !== '' ? ' — ' . $notas : '');
+        }
 
         // Aplicar FIFO: liquidar créditos del más antiguo al más reciente
         // [FIX-MORA-QUINCENAL] Un abono parcial ya NO regresa el crédito a "Activo" ni le
@@ -413,13 +423,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             $pdo->prepare("
                 INSERT INTO abonos
                     (credito_id, usuario_id, monto, saldo_despues, comision_terminal, metodo_pago, notas,
-                     folio, caja_id, sucursal_id, monto_efectivo, monto_terminal, referencia_transferencia, monto_recibido)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     folio, caja_id, sucursal_id, monto_efectivo, monto_terminal, referencia_transferencia, monto_recibido, folio_terminal)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ")->execute([
                 $cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $nuevoSaldo, $comisionEste, $metodo, $notas,
                 $folioAbono, $cajaIdAb, $_SESSION['sucursal_id'], $monto_ef, $monto_term,
                 ($metodo === 'Transferencia' ? $referencia : null),
                 ($metodo === 'Efectivo' ? $monto_recibido : null),
+                ($folio_terminal !== '' ? $folio_terminal : null),
             ]);
             if ($seLiquida) {
                 $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado', mora_acumulada = 0 WHERE credito_id = ?")
@@ -1093,6 +1104,10 @@ $totales = $pdo->query("
                     <?php else: ?>
                         <div style="font-size:12px;color:#888;">Sin comisión de terminal configurada para esta sucursal.</div>
                     <?php endif; ?>
+                    <div class="ab-fg" style="margin-top:10px;">
+                        <label>Folio de la terminal *</label>
+                        <input type="text" id="abFolioTerminal" maxlength="100" placeholder="Número de folio del voucher" autocomplete="off" oninput="verificarPagoAb()">
+                    </div>
                 </div>
 
                 <!-- Transferencia -->
@@ -1162,6 +1177,10 @@ $totales = $pdo->query("
                     <?php if ($comisionPct > 0): ?>
                         <div class="ab-dato" style="font-size:12px;padding:2px 0 6px;"><span>Comisión terminal</span><span id="abMixtoComision" style="color:#c0392b;">$0.00</span></div>
                     <?php endif; ?>
+                    <div class="ab-fg">
+                        <label>Folio de la terminal *</label>
+                        <input type="text" id="abMixtoFolio" maxlength="100" placeholder="Número de folio del voucher" autocomplete="off" oninput="calcularMixtoAb()">
+                    </div>
                 </div>
 
                 <div class="ab-fg">
@@ -1171,6 +1190,7 @@ $totales = $pdo->query("
 
                 <input type="hidden" name="monto_efectivo" id="abHiddenEf" value="0">
                 <input type="hidden" name="monto_terminal" id="abHiddenTerm" value="0">
+                <input type="hidden" name="folio_terminal" id="abHiddenFolio" value="">
 
                 <button class="btn-ab-submit" type="submit" id="btnSubmitAbono" disabled>Registrar pago</button>
             </form>
@@ -1507,6 +1527,9 @@ function generarTicketAbonoHTML(pago) {
     if (pago.metodo_pago === 'Transferencia' && pago.referencia_transferencia) {
         html += `<div class="t-fila"><span>Referencia</span><span>${esc(pago.referencia_transferencia)}</span></div>`;
     }
+    if ((pago.metodo_pago === 'Terminal' || pago.metodo_pago === 'Mixto') && pago.folio_terminal) {
+        html += `<div class="t-fila"><span>Folio terminal</span><span>${esc(pago.folio_terminal)}</span></div>`;
+    }
     if (pago.metodo_pago === 'Efectivo' && pago.monto_recibido !== null && parseFloat(pago.cambio) > 0) {
         html += `
         <div class="t-fila"><span>Recibido</span><span>$${parseFloat(pago.monto_recibido).toFixed(2)}</span></div>
@@ -1573,6 +1596,12 @@ function calcularCambioAb() {
     verificarPagoAb();
 }
 
+// [FEATURE-FOLIO-TERMINAL] Folio capturado en el panel visible (Terminal o Mixto).
+function folioTerminalAb() {
+    const id = _metodoPagoAb === 'Mixto' ? 'abMixtoFolio' : 'abFolioTerminal';
+    return String(document.getElementById(id)?.value || '').trim();
+}
+
 function calcularMixtoAb() {
     const monto = parseFloat(document.getElementById('abMonto').value) || 0;
     const ef    = parseFloat(document.getElementById('abMixtoEf').value) || 0;
@@ -1592,7 +1621,8 @@ function calcularMixtoAb() {
     // Update button directly — do NOT call verificarPagoAb (evita recursión infinita)
     const maxMonto = parseFloat(document.getElementById('abMonto').max) || 0;
     document.getElementById('btnSubmitAbono').disabled =
-        !CAJA_ABIERTA || monto <= 0 || ef <= 0 || ef >= monto || (maxMonto > 0 && monto > maxMonto + 0.001);
+        !CAJA_ABIERTA || monto <= 0 || ef <= 0 || ef >= monto || (maxMonto > 0 && monto > maxMonto + 0.001)
+        || folioTerminalAb() === '';
 }
 
 function actualizarComisionAb() {
@@ -1635,12 +1665,14 @@ function verificarPagoAb() {
         calcularMixtoAb(); // seguro — calcularMixtoAb ya no llama verificarPagoAb
         return;
     }
-    btn.disabled = false; // Terminal
+    btn.disabled = folioTerminalAb() === ''; // Terminal: requiere folio del voucher
 }
 
 function submitAbono(e) {
     e.preventDefault();
     const btn  = document.getElementById('btnSubmitAbono');
+    document.getElementById('abHiddenFolio').value =
+        (_metodoPagoAb === 'Terminal' || _metodoPagoAb === 'Mixto') ? folioTerminalAb() : '';
     const data = new FormData(document.getElementById('formAbono'));
     data.append('action', 'registrar_abono');
     data.append('cliente_id', _clienteIdActual);

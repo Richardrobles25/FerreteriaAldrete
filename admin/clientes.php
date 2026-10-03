@@ -472,6 +472,43 @@ if (isset($_GET['editar'])) {
     }
 }
 
+// [FEATURE-DEUDA-ANTERIOR] Credito pendiente que ya tiene el cliente que se esta editando. La
+// deuda anterior (del sistema viejo) solo se puede capturar mientras el cliente NO tenga ya un
+// credito Activo/Vencido: mismo criterio que el importador de clientes (columna "Saldo actual"),
+// para no duplicar la deuda de un cliente que ya tiene su credito real.
+$tieneCredPendienteEditando = false;
+$credPendienteEditando      = 0.0;
+if ($editando) {
+    $stmtCredPend = $pdo->prepare("SELECT COUNT(*), COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+    $stmtCredPend->execute([$editando['cliente_id']]);
+    [$nCredPend, $credPendienteEditando] = $stmtCredPend->fetch(PDO::FETCH_NUM);
+    $tieneCredPendienteEditando = intval($nCredPend) > 0;
+    $credPendienteEditando      = floatval($credPendienteEditando);
+}
+
+// [FEATURE-DEUDA-ANTERIOR] Registra la deuda que un cliente traia del sistema anterior como un
+// credito "standalone" (venta_id NULL, fecha_limite NULL) -- el mismo tipo de credito que ya
+// crea el importador de clientes: se ve como "Credito #N" en Creditos, se liquida con abonos
+// normales (FIFO) y, al no tener fecha limite, nunca se marca Vencido ni genera mora. DEBE
+// llamarse dentro de una transaccion abierta por quien llama (alta o edicion del cliente), para
+// que el cliente y su deuda se guarden juntos o no se guarde ninguno. Devuelve true, o un
+// mensaje de error ya listo para mostrar.
+function registrarDeudaAnteriorCliente(PDO $pdo, int $clienteId, float $monto) {
+    // Candado de fila sobre el cliente: dos envios simultaneos (doble clic) quedan en fila y el
+    // segundo ya ve el credito que creo el primero, en vez de duplicar la deuda.
+    $stmtLock = $pdo->prepare("SELECT cliente_id FROM clientes WHERE cliente_id = ? FOR UPDATE");
+    $stmtLock->execute([$clienteId]);
+    if (!$stmtLock->fetchColumn()) return 'El cliente ya no existe.';
+    $stmtYa = $pdo->prepare("SELECT COUNT(*) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+    $stmtYa->execute([$clienteId]);
+    if (intval($stmtYa->fetchColumn()) > 0) {
+        return 'Este cliente ya tiene un crédito pendiente: no se registró la deuda anterior para no duplicarla. Los abonos se registran desde Créditos.';
+    }
+    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, NULL, ?, ?, 'Activo', NULL)")
+        ->execute([$clienteId, $monto, $monto]);
+    return true;
+}
+
 // [FEATURE-IMPORTAR-CLIENTES] "!isset($_FILES['clientes_excel'])" evita que el POST del
 // formulario de importacion (manejado arriba) tambien caiga en el alta/edicion manual de abajo
 // -- sin este candado, ese POST no traeria "nombre_completo" y este bloque lo tomaria como un
@@ -531,6 +568,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_FILES['clientes_excel'])) 
     if ($limiteCredito < 0) $errores[] = 'El límite de crédito no puede ser negativo.';
     if ($limiteCredito > 500000) $errores[] = 'El límite de crédito no puede ser mayor a $500,000.00. Verifica la cantidad capturada.';
 
+    // [FEATURE-DEUDA-ANTERIOR] Deuda que el cliente ya traia del sistema anterior (opcional).
+    // Tope = lo que cabe de sobra en creditos.monto_total (DECIMAL(10,2)); sin tope, un valor
+    // absurdo tronaria con HTTP 500 crudo.
+    $deudaAnterior = round(floatval(str_replace([',', '$', ' '], '', is_scalar($_POST['deuda_anterior'] ?? null) ? (string)$_POST['deuda_anterior'] : '0')), 2);
+    if ($deudaAnterior < 0) $errores[] = 'La deuda anterior no puede ser negativa.';
+    if ($deudaAnterior > 9999999.99) $errores[] = 'La deuda anterior no puede ser mayor a $9,999,999.99. Verifica la cantidad capturada.';
+    if ($deudaAnterior > 0 && $clienteId > 0 && $tieneCredPendienteEditando) {
+        $errores[] = 'Este cliente ya tiene un crédito pendiente de $' . number_format($credPendienteEditando, 2) . ': no se puede capturar una deuda anterior encima. Los abonos se registran desde Créditos.';
+    }
+
     // [FIX-TELEFONO-DUPLICADO] El nombre del cliente no es único (dos personas reales pueden
     // llamarse igual), pero el teléfono sí debería serlo — es lo que realmente distingue a un
     // cliente de otro en el buscador de Nueva Venta. Mismo fix aplicado en
@@ -565,37 +612,72 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_FILES['clientes_excel'])) 
 
     if (empty($errores)) {
         if ($clienteId > 0) {
-            $stmt = $pdo->prepare("
-                UPDATE clientes
-                SET nombre_completo = ?, telefono = ?, direccion = ?, correo = ?, descuento_fijo = ?, notas = ?, credito_autorizado = ?, limite_credito = ?, cobrar_mora = ?
-                WHERE cliente_id = ?
-            ");
-            $stmt->execute([$nombre, $telefono, $direccion, $correo, $descuento, $notas, $creditoAutorizado, $limiteCredito, $cobrarMora, $clienteId]);
-            // [FIX-CLIENTE-EDITAR-FANTASMA] (espejo de cajeroInventario/clientes.php): rowCount()
-            // por si solo no basta (PDO/MySQL reporta filas MODIFICADAS, no encontradas — guardar
-            // sin cambios tambien da 0), asi que se verifica existencia por separado.
-            if ($stmt->rowCount() === 0) {
-                $stmtExisteCliente = $pdo->prepare("SELECT 1 FROM clientes WHERE cliente_id = ?");
-                $stmtExisteCliente->execute([$clienteId]);
-                if (!$stmtExisteCliente->fetchColumn()) {
-                    if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
-                    header('Location: clientes.php?msg=no_encontrado');
-                    exit();
+            // [FEATURE-DEUDA-ANTERIOR] Con deuda anterior capturada, el UPDATE del cliente y el
+            // alta de su credito van en una sola transaccion (o se guarda todo o nada).
+            try {
+                if ($deudaAnterior > 0) $pdo->beginTransaction();
+                $stmt = $pdo->prepare("
+                    UPDATE clientes
+                    SET nombre_completo = ?, telefono = ?, direccion = ?, correo = ?, descuento_fijo = ?, notas = ?, credito_autorizado = ?, limite_credito = ?, cobrar_mora = ?
+                    WHERE cliente_id = ?
+                ");
+                $stmt->execute([$nombre, $telefono, $direccion, $correo, $descuento, $notas, $creditoAutorizado, $limiteCredito, $cobrarMora, $clienteId]);
+                // [FIX-CLIENTE-EDITAR-FANTASMA] (espejo de cajeroInventario/clientes.php): rowCount()
+                // por si solo no basta (PDO/MySQL reporta filas MODIFICADAS, no encontradas — guardar
+                // sin cambios tambien da 0), asi que se verifica existencia por separado.
+                if ($stmt->rowCount() === 0) {
+                    $stmtExisteCliente = $pdo->prepare("SELECT 1 FROM clientes WHERE cliente_id = ?");
+                    $stmtExisteCliente->execute([$clienteId]);
+                    if (!$stmtExisteCliente->fetchColumn()) {
+                        if ($pdo->inTransaction()) $pdo->rollBack();
+                        if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
+                        header('Location: clientes.php?msg=no_encontrado');
+                        exit();
+                    }
                 }
+                if ($deudaAnterior > 0) {
+                    $errDeuda = registrarDeudaAnteriorCliente($pdo, $clienteId, $deudaAnterior);
+                    if ($errDeuda !== true) {
+                        $pdo->rollBack();
+                        $errores[] = $errDeuda;
+                    } else {
+                        $pdo->commit();
+                    }
+                }
+            } catch (\Throwable $eEdit) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                error_log('[clientes.php] Error al editar cliente_id=' . $clienteId . ': ' . $eEdit->getMessage());
+                $errores[] = 'No se pudo guardar el cliente. Intenta de nuevo.';
             }
-            if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
-            header('Location: clientes.php?msg=editado');
-            exit();
+            if (empty($errores)) {
+                if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
+                header('Location: clientes.php?msg=' . ($deudaAnterior > 0 ? 'editado_deuda' : 'editado'));
+                exit();
+            }
+        } else {
+            try {
+                if ($deudaAnterior > 0) $pdo->beginTransaction();
+                $stmt = $pdo->prepare("
+                    INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, cobrar_mora, activo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ");
+                $stmt->execute([$nombre, $telefono, $direccion, $correo, $descuento, $notas, $creditoAutorizado, $limiteCredito, $cobrarMora]);
+                if ($deudaAnterior > 0) {
+                    $errDeuda = registrarDeudaAnteriorCliente($pdo, (int)$pdo->lastInsertId(), $deudaAnterior);
+                    if ($errDeuda !== true) throw new RuntimeException($errDeuda);
+                    $pdo->commit();
+                }
+            } catch (\Throwable $eAlta) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                error_log('[clientes.php] Error al registrar cliente: ' . $eAlta->getMessage());
+                $errores[] = 'No se pudo registrar el cliente. Intenta de nuevo.';
+            }
+            if (empty($errores)) {
+                if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
+                header('Location: clientes.php?msg=' . ($deudaAnterior > 0 ? 'creado_deuda' : 'creado'));
+                exit();
+            }
         }
-
-        $stmt = $pdo->prepare("
-            INSERT INTO clientes (nombre_completo, telefono, direccion, correo, descuento_fijo, notas, credito_autorizado, limite_credito, cobrar_mora, activo)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-        ");
-        $stmt->execute([$nombre, $telefono, $direccion, $correo, $descuento, $notas, $creditoAutorizado, $limiteCredito, $cobrarMora]);
-        if ($lockTelefono) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
-        header('Location: clientes.php?msg=creado');
-        exit();
     }
     if ($lockTelefono && $lockTelAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockTelefono) . ")");
 }
@@ -1010,7 +1092,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <?php $msgKeyCli = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
             <?php if ($msgKeyCli === 'no_encontrado'): ?>
                 <div class="msg" style="background:#fdecea;color:#c0392b;">Cliente no encontrado.</div>
-            <?php elseif ($msgKeyCli !== ''): $mensajes = ['creado' => 'Cliente registrado correctamente.', 'editado' => 'Cliente actualizado correctamente.']; ?>
+            <?php elseif ($msgKeyCli !== ''): $mensajes = ['creado' => 'Cliente registrado correctamente.', 'editado' => 'Cliente actualizado correctamente.', 'creado_deuda' => 'Cliente registrado correctamente. Su deuda anterior quedó registrada como crédito pendiente (se liquida con abonos desde Créditos).', 'editado_deuda' => 'Cliente actualizado correctamente. Su deuda anterior quedó registrada como crédito pendiente (se liquida con abonos desde Créditos).']; ?>
                 <div class="msg msg-exito"><?= htmlspecialchars($mensajes[$msgKeyCli] ?? '') ?></div>
             <?php endif; ?>
             <?php if (($_GET['error'] ?? '') === 'credito_pendiente'): ?>
@@ -1126,6 +1208,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         // marcada por default (1) — solo un cliente ya existente puede traer 0
                         // guardado (por ejemplo, importado desde el sistema anterior).
                         $vCobrarMora = $esPostCliente ? $cobrarMora : ($editando['cobrar_mora'] ?? 1);
+                        // [FEATURE-DEUDA-ANTERIOR] Tras un error de validacion se conserva lo capturado.
+                        $vDeudaAnt   = ($esPostCliente && $deudaAnterior > 0) ? $deudaAnterior : '';
                     ?>
                     <div class="form-group"><label>Nombre completo *</label><input type="text" name="nombre_completo" maxlength="100" value="<?= htmlspecialchars($vNombre) ?>" placeholder="Ej. Juan Garcia"></div>
                     <div class="form-row">
@@ -1142,6 +1226,16 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                     <div style="font-size:11px;color:#aaa;margin:-8px 0 13px;">Si la desmarcas, este cliente nunca acumulará recargo por atraso en ningún crédito futuro, aunque se pase de su fecha límite. No afecta la mora que ya tenga acumulada — para eso usa "Cancelar mora" desde Créditos.</div>
                     <div class="check-row"><input type="checkbox" name="credito_autorizado" id="chkCredito" <?= ($vCredAut ? 'checked' : '') ?> onchange="toggleCredito(this.checked)"><label for="chkCredito">Autorizar credito a este cliente</label></div>
                     <div class="credito-campos <?= ($vCredAut ? 'visible' : '') ?>" id="creditoCampos"><div class="form-group"><label>Limite de credito</label><input type="number" name="limite_credito" value="<?= htmlspecialchars($vLimite) ?>" step="0.01" min="0" placeholder="0.00"></div></div>
+                    <?php /* [FEATURE-DEUDA-ANTERIOR] Solo mientras el cliente no tenga ya un credito pendiente. */ ?>
+                    <?php if (!$tieneCredPendienteEditando): ?>
+                    <div class="form-group" style="margin-top:4px;padding-top:12px;border-top:1px solid #f0f0f0;">
+                        <label>Deuda anterior (del sistema anterior)</label>
+                        <input type="number" name="deuda_anterior" value="<?= htmlspecialchars($vDeudaAnt) ?>" step="0.01" min="0" max="9999999.99" placeholder="0.00">
+                        <div style="font-size:11px;color:#aaa;margin-top:4px;">Opcional. Si este cliente ya debía dinero en el sistema anterior, captura aquí cuánto: quedará registrado como un crédito pendiente ("Crédito #N", sin fecha límite, no genera mora) que se va liquidando con abonos desde Créditos. Cuenta para su límite de crédito.</div>
+                    </div>
+                    <?php else: ?>
+                    <div style="font-size:12px;color:#1565c0;background:#e3f2fd;border-radius:6px;padding:9px 12px;margin-bottom:13px;">Este cliente ya tiene <strong>$<?= number_format($credPendienteEditando, 2) ?></strong> pendientes en créditos. Los abonos se registran desde Créditos.</div>
+                    <?php endif; ?>
                     <button class="btn-guardar" type="submit"><?= $editando ? 'Guardar cambios' : 'Registrar cliente' ?></button>
                     <?php if ($editando): ?><a class="btn-cancelar-edit" href="clientes.php">Cancelar</a><?php endif; ?>
                 </form>

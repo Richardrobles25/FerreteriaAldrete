@@ -49,6 +49,12 @@ $sucursalInfo->execute([$sucursalVista]);
 $datosBanco  = $sucursalInfo->fetch(PDO::FETCH_ASSOC);
 $comisionPct = floatval($datosBanco['comision_terminal_pct'] ?? 0);
 
+// [FEATURE-TICKET-ABONO] (espejo de admin/cajero_creditos.php) Datos completos de la sucursal
+// para el comprobante de pago.
+$stmtSucTicketAb = $pdo->prepare("SELECT * FROM sucursales WHERE sucursal_id = ?");
+$stmtSucTicketAb->execute([$sucursalVista]);
+$sucursalTicketAb = $stmtSucTicketAb->fetch(PDO::FETCH_ASSOC);
+
 // [AUTOFIX] BUG-07: Envolver en try/catch para evitar crash si la BD falla
 try {
     // [FIX-MORA-DIA-GRACIA 2026-09-12] (espejo de cajeroInventario/creditos.php) el cliente
@@ -137,7 +143,7 @@ if (isset($_GET['get_abonos_cliente'])) {
     $cliente_id = intval($_GET['get_abonos_cliente']);
     if ($cliente_id <= 0) { echo json_encode([]); exit(); }
     $stmt = $pdo->prepare("
-        SELECT a.abono_id, a.monto, a.comision_terminal, a.metodo_pago, a.notas, a.created_at,
+        SELECT a.abono_id, a.folio AS folio_pago, a.monto, a.comision_terminal, a.metodo_pago, a.notas, a.created_at,
                u.nombre_completo AS cajero,
                COALESCE(v.folio, CONCAT('Crédito #', cr.credito_id)) AS folio
         FROM abonos a
@@ -153,28 +159,132 @@ if (isset($_GET['get_abonos_cliente'])) {
     exit();
 }
 
+// [FEATURE-TICKET-ABONO] (espejo de cajeroInventario/creditos.php) AJAX: comprobante de un
+// pago ya registrado, agrupado por folio (un pago puede tocar varios creditos por FIFO).
+if (isset($_GET['ticket_abono'])) {
+    header('Content-Type: application/json');
+    try {
+        $folioPago = trim(is_scalar($_GET['ticket_abono'] ?? null) ? (string)$_GET['ticket_abono'] : '');
+        if ($folioPago === '') { echo json_encode(null); exit(); }
+        // Filtro de sucursal via caja: un admin viendo la sucursal X no puede pedir el
+        // comprobante de un pago registrado en otra sucursal.
+        $stmtTA = $pdo->prepare("
+            SELECT a.abono_id, a.monto, a.comision_terminal, a.metodo_pago, a.notas,
+                   a.monto_efectivo, a.monto_terminal, a.referencia_transferencia, a.saldo_despues,
+                   a.monto_recibido, a.folio_terminal,
+                   a.created_at, u.nombre_completo AS cajero, cl.nombre_completo AS cliente,
+                   cl.cliente_id,
+                   COALESCE(v.folio, CONCAT('Crédito #', cr.credito_id)) AS folio_venta
+            FROM abonos a
+            JOIN creditos cr ON a.credito_id = cr.credito_id
+            JOIN clientes cl ON cr.cliente_id = cl.cliente_id
+            JOIN usuarios u  ON a.usuario_id = u.usuario_id
+            LEFT JOIN ventas v ON cr.venta_id = v.venta_id
+            JOIN cajas ca ON a.caja_id = ca.caja_id AND ca.sucursal_id = ?
+            WHERE a.folio = ?
+            ORDER BY a.abono_id ASC
+        ");
+        $stmtTA->execute([$sucursalVista, $folioPago]);
+        $filasTA = $stmtTA->fetchAll(PDO::FETCH_ASSOC);
+        if (!$filasTA) { echo json_encode(null); exit(); }
+
+        $primeraTA = $filasTA[0];
+        $montoTotalTA = round(array_sum(array_column($filasTA, 'monto')), 2);
+        // monto_recibido se guarda igual en cada fila del mismo folio (es el total entregado
+        // por el pago completo, no por credito) -- basta con leerlo de la primera fila.
+        $recibidoTA = $primeraTA['monto_recibido'] !== null ? floatval($primeraTA['monto_recibido']) : null;
+        // [FEATURE-TICKET-ABONO-SALDO-TOTAL 2026-09-20] (portado de cajeroInventario/creditos.php)
+        $stmtSaldoTotalTA = $pdo->prepare("SELECT COALESCE(SUM(saldo_pendiente), 0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')");
+        $stmtSaldoTotalTA->execute([$primeraTA['cliente_id']]);
+        $saldoTotalPendienteTA = round(floatval($stmtSaldoTotalTA->fetchColumn()), 2);
+        echo json_encode([
+            'folio'                    => $folioPago,
+            'fecha_formateada'         => date('d/m/Y H:i', strtotime($primeraTA['created_at'])),
+            'cajero'                   => $primeraTA['cajero'],
+            'cliente'                  => $primeraTA['cliente'],
+            'metodo_pago'              => $primeraTA['metodo_pago'],
+            'monto'                    => $montoTotalTA,
+            'comision_terminal'        => round(array_sum(array_column($filasTA, 'comision_terminal')), 2),
+            'monto_efectivo'           => floatval($primeraTA['monto_efectivo']),
+            'monto_terminal'           => floatval($primeraTA['monto_terminal']),
+            'referencia_transferencia' => $primeraTA['referencia_transferencia'],
+            'folio_terminal'           => $primeraTA['folio_terminal'],
+            'monto_recibido'           => $recibidoTA,
+            'cambio'                   => $recibidoTA !== null ? round($recibidoTA - $montoTotalTA, 2) : 0,
+            'notas'                    => $primeraTA['notas'],
+            'saldo_total_pendiente'    => $saldoTotalPendienteTA,
+            'detalle'                  => array_map(fn($f) => [
+                'folio_venta'    => $f['folio_venta'],
+                'monto'          => floatval($f['monto']),
+                'saldo_despues'  => $f['saldo_despues'] !== null ? floatval($f['saldo_despues']) : null,
+            ], $filasTA),
+        ]);
+    } catch (\Throwable $e) {
+        error_log('[Ferreteria/abonos] Error ticket_abono: ' . $e->getMessage());
+        echo json_encode(['error' => 'Error al cargar el comprobante.']);
+    }
+    exit();
+}
+
 // AJAX: registrar pago (distribuye automáticamente a créditos del más antiguo al más reciente)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'registrar_abono') {
     header('Content-Type: application/json');
-    requerirCSRF($_POST['_token'] ?? '', 'abonos.php');
+    // [FIX-CSRF-AJAX-CREDITOS] Este formulario SIEMPRE se envia por fetch() (submitAbono()
+    // hace e.preventDefault(), nunca navega). requerirCSRF() hace un redirect Location: en
+    // vez de responder JSON -- el fetch().then(r=>r.json()) del cliente truena al intentar
+    // parsear el 302 como JSON y cae en el .catch() generico ("Error de conexion"), sin
+    // decirle al cajero que su token expiro y debe recargar. Mismo patron ya corregido en
+    // cajero_nuevaVenta.php (FIX-A1): usar verificarCSRF() y responder JSON directamente.
+    if (!verificarCSRF($_POST['_token'] ?? '')) {
+        echo json_encode(['ok' => false, 'error' => 'Token de seguridad inválido. Recarga la página e intenta de nuevo.']);
+        exit();
+    }
     try {
+        // Caja abierta obligatoria, en la sucursal que se esta viendo/operando
         if ($sucursalVista === 0) throw new Exception('Selecciona una sucursal específica para registrar un pago.');
         $stmtCajaAb = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
         $stmtCajaAb->execute([$_SESSION['usuario_id'], $sucursalVista]);
         $cajaIdAb = $stmtCajaAb->fetchColumn();
         if (!$cajaIdAb) throw new Exception('No hay caja abierta. Abre la caja antes de registrar un pago.');
 
-        $cliente_id = intval($_POST['cliente_id'] ?? 0);
-        $monto      = floatval($_POST['monto'] ?? 0);
-        $metodo     = $_POST['metodo_pago'] ?? '';
-        $notas      = trim($_POST['notas'] ?? '');
-        $referencia = trim($_POST['referencia'] ?? '');
-        $monto_ef   = floatval($_POST['monto_efectivo'] ?? 0);
-        $monto_term = floatval($_POST['monto_terminal'] ?? 0);
+        // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en admin/gastos*.php) un campo
+        // mandado como array truena trim()/htmlspecialchars() o se coacciona en silencio.
+        $cliente_id = intval(is_scalar($_POST['cliente_id'] ?? null) ? $_POST['cliente_id'] : 0);
+        $monto      = floatval(is_scalar($_POST['monto'] ?? null) ? $_POST['monto'] : 0);
+        $metodo     = is_scalar($_POST['metodo_pago'] ?? null) ? $_POST['metodo_pago'] : '';
+        $notas      = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+        $referencia = trim(is_scalar($_POST['referencia'] ?? null) ? (string)$_POST['referencia'] : '');
+        // [FEATURE-FOLIO-TERMINAL] Folio del voucher de la terminal (evidencia del cargo),
+        // obligatorio en Terminal y en la parte de terminal de Mixto.
+        $folio_terminal = in_array($metodo, ['Terminal', 'Mixto'], true)
+            ? trim(is_scalar($_POST['folio_terminal'] ?? null) ? (string)$_POST['folio_terminal'] : '') : '';
+        $monto_ef   = floatval(is_scalar($_POST['monto_efectivo'] ?? null) ? $_POST['monto_efectivo'] : 0);
+        $monto_term = floatval(is_scalar($_POST['monto_terminal'] ?? null) ? $_POST['monto_terminal'] : 0);
+        $monto_recibido = floatval(is_scalar($_POST['monto_recibido'] ?? null) ? $_POST['monto_recibido'] : 0);
 
         if ($monto <= 0) throw new Exception('El monto debe ser mayor a 0.');
         if (!in_array($metodo, ['Efectivo','Terminal','Transferencia','Mixto'])) throw new Exception('Selecciona el método de pago.');
         if ($metodo === 'Transferencia' && $referencia === '') throw new Exception('Ingresa la referencia de la transferencia.');
+        if (in_array($metodo, ['Terminal', 'Mixto'], true) && $folio_terminal === '') throw new Exception('Ingresa el número de folio de la terminal.');
+        if (mb_strlen($folio_terminal) > 100) throw new Exception('El folio de la terminal no puede tener más de 100 caracteres.');
+        // [FEATURE-TICKET-ABONO-CAMBIO 2026-09-12] Igual que "Cantidad recibida" en
+        // nuevaVenta.php: la pantalla ya exige recibido >= monto antes de habilitar el boton,
+        // pero eso solo era del lado del cliente -- se revalida aqui para que el comprobante
+        // (Recibido/Cambio) no pueda mentir con un valor manipulado desde DevTools.
+        if ($metodo === 'Efectivo') {
+            if ($monto_recibido < $monto - 0.005) {
+                throw new Exception('La cantidad recibida debe cubrir el monto del abono.');
+            }
+            $monto_recibido = round($monto_recibido, 2);
+        } else {
+            $monto_recibido = 0.0;
+        }
+        // [FIX] Igual que en nuevaVenta.php: monto_efectivo/monto_terminal llegaban del
+        // navegador sin verificarse contra $monto. Si no cuadraban (error de captura o un
+        // valor viejo que quedo en el formulario), el Ingreso registrado en movimientos_caja
+        // no coincidia con el efectivo real que entro y el corte de caja marcaba una
+        // diferencia que no existia. Ahora el servidor recalcula monto_terminal a partir
+        // de monto_efectivo (ya validado) en vez de confiar en el valor recibido.
         if ($metodo === 'Mixto') {
             if ($monto_ef <= 0.005) throw new Exception('Ingresa el monto en efectivo para el pago mixto.');
             if ($monto_ef >= $monto - 0.005) throw new Exception('El efectivo cubre el pago completo. Usa el método Efectivo en lugar de Mixto.');
@@ -186,7 +296,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         $clienteNombre = $stmtCl->fetchColumn();
         if (!$clienteNombre) throw new Exception('Cliente no encontrado.');
 
+        // [FEATURE-TICKET-ABONO] (espejo de cajeroInventario/creditos.php) Folio del
+        // comprobante de pago -- todas las filas de "abonos" que este pago genere (si toca
+        // varios creditos por FIFO) comparten este mismo folio.
+        $mesFolioAb      = date('m');
+        $anioFolioAb     = date('Y');
+        $folioLockAb     = 'folio_abonos_' . $anioFolioAb . '_' . $mesFolioAb;
+        $lockAbAdquirido = $pdo->query("SELECT GET_LOCK(" . $pdo->quote($folioLockAb) . ", 10)")->fetchColumn();
+        if (!$lockAbAdquirido) throw new Exception('El sistema está procesando otro pago. Intenta de nuevo en unos segundos.');
+
+        // [FIX-A5] Bloquear las filas de creditos del cliente dentro de la transaccion para
+        // evitar que dos abonos simultaneos lean el mismo saldo_pendiente y uno sobrescriba
+        // al otro (perdida de actualizacion). Se adelanta el beginTransaction() a antes de
+        // esta lectura; lo que sigue (validacion de monto, calculo de comision) no toca la
+        // base de datos, asi que no le afecta quedar dentro de la transaccion.
         $pdo->beginTransaction();
+
+        $stmtFolioAb = $pdo->prepare("
+            SELECT COALESCE(MAX(CAST(folio AS UNSIGNED)), 0) + 1
+            FROM abonos
+            WHERE folio IS NOT NULL
+              AND MONTH(created_at) = ? AND YEAR(created_at) = ?
+        ");
+        $stmtFolioAb->execute([$mesFolioAb, $anioFolioAb]);
+        $folioAbono = str_pad(intval($stmtFolioAb->fetchColumn()), 4, '0', STR_PAD_LEFT);
 
         // Créditos del cliente, del más antiguo al más reciente (globales — el cliente paga en cualquier sucursal)
         $stmtCrs = $pdo->prepare("
@@ -204,11 +337,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             throw new Exception('El monto excede el total pendiente ($'.number_format($totalPendiente,2).').');
         }
 
+        // Calcular comisión según método
         $comisionTotal = 0;
         if ($metodo === 'Terminal' && $comisionPct > 0) {
             $comisionTotal = round($monto * $comisionPct / 100, 2);
         }
         if ($metodo === 'Mixto') {
+            // monto_terminal se recalcula server-side: base restante (ya validada > 0) + comisión.
+            // Reemplaza el valor recibido del navegador para que coincida exactamente con
+            // lo que se registrara en movimientos_caja.
             $baseTerminal  = round($monto - $monto_ef, 2);
             $comisionTotal = $comisionPct > 0 ? round($baseTerminal * $comisionPct / 100, 2) : 0.0;
             $monto_term    = round($baseTerminal + $comisionTotal, 2);
@@ -216,27 +353,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         if ($metodo === 'Transferencia' && $referencia !== '') {
             $notas = 'Ref: ' . $referencia . ($notas !== '' ? ' — ' . $notas : '');
         }
+        if ($folio_terminal !== '') {
+            $notas = 'Folio terminal: ' . $folio_terminal . ($notas !== '' ? ' — ' . $notas : '');
+        }
 
-        // Aplicar FIFO: liquidar créditos del más antiguo al más reciente. Un abono parcial ya
-        // NO regresa el crédito a "Activo" ni le toca fecha_limite — sigue "Vencido" (si ya lo
-        // estaba) hasta liquidarse por completo.
-        // [FIX-MORA-BADGE-ABONO 2026-09-12] (espejo de admin/cajero_creditos.php y
-        // cajeroInventario/creditos.php, que ya lo tenian): mora_acumulada SI se limpia con cada
-        // abono -- es solo un campo de despliegue ("la ultima mora que se cobro"), no un saldo
-        // aparte. Sin este reset, el badge "Mora actual: +$X" y el boton "Cancelar mora" seguian
-        // activos despues de pagar, y si el admin le daba clic a "Cancelar mora" ya con el abono
-        // aplicado, restaba esa mora POR SEGUNDA VEZ del saldo (ya reducido por el abono real),
-        // regalando dinero. El historial de movimientos_mora no se toca -- sigue intacto.
-        $restante = $monto;
+        // Aplicar FIFO: liquidar créditos del más antiguo al más reciente
+        // [FIX-MORA-QUINCENAL] Un abono parcial ya NO regresa el crédito a "Activo" ni le
+        // toca fecha_limite — el crédito fiado sigue viéndose "Vencido" (si ya lo estaba)
+        // hasta liquidarse por completo. La fecha_limite es ahora exclusivamente el reloj de
+        // la mora quincenal (ver bloque de arriba), independiente de los abonos.
+        // [FIX-MORA-BADGE-ABONO] mora_acumulada SI se limpia con cada abono (a diferencia de
+        // fecha_limite): es solo un campo de despliegue ("la ultima mora que se cobro"), no un
+        // saldo aparte — el saldo real ya vive completo en saldo_pendiente. Sin este reset, el
+        // badge "Mora actual: +$X" en el modal se quedaba mostrando la mora vieja despues de
+        // pagar, aunque el saldo ya bajara correctamente, dando la impresion de que el abono no
+        // toco nada de la mora. El historial completo de mora (tabla movimientos_mora, ver abajo)
+        // no se toca -- sigue intacto para consulta.
+        $restante        = $monto;
+        // [FIX-COMISION-REDONDEO] (espejo de cajeroInventario/creditos.php): round() por
+        // separado en cada credito perdia centavos frente al comisionTotal realmente cobrado
+        // (movimientos_caja). Se acumula lo ya asignado y al ULTIMO credito de este abono se le
+        // da el resto exacto en vez de su propio round().
+        $comisionAsignada = 0.0;
         foreach ($creditsRows as $cr) {
             if ($restante <= 0.001) break;
-            $pagoEste     = min($restante, floatval($cr['saldo_pendiente']));
-            $nuevoSaldo   = max(0, floatval($cr['saldo_pendiente']) - $pagoEste);
-            $seLiquida    = $nuevoSaldo <= 0.001;
-            $comisionEste = ($monto > 0 && $comisionTotal > 0) ? round($comisionTotal * $pagoEste / $monto, 2) : 0;
+            $pagoEste    = min($restante, floatval($cr['saldo_pendiente']));
+            $nuevoSaldo  = max(0, floatval($cr['saldo_pendiente']) - $pagoEste);
+            $seLiquida   = $nuevoSaldo <= 0.001;
+            $esUltimoPago = ($restante - $pagoEste) <= 0.001;
+            if ($monto <= 0 || $comisionTotal <= 0) {
+                $comisionEste = 0;
+            } elseif ($esUltimoPago) {
+                $comisionEste = round($comisionTotal - $comisionAsignada, 2);
+            } else {
+                $comisionEste = round($comisionTotal * $pagoEste / $monto, 2);
+            }
+            $comisionAsignada += $comisionEste;
 
-            $pdo->prepare("INSERT INTO abonos (credito_id, usuario_id, monto, comision_terminal, metodo_pago, notas) VALUES (?,?,?,?,?,?)")
-                ->execute([$cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $comisionEste, $metodo, $notas]);
+            // [FEATURE-TICKET-ABONO] (espejo de cajeroInventario/creditos.php)
+            $pdo->prepare("
+                INSERT INTO abonos
+                    (credito_id, usuario_id, monto, saldo_despues, comision_terminal, metodo_pago, notas,
+                     folio, caja_id, sucursal_id, monto_efectivo, monto_terminal, referencia_transferencia, monto_recibido, folio_terminal)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ")->execute([
+                $cr['credito_id'], $_SESSION['usuario_id'], $pagoEste, $nuevoSaldo, $comisionEste, $metodo, $notas,
+                $folioAbono, $cajaIdAb, $sucursalVista, $monto_ef, $monto_term,
+                ($metodo === 'Transferencia' ? $referencia : null),
+                ($metodo === 'Efectivo' ? $monto_recibido : null),
+                ($folio_terminal !== '' ? $folio_terminal : null),
+            ]);
             if ($seLiquida) {
                 $pdo->prepare("UPDATE creditos SET saldo_pendiente = 0, estado = 'Liquidado', mora_acumulada = 0 WHERE credito_id = ?")
                     ->execute([$cr['credito_id']]);
@@ -260,19 +426,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
                     ->execute([$cajaIdAb, $_SESSION['usuario_id'], $sucursalVista, $monto_term, $notaBase . ' [Terminal]']);
             }
         } else {
+            // Terminal: registrar lo que el cliente paga (monto + comisión)
             $montoMov  = ($metodo === 'Terminal') ? $monto + $comisionTotal : $monto;
             $pdo->prepare("INSERT INTO movimientos_caja (caja_id, usuario_id, sucursal_id, tipo, monto, nota) VALUES (?,?,?,'Ingreso',?,?)")
                 ->execute([$cajaIdAb, $_SESSION['usuario_id'], $sucursalVista, $montoMov, $notaBase . ' [' . $metodo . ']']);
         }
 
         $pdo->commit();
-        echo json_encode(['ok' => true]);
+        if ($lockAbAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLockAb) . ")");
+        echo json_encode(['ok' => true, 'folio' => $folioAbono]);
     } catch (\PDOException $e) {
+        // [AUTOFIX] BUG-08: Errores PDO (técnicos) no se exponen al cliente
         if ($pdo->inTransaction()) $pdo->rollBack();
-        error_log('[Ferreteria/abonos] Error PDO abono: ' . $e->getMessage());
+        if (!empty($lockAbAdquirido)) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLockAb) . ")");
+        error_log('[Ferreteria/creditos] Error PDO abono: ' . $e->getMessage());
         echo json_encode(['ok' => false, 'error' => 'Error al registrar el pago. Intenta de nuevo.']);
     } catch (Exception $e) {
+        // Excepciones de validación lanzadas manualmente — el mensaje es seguro
         if ($pdo->inTransaction()) $pdo->rollBack();
+        if (!empty($lockAbAdquirido)) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLockAb) . ")");
         echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
     }
     exit();
@@ -597,7 +769,33 @@ if ($verCreditoId) {
         .topbar-right > span { display: none; }
         .content { padding: 12px !important; display: block !important; }
     }
+    /* [FEATURE-TICKET-ABONO] Ticket de impresión — mismo patron que cajero_nuevaVenta.php */
+    @page { size: 80mm auto; margin: 0; }
+    @media print {
+        html, body { height: auto !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; }
+        body > * { display: none !important; }
+        @page { margin: 0; size: 58mm auto; }
+        body { margin: 0 !important; padding: 0 !important; }
+        #ticketImprimir { display: block !important; page-break-after: avoid; break-after: avoid; }
+    }
+    #ticketImprimir {
+        display: none;
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+        width: 72mm;
+        margin: 0;
+        padding: 3mm 4mm 2mm;
+    }
+    #ticketImprimir .t-centro { text-align: center; }
+    #ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
+    #ticketImprimir .t-fila   { display: flex; justify-content: space-between; }
+    #ticketImprimir .t-bold   { font-weight: bold; }
+    #ticketImprimir .t-grande { font-size: 13px; font-weight: bold; }
+    .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 5px 11px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; }
     </style>
+
+<!-- Ticket oculto para impresión -->
+<div id="ticketImprimir"></div>
 
 <?php renderAdminSidebar('abonos_admin'); ?>
 
@@ -821,7 +1019,7 @@ if ($verCreditoId) {
                 <div class="ab-campos-pago" id="abCamposEfectivo">
                     <div class="ab-fg">
                         <label>Cantidad recibida</label>
-                        <input type="number" id="abRecibido" placeholder="0.00" step="0.01" oninput="calcularCambioAb()">
+                        <input type="number" id="abRecibido" name="monto_recibido" placeholder="0.00" step="0.01" oninput="calcularCambioAb()">
                     </div>
                     <div class="ab-cambio-fila"><span id="abCambioLabel">Cambio</span><span id="abCambioVal" style="color:#2e7d32;">$0.00</span></div>
                 </div>
@@ -837,6 +1035,10 @@ if ($verCreditoId) {
                     <?php else: ?>
                         <div style="font-size:12px;color:#888;">Sin comisión de terminal configurada para esta sucursal.</div>
                     <?php endif; ?>
+                    <div class="ab-fg" style="margin-top:10px;">
+                        <label>Folio de la terminal *</label>
+                        <input type="text" id="abFolioTerminal" maxlength="100" placeholder="Número de folio del voucher" autocomplete="off" oninput="verificarPagoAb()">
+                    </div>
                 </div>
 
                 <div class="ab-campos-pago" id="abCamposTransferencia">
@@ -880,6 +1082,10 @@ if ($verCreditoId) {
                     <?php if ($comisionPct > 0): ?>
                         <div class="ab-dato" style="font-size:12px;padding:2px 0 6px;"><span>Comisión terminal</span><span id="abMixtoComision" style="color:#c0392b;">$0.00</span></div>
                     <?php endif; ?>
+                    <div class="ab-fg">
+                        <label>Folio de la terminal *</label>
+                        <input type="text" id="abMixtoFolio" maxlength="100" placeholder="Número de folio del voucher" autocomplete="off" oninput="calcularMixtoAb()">
+                    </div>
                 </div>
 
                 <div class="ab-fg">
@@ -889,6 +1095,7 @@ if ($verCreditoId) {
 
                 <input type="hidden" name="monto_efectivo" id="abHiddenEf" value="0">
                 <input type="hidden" name="monto_terminal" id="abHiddenTerm" value="0">
+                <input type="hidden" name="folio_terminal" id="abHiddenFolio" value="">
 
                 <button class="btn-ab-submit" type="submit" id="btnSubmitAbono" disabled>Registrar pago</button>
             </form>
@@ -1054,6 +1261,20 @@ function formatFecha(str) {
     return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+// [FEATURE-TICKET-ABONO] (espejo de cajeroInventario/creditos.php)
+const datosTicket = <?= json_encode([
+    'nombre'              => $sucursalTicketAb['nombre']              ?? 'Ferretería Aldrete',
+    'rfc'                 => $sucursalTicketAb['rfc']                 ?? '',
+    'direccion'           => $sucursalTicketAb['direccion']           ?? '',
+    'telefono'            => $sucursalTicketAb['telefono']            ?? '',
+    'datos_ticket'        => $sucursalTicketAb['datos_ticket']        ?? '',
+    'ticket_logo'         => $sucursalTicketAb['ticket_logo']         ?? null,
+    'ticket_font_size'    => intval($sucursalTicketAb['ticket_font_size'] ?? 12),
+    'ticket_ancho_mm'     => intval($sucursalTicketAb['ticket_ancho_mm']  ?? 58),
+    'ticket_pie'          => $sucursalTicketAb['ticket_pie']          ?? '',
+]) ?>;
+const cajeroNombre = <?= json_encode($_SESSION['nombre_completo']) ?>;
+
 const COMISION_PCT  = <?= $comisionPct ?>;
 const CAJA_ABIERTA  = <?= $cajaAbiertaId ? 'true' : 'false' ?>;
 let   _metodoPagoAb = null;
@@ -1132,20 +1353,146 @@ function cargarHistorialPagos(clienteId) {
                 return;
             }
             const badges = { Efectivo:'badge-efectivo', Terminal:'badge-terminal', Transferencia:'badge-transferencia', Mixto:'badge-mixto' };
-            cont.innerHTML = '<table class="tabla-abonos"><thead><tr><th>Monto</th><th>Metodo</th><th>Folio</th><th>Cajero</th><th>Fecha</th></tr></thead><tbody>' +
+            cont.innerHTML = '<table class="tabla-abonos"><thead><tr><th>Monto</th><th>Metodo</th><th>Folio</th><th>Cajero</th><th>Fecha</th><th></th></tr></thead><tbody>' +
                 abonos.map(a => {
                     const com    = parseFloat(a.comision_terminal||0);
                     const metodo = esc(a.metodo_pago);
+                    // [FEATURE-TICKET-ABONO] a.folio_pago solo existe en pagos registrados con el
+                    // comprobante activo -- los abonos viejos no tienen ticket.
+                    const btnTicket = a.folio_pago
+                        ? `<button type="button" class="btn-print-ticket" onclick="imprimirTicketAbono('${esc(a.folio_pago)}')">Ticket</button>`
+                        : '';
                     return `<tr>
                         <td><span style="font-weight:700;color:#2e7d32;">$${parseFloat(a.monto).toFixed(2)}</span>${com>0?'<br><span style="font-size:11px;color:#1565c0;">+$'+com.toFixed(2)+' com.</span>':''}</td>
                         <td><span class="badge ${badges[a.metodo_pago]||''}">${metodo}</span></td>
                         <td style="font-size:11px;color:#888;">${a.folio ? esc(a.folio) : '&mdash;'}</td>
                         <td style="font-size:11px;">${esc(a.cajero)}</td>
                         <td style="font-size:11px;color:#aaa;">${formatFecha(a.created_at)}</td>
+                        <td>${btnTicket}</td>
                     </tr>`;
                 }).join('') + '</tbody></table>';
         })
         .catch(() => { cont.innerHTML = '<div style="text-align:center;color:#c0392b;font-size:12px;padding:12px;">Error al cargar.</div>'; });
+}
+
+// [FEATURE-TICKET-ABONO] (espejo de cajeroInventario/creditos.php)
+function imprimirTicketAbono(folio) {
+    if (!folio) return;
+    fetch(`abonos.php?ticket_abono=${encodeURIComponent(folio)}`)
+        .then(r => r.json())
+        .then(pago => {
+            if (!pago || pago.error) { alert('No se pudo cargar el comprobante.'); return; }
+            generarTicketAbonoHTML(pago);
+            const _doImprimir = () => {
+                let estilo = document.getElementById('__ticketPageStyle');
+                if (!estilo) {
+                    estilo = document.createElement('style');
+                    estilo.id = '__ticketPageStyle';
+                    document.head.appendChild(estilo);
+                }
+                estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm auto; margin: 0; }`;
+                setTimeout(() => window.print(), 150);
+            };
+            const imgTicket = document.querySelector('#ticketImprimir img');
+            if (imgTicket && !imgTicket.complete) {
+                imgTicket.onload  = _doImprimir;
+                imgTicket.onerror = _doImprimir;
+            } else {
+                _doImprimir();
+            }
+        })
+        .catch(() => alert('No se pudo cargar el comprobante.'));
+}
+
+function generarTicketAbonoHTML(pago) {
+    const elTicket = document.getElementById('ticketImprimir');
+    elTicket.style.fontSize = datosTicket.ticket_font_size + 'px';
+    elTicket.style.width    = datosTicket.ticket_ancho_mm  + 'mm';
+
+    let html = '';
+    if (datosTicket.ticket_logo) {
+        const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    }
+    html += `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
+
+    if (datosTicket.datos_ticket) {
+        html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(datosTicket.datos_ticket)}</div>`;
+    } else {
+        if (datosTicket.rfc)       html += `<div class="t-centro">RFC: ${esc(datosTicket.rfc)}</div>`;
+        if (datosTicket.direccion) html += `<div class="t-centro">${esc(datosTicket.direccion)}</div>`;
+        if (datosTicket.telefono)  html += `<div class="t-centro">Tel: ${esc(datosTicket.telefono)}</div>`;
+    }
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-centro t-bold">COMPROBANTE DE PAGO</div>
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Folio:</span><span>${esc(pago.folio)}</span></div>
+        <div class="t-fila"><span>Fecha:</span><span>${esc(pago.fecha_formateada)}</span></div>
+        <div class="t-fila"><span>Cajero:</span><span>${esc(cajeroNombre)}</span></div>
+        <div class="t-fila"><span>Cliente:</span><span>${esc(pago.cliente)}</span></div>
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>Crédito</span><span>Abonado</span></div>
+        <div class="t-linea"></div>`;
+
+    (pago.detalle || []).forEach(d => {
+        const saldoTxt = d.saldo_despues === null
+            ? ''
+            : (d.saldo_despues <= 0.001 ? 'LIQUIDADO' : ('Saldo: $' + d.saldo_despues.toFixed(2)));
+        html += `
+        <div class="t-fila">
+            <span>Folio ${esc(d.folio_venta)}</span>
+            <span>$${parseFloat(d.monto).toFixed(2)}</span>
+        </div>`;
+        if (saldoTxt) {
+            html += `<div class="t-fila" style="font-size:10px;color:#555;"><span>${saldoTxt}</span><span></span></div>`;
+        }
+    });
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold t-grande">
+            <span>TOTAL PAGADO</span><span>$${parseFloat(pago.monto).toFixed(2)}</span>
+        </div>
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Método de pago</span><span>${esc(pago.metodo_pago)}</span></div>`;
+
+    if (parseFloat(pago.comision_terminal) > 0) {
+        html += `<div class="t-fila"><span>Comisión terminal</span><span>$${parseFloat(pago.comision_terminal).toFixed(2)}</span></div>`;
+    }
+    if (pago.metodo_pago === 'Transferencia' && pago.referencia_transferencia) {
+        html += `<div class="t-fila"><span>Referencia</span><span>${esc(pago.referencia_transferencia)}</span></div>`;
+    }
+    if ((pago.metodo_pago === 'Terminal' || pago.metodo_pago === 'Mixto') && pago.folio_terminal) {
+        html += `<div class="t-fila"><span>Folio terminal</span><span>${esc(pago.folio_terminal)}</span></div>`;
+    }
+    if (pago.metodo_pago === 'Efectivo' && pago.monto_recibido !== null && parseFloat(pago.cambio) > 0) {
+        html += `
+        <div class="t-fila"><span>Recibido</span><span>$${parseFloat(pago.monto_recibido).toFixed(2)}</span></div>
+        <div class="t-fila"><span>Cambio</span><span>$${parseFloat(pago.cambio).toFixed(2)}</span></div>`;
+    }
+    if (pago.metodo_pago === 'Mixto') {
+        html += `
+        <div class="t-fila"><span>Efectivo</span><span>$${parseFloat(pago.monto_efectivo).toFixed(2)}</span></div>
+        <div class="t-fila"><span>Terminal</span><span>$${parseFloat(pago.monto_terminal).toFixed(2)}</span></div>`;
+    }
+
+    // [FEATURE-TICKET-ABONO-SALDO-TOTAL 2026-09-20] (portado de cajeroInventario/creditos.php)
+    // Saldo que el cliente sigue debiendo en TODOS sus creditos activos/vencidos, no solo el/los
+    // que este pago toco. Se muestra siempre, incluso en $0.00.
+    const saldoTotalTA = parseFloat(pago.saldo_total_pendiente || 0);
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>SALDO TOTAL PENDIENTE</span><span>$${saldoTotalTA.toFixed(2)}</span></div>`;
+
+    const pieTexto = datosTicket.ticket_pie || '¡Gracias por su pago!';
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-centro">${esc(pieTexto)}</div>
+        <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
+
+    document.getElementById('ticketImprimir').innerHTML = html;
 }
 
 function seleccionarMetodoAb(metodo, btn) {
@@ -1185,6 +1532,12 @@ function calcularCambioAb() {
     verificarPagoAb();
 }
 
+// [FEATURE-FOLIO-TERMINAL] Folio capturado en el panel visible (Terminal o Mixto).
+function folioTerminalAb() {
+    const id = _metodoPagoAb === 'Mixto' ? 'abMixtoFolio' : 'abFolioTerminal';
+    return String(document.getElementById(id)?.value || '').trim();
+}
+
 function calcularMixtoAb() {
     const monto = parseFloat(document.getElementById('abMonto').value) || 0;
     const ef    = parseFloat(document.getElementById('abMixtoEf').value) || 0;
@@ -1203,7 +1556,8 @@ function calcularMixtoAb() {
     document.getElementById('abHiddenTerm').value = termDisplay.toFixed(2);
     const maxMonto = parseFloat(document.getElementById('abMonto').max) || 0;
     document.getElementById('btnSubmitAbono').disabled =
-        !CAJA_ABIERTA || monto <= 0 || ef <= 0 || ef >= monto || (maxMonto > 0 && monto > maxMonto + 0.001);
+        !CAJA_ABIERTA || monto <= 0 || ef <= 0 || ef >= monto || (maxMonto > 0 && monto > maxMonto + 0.001)
+        || folioTerminalAb() === '';
 }
 
 function actualizarComisionAb() {
@@ -1245,12 +1599,14 @@ function verificarPagoAb() {
         calcularMixtoAb();
         return;
     }
-    btn.disabled = false;
+    btn.disabled = folioTerminalAb() === ''; // Terminal: requiere folio del voucher
 }
 
 function submitAbono(e) {
     e.preventDefault();
     const btn  = document.getElementById('btnSubmitAbono');
+    document.getElementById('abHiddenFolio').value =
+        (_metodoPagoAb === 'Terminal' || _metodoPagoAb === 'Mixto') ? folioTerminalAb() : '';
     const data = new FormData(document.getElementById('formAbono'));
     data.append('action', 'registrar_abono');
     data.append('cliente_id', _clienteIdActual);
@@ -1263,7 +1619,10 @@ function submitAbono(e) {
         .then(res => {
             if (res.ok) {
                 document.getElementById('abMsgOk').style.display = 'block';
-                setTimeout(() => location.reload(), 1400);
+                // [FEATURE-TICKET-ABONO] Imprimir automaticamente el comprobante; el reload se
+                // retrasa para dar tiempo a que abra el dialogo de impresion.
+                if (res.folio) imprimirTicketAbono(res.folio);
+                setTimeout(() => location.reload(), 2200);
             } else {
                 btn.disabled = false;
                 btn.textContent = 'Registrar pago';

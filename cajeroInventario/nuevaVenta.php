@@ -503,6 +503,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
     $cambio            = floatval(is_scalar($_POST['cambio'] ?? null) ? $_POST['cambio'] : 0);
 
     $referencia_transferencia = ($metodo_pago === 'Transferencia') ? trim(is_scalar($_POST['referencia_transferencia'] ?? null) ? (string)$_POST['referencia_transferencia'] : '') : null;
+    // [FEATURE-FOLIO-TERMINAL] Folio del voucher de la terminal bancaria (evidencia del cargo).
+    // Solo aplica a Terminal y a Mixto (que siempre lleva una parte a terminal).
+    $folio_terminal = in_array($metodo_pago, ['Terminal', 'Mixto'], true)
+        ? trim(is_scalar($_POST['folio_terminal'] ?? null) ? (string)$_POST['folio_terminal'] : '') : null;
     // [FEATURE-TICKET-MIXTO] (portado de admin/cajero_nuevaVenta.php): "Efectivo recibido" del
     // pago Mixto es solo una ayuda de cambio para el cajero, no afecta monto_efectivo/monto_terminal
     // ni ninguna validación -- se guarda tal cual solo para poder mostrarlo en el ticket impreso.
@@ -569,6 +573,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             exit();
         }
         $errorVenta = 'La referencia bancaria no puede tener más de 100 caracteres.';
+    }
+
+    // [FEATURE-FOLIO-TERMINAL] El folio es obligatorio igual que la referencia de Transferencia:
+    // la pantalla ya lo exige, pero el servidor lo revalida por si llega un POST directo.
+    if (!$errorVenta && in_array($metodo_pago, ['Terminal', 'Mixto'], true) && $folio_terminal === '') {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'El número de folio de la terminal es obligatorio para pagos con Terminal o Mixto.']);
+            exit();
+        }
+        $errorVenta = 'El número de folio de la terminal es obligatorio para pagos con Terminal o Mixto.';
+    }
+    if (!$errorVenta && $folio_terminal !== null && mb_strlen($folio_terminal) > 100) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'El folio de la terminal no puede tener más de 100 caracteres.']);
+            exit();
+        }
+        $errorVenta = 'El folio de la terminal no puede tener más de 100 caracteres.';
     }
 
     // [AUTOFIX] V-05: Validar que items sea un array valido antes de procesar
@@ -892,13 +915,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $stmt = $pdo->prepare("
                 INSERT INTO ventas
                 (folio,caja_id,cliente_id,usuario_id,subtotal,descuento,comision_terminal,
-                 total,metodo_pago,monto_efectivo,monto_terminal,mixto_recibido,cambio,estado,notas,referencia_transferencia)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?,?)
+                 total,metodo_pago,monto_efectivo,monto_terminal,mixto_recibido,cambio,estado,notas,referencia_transferencia,folio_terminal)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'Completada',?,?,?)
             ");
             $stmt->execute([$folio,$caja['caja_id'],$cliente_id,$_SESSION['usuario_id'],
                             round($sumaItems + $sumaDescuentoAjustes, 2), round($descuentoCliente + $sumaDescuentoAjustes, 2), $comision_terminal,$total,
                             $metodo_pago,$monto_efectivo,$monto_terminal,$mixto_recibido,$cambio,$notas_venta,
-                            $referencia_transferencia]);
+                            $referencia_transferencia,$folio_terminal]);
             $venta_id = $pdo->lastInsertId();
 
             foreach ($items as $idxVP => $item) {
@@ -1526,6 +1549,10 @@ if (!$caja) {
                             <label>Comisión terminal (%)</label>
                             <input type="number" id="porcComision" value="<?= number_format(floatval($sucursalTicket['comision_terminal_pct'] ?? 0), 2) ?>" readonly style="background:#f5f5f5;color:#888;cursor:not-allowed;">
                         </div>
+                        <div class="form-group-sm">
+                            <label>Folio de la terminal *</label>
+                            <input type="text" id="terminalFolio" maxlength="100" placeholder="Número de folio del voucher" autocomplete="off" oninput="verificarCobrar()">
+                        </div>
                     </div>
 
                     <div class="campos-pago" id="camposTransferencia">
@@ -1591,6 +1618,10 @@ if (!$caja) {
                             <label>Comisión terminal (%)</label>
                             <input type="number" id="mixtoComision" value="<?= number_format(floatval($sucursalTicket['comision_terminal_pct'] ?? 0), 2) ?>" readonly style="background:#f5f5f5;color:#888;cursor:not-allowed;">
                         </div>
+                        <div class="form-group-sm">
+                            <label>Folio de la terminal *</label>
+                            <input type="text" id="mixtoFolio" maxlength="100" placeholder="Número de folio del voucher" autocomplete="off" oninput="verificarCobrar()">
+                        </div>
                     </div>
                 </div>
 
@@ -1606,6 +1637,7 @@ if (!$caja) {
                     <input type="hidden" name="mixto_recibido" id="inputMixtoRecibido">
                     <input type="hidden" name="comision_terminal" id="inputComisionTerminal">
                     <input type="hidden" name="referencia_transferencia" id="inputReferenciaTransferencia">
+                    <input type="hidden" name="folio_terminal" id="inputFolioTerminal">
                     <input type="hidden" name="descuento" id="inputDescuento">
                     <input type="hidden" name="subtotal" id="inputSubtotal">
                     <input type="hidden" name="total" id="inputTotal">
@@ -1795,7 +1827,7 @@ function crearPestañaVacia() {
         modoScannerActivo: false,
         descCliente: { aplicar: false, porc: '' },
         ajusteDanoActivo: false,
-        pago: { montoEfectivo: '', transferReferencia: '', mixtoEfectivo: '', mixtoRecibido: '' }
+        pago: { montoEfectivo: '', transferReferencia: '', terminalFolio: '', mixtoFolio: '', mixtoEfectivo: '', mixtoRecibido: '' }
     };
 }
 
@@ -1907,6 +1939,8 @@ function snapshotPestañaActiva() {
         pago: {
             montoEfectivo:      document.getElementById('montoEfectivo')?.value || '',
             transferReferencia: document.getElementById('transferReferencia')?.value || '',
+            terminalFolio:      document.getElementById('terminalFolio')?.value || '',
+            mixtoFolio:         document.getElementById('mixtoFolio')?.value || '',
             mixtoEfectivo:      document.getElementById('mixtoEfectivo')?.value || '',
             mixtoRecibido:      document.getElementById('mixtoRecibido')?.value || ''
         }
@@ -1922,6 +1956,8 @@ function aplicarPestañaAlDOM(p) {
     document.getElementById('montoEfectivo').value      = '';
     document.getElementById('resCambio').textContent    = '$0.00';
     document.getElementById('transferReferencia').value = '';
+    document.getElementById('terminalFolio').value      = '';
+    document.getElementById('mixtoFolio').value         = '';
     document.getElementById('mixtoEfectivo').value      = '';
     document.getElementById('mixtoTerminal').value      = '';
     document.getElementById('mixtoRecibido').value      = '';
@@ -1948,6 +1984,8 @@ function aplicarPestañaAlDOM(p) {
     if (p.pago) {
         if (p.pago.montoEfectivo)      document.getElementById('montoEfectivo').value      = p.pago.montoEfectivo;
         if (p.pago.transferReferencia) document.getElementById('transferReferencia').value = p.pago.transferReferencia;
+        if (p.pago.terminalFolio)      document.getElementById('terminalFolio').value      = p.pago.terminalFolio;
+        if (p.pago.mixtoFolio)         document.getElementById('mixtoFolio').value         = p.pago.mixtoFolio;
         if (p.pago.mixtoEfectivo)      document.getElementById('mixtoEfectivo').value      = p.pago.mixtoEfectivo;
         if (p.pago.mixtoRecibido)      document.getElementById('mixtoRecibido').value      = p.pago.mixtoRecibido;
     }
@@ -2912,6 +2950,10 @@ function limpiarVenta() {
     if (_resCambio2) _resCambio2.textContent = '$0.00';
     const _transferRef2 = document.getElementById('transferReferencia');
     if (_transferRef2) _transferRef2.value = '';
+    const _termFolio2 = document.getElementById('terminalFolio');
+    if (_termFolio2) _termFolio2.value = '';
+    const _mixtoFolio2 = document.getElementById('mixtoFolio');
+    if (_mixtoFolio2) _mixtoFolio2.value = '';
     const _mixtoEf2 = document.getElementById('mixtoEfectivo');
     if (_mixtoEf2) _mixtoEf2.value = '';
     const _mixtoTerm2 = document.getElementById('mixtoTerminal');
@@ -3280,8 +3322,15 @@ function calcularMixto() {
     verificarCobrar();
 }
 
+// [FEATURE-FOLIO-TERMINAL] Folio capturado en el panel visible (Terminal o Mixto).
+function folioTerminalValor() {
+    const id = metodoPago === 'Mixto' ? 'mixtoFolio' : 'terminalFolio';
+    return String(document.getElementById(id)?.value || '').trim();
+}
+
 function verificarCobrar() {
-    const referenciaOk = metodoPago !== 'Transferencia' || String(document.getElementById('transferReferencia')?.value || '').trim() !== '';
+    const referenciaOk = (metodoPago !== 'Transferencia' || String(document.getElementById('transferReferencia')?.value || '').trim() !== '')
+        && ((metodoPago !== 'Terminal' && metodoPago !== 'Mixto') || folioTerminalValor() !== '');
     let mixtoOk = true;
     if (metodoPago === 'Mixto') {
         const ef = parseFloat(document.getElementById('mixtoEfectivo').value) || 0;
@@ -3364,6 +3413,16 @@ function prepararVenta() {
         alert('Captura la referencia bancaria de la transferencia.');
         document.getElementById('transferReferencia').focus();
         return false;
+    }
+    if (metodoPago === 'Terminal' || metodoPago === 'Mixto') {
+        if (folioTerminalValor() === '') {
+            alert('Captura el número de folio de la terminal.');
+            document.getElementById(metodoPago === 'Mixto' ? 'mixtoFolio' : 'terminalFolio').focus();
+            return false;
+        }
+        document.getElementById('inputFolioTerminal').value = folioTerminalValor();
+    } else {
+        document.getElementById('inputFolioTerminal').value = '';
     }
     const paquetesVendidos = carrito
         .filter(item => item.tipo === 'paquete')
@@ -3458,6 +3517,10 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
             if (_resCambio) _resCambio.textContent = '$0.00';
             const _transferRef = document.getElementById('transferReferencia');
             if (_transferRef) _transferRef.value = '';
+            const _termFolio = document.getElementById('terminalFolio');
+            if (_termFolio) _termFolio.value = '';
+            const _mixtoFolio = document.getElementById('mixtoFolio');
+            if (_mixtoFolio) _mixtoFolio.value = '';
             const _mixtoEf = document.getElementById('mixtoEfectivo');
             if (_mixtoEf) _mixtoEf.value = '';
             const _mixtoTerm = document.getElementById('mixtoTerminal');
@@ -3670,6 +3733,12 @@ function generarTicketHTML(venta) {
     if (venta.metodo_pago === 'Transferencia' && venta.referencia_transferencia) {
         html += `
         <div class="t-fila"><span>Referencia</span><span>${esc(venta.referencia_transferencia)}</span></div>`;
+    }
+
+    // [FEATURE-FOLIO-TERMINAL] Folio del voucher de la terminal (viene en v.* de ?ticket_venta=).
+    if ((venta.metodo_pago === 'Terminal' || venta.metodo_pago === 'Mixto') && venta.folio_terminal) {
+        html += `
+        <div class="t-fila"><span>Folio terminal</span><span>${esc(venta.folio_terminal)}</span></div>`;
     }
 
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {

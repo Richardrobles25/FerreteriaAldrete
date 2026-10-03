@@ -2001,6 +2001,18 @@ function generarTicketHTML(venta) {
     if (venta.cliente) {
         html += `<div class="t-fila"><span>Cliente:</span><span>${esc(venta.cliente)}</span></div>`;
     }
+    // [FIX-TICKET-DOMICILIO] Una venta a domicilio se imprimia sin la direccion del cliente (el
+    // "direccion" de arriba es la de la SUCURSAL), asi que el repartidor no sabia a donde
+    // llevarla. dir_cliente viene de clientes.direccion (ver ?detalle_venta= del historial de
+    // ventas); solo se imprime si el cliente tiene una capturada.
+    // [FEATURE-DOMICILIO-ENTREGA] Prioridad al campo "Dirección / Notas de entrega" capturado al
+    // crear la venta a domicilio (ventas.notas): es a donde realmente se va a entregar. Solo si
+    // quedó vacío se usa el domicilio registrado del cliente (clientes.direccion).
+    const _domEntrega = String(venta.notas || '').split('__META_VENTA__')[0].trim();
+    const _domTicket  = _domEntrega !== '' ? _domEntrega : String(venta.dir_cliente || '').trim();
+    if (_domTicket !== '') {
+        html += `<div style="margin-top:2px;white-space:normal;word-break:break-word;"><strong>Domicilio:</strong> ${esc(_domTicket)}</div>`;
+    }
 
     html += `
         <div class="t-linea"></div>

@@ -25,7 +25,7 @@ if (isset($_GET['detalle_venta'])) {
     // pareciendo el formato viejo de antes de que existiera esta personalizacion. Se trae aqui
     // los datos de LA SUCURSAL REAL DE LA VENTA (via cajas -> sucursales), no la del filtro.
     $stmtV = $pdo->prepare("
-        SELECT v.*, c.nombre_completo AS cliente, c.telefono AS tel_cliente,
+        SELECT v.*, c.nombre_completo AS cliente, c.telefono AS tel_cliente, c.direccion AS dir_cliente,
                u.nombre_completo AS cajero,
                s.nombre AS suc_nombre, s.rfc AS suc_rfc, s.direccion AS suc_direccion,
                s.telefono AS suc_telefono, s.datos_ticket AS suc_datos_ticket,
@@ -1115,12 +1115,14 @@ function renderDetalle(v) {
         ${v.metodo_pago === 'Terminal' ? `
             <div class="det-campo"><span>Monto terminal</span><strong>$${fmt(v.monto_terminal)}</strong></div>
             <div class="det-campo"><span>Comisión</span><strong>$${fmt(v.comision_terminal)}</strong></div>
+            ${v.folio_terminal ? `<div class="det-campo"><span>Folio terminal</span><strong>${esc(v.folio_terminal)}</strong></div>` : ''}
         ` : ''}
         ${v.metodo_pago === 'Mixto' ? `
             <div class="det-campo"><span>Efectivo</span><strong>$${fmt(v.monto_efectivo)}</strong></div>
             <div class="det-campo"><span>Terminal</span><strong>$${fmt(v.monto_terminal)}</strong></div>
             <div class="det-campo"><span>Comisión</span><strong>$${fmt(v.comision_terminal)}</strong></div>
             <div class="det-campo"><span>Cambio</span><strong>$${fmt(v.cambio)}</strong></div>
+            ${v.folio_terminal ? `<div class="det-campo"><span>Folio terminal</span><strong>${esc(v.folio_terminal)}</strong></div>` : ''}
         ` : ''}
         ${v.metodo_pago === 'Transferencia' && v.referencia_transferencia ? `
             <div class="det-campo"><span>Referencia</span><strong>${esc(v.referencia_transferencia)}</strong></div>
@@ -1484,6 +1486,12 @@ function generarTicketHTML(venta) {
     if (venta.metodo_pago === 'Transferencia' && venta.referencia_transferencia) {
         html += `
         <div class="t-fila"><span>Referencia</span><span>${esc(venta.referencia_transferencia)}</span></div>`;
+    }
+
+    // [FEATURE-FOLIO-TERMINAL] Folio del voucher de la terminal (Terminal o parte terminal de Mixto).
+    if ((venta.metodo_pago === 'Terminal' || venta.metodo_pago === 'Mixto') && venta.folio_terminal) {
+        html += `
+        <div class="t-fila"><span>Folio terminal</span><span>${esc(venta.folio_terminal)}</span></div>`;
     }
 
     if (venta.metodo_pago === 'Efectivo' && parseFloat(venta.cambio) > 0) {

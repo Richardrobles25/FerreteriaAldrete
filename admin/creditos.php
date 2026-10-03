@@ -243,6 +243,54 @@ $stmt = $pdo->prepare("
 $stmt->execute($params);
 $creditos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// [FEATURE-CREDITOS-POR-CLIENTE] Un cliente puede tener varios creditos a la vez (uno por cada
+// venta a credito, mas el saldo importado del sistema anterior). Los creditos siguen siendo
+// registros separados en la base (cada uno conserva su venta, su fecha limite y su mora, y los
+// abonos los liquidan del mas antiguo al mas reciente), pero aqui se muestran juntos: una sola
+// fila por cliente con el total, y el detalle de cada credito dentro de la misma fila. Es el
+// mismo criterio que ya usan las pantallas de Creditos del cajero (una fila por cliente).
+// Las exportaciones PDF/Excel de arriba siguen siendo por credito (detalle contable).
+$clientesCred = [];
+foreach ($creditos as $cr) {
+    $cid = intval($cr['cliente_id']);
+    if (!isset($clientesCred[$cid])) {
+        $clientesCred[$cid] = [
+            'cliente_id' => $cid, 'nombre_completo' => $cr['nombre_completo'], 'telefono' => $cr['telefono'],
+            'limite_credito' => $cr['limite_credito'], 'monto_total' => 0.0, 'saldo_pendiente' => 0.0,
+            'total_abonado' => 0.0, 'numero_abonos' => 0, 'ultimo_abono' => null, 'fecha_limite' => null,
+            'tiene_vencido' => false, 'tiene_activo' => false, 'sucursales' => [], 'creditos' => [],
+            'credito_ver' => intval($cr['credito_id']), 'ver_es_pendiente' => false,
+        ];
+    }
+    $g = &$clientesCred[$cid];
+    $g['monto_total']     += floatval($cr['monto_total']);
+    $g['saldo_pendiente'] += floatval($cr['saldo_pendiente']);
+    $g['total_abonado']   += floatval($cr['total_abonado']);
+    $g['numero_abonos']   += intval($cr['numero_abonos']);
+    if ($cr['ultimo_abono'] !== null && ($g['ultimo_abono'] === null || $cr['ultimo_abono'] > $g['ultimo_abono'])) {
+        $g['ultimo_abono'] = $cr['ultimo_abono'];
+    }
+    $pendiente = in_array($cr['estado'], ['Activo', 'Vencido'], true);
+    if ($cr['estado'] === 'Vencido') $g['tiene_vencido'] = true;
+    if ($cr['estado'] === 'Activo')  $g['tiene_activo']  = true;
+    if ($pendiente && $cr['fecha_limite'] !== null && ($g['fecha_limite'] === null || $cr['fecha_limite'] < $g['fecha_limite'])) {
+        $g['fecha_limite'] = $cr['fecha_limite'];
+    }
+    // El boton "Ver abonos" abre al cliente completo; se ancla a un credito pendiente si hay.
+    if ($pendiente && !$g['ver_es_pendiente']) {
+        $g['credito_ver']      = intval($cr['credito_id']);
+        $g['ver_es_pendiente'] = true;
+    }
+    $nombreSuc = $cr['sucursal'] !== null ? $cr['sucursal'] : 'Saldo importado';
+    if (!in_array($nombreSuc, $g['sucursales'], true)) $g['sucursales'][] = $nombreSuc;
+    $g['creditos'][] = $cr;
+    unset($g);
+}
+foreach ($clientesCred as &$gc) {
+    $gc['estado'] = $gc['tiene_vencido'] ? 'Vencido' : ($gc['tiene_activo'] ? 'Activo' : 'Liquidado');
+}
+unset($gc);
+
 $totales = $pdo->query("
     SELECT
         COUNT(*) AS total,
@@ -400,20 +448,26 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
         </form>
 
         <div class="tabla-wrapper">
-            <?php if (count($creditos) > 0): ?>
+            <?php if (count($clientesCred) > 0): ?>
                 <table>
                     <thead><tr><th>Cliente</th><th>Sucursal</th><th>Venta</th><th>Abonos</th><th>Pendiente</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr></thead>
                     <tbody id="tablaFiltrable">
-                        <?php foreach ($creditos as $credito): ?>
+                        <?php foreach ($clientesCred as $credito): ?>
                             <tr>
                                 <td><strong><?= htmlspecialchars($credito['nombre_completo']) ?></strong><div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($credito['telefono'] ?: 'Sin telefono') ?></div><div style="font-size:11px;color:#aaa;">Limite: $<?= number_format($credito['limite_credito'], 2) ?></div></td>
-                                <td><?= $credito['sucursal'] !== null ? htmlspecialchars($credito['sucursal']) : '<span style="color:#aaa;">Saldo importado</span>' ?></td>
-                                <td><strong>$<?= number_format($credito['monto_total'], 2) ?></strong><div style="font-size:11px;color:#aaa;"><?= $credito['venta_id'] ? 'Venta #' . intval($credito['venta_id']) . ' - ' . date('d/m/Y', strtotime($credito['fecha_venta'])) : 'Saldo importado' ?></div></td>
+                                <td><?php foreach ($credito['sucursales'] as $nombreSucFila): ?><div><?= $nombreSucFila === 'Saldo importado' ? '<span style="color:#aaa;">Saldo importado</span>' : htmlspecialchars($nombreSucFila) ?></div><?php endforeach; ?></td>
+                                <td>
+                                    <strong>$<?= number_format($credito['monto_total'], 2) ?></strong>
+                                    <?php if (count($credito['creditos']) > 1): ?><div style="font-size:11px;color:#1565c0;font-weight:600;"><?= count($credito['creditos']) ?> creditos juntos</div><?php endif; ?>
+                                    <?php foreach ($credito['creditos'] as $crDet): ?>
+                                        <div style="font-size:11px;color:#aaa;"><?= $crDet['venta_id'] ? 'Venta #' . intval($crDet['venta_id']) . ' - ' . date('d/m/Y', strtotime($crDet['fecha_venta'])) : 'Saldo importado' ?><?php if (count($credito['creditos']) > 1): ?> · $<?= number_format($crDet['monto_total'], 2) ?><?php endif; ?></div>
+                                    <?php endforeach; ?>
+                                </td>
                                 <td><strong>$<?= number_format($credito['total_abonado'], 2) ?></strong><div style="font-size:11px;color:#aaa;"><?= intval($credito['numero_abonos']) ?> abonos</div><div style="font-size:11px;color:#aaa;"><?= $credito['ultimo_abono'] ? 'Ultimo: ' . date('d/m/Y', strtotime($credito['ultimo_abono'])) : 'Sin abonos' ?></div></td>
                                 <td style="font-weight:700;color:<?= $credito['saldo_pendiente'] > 0 ? '#c0392b' : '#2e7d32' ?>;">$<?= number_format($credito['saldo_pendiente'], 2) ?></td>
                                 <td style="font-size:12px;"><?= $credito['fecha_limite'] ? date('d/m/Y', strtotime($credito['fecha_limite'])) : '-' ?></td>
                                 <td><span class="badge badge-<?= strtolower($credito['estado']) ?>"><?= htmlspecialchars($credito['estado']) ?></span></td>
-                                <td><div class="acciones"><a class="btn-accion btn-ver" href="abonos.php?ver=<?= intval($credito['credito_id']) ?>">Ver abonos</a></div></td>
+                                <td><div class="acciones"><a class="btn-accion btn-ver" href="abonos.php?ver=<?= intval($credito['credito_ver']) ?>">Ver abonos</a></div></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

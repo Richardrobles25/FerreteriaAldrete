@@ -35,86 +35,10 @@ function celdasProveedorExport(array $p): array {
     return [(string)($p['proveedores'] ?? ''), $codigos];
 }
 
-// Exportar PDF
-if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
-    require_once __DIR__ . '/export_helper.php';
-    $esAdmin     = $_SESSION['rol'] === 'Administrador';
-    $vistaGlobal = $esAdmin && $sucursalVista === 0;
-
-    if ($vistaGlobal) {
-        // Catálogo global: sin stock ni sucursal
-        $sqlSelC = $esAdmin ? ", p.precio_compra" : "";
-        $stmt = $pdo->prepare("
-            SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
-                   p.precio_venta, p.precio_mayoreo, p.tipo_venta, p.unidad_medida
-            FROM productos p
-            LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-            WHERE p.activo = 1
-            ORDER BY p.nombre_producto ASC
-        ");
-        $stmt->execute([]);
-        $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        if ($esAdmin) {
-            $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Tipo','Unidad'];
-            $filas = array_map(fn($p) => [
-                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
-                '$' . number_format($p['precio_compra'], 2),
-                '$' . number_format($p['precio_venta'], 2),
-                '$' . number_format($p['precio_mayoreo'], 2),
-                $p['tipo_venta'], $p['unidad_medida'] ?? '—',
-            ], $datos);
-        } else {
-            $columnas = ['Código','Nombre','Categoría','P. Venta','P. Mayoreo','Tipo','Unidad'];
-            $filas = array_map(fn($p) => [
-                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
-                '$' . number_format($p['precio_venta'], 2),
-                '$' . number_format($p['precio_mayoreo'], 2),
-                $p['tipo_venta'], $p['unidad_medida'] ?? '—',
-            ], $datos);
-        }
-        $titulo    = 'Catálogo Global de Productos';
-        $subtitulo = 'Todos los productos del catálogo';
-    } else {
-        $sqlSelC   = $esAdmin ? ", p.precio_compra" : "";
-        $stmt = $pdo->prepare("
-            SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
-                   p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo, p.tipo_venta, p.unidad_medida
-            FROM productos p
-            LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
-            INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
-            WHERE p.activo = 1
-            ORDER BY p.nombre_producto ASC
-        ");
-        $stmt->execute([$sucursalVista]);
-        $datos = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        if ($esAdmin) {
-            $columnas = ['Código','Nombre','Categoría','P. Compra','P. Venta','P. Mayoreo','Stock','Mín.','Tipo','Unidad'];
-            $filas = array_map(fn($p) => [
-                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
-                '$' . number_format($p['precio_compra'], 2),
-                '$' . number_format($p['precio_venta'], 2),
-                '$' . number_format($p['precio_mayoreo'], 2),
-                $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'], $p['unidad_medida'] ?? '—',
-            ], $datos);
-        } else {
-            $columnas = ['Código','Nombre','Categoría','P. Venta','P. Mayoreo','Stock','Mín.','Tipo','Unidad'];
-            $filas = array_map(fn($p) => [
-                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '—',
-                '$' . number_format($p['precio_venta'], 2),
-                '$' . number_format($p['precio_mayoreo'], 2),
-                $p['stock_actual'], $p['stock_minimo'], $p['tipo_venta'], $p['unidad_medida'] ?? '—',
-            ], $datos);
-        }
-        $titulo    = 'Inventario de Productos';
-        $subtitulo = 'Productos activos — ' . $nombreSucursalVista;
-    }
-
-    $resumen = [['label' => 'Total Productos', 'valor' => count($datos)]];
-    while (ob_get_level() > 0) ob_end_clean();
-    exportarPDF($titulo, $subtitulo, $columnas, $filas, $resumen, 'L');
-}
+// [PDF-PRODUCTOS-DESACTIVADO] La exportacion a PDF del listado de productos se quito: con un
+// catalogo de miles de productos mPDF tardaba mas que el tiempo limite del servidor ("Gateway
+// Timeout") y dejaba el servidor saturado. Para sacar el listado completo se usa la exportacion
+// a Excel, que no tiene ese problema.
 
 // Exportar a Excel
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
@@ -1558,7 +1482,6 @@ $categorias = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC")->fetch
                 <a class="btn-plantilla" href="inventario_productos.php?plantilla=1">Descargar plantilla</a>
                 <button class="btn-excel-import" onclick="toggleImport()">Importar Excel</button>
                 <?php endif; ?>
-                <a style="background:#c0392b;color:white;border:none;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:600;text-decoration:none;" href="inventario_productos.php?exportar=pdf"><?= icono('download') ?> PDF</a>
                 <a class="btn-excel-export" href="inventario_productos.php?exportar=excel"><?= icono('download') ?> Excel</a>
                 <?php /* [FEATURE-ELIMINAR-TODOS] Valvula de seguridad para una importacion de Excel
                 equivocada -- solo Administrador, sin importar el rol que normalmente puede borrar un

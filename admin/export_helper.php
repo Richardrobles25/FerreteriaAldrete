@@ -73,6 +73,31 @@ function exportarPDF(
         $nombreArchivo = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $titulo)) . '_' . date('Y-m-d') . '.pdf';
     }
 
+    // [FIX-PDF-TOPE-FILAS] mPDF es lento y consume mucha memoria con tablas grandes (unas 600
+    // filas ya toman varios segundos; con miles el servidor llega a "Gateway Timeout" y se
+    // satura, afectando a todos los usuarios). Este helper es el unico punto por el que pasan
+    // TODOS los PDF del sistema, asi que aqui se protege el servidor: arriba del tope no se
+    // genera el PDF y se explica como obtener los datos (filtrar o usar Excel, que no tiene
+    // este problema).
+    $maxFilasPDF = 600;
+    if (count($filas) > $maxFilasPDF) {
+        while (ob_get_level() > 0) ob_end_clean();
+        http_response_code(200);
+        header('Content-Type: text/html; charset=utf-8');
+        $nFilasTxt = number_format(count($filas));
+        $topeTxt   = number_format($maxFilasPDF);
+        echo "<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>"
+           . "<title>PDF no disponible</title></head>"
+           . "<body style='font-family:Arial,sans-serif;background:#f5f7fa;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;'>"
+           . "<div style='background:#fff;border:1px solid #e0e0e0;border-radius:10px;padding:28px 32px;max-width:460px;box-shadow:0 2px 12px rgba(0,0,0,.06);'>"
+           . "<h2 style='margin:0 0 10px;color:#1a1a2e;font-size:18px;'>Demasiados registros para PDF</h2>"
+           . "<p style='color:#555;font-size:14px;line-height:1.5;margin:0 0 18px;'>Este reporte tiene <strong>$nFilasTxt</strong> filas y el PDF admite hasta <strong>$topeTxt</strong>. "
+           . "Aplica un filtro (fechas, sucursal, búsqueda) para reducir el resultado, o descarga el reporte en <strong>Excel</strong>, que no tiene límite.</p>"
+           . "<a href='javascript:history.back()' style='display:inline-block;background:#14ace7;color:#fff;text-decoration:none;padding:9px 18px;border-radius:6px;font-size:14px;font-weight:600;'>Volver</a>"
+           . "</div></body></html>";
+        exit();
+    }
+
     // [FIX-PDF-MEMORIA] mPDF arma TODA la tabla en memoria antes de paginar: un catalogo de miles
     // de productos (ej. 2,700+ filas) agotaba el memory_limit de PHP (128M por defecto) con
     // "Allowed memory size exhausted ... Tag/Td.php". Dos medidas, ambas dentro de este unico
@@ -86,7 +111,7 @@ function exportarPDF(
         if ($unidad === 'G') $bytesActual *= 1073741824;
         elseif ($unidad === 'M') $bytesActual *= 1048576;
         elseif ($unidad === 'K') $bytesActual *= 1024;
-        if ($bytesActual < 1073741824) @ini_set('memory_limit', '1024M');
+        if ($bytesActual < 268435456) @ini_set('memory_limit', '256M');
     }
     @set_time_limit(300);
 

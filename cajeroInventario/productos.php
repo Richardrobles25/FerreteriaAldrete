@@ -24,6 +24,16 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 // — nunca crear productos nuevos ni actualizar el catálogo en bloque por Excel.
 $puedeImportarExcel = ($_SESSION['rol'] ?? '') === 'Administrador';
 
+// [FEATURE-EXPORT-IGUAL-A-IMPORT] Las columnas "Proveedor(es)" y "Código proveedor" del Excel
+// exportado salen en el mismo formato que pide el importador (varios separados por coma, el
+// código N corresponde al proveedor N). Si ningun proveedor del producto tiene código, la celda
+// de códigos va vacía (en vez de solo comas) para que al reimportar no quede nada raro.
+function celdasProveedorExport(array $p): array {
+    $codigos = (string)($p['codigos_proveedor'] ?? '');
+    if (trim(str_replace(',', '', $codigos)) === '') $codigos = '';
+    return [(string)($p['proveedores'] ?? ''), $codigos];
+}
+
 // Exportar PDF
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     require_once __DIR__ . '/../admin/export_helper.php';
@@ -53,10 +63,23 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
 // Exportar Excel
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
     try {
+        // [FEATURE-EXPORT-IGUAL-A-IMPORT] El Excel exportado sale con las mismas columnas y el
+        // mismo orden que la plantilla de importación de este archivo (14 columnas, con
+        // "Precio compra" en la posición 4 y "Proveedor(es)"/"Código proveedor" al final), para
+        // poder volver a importarlo tal cual. "Precio compra" solo se incluye para
+        // Administrador (los demás roles nunca lo han visto en esta pantalla ni pueden importar).
+        $esAdminExp = ($_SESSION['rol'] ?? '') === 'Administrador';
+        $sqlSelCExp = $esAdminExp ? ", p.precio_compra" : "";
         $stmt = $pdo->prepare("
-            SELECT p.codigo, p.nombre_producto, c.nombre as categoria,
+            SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelCExp},
                    p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
                    ss.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida
+                   , (SELECT GROUP_CONCAT(pr.nombre ORDER BY pr.nombre, pr.proveedor_id SEPARATOR ', ')
+                      FROM producto_proveedor pp JOIN proveedores pr ON pr.proveedor_id = pp.proveedor_id
+                      WHERE pp.producto_id = p.producto_id) AS proveedores
+                   , (SELECT GROUP_CONCAT(COALESCE(pp2.codigo_proveedor, '') ORDER BY pr2.nombre, pr2.proveedor_id SEPARATOR ', ')
+                      FROM producto_proveedor pp2 JOIN proveedores pr2 ON pr2.proveedor_id = pp2.proveedor_id
+                      WHERE pp2.producto_id = p.producto_id) AS codigos_proveedor
             FROM productos p
             INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
             LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
@@ -70,7 +93,9 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Productos');
 
-        $headers = ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
+        $headers = $esAdminExp
+            ? ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida','Proveedor(es)','Código proveedor']
+            : ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida','Proveedor(es)','Código proveedor'];
         foreach ($headers as $i => $h) {
             $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
             $sheet->setCellValue("{$col}1", $h);
@@ -82,15 +107,21 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
 
         $rowIndex = 2;
         foreach ($datos as $p) {
-            $sheet->fromArray([
-                $p['codigo'], $p['nombre_producto'], $p['categoria'] ?? '',
-                $p['precio_venta'], $p['precio_mayoreo'],
-                $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'],
-                $p['tipo_venta'], $p['descripcion'] ?? '', $p['unidad_medida'] ?? '',
-            ], null, 'A' . $rowIndex);
+            $celdasProvExp = celdasProveedorExport($p);
+            $sheet->fromArray(array_merge(
+                [$p['codigo'], $p['nombre_producto'], $p['categoria'] ?? ''],
+                $esAdminExp ? [$p['precio_compra']] : [],
+                [
+                    $p['precio_venta'], $p['precio_mayoreo'],
+                    $p['stock_actual'], $p['stock_minimo'], $p['stock_maximo'],
+                    $p['tipo_venta'], $p['descripcion'] ?? '', $p['unidad_medida'] ?? '',
+                ],
+                $celdasProvExp
+            ), null, 'A' . $rowIndex);
             $rowIndex++;
         }
-        foreach (range('A','K') as $col) {
+        $ultimaColExp = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($headers));
+        foreach (range('A', $ultimaColExp) as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 

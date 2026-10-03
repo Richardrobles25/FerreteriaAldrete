@@ -25,6 +25,16 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 // backend deben bloquearlos aquí.
 $puedeImportarExcel = ($_SESSION['rol'] ?? '') === 'Administrador';
 
+// [FEATURE-EXPORT-IGUAL-A-IMPORT] Las columnas "Proveedor(es)" y "Código proveedor" del Excel
+// exportado salen en el mismo formato que pide el importador (varios separados por coma, el
+// código N corresponde al proveedor N). Si ningun proveedor del producto tiene código, la celda
+// de códigos va vacía (en vez de solo comas) para que al reimportar no quede nada raro.
+function celdasProveedorExport(array $p): array {
+    $codigos = (string)($p['codigos_proveedor'] ?? '');
+    if (trim(str_replace(',', '', $codigos)) === '') $codigos = '';
+    return [(string)($p['proveedores'] ?? ''), $codigos];
+}
+
 // Exportar PDF
 if (isset($_GET['exportar']) && $_GET['exportar'] === 'pdf') {
     require_once __DIR__ . '/export_helper.php';
@@ -117,6 +127,12 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         $stmt = $pdo->prepare("
             SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
                    p.precio_venta, p.precio_mayoreo, p.tipo_venta, p.descripcion, p.unidad_medida
+                   , (SELECT GROUP_CONCAT(pr.nombre ORDER BY pr.nombre, pr.proveedor_id SEPARATOR ', ')
+                      FROM producto_proveedor pp JOIN proveedores pr ON pr.proveedor_id = pp.proveedor_id
+                      WHERE pp.producto_id = p.producto_id) AS proveedores
+                   , (SELECT GROUP_CONCAT(COALESCE(pp2.codigo_proveedor, '') ORDER BY pr2.nombre, pr2.proveedor_id SEPARATOR ', ')
+                      FROM producto_proveedor pp2 JOIN proveedores pr2 ON pr2.proveedor_id = pp2.proveedor_id
+                      WHERE pp2.producto_id = p.producto_id) AS codigos_proveedor
             FROM productos p
             LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
             WHERE p.activo = 1
@@ -124,18 +140,26 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         ");
         $stmt->execute([]);
         $datos   = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // [FEATURE-EXPORT-IGUAL-A-IMPORT] Mismas columnas y mismo orden que la plantilla de
+        // importación del catálogo global (sin columnas de stock), incl. proveedor y su código.
         $headers = $esAdmin
-            ? ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Tipo venta','Descripción','Unidad de medida']
-            : ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Tipo venta','Descripción','Unidad de medida'];
+            ? ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Tipo venta','Descripción','Unidad de medida','Proveedor(es)','Código proveedor']
+            : ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Tipo venta','Descripción','Unidad de medida','Proveedor(es)','Código proveedor'];
         $filaFn  = $esAdmin
-            ? fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_compra'],$p['precio_venta'],$p['precio_mayoreo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??'']
-            : fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_venta'],$p['precio_mayoreo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''];
+            ? fn($p) => array_merge([$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_compra'],$p['precio_venta'],$p['precio_mayoreo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''], celdasProveedorExport($p))
+            : fn($p) => array_merge([$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_venta'],$p['precio_mayoreo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''], celdasProveedorExport($p));
         $filename = 'catalogo_global_' . date('Y-m-d') . '.xlsx';
     } else {
         $stmt = $pdo->prepare("
             SELECT p.codigo, p.nombre_producto, c.nombre as categoria{$sqlSelC},
                    p.precio_venta, p.precio_mayoreo, ss.stock_actual, ss.stock_minimo,
                    ss.stock_maximo, p.tipo_venta, p.descripcion, p.unidad_medida
+                   , (SELECT GROUP_CONCAT(pr.nombre ORDER BY pr.nombre, pr.proveedor_id SEPARATOR ', ')
+                      FROM producto_proveedor pp JOIN proveedores pr ON pr.proveedor_id = pp.proveedor_id
+                      WHERE pp.producto_id = p.producto_id) AS proveedores
+                   , (SELECT GROUP_CONCAT(COALESCE(pp2.codigo_proveedor, '') ORDER BY pr2.nombre, pr2.proveedor_id SEPARATOR ', ')
+                      FROM producto_proveedor pp2 JOIN proveedores pr2 ON pr2.proveedor_id = pp2.proveedor_id
+                      WHERE pp2.producto_id = p.producto_id) AS codigos_proveedor
             FROM productos p
             LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
             INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
@@ -144,12 +168,14 @@ if (isset($_GET['exportar']) && $_GET['exportar'] === 'excel') {
         ");
         $stmt->execute([$sucursalVista]);
         $datos   = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // [FEATURE-EXPORT-IGUAL-A-IMPORT] Mismas columnas y mismo orden que la plantilla de
+        // importación a una sucursal específica (con stock), incl. proveedor y su código.
         $headers = $esAdmin
-            ? ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida']
-            : ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida'];
+            ? ['Código','Nombre','Categoría','Precio compra','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida','Proveedor(es)','Código proveedor']
+            : ['Código','Nombre','Categoría','Precio venta','Precio mayoreo','Stock actual','Stock mínimo','Stock máximo','Tipo venta','Descripción','Unidad de medida','Proveedor(es)','Código proveedor'];
         $filaFn  = $esAdmin
-            ? fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_compra'],$p['precio_venta'],$p['precio_mayoreo'],$p['stock_actual'],$p['stock_minimo'],$p['stock_maximo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??'']
-            : fn($p) => [$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_venta'],$p['precio_mayoreo'],$p['stock_actual'],$p['stock_minimo'],$p['stock_maximo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''];
+            ? fn($p) => array_merge([$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_compra'],$p['precio_venta'],$p['precio_mayoreo'],$p['stock_actual'],$p['stock_minimo'],$p['stock_maximo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''], celdasProveedorExport($p))
+            : fn($p) => array_merge([$p['codigo'],$p['nombre_producto'],$p['categoria']??'',$p['precio_venta'],$p['precio_mayoreo'],$p['stock_actual'],$p['stock_minimo'],$p['stock_maximo'],$p['tipo_venta'],$p['descripcion']??'',$p['unidad_medida']??''], celdasProveedorExport($p));
         $filename = 'productos_' . date('Y-m-d') . '.xlsx';
     }
 

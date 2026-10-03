@@ -209,6 +209,23 @@ if (isset($_GET['buscar_venta'])) {
             $venta['subtotal_original']  = $subtotalOriginal;
             $venta['descuento_original'] = $descuentoOriginal;
 
+            // [FIX-DEVOLUCION-CREDITO-AVISO-EFECTIVO] El servidor ya reparte bien una devolucion
+            // de credito con abonos previos (baja el saldo pendiente y reembolsa en efectivo el
+            // excedente ya pagado -- ver "reembolsoExcedenteCredito" en el procesamiento), pero la
+            // pantalla solo decia "Descuenta del saldo del credito" por el monto completo, sin
+            // avisar que parte de ese monto en realidad sale en EFECTIVO de la caja: ej. venta de
+            // $500, abono de $200 (saldo $300), devolucion total -> $300 baja del saldo y $200 se
+            // entregan en efectivo. Sin este dato el cajero veia "$500 del credito" cuando el
+            // credito solo debia $300, y las cuentas parecian no cuadrar. Se manda el saldo actual
+            // del credito de esta venta para que el resumen muestre el desglose real.
+            $venta['credito_saldo'] = null;
+            if (in_array($venta['metodo_pago'] ?? '', ['Credito', 'Crédito'], true) && !empty($venta['cliente_id'])) {
+                $stmtSaldoCred = $pdo->prepare("SELECT saldo_pendiente FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido','Liquidado') LIMIT 1");
+                $stmtSaldoCred->execute([$venta['venta_id']]);
+                $saldoCred = $stmtSaldoCred->fetchColumn();
+                if ($saldoCred !== false) $venta['credito_saldo'] = floatval($saldoCred);
+            }
+
             $stmtP = $pdo->prepare("
                 SELECT vp.*, p.nombre_producto, p.codigo,
                        pk.nombre AS paquete_nombre,
@@ -1629,9 +1646,27 @@ function actualizarResumen() {
     // [AUTOFIX] Las devoluciones siempre se entregan en efectivo sin importar cómo se pagó originalmente
     // Crédito es la única excepción: se descuenta del saldo pendiente
     const esCredito = (metodo === 'Crédito' || metodo === 'Credito');
-    const metodoHtml = esCredito
-        ? `<div class="resumen-dev-metodo">${ICONS.clipboard} Descuenta del <strong>saldo del crédito</strong></div>`
-        : `<div class="resumen-dev-metodo">${ICONS.banknote} El cliente recibirá el reembolso en <strong>efectivo</strong></div>`;
+    // [FIX-DEVOLUCION-CREDITO-AVISO-EFECTIVO] Desglose real para crédito: lo que el cliente
+    // todavía debe se baja del saldo; el resto (lo que ya había abonado) sale en efectivo --
+    // misma cuenta que hace el servidor (descuentoDelSaldo = min(monto, saldo); excedente =
+    // monto - saldo). Si la venta no trae saldo (crédito no encontrado) se cae al texto anterior.
+    let metodoHtml;
+    if (esCredito) {
+        const saldoCred = (ventaActual.credito_saldo === null || ventaActual.credito_saldo === undefined)
+            ? null : parseFloat(ventaActual.credito_saldo);
+        if (saldoCred === null || isNaN(saldoCred)) {
+            metodoHtml = `<div class="resumen-dev-metodo">${ICONS.clipboard} Descuenta del <strong>saldo del crédito</strong></div>`;
+        } else {
+            const delSaldo   = Math.min(totalADevolver, saldoCred);
+            const enEfectivo = Math.max(0, Math.round((totalADevolver - saldoCred) * 100) / 100);
+            metodoHtml = `<div class="resumen-dev-metodo">${ICONS.clipboard} Se descuentan <strong>$${delSaldo.toFixed(2)}</strong> del saldo del crédito (debe $${saldoCred.toFixed(2)})</div>`
+                + (enEfectivo > 0.001
+                    ? `<div class="resumen-dev-metodo">${ICONS.banknote} Entregar <strong>$${enEfectivo.toFixed(2)} en efectivo</strong> al cliente (es lo que ya había abonado)</div>`
+                    : '');
+        }
+    } else {
+        metodoHtml = `<div class="resumen-dev-metodo">${ICONS.banknote} El cliente recibirá el reembolso en <strong>efectivo</strong></div>`;
+    }
 
     // Aviso de comisión (solo Terminal / Mixto)
     const comisionHtml = comisionProp > 0

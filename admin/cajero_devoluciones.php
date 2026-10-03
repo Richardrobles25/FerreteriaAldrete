@@ -187,6 +187,17 @@ if (isset($_GET['buscar_venta'])) {
             $venta['subtotal_original']  = $subtotalOriginal;
             $venta['descuento_original'] = $descuentoOriginal;
 
+            // [FIX-DEVOLUCION-CREDITO-AVISO-EFECTIVO] (espejo de cajeroInventario/devoluciones.php)
+            // manda el saldo actual del credito de esta venta para que el resumen muestre cuanto
+            // baja del saldo y cuanto sale en efectivo (lo ya abonado).
+            $venta['credito_saldo'] = null;
+            if (in_array($venta['metodo_pago'] ?? '', ['Credito', 'Crédito'], true) && !empty($venta['cliente_id'])) {
+                $stmtSaldoCred = $pdo->prepare("SELECT saldo_pendiente FROM creditos WHERE venta_id = ? AND estado IN ('Activo','Vencido','Liquidado') LIMIT 1");
+                $stmtSaldoCred->execute([$venta['venta_id']]);
+                $saldoCred = $stmtSaldoCred->fetchColumn();
+                if ($saldoCred !== false) $venta['credito_saldo'] = floatval($saldoCred);
+            }
+
             $stmtP = $pdo->prepare("
                 SELECT vp.*, p.nombre_producto, p.codigo,
                        pk.nombre AS paquete_nombre,
@@ -1500,9 +1511,26 @@ function actualizarResumen() {
     // [AUTOFIX] Las devoluciones siempre se entregan en efectivo sin importar cómo se pagó originalmente
     // Crédito es la única excepción: se descuenta del saldo pendiente
     const esCredito = (metodo === 'Crédito' || metodo === 'Credito');
-    const metodoHtml = esCredito
-        ? `<div class="resumen-dev-metodo">${ICONS.clipboard} Descuenta del <strong>saldo del crédito</strong></div>`
-        : `<div class="resumen-dev-metodo">${ICONS.banknote} El cliente recibirá el reembolso en <strong>efectivo</strong></div>`;
+    // [FIX-DEVOLUCION-CREDITO-AVISO-EFECTIVO] (espejo de cajeroInventario/devoluciones.php)
+    // desglose real para crédito: lo que todavía debe baja del saldo; el resto (lo ya abonado)
+    // sale en efectivo -- misma cuenta que hace el servidor.
+    let metodoHtml;
+    if (esCredito) {
+        const saldoCred = (ventaActual.credito_saldo === null || ventaActual.credito_saldo === undefined)
+            ? null : parseFloat(ventaActual.credito_saldo);
+        if (saldoCred === null || isNaN(saldoCred)) {
+            metodoHtml = `<div class="resumen-dev-metodo">${ICONS.clipboard} Descuenta del <strong>saldo del crédito</strong></div>`;
+        } else {
+            const delSaldo   = Math.min(totalADevolver, saldoCred);
+            const enEfectivo = Math.max(0, Math.round((totalADevolver - saldoCred) * 100) / 100);
+            metodoHtml = `<div class="resumen-dev-metodo">${ICONS.clipboard} Se descuentan <strong>$${delSaldo.toFixed(2)}</strong> del saldo del crédito (debe $${saldoCred.toFixed(2)})</div>`
+                + (enEfectivo > 0.001
+                    ? `<div class="resumen-dev-metodo">${ICONS.banknote} Entregar <strong>$${enEfectivo.toFixed(2)} en efectivo</strong> al cliente (es lo que ya había abonado)</div>`
+                    : '');
+        }
+    } else {
+        metodoHtml = `<div class="resumen-dev-metodo">${ICONS.banknote} El cliente recibirá el reembolso en <strong>efectivo</strong></div>`;
+    }
 
     // Aviso de comisión (solo Terminal / Mixto)
     const comisionHtml = comisionProp > 0

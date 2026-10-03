@@ -550,6 +550,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $sumaItems = round($sumaItems, 2);
 
+                // [FEATURE-AJUSTE-DANO-PENDIENTE] (portado de cajero_nuevaVenta.php,
+                // FEATURE-DESCUENTO-AJUSTE-DAÑO) El "Ajuste de precio por daño" cuenta como descuento
+                // en ventas.subtotal/descuento y en venta_productos.descuento (misma pareja
+                // precio_orig/precio_final que ya se guarda en venta_productos): sin esto, el ajuste
+                // solo quedaba "escondido" dentro del precio y ningun reporte ni devolucion veia
+                // cuanto se habia rebajado. Una promo (sin nota_ajuste) NO cuenta: es precio normal
+                // del catalogo. $sumaItems/$total siguen sin tocarse (los precios ya traen el ajuste).
+                $descuentoAjustePorIdx = [];
+                $sumaDescuentoAjustes  = 0.0;
+                foreach ($items as $idxAj => $itAj) {
+                    $notaAjChk = trim(is_scalar($itAj['nota_ajuste'] ?? null) ? (string)$itAj['nota_ajuste'] : '');
+                    $esPaqAj   = !empty($itAj['paquete_id']) && intval($itAj['paquete_id']) > 0;
+                    if ($notaAjChk === '' || $esPaqAj) continue;
+                    // venta_productos.nota_ajuste es VARCHAR(255): sin este tope una nota mas larga
+                    // tronaba el INSERT con un error crudo de MySQL (modo estricto del servidor).
+                    if (mb_strlen($notaAjChk) > 255) {
+                        throw new Exception('La nota del ajuste de precio no puede tener más de 255 caracteres.');
+                    }
+                    $precioOrigAj  = floatval($itAj['precio_normal'] ?? $itAj['precio'] ?? 0);
+                    $precioFinalAj = floatval($itAj['precio'] ?? 0);
+                    $cantAj        = floatval($itAj['cantidad'] ?? 0);
+                    $montoAj = max(0.0, round(($precioOrigAj - $precioFinalAj) * $cantAj, 2));
+                    $descuentoAjustePorIdx[$idxAj] = $montoAj;
+                    $sumaDescuentoAjustes += $montoAj;
+                }
+                $sumaDescuentoAjustes = round($sumaDescuentoAjustes, 2);
+
                 // Descuento de cliente implícito = descuento enviado − descuentos por ítem (promos)
                 $descuentoCliente = round($descuento - (round($subtotal, 2) - $sumaItems), 2);
                 if ($descuentoCliente < -0.05) {
@@ -644,7 +671,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // $descuentoCliente (ya recalculados y acotados en el servidor) en vez del
                 // subtotal/descuento crudos del navegador.
                 $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,0,?,?,?,0,?,'Pendiente',?,?)")
-                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], $sumaItems, $descuentoCliente, $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
+                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], round($sumaItems + $sumaDescuentoAjustes, 2), round($descuentoCliente + $sumaDescuentoAjustes, 2), $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
                 $venta_id = $pdo->lastInsertId();
 
                 // [FIX-STOCK-PENDIENTE-INMEDIATO] Antes el stock NO se descontaba al crear la
@@ -658,7 +685,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // "reservado" de forma invisible para el resto del sistema. Esto también
                 // simplifica "liquidar" (ya no vuelve a tocar stock, solo confirma entrega/cobro)
                 // y "cancelar" ahora sí debe devolverlo (ver el handler de $_GET['cancelar']).
-                foreach ($items as $item) {
+                foreach ($items as $idxVP => $item) {
                     $precioOrig   = floatval($item['precio_normal'] ?? $item['precio']);
                     $precioFinal  = floatval($item['precio']);
                     $cantidadItem = floatval($item['cantidad']);
@@ -666,6 +693,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // exacto del último item de un paquete en vez de cantidad*precio.
                     $subtotalItem = isset($item['subtotal_exacto']) ? floatval($item['subtotal_exacto']) : $cantidadItem * $precioFinal;
                     $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
+                    // [FEATURE-AJUSTE-DANO-PENDIENTE] Nota del ajuste por daño (solo productos sueltos).
+                    $notaAjuste   = $paqId ? '' : trim(is_scalar($item['nota_ajuste'] ?? null) ? (string)$item['nota_ajuste'] : '');
+                    $motivoMovimientoPend = 'Venta a domicilio';
+                    if ($notaAjuste !== '') {
+                        $motivoMovimientoPend = 'Venta a domicilio - Ajuste por daño: ' . mb_substr($notaAjuste, 0, 120);
+                    }
 
                     $stmtStockActual = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
                     $stmtStockActual->execute([$item['producto_id'], $sucursalVista]);
@@ -677,11 +710,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stockNvoPend = max(0, $stockActual - $cantidadItem);
                     $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
                         ->execute([$stockNvoPend, $item['producto_id'], $sucursalVista]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,'Venta a domicilio')")
-                        ->execute([$item['producto_id'], $_SESSION['usuario_id'], $sucursalVista, $cantidadItem, $stockActual, $stockNvoPend]);
+                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
+                        ->execute([$item['producto_id'], $_SESSION['usuario_id'], $sucursalVista, $cantidadItem, $stockActual, $stockNvoPend, $motivoMovimientoPend]);
 
-                    $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, subtotal, paquete_id) VALUES (?,?,?,?,?,?,?)")
-                        ->execute([$venta_id, $item['producto_id'], $cantidadItem, $precioOrig, $precioFinal, $subtotalItem, $paqId]);
+                    $pdo->prepare("INSERT INTO venta_productos (venta_id, producto_id, cantidad, precio_unitario, precio_final, descuento, subtotal, paquete_id, nota_ajuste) VALUES (?,?,?,?,?,?,?,?,?)")
+                        ->execute([$venta_id, $item['producto_id'], $cantidadItem, $precioOrig, $precioFinal, ($descuentoAjustePorIdx[$idxVP] ?? 0.0), $subtotalItem, $paqId, ($notaAjuste !== '' ? $notaAjuste : null)]);
                 }
 
                 $pdo->commit();
@@ -717,7 +750,7 @@ $pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Productos para agregar
 $stmt = $pdo->prepare("
-    SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, ss.stock_actual, p.tipo_venta
+    SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.precio_compra, ss.stock_actual, p.tipo_venta
     FROM productos p
     INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
     WHERE p.activo = 1 AND ss.activo = 1 AND ss.stock_actual > 0
@@ -1064,6 +1097,60 @@ if (!$cajaActualId) {
                     </div>
                 </div>
 
+                <!-- Panel: Ajuste por daño (portado de cajero_nuevaVenta.php) -->
+                <div style="border-top:1px solid #eee;margin-top:10px;padding-top:10px;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#555;font-weight:600;user-select:none;">
+                        <input type="checkbox" id="chkAjusteDano" onchange="togglePanelAjuste(this.checked)"
+                            style="width:15px;height:15px;accent-color:#e65100;cursor:pointer;">
+                        <?= icono('triangle-alert') ?> Ajuste de precio por daño
+                    </label>
+                    <div id="panelAjusteDano" style="display:none;margin-top:10px;padding:12px;background:#fff8f0;border:1px solid #f0c080;border-radius:8px;">
+                        <div style="font-size:12px;color:#888;margin-bottom:8px;">Selecciona el producto del carrito al que deseas aplicar el ajuste:</div>
+                        <select id="selProductoAjuste" onchange="seleccionarProductoAjuste()"
+                            style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:10px;">
+                            <option value="">— Elige un producto —</option>
+                        </select>
+                        <div id="panelCamposAjuste" style="display:none;">
+                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;align-items:end;">
+                                <div>
+                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">% DESCUENTO</label>
+                                    <input type="number" id="inputPctAjuste" min="0" max="100" step="0.1"
+                                        placeholder="Ej. 20"
+                                        style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                        oninput="ajustePctCambia(this.value)">
+                                </div>
+                                <div>
+                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">PRECIO AJUSTADO</label>
+                                    <input type="number" id="inputPrecioAjuste" min="0" step="0.01"
+                                        placeholder="Ej. 80.00"
+                                        style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;"
+                                        oninput="ajustePrecioCambia(this.value)">
+                                </div>
+                                <div>
+                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">CANT. DAÑADA</label>
+                                    <input type="number" id="inputCantAjuste" min="1" step="1"
+                                        placeholder="Ej. 2"
+                                        style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                                </div>
+                            </div>
+                            <div id="infoMinPrecio" style="font-size:11px;color:#888;margin-bottom:8px;"></div>
+                            <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">NOTA OBLIGATORIA</label>
+                            <textarea id="textareaNotaAjuste" rows="2" maxlength="255"
+                                placeholder="¿Por qué se ajusta el precio? Ej: Producto golpeado, caja dañada..."
+                                style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;resize:none;"
+                                oninput="actualizarNotaAjuste(this.value)"></textarea>
+                            <button type="button" onclick="aplicarAjuste()"
+                                style="width:100%;margin-top:8px;background:#e65100;color:white;border:none;padding:9px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
+                                Aplicar ajuste
+                            </button>
+                            <button type="button" onclick="quitarAjusteProducto()"
+                                style="width:100%;margin-top:4px;background:white;color:#888;border:1px solid #ddd;padding:7px;border-radius:6px;font-size:12px;cursor:pointer;">
+                                Quitar ajuste de este producto
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <form method="POST" id="formPendiente">
                     <!-- [AUTOFIX] SEC-03: CSRF token obligatorio en formulario POST -->
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
@@ -1250,11 +1337,19 @@ if (!$cajaActualId) {
 #ticketContenidoVentaPend .t-fila   { display: flex; justify-content: space-between; }
 #ticketContenidoVentaPend .t-bold   { font-weight: bold; }
 #ticketContenidoVentaPend .t-grande { font-size: 13px; font-weight: bold; }
+/* Aviso flotante del ajuste por daño (mismo que cajero_nuevaVenta.php) */
+#_notifFlotante { position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:9999;
+    white-space:nowrap; padding:8px 12px; font-size:12px; border-radius:6px; gap:6px;
+    display:none; align-items:center; box-shadow:0 2px 10px rgba(0,0,0,.15); }
+#_notifFlotante.exito { background:#e8f5e9; color:#2e7d32; border-left:3px solid #2e7d32; }
+#_notifFlotante.error { background:#fdecea; color:#c0392b; border-left:3px solid #c0392b; }
 </style>
 
 <script>
 const ICONS = <?= json_encode([
-    'package' => icono('package', '', 14),
+    'package'  => icono('package', '', 14),
+    'warning'  => icono('triangle-alert', '', 14),
+    'checkBig' => icono('circle-check-big', '', 14),
 ]) ?>;
 // [FIX-BORRADOR-PENDIENTE] Igual que nuevaVenta.php: si venimos de crear la venta con exito
 // (?ticket=<id> en la URL), limpiar cualquier borrador viejo ANTES de restaurarlo, para que
@@ -1295,6 +1390,7 @@ const prodsPend = <?= json_encode(array_values(array_map(function($p) use ($prom
         'codigo'        => $p['codigo'],
         'precio'        => $precioFinal,
         'precio_normal' => $precioNormal,
+        'precio_compra' => floatval($p['precio_compra'] ?? 0),
         'tiene_promo'   => $tienePromo,
         'promo_desc'    => $tienePromo ? ($promosPendById[$pid]['descripcion'] ?? '') : '',
         'stock'         => floatval($p['stock_actual']),
@@ -1506,10 +1602,17 @@ function confirmarAgregarProdPend() {
         return;
     }
 
-    const { producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc } = prodSelPendActual;
-    const existe = carritoP.find(i => i.producto_id === producto_id);
+    const { producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc, precio_compra, tipo } = prodSelPendActual;
+    // Incrementar solo una fila sin ajuste de daño; si todas están dañadas, crear fila nueva limpia
+    const existe = carritoP.find(i => i.producto_id === producto_id && !i.ajuste_activo);
     if (existe) { existe.cantidad += cantidad; }
-    else { carritoP.push({ producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc, cantidad }); }
+    else {
+        carritoP.push({
+            producto_id, nombre, precio, precio_normal, tiene_promo, promo_desc, cantidad,
+            precio_compra: parseFloat(precio_compra || 0), tipo,
+            ajuste_activo: false, precio_ajuste: null, nota_ajuste: ''
+        });
+    }
 
     // Ocultar panel sin reabrir el dropdown
     prodSelPendActual = null;
@@ -1517,6 +1620,7 @@ function confirmarAgregarProdPend() {
     document.getElementById('inputCantPend').value = 1;
     document.getElementById('buscarProductoPendiente').value = '';
     renderCarritoMini();
+    if (document.getElementById('chkAjusteDano').checked) actualizarSelectProductos();
 }
 
 function cancelarSelPend() {
@@ -1639,21 +1743,36 @@ function renderCarritoMini() {
             </div>`;
         }
         const cantStr = Number.isInteger(i.cantidad) ? i.cantidad : i.cantidad.toFixed(3).replace(/\.?0+$/, '');
-        const precioDisplay = i.tiene_promo
-            ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${i.precio_normal.toFixed(2)}</span> <span style="color:#2e7d32;font-weight:700;font-size:12px;">$${i.precio.toFixed(2)}</span>`
-            : `<span style="color:#14ace7;font-weight:600;font-size:12px;">$${i.precio.toFixed(2)}</span>`;
-        return `<div class="item-mini">
+        const tieneAjuste = i.ajuste_activo === true && i.precio_ajuste !== null;
+        const precioDisplay = tieneAjuste
+            ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${i.precio.toFixed(2)}</span> <span style="color:#c0392b;font-weight:700;font-size:12px;">$${parseFloat(i.precio_ajuste).toFixed(2)}</span>`
+            : (i.tiene_promo
+                ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">$${i.precio_normal.toFixed(2)}</span> <span style="color:#2e7d32;font-weight:700;font-size:12px;">$${i.precio.toFixed(2)}</span>`
+                : `<span style="color:#14ace7;font-weight:600;font-size:12px;">$${i.precio.toFixed(2)}</span>`);
+        const lineaAjuste = tieneAjuste ? (() => {
+            const pctDesc   = ((1 - i.precio_ajuste / i.precio) * 100).toFixed(1);
+            const montoDesc = (i.precio - i.precio_ajuste).toFixed(2);
+            return `<div style="width:100%;font-size:10px;color:#e65100;margin-top:2px;">${ICONS.warning} Ajuste por daño &nbsp;·&nbsp; -${pctDesc}% (-$${montoDesc}/u)</div>`;
+        })() : '';
+        return `<div class="item-mini"${tieneAjuste ? ' style="flex-wrap:wrap;"' : ''}>
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(i.nombre)}</span>
             <span style="white-space:nowrap;color:#555;font-size:12px;margin:0 6px;">×${cantStr}</span>
             ${precioDisplay}
             <button class="btn-quitar-mini" onclick="quitarProd(${idx})">×</button>
+            ${lineaAjuste}
         </div>`;
     }).join('');
     tot.style.display = 'flex';
     recalcularTotalPend();
 }
 
-function quitarProd(i) { carritoP.splice(i,1); renderCarritoMini(); }
+function quitarProd(i) {
+    if (idxAjusteActual === i) { idxAjusteActual = -1; document.getElementById('panelCamposAjuste').style.display = 'none'; }
+    else if (idxAjusteActual > i) { idxAjusteActual--; }
+    carritoP.splice(i,1);
+    renderCarritoMini();
+    if (document.getElementById('chkAjusteDano').checked) actualizarSelectProductos();
+}
 
 function recalcularTotalPend() {
     // Subtotal bruto: precio original (antes de promos)
@@ -1667,12 +1786,23 @@ function recalcularTotalPend() {
     }, 0);
     const subtotalConPromo = subtotalBruto - ahorroPromos;
 
+    // Ahorro por ajustes de daño (sobre el precio ya con promo, si aplica) — igual que
+    // recalcularTodo() de cajero_nuevaVenta.php. El descuento de cliente se calcula sobre lo
+    // que queda DESPUES del ajuste.
+    const ahorroAjustes = carritoP.reduce((a, i) => {
+        if (i.tipo !== 'paquete' && i.ajuste_activo && i.precio_ajuste !== null) {
+            return a + (i.cantidad * (i.precio - i.precio_ajuste));
+        }
+        return a;
+    }, 0);
+    const subtotalEfectivo = subtotalConPromo - ahorroAjustes;
+
     const aplicarDesc = document.getElementById('aplicarDescPend').checked;
     const descPorc = (clientePendActual && clientePendActual.descuento > 0 && aplicarDesc)
         ? Math.min(parseFloat(document.getElementById('inputDescClientePend').value || 0), clientePendActual.descuento)
         : 0;
-    const descCliente    = subtotalConPromo * (descPorc / 100);
-    const descuentoTotal = ahorroPromos + descCliente;
+    const descCliente    = subtotalEfectivo * (descPorc / 100);
+    const descuentoTotal = ahorroPromos + ahorroAjustes + descCliente;
 
     // Sin comisión terminal en ventas a domicilio
     const total = subtotalBruto - descuentoTotal;
@@ -1710,7 +1840,8 @@ function guardarEstadoPendiente() {
         descPorc:      document.getElementById('inputDescClientePend')?.value || '',
         montoEfectivo: document.getElementById('montoEfectivoPend')?.value || '',
         refTransf:     document.getElementById('refTransfPend')?.value || '',
-        notas:         document.getElementById('notasPend')?.value || ''
+        notas:         document.getElementById('notasPend')?.value || '',
+        ajusteDanoActivo: document.getElementById('chkAjusteDano')?.checked || false
     };
     localStorage.setItem('pendienteExtra', JSON.stringify(extra));
 }
@@ -1720,6 +1851,10 @@ function guardarEstadoPendiente() {
 function limpiarFormularioPendiente() {
     if (carritoP.length > 0 && !confirm('¿Reiniciar el formulario? Se perderán los productos agregados.')) return;
     carritoP = [];
+    idxAjusteActual = -1;
+    document.getElementById('chkAjusteDano').checked = false;
+    document.getElementById('panelAjusteDano').style.display = 'none';
+    document.getElementById('panelCamposAjuste').style.display = 'none';
     renderCarritoMini();
     quitarClientePend();
     document.getElementById('montoEfectivoPend').value = '';
@@ -1728,6 +1863,202 @@ function limpiarFormularioPendiente() {
     if (notas) notas.value = '';
     cambiarMetodoPend('Efectivo');
     document.getElementById('buscarProductoPendiente')?.focus();
+}
+
+/* ── Ajuste de precio por daño ── (portado de cajero_nuevaVenta.php: mismas reglas) */
+let idxAjusteActual = -1;
+
+// Aviso flotante (mismo que usa cajero_nuevaVenta.php).
+function mostrarNotifTemporal(mensajeHtml, tipo = 'exito', duracionMs = 4000) {
+    let notif = document.getElementById('_notifFlotante');
+    if (!notif) {
+        notif = document.createElement('div');
+        notif.id = '_notifFlotante';
+        document.body.appendChild(notif);
+    }
+    notif.className = tipo === 'error' ? 'error' : 'exito';
+    notif.innerHTML = mensajeHtml;
+    notif.style.display = 'flex';
+    clearTimeout(notif._hideTimer);
+    notif._hideTimer = setTimeout(() => { notif.style.display = 'none'; }, duracionMs);
+}
+
+// Tipo de venta (Unidad/Suelto) de una linea del carrito. Los borradores guardados antes de
+// esta funcion no traen "tipo" en la linea, asi que se completa desde el catalogo cargado.
+function tipoItemPend(item) {
+    if (item.tipo && item.tipo !== 'paquete') return item.tipo;
+    const p = prodsPend.find(x => x.producto_id === item.producto_id);
+    return p ? p.tipo : 'Unidad';
+}
+
+function togglePanelAjuste(activo) {
+    document.getElementById('panelAjusteDano').style.display = activo ? 'block' : 'none';
+    if (!activo) {
+        // Si se desactiva el checkbox, quitar ajustes de todos los productos
+        carritoP.forEach(item => { item.ajuste_activo = false; item.precio_ajuste = null; item.nota_ajuste = ''; item.cant_danada = undefined; });
+        resetPanelAjuste();
+        renderCarritoMini();
+    } else {
+        actualizarSelectProductos();
+    }
+}
+
+function resetPanelAjuste() {
+    // Solo limpia la UI del panel — no toca ajuste_activo de ningún item del carrito
+    idxAjusteActual = -1;
+    document.getElementById('panelCamposAjuste').style.display = 'none';
+    document.getElementById('selProductoAjuste').value         = '';
+    document.getElementById('inputPrecioAjuste').value         = '';
+    document.getElementById('inputPctAjuste').value            = '';
+    document.getElementById('inputCantAjuste').value           = '';
+    document.getElementById('textareaNotaAjuste').value        = '';
+}
+
+function actualizarSelectProductos() {
+    const sel = document.getElementById('selProductoAjuste');
+    const idx = idxAjusteActual;
+    sel.innerHTML = '<option value="">— Elige un producto —</option>' +
+        carritoP.map((item, i) => item.tipo !== 'paquete'
+            ? `<option value="${i}" ${i===idx?'selected':''}>${esc(item.nombre)} — $${item.precio.toFixed(2)}</option>`
+            : '').join('');
+    if (idx >= 0) seleccionarProductoAjuste();
+}
+
+function seleccionarProductoAjuste() {
+    const sel = document.getElementById('selProductoAjuste');
+    const i   = parseInt(sel.value);
+    const panel = document.getElementById('panelCamposAjuste');
+    if (isNaN(i) || i < 0) { panel.style.display = 'none'; idxAjusteActual = -1; return; }
+    idxAjusteActual = i;
+    const item      = carritoP[i];
+    const esSuelto  = tipoItemPend(item) === 'Suelto';
+    panel.style.display = 'block';
+
+    // Info de precios
+    const minPrecio = item.precio_compra > 0 ? parseFloat(item.precio_compra) : 0;
+    document.getElementById('infoMinPrecio').textContent =
+        `Precio original: $${item.precio.toFixed(2)}${minPrecio > 0 ? ' · Mín. (precio compra): $' + minPrecio.toFixed(2) : ''}`;
+
+    // Configurar input de cantidad
+    const inpCant = document.getElementById('inputCantAjuste');
+    inpCant.step  = esSuelto ? '0.001' : '1';
+    inpCant.min   = esSuelto ? '0.001' : '1';
+    inpCant.max   = item.cantidad;
+
+    // Cargar valores existentes si ya tiene ajuste
+    if (item.ajuste_activo && item.precio_ajuste !== null) {
+        document.getElementById('inputPrecioAjuste').value = item.precio_ajuste.toFixed(2);
+        const pct = ((1 - item.precio_ajuste / item.precio) * 100).toFixed(1);
+        document.getElementById('inputPctAjuste').value    = pct;
+        inpCant.value = item.cant_danada !== undefined ? item.cant_danada : item.cantidad;
+    } else {
+        document.getElementById('inputPrecioAjuste').value = '';
+        document.getElementById('inputPctAjuste').value    = '';
+        inpCant.value = esSuelto ? '0.001' : '1';
+    }
+    document.getElementById('textareaNotaAjuste').value = item.nota_ajuste || '';
+}
+
+function ajustePctCambia(val) {
+    if (idxAjusteActual < 0) return;
+    const item = carritoP[idxAjusteActual];
+    let pct = parseFloat(val);
+    if (isNaN(pct) || val === '') { document.getElementById('inputPrecioAjuste').value = ''; return; }
+    pct = Math.max(0, Math.min(100, pct));
+    const nuevo = parseFloat((item.precio * (1 - pct / 100)).toFixed(2));
+    document.getElementById('inputPrecioAjuste').value = nuevo.toFixed(2);
+    validarMinPrecio(nuevo, item);
+}
+
+function ajustePrecioCambia(val) {
+    if (idxAjusteActual < 0) return;
+    const item = carritoP[idxAjusteActual];
+    const nuevo = parseFloat(val);
+    if (isNaN(nuevo) || val === '') { document.getElementById('inputPctAjuste').value = ''; return; }
+    const pct = Math.max(0, ((1 - nuevo / item.precio) * 100));
+    document.getElementById('inputPctAjuste').value = pct.toFixed(1);
+    validarMinPrecio(nuevo, item);
+}
+
+function validarMinPrecio(nuevo, item) {
+    const minPrecio = item.precio_compra > 0 ? parseFloat(item.precio_compra) : 0;
+    const inp = document.getElementById('inputPrecioAjuste');
+    inp.style.borderColor = (minPrecio > 0 && nuevo < minPrecio) ? '#c0392b' : '#ddd';
+}
+
+function actualizarNotaAjuste(val) {
+    if (idxAjusteActual < 0) return;
+    carritoP[idxAjusteActual].nota_ajuste = val.trim();
+}
+
+function aplicarAjuste() {
+    if (idxAjusteActual < 0) { alert('Selecciona un producto primero.'); return; }
+    const item      = carritoP[idxAjusteActual];
+    const nuevo     = parseFloat(document.getElementById('inputPrecioAjuste').value);
+    const nota      = document.getElementById('textareaNotaAjuste').value.trim();
+    const minPrecio = item.precio_compra > 0 ? parseFloat(item.precio_compra) : 0;
+    const esSuelto  = tipoItemPend(item) === 'Suelto';
+    let cantDanada  = esSuelto
+        ? parseFloat(document.getElementById('inputCantAjuste').value)
+        : parseInt(document.getElementById('inputCantAjuste').value);
+
+    if (isNaN(nuevo) || nuevo <= 0)       { alert('Ingresa un precio válido.'); return; }
+    if (nuevo > item.precio)               { alert(`El precio ajustado no puede ser mayor al precio original ($${item.precio.toFixed(2)}).`); return; }
+    if (minPrecio > 0 && nuevo < minPrecio){ alert(`El precio ajustado ($${nuevo.toFixed(2)}) no puede ser menor al precio de compra ($${minPrecio.toFixed(2)}).`); return; }
+    if (!nota)                             { alert('La nota es obligatoria. Escribe el motivo del ajuste.'); document.getElementById('textareaNotaAjuste').focus(); return; }
+    if (isNaN(cantDanada) || cantDanada <= 0) { alert('Ingresa una cantidad dañada válida.'); return; }
+    if (cantDanada > item.cantidad)        { alert(`La cantidad dañada (${cantDanada}) no puede ser mayor a la cantidad en el carrito (${item.cantidad}).`); return; }
+
+    const cantRestante = parseFloat((item.cantidad - cantDanada).toFixed(3));
+
+    if (cantRestante > 0.0001) {
+        // Dividir en dos items: dañados (con ajuste) + originales (sin ajuste)
+        // Item original queda con cantidad restante, sin ajuste
+        carritoP[idxAjusteActual] = {
+            ...item,
+            cantidad:      cantRestante,
+            ajuste_activo: false,
+            precio_ajuste: null,
+            nota_ajuste:   '',
+            cant_danada:   undefined
+        };
+        // Insertar nuevo item con la cantidad dañada justo después
+        const itemDanado = {
+            ...item,
+            cantidad:      cantDanada,
+            ajuste_activo: true,
+            precio_ajuste: nuevo,
+            nota_ajuste:   nota,
+            cant_danada:   cantDanada
+        };
+        carritoP.splice(idxAjusteActual + 1, 0, itemDanado);
+        idxAjusteActual = idxAjusteActual + 1;
+    } else {
+        // Toda la cantidad está dañada
+        item.ajuste_activo = true;
+        item.precio_ajuste = nuevo;
+        item.nota_ajuste   = nota;
+        item.cant_danada   = cantDanada;
+    }
+
+    renderCarritoMini();
+    actualizarSelectProductos();
+    mostrarNotifTemporal(`${ICONS.checkBig} Ajuste aplicado: ${esc(item.nombre)} × ${cantDanada} → $${nuevo.toFixed(2)}`, 'exito');
+}
+
+function quitarAjusteProducto() {
+    if (idxAjusteActual < 0) return;
+    const item = carritoP[idxAjusteActual];
+    item.ajuste_activo = false;
+    item.precio_ajuste = null;
+    item.nota_ajuste   = '';
+    item.cant_danada   = undefined;
+    document.getElementById('inputPrecioAjuste').value  = '';
+    document.getElementById('inputPctAjuste').value     = '';
+    document.getElementById('inputCantAjuste').value    = '';
+    document.getElementById('textareaNotaAjuste').value = '';
+    renderCarritoMini();
+    actualizarSelectProductos();
 }
 
 /* ── Búsqueda de clientes ── */
@@ -1950,11 +2281,17 @@ function prepararPendiente() {
                 });
             }
         } else {
+            const tieneAjuste = i.ajuste_activo === true && i.precio_ajuste !== null;
+            if (tieneAjuste && !i.nota_ajuste) {
+                alert(`"${i.nombre}": la nota del ajuste de precio es obligatoria.`);
+                return false;
+            }
             itemsExpandidos.push({
                 producto_id:   i.producto_id,
                 cantidad:      i.cantidad,
-                precio:        i.precio,
+                precio:        tieneAjuste ? i.precio_ajuste : i.precio,
                 precio_normal: i.precio_normal ?? i.precio,
+                nota_ajuste:   tieneAjuste ? (i.nota_ajuste || '') : '',
             });
         }
     }
@@ -2072,19 +2409,29 @@ function generarTicketHTML(venta) {
 
     html += `<div class="t-linea"></div>`;
 
-    if (parseFloat(venta.descuento) > 0) {
+    // [FEATURE-AJUSTE-DANO-PENDIENTE] (igual que cajero_nuevaVenta.php) ventas.descuento mezcla
+    // el ajuste por daño (venta_productos.descuento, ya guardado por linea) con el descuento de
+    // cliente. El ajuste es la suma de las lineas; lo que sobra de ventas.descuento es el
+    // descuento de cliente. En ventas anteriores a esta funcion el ajuste suma 0 y todo el
+    // descuento es de cliente, igual que se mostraba antes.
+    const ajusteMontoTicket  = Math.round(productos.reduce((s, p) => s + (parseFloat(p.descuento) || 0), 0) * 100) / 100;
+    const clienteMontoTicket = Math.max(0, Math.round(((parseFloat(venta.descuento) || 0) - ajusteMontoTicket) * 100) / 100);
+    if (ajusteMontoTicket + clienteMontoTicket > 0) {
         html += `<div class="t-fila"><span>Subtotal</span><span>$${fmt(venta.subtotal)}</span></div>`;
     }
     if (parseFloat(venta.comision_terminal) > 0) {
         html += `<div class="t-fila"><span>Comisión terminal</span><span>$${fmt(venta.comision_terminal)}</span></div>`;
     }
-    if (parseFloat(venta.descuento) > 0) {
-        // Descuento de cliente: aplica igual sin importar el método de pago. venta.descuento
-        // aquí es solo el descuento de cliente (promos/ajustes ya van en el precio del producto).
-        const pctDescClienteTicket = (parseFloat(venta.subtotal) || 0) > 0
-            ? (parseFloat(venta.descuento) / parseFloat(venta.subtotal) * 100) : 0;
-        const etiquetaDescTicket = pctDescClienteTicket > 0 ? `Descuento cliente (${pctDescClienteTicket.toFixed(1)}%)` : 'Ahorraste';
-        html += `<div class="t-fila" style="font-size:11px;"><span>${etiquetaDescTicket}</span><span>-$${fmt(venta.descuento)}</span></div>`;
+    if (ajusteMontoTicket > 0) {
+        html += `<div class="t-fila" style="font-size:11px;"><span>Ajuste de precio</span><span>-$${ajusteMontoTicket.toFixed(2)}</span></div>`;
+    }
+    if (clienteMontoTicket > 0) {
+        // Base del % = lo que ya trae los ajustes descontados (así se calculó el tope de
+        // descuento_fijo del cliente en el servidor: sobre $sumaItems, no sobre el bruto).
+        const baseClienteTicket    = (parseFloat(venta.subtotal) || 0) - ajusteMontoTicket;
+        const pctDescClienteTicket = baseClienteTicket > 0 ? (clienteMontoTicket / baseClienteTicket * 100) : 0;
+        const etiquetaDescTicket   = pctDescClienteTicket > 0 ? `Descuento cliente (${pctDescClienteTicket.toFixed(1)}%)` : 'Descuento cliente';
+        html += `<div class="t-fila" style="font-size:11px;"><span>${etiquetaDescTicket}</span><span>-$${clienteMontoTicket.toFixed(2)}</span></div>`;
     }
 
     html += `
@@ -2220,6 +2567,21 @@ function imprimirTicketPend() {
     if (extra.montoEfectivo) document.getElementById('montoEfectivoPend').value = extra.montoEfectivo;
     if (extra.refTransf) document.getElementById('refTransfPend').value = extra.refTransf;
     if (extra.notas) document.getElementById('notasPend').value = extra.notas;
+
+    // [FEATURE-AJUSTE-DANO-PENDIENTE] Reactivar el panel de ajuste por daño si estaba abierto
+    // (los ajustes ya aplicados viajan dentro de cada linea del carrito guardado).
+    if (extra.ajusteDanoActivo) {
+        const chkDano = document.getElementById('chkAjusteDano');
+        chkDano.checked = true;
+        // Forzar repintado del checkbox restaurado (mismo truco que cajero_nuevaVenta.php).
+        const displayOriginal = chkDano.style.display;
+        chkDano.style.display = 'none';
+        void chkDano.offsetHeight;
+        chkDano.style.display = displayOriginal;
+        const idxDanado = carritoP.findIndex(item => item.ajuste_activo);
+        if (idxDanado >= 0) idxAjusteActual = idxDanado;
+        togglePanelAjuste(true);
+    }
 
     recalcularTotalPend();
 })();

@@ -76,13 +76,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($telefono !== '' && !preg_match('/^\d{10}$/', $telefono))
         $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
-    if ($numero_cuenta !== '' && !preg_match('/^\d{1,10}$/', $numero_cuenta))
-        $errores[] = 'El número de cuenta debe contener solo dígitos (máximo 10).';
+    if ($numero_cuenta !== '' && !preg_match('/^\d{1,15}$/', $numero_cuenta))
+        $errores[] = 'El número de cuenta debe contener solo dígitos (máximo 15).';
     if ($clabe_interbancaria && strlen($clabe_interbancaria) !== 18)
         $errores[] = 'La CLABE interbancaria debe tener exactamente 18 dígitos.';
     // [FEATURE-DATOS-FACTURACION 2026-09-21] mismas validaciones que los datos bancarios normales.
-    if ($numero_cuenta_fact !== '' && !preg_match('/^\d{1,10}$/', $numero_cuenta_fact))
-        $errores[] = 'El número de cuenta de facturación debe contener solo dígitos (máximo 10).';
+    if ($numero_cuenta_fact !== '' && !preg_match('/^\d{1,15}$/', $numero_cuenta_fact))
+        $errores[] = 'El número de cuenta de facturación debe contener solo dígitos (máximo 15).';
     if ($clabe_interbancaria_fact && strlen($clabe_interbancaria_fact) !== 18)
         $errores[] = 'La CLABE interbancaria de facturación debe tener exactamente 18 dígitos.';
     // [FIX-MEDIO-A-13] El rango 0-100 solo se validaba con min/max de HTML5 (se salta con
@@ -407,11 +407,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <label>Número de cuenta</label>
                             <input type="text" name="numero_cuenta"
                                 value="<?= htmlspecialchars(is_scalar($_POST['numero_cuenta'] ?? null) ? $_POST['numero_cuenta'] : ($editando['numero_cuenta'] ?? '')) ?>"
-                                placeholder="10 dígitos"
-                                maxlength="10"
+                                placeholder="Hasta 15 dígitos"
+                                maxlength="15"
                                 inputmode="numeric"
-                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"
-                                title="Solo dígitos, máximo 10">
+                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,15)"
+                                title="Solo dígitos, máximo 15">
                         </div>
                         <div class="form-group">
                             <label>CLABE interbancaria</label>
@@ -459,11 +459,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <label>Número de cuenta</label>
                             <input type="text" name="numero_cuenta_fact"
                                 value="<?= htmlspecialchars(is_scalar($_POST['numero_cuenta_fact'] ?? null) ? $_POST['numero_cuenta_fact'] : ($editando['numero_cuenta_fact'] ?? '')) ?>"
-                                placeholder="10 dígitos"
-                                maxlength="10"
+                                placeholder="Hasta 15 dígitos"
+                                maxlength="15"
                                 inputmode="numeric"
-                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,10)"
-                                title="Solo dígitos, máximo 10">
+                                oninput="this.value=this.value.replace(/\D/g,'').slice(0,15)"
+                                title="Solo dígitos, máximo 15">
                         </div>
                         <div class="form-group">
                             <label>CLABE interbancaria</label>

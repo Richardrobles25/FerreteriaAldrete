@@ -73,6 +73,23 @@ function exportarPDF(
         $nombreArchivo = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $titulo)) . '_' . date('Y-m-d') . '.pdf';
     }
 
+    // [FIX-PDF-MEMORIA] mPDF arma TODA la tabla en memoria antes de paginar: un catalogo de miles
+    // de productos (ej. 2,700+ filas) agotaba el memory_limit de PHP (128M por defecto) con
+    // "Allowed memory size exhausted ... Tag/Td.php". Dos medidas, ambas dentro de este unico
+    // helper por el que pasan TODOS los PDF del sistema: (1) mas memoria y tiempo solo para esta
+    // peticion, sin tocar el php.ini, y (2) $mpdf->packTableData abajo, que
+    // reducen mucho lo que mPDF guarda por cada celda.
+    $limiteActual = ini_get('memory_limit');
+    if ($limiteActual !== '-1') {
+        $bytesActual = (int)$limiteActual;
+        $unidad = strtoupper(substr(trim($limiteActual), -1));
+        if ($unidad === 'G') $bytesActual *= 1073741824;
+        elseif ($unidad === 'M') $bytesActual *= 1048576;
+        elseif ($unidad === 'K') $bytesActual *= 1024;
+        if ($bytesActual < 1073741824) @ini_set('memory_limit', '1024M');
+    }
+    @set_time_limit(300);
+
     $tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'mpdf';
     if (!is_dir($tmpDir)) @mkdir($tmpDir, 0777, true);
 
@@ -84,6 +101,7 @@ function exportarPDF(
         'margin_right' => 12,
         'tempDir'      => $tmpDir,
     ]);
+    $mpdf->packTableData = true; // guarda los datos de celdas de forma compacta (menos memoria)
 
     // Marca de agua: tamaño moderado, centrada
     if (file_exists(LOGO_PATH)) {
@@ -185,20 +203,34 @@ function exportarPDF(
     }
     $html .= "</tr></thead><tbody>";
 
+    // [FIX-PDF-MEMORIA] mPDF rechaza un solo WriteHTML() mayor a pcre.backtrack_limit (1,000,000
+    // de caracteres: "HTML code size is larger than pcre.backtrack_limit") -- un catalogo de
+    // miles de productos lo rebasa aunque ya alcance la memoria. Se manda el HTML por partes:
+    // primero titulo/estilos/encabezado de la tabla, luego las filas en bloques chicos, y al
+    // final el cierre de la tabla (mPDF conserva la tabla abierta entre llamadas y repite el
+    // <thead> en cada pagina).
+    $mpdf->WriteHTML($html);
+    $html   = '';
+    $bloque = '';
+    $nFilas = 0;
     foreach ($filas as $i => $fila) {
         $cls = ($i % 2 === 1) ? " class='alt'" : "";
-        $html .= "<tr$cls>";
+        $bloque .= "<tr$cls>";
         foreach ($fila as $celda) {
-            $html .= "<td>" . htmlspecialchars(limpiarBOM((string)$celda)) . "</td>";
+            $bloque .= "<td>" . htmlspecialchars(limpiarBOM((string)$celda)) . "</td>";
         }
-        $html .= "</tr>";
+        $bloque .= "</tr>";
+        if (++$nFilas % 100 === 0) {
+            $mpdf->WriteHTML($bloque);
+            $bloque = '';
+        }
     }
     if (empty($filas)) {
-        $html .= "<tr><td colspan='" . count($columnas) . "' style='text-align:center;color:#aaa;padding:20px;'>Sin datos</td></tr>";
+        $bloque .= "<tr><td colspan='" . count($columnas) . "' style='text-align:center;color:#aaa;padding:20px;'>Sin datos</td></tr>";
     }
-    $html .= "</tbody></table>";
+    $bloque .= "</tbody></table>";
 
-    $mpdf->WriteHTML($html);
+    $mpdf->WriteHTML($bloque);
     $mpdf->Output($nombreArchivo, 'D');
     exit();
 }

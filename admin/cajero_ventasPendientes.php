@@ -855,6 +855,7 @@ if (!$cajaActualId) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ventas a Domicilio — Ferretería Aldrete</title>
+<link rel="stylesheet" href="../includes/ticket_impresion.css" media="print">
 </head>
 <body>
 <style>
@@ -2448,7 +2449,7 @@ function generarTicketHTML(venta) {
     let html = '';
     if (datosTicket.ticket_logo) {
         const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
-        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="height:24mm;width:auto;max-width:70%;object-fit:contain;"></div>`;
     }
     html += `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
 
@@ -2476,11 +2477,12 @@ function generarTicketHTML(venta) {
     // [FEATURE-DOMICILIO-ENTREGA] Prioridad al campo "Dirección / Notas de entrega" capturado al
     // crear la venta a domicilio (ventas.notas): es a donde realmente se va a entregar. Solo si
     // quedó vacío se usa el domicilio registrado del cliente (clientes.direccion).
+    // [CAMBIO 2026-10-05] Ya NO se jala la direccion de la base de datos: se imprime solo lo capturado en
+    // "Dirección / Notas de entrega". El renglon "Domicilio:" SIEMPRE sale; si el campo quedo vacio se
+    // imprime la etiqueta sin nada despues (para escribirlo a mano).
     const _domEntrega = String(venta.notas || '').split('__META_VENTA__')[0].trim();
-    const _domTicket  = _domEntrega !== '' ? _domEntrega : String(venta.dir_cliente || '').trim();
-    if (_domTicket !== '') {
-        html += `<div style="margin-top:2px;white-space:normal;word-break:break-word;"><strong>Domicilio:</strong> ${esc(_domTicket)}</div>`;
-    }
+    const _domTicket  = _domEntrega;
+    html += `<div style="margin-top:2px;white-space:normal;word-break:break-word;"><strong>Domicilio:</strong> ${esc(_domTicket)}</div>`;
 
     html += `
         <div class="t-linea"></div>

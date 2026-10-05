@@ -358,6 +358,7 @@ $sucursalTicket = $stmtSuc->fetch(PDO::FETCH_ASSOC);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Historial de Ventas — Ferretería Aldrete</title>
+<link rel="stylesheet" href="../includes/ticket_impresion.css" media="print">
 </head>
 <body>
 <style>
@@ -1372,7 +1373,7 @@ function generarTicketHTML(venta) {
     let html = '';
     if (datosTicket.ticket_logo) {
         const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
-        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${datosTicket.ticket_logo}" style="height:24mm;width:auto;max-width:70%;object-fit:contain;"></div>`;
     }
     html += `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
 

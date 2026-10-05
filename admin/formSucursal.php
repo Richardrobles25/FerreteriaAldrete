@@ -717,9 +717,9 @@ function renderPreview(metodo) {
     const logoNuevoSrc = document.getElementById('logoNuevoImg').src;
     const logoActualEl = document.querySelector('.logo-preview img');
     if (logoNuevoSrc && document.getElementById('logoNuevoPreview').style.display !== 'none') {
-        html += `<div style="text-align:center;margin-bottom:6px;"><img src="${logoNuevoSrc}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+        html += `<div style="text-align:center;margin-bottom:6px;"><img src="${logoNuevoSrc}" style="height:24mm;width:auto;max-width:70%;object-fit:contain;"></div>`;
     } else if (logoActualEl && !document.getElementById('eliminarLogo')?.checked) {
-        html += `<div style="text-align:center;margin-bottom:6px;"><img src="${logoActualEl.src}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+        html += `<div style="text-align:center;margin-bottom:6px;"><img src="${logoActualEl.src}" style="height:24mm;width:auto;max-width:70%;object-fit:contain;"></div>`;
     }
 
     // Encabezado
@@ -813,13 +813,14 @@ function imprimirPreview() {
     const doc = iframe.contentWindow.document;
     doc.open();
     doc.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<link rel="stylesheet" href="../includes/ticket_impresion.css" media="print">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Courier New',monospace; font-size:${fontSize}px; width:${anchoMm}mm; padding:8px; }
 table { width:100%; border-collapse:collapse; }
 td { padding:1px 0; }
 @media print { @page { margin:0; size:${anchoMm}mm auto; } }
-</style></head><body>${contenido}</body></html>`);
+</style></head><body><div id="ticketImprimir">${contenido}</div></body></html>`);
     doc.close();
 
     iframe.onload = function() {

@@ -1,0 +1,49 @@
+/*
+ * ticket_impresion.css — hace que los tickets impresos (impresora termica) salgan mas oscuros y legibles.
+ *
+ * Problema: una impresora termica no puede imprimir grises ni trazos finos. El ticket usaba una fuente delgada
+ * (Courier New) y varios textos en gris (#aaa, #555, #666) o de 10px (precio original tachado, notas, "Conserve
+ * su ticket"...): en papel salian muy tenues, "como si se acabara la tinta". Aqui, SOLO al imprimir:
+ *   - todo el texto en negro puro (nada de grises),
+ *   - negritas y un contorno minimo para engrosar el trazo,
+ *   - tamaño minimo de 11px,
+ *   - lineas separadoras mas gruesas.
+ * Se usa !important porque los tickets se arman con estilos en linea (style="color:#aaa;font-size:10px").
+ */
+@media print {
+    #ticketImprimir,
+    #ticketImprimir * {
+        color: #000 !important;
+        font-weight: 700 !important;
+        -webkit-text-stroke: 0.25px #000;
+        text-shadow: none !important;
+        opacity: 1 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    /* Textos chicos del ticket (notas, precio original tachado, pie): minimo 11px */
+    #ticketImprimir [style*="font-size:9px"],
+    #ticketImprimir [style*="font-size: 9px"],
+    #ticketImprimir [style*="font-size:10px"],
+    #ticketImprimir [style*="font-size: 10px"] {
+        font-size: 11px !important;
+    }
+    /* Lineas separadoras mas gruesas y negras */
+    #ticketImprimir .t-linea {
+        border-top: 2px dashed #000 !important;
+    }
+    /* Lineas para firmar / observaciones */
+    #ticketImprimir [style*="border-top:1px solid"] {
+        border-top: 2px solid #000 !important;
+    }
+    /* Logo: mas grande (antes max 100px x 50px en linea) y con mas contraste para que la termica lo pinte bien.
+       Alto fijo de 24mm; el ancho se ajusta solo (hasta 70% del ticket) y la imagen no se deforma. */
+    #ticketImprimir img {
+        height: 24mm !important;
+        width: auto !important;
+        max-width: 70% !important;
+        max-height: none !important;
+        object-fit: contain !important;
+        filter: grayscale(1) contrast(1.25);
+    }
+}

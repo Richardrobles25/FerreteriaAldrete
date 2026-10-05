@@ -54,18 +54,6 @@ $stmtCajas = $pdo->query("
 ");
 $cajasAbiertas = $stmtCajas->fetchAll(PDO::FETCH_ASSOC);
 
-// Stock bajo global
-$stmtStock = $pdo->query("
-    SELECT p.nombre_producto, ss.stock_actual, ss.stock_minimo, s.nombre AS sucursal
-    FROM productos p
-    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.activo = 1
-    JOIN sucursales s ON ss.sucursal_id = s.sucursal_id
-    WHERE p.activo = 1 AND ss.stock_actual <= ss.stock_minimo
-    ORDER BY (ss.stock_actual / NULLIF(ss.stock_minimo,0)) ASC
-    LIMIT 8
-");
-$stockBajo = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
-
 // Auto-marcar vencidos antes de consultar
 // [FIX-MORA-DIA-GRACIA 2026-09-12] (espejo de cajeroInventario/creditos.php) el cliente tiene
 // TODO el dia del corte para pagar sin marcarse Vencido -- antes "<= CURDATE()" lo marcaba
@@ -236,14 +224,8 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <!-- Alertas -->
-        <?php if (count($stockBajo) > 0 || $creditosVencidos['vencidos'] > 0 || $transfPend > 0): ?>
+        <?php if ($creditosVencidos['vencidos'] > 0 || $transfPend > 0): ?>
         <div class="alertas">
-            <?php if (count($stockBajo) > 0): ?>
-            <div class="alerta alerta-roja">
-                <span><?= icono('triangle-alert') ?> <strong><?= count($stockBajo) ?></strong> producto(s) con stock bajo</span>
-                <a href="inventario_productos.php?stock_bajo=1">Ver</a>
-            </div>
-            <?php endif; ?>
             <?php if ($creditosVencidos['vencidos'] > 0): ?>
             <div class="alerta alerta-amarilla">
                 <span><?= icono('credit-card') ?> <strong><?= $creditosVencidos['vencidos'] ?></strong> crédito(s) vencido(s) - $<?= number_format($creditosVencidos['monto_vencido'],0) ?></span>
@@ -312,7 +294,7 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
 
         <div class="grid-2">
             <!-- Ultimas ventas globales -->
-            <div class="tabla">
+            <div class="tabla" style="grid-column: 1 / -1;">
                 <div class="tabla-header">
                     <span>Ultimas ventas</span>
                     <a href="reporteVentas.php">Ver todas</a>
@@ -332,30 +314,6 @@ $ultimasVentas = $stmtUltVentas->fetchAll(PDO::FETCH_ASSOC);
                     <?php endforeach; ?>
                 <?php else: ?>
                     <div class="sin-datos">Sin ventas hoy.</div>
-                <?php endif; ?>
-            </div>
-
-            <!-- Stock bajo global -->
-            <div class="tabla">
-                <div class="tabla-header">
-                    <span>Stock bajo - todas las sucursales</span>
-                    <a href="inventario_productos.php?stock_bajo=1">Ver todo</a>
-                </div>
-                <?php if (count($stockBajo) > 0): ?>
-                    <?php foreach ($stockBajo as $p): ?>
-                    <div class="stock-bajo-item">
-                        <div>
-                            <div style="font-weight:500;color:#333;"><?= htmlspecialchars($p['nombre_producto']) ?></div>
-                            <div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($p['sucursal']) ?></div>
-                        </div>
-                        <div style="text-align:right;">
-                            <span style="color:#c0392b;font-weight:700;"><?= number_format($p['stock_actual'],2) ?></span>
-                            <span style="color:#aaa;font-size:11px;"> / min <?= number_format($p['stock_minimo'],2) ?></span>
-                        </div>
-                    </div>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <div class="sin-datos" style="color:#0899d3;">Todo el inventario en buen estado</div>
                 <?php endif; ?>
             </div>
         </div>

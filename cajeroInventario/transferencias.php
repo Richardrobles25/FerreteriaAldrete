@@ -699,6 +699,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Transferencias — Ferretería Aldrete</title>
+<link rel="stylesheet" href="../includes/ticket_impresion.css" media="print">
 </head>
 <body>
 <style>
@@ -1568,7 +1569,7 @@ function generarTicketEnvioHTML(d) {
     {
         const logoTicket = o.ticket_logo || 'logoIcono.png';
         const maxW = _ticketEnvioAncho >= 80 ? '140px' : '100px';
-        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${esc(logoTicket)}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${esc(logoTicket)}" style="height:24mm;width:auto;max-width:70%;object-fit:contain;"></div>`;
     }
     html += `<div class="t-centro t-bold t-grande">${esc(o.nombre || 'Ferretería Aldrete')}</div>`;
     if (o.datos_ticket) {

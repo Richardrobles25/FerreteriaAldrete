@@ -1838,5 +1838,6 @@ document.addEventListener('keydown', e => {
     cerrarModal();
 });
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

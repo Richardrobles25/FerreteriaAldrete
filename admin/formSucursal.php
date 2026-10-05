@@ -843,6 +843,7 @@ document.getElementById('inputClabeFact').addEventListener('input', function() {
     hint.style.color = n === 18 ? '#2e7d32' : n > 0 ? '#e65100' : '#aaa';
 });
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>
 

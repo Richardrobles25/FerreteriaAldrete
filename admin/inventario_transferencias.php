@@ -1182,7 +1182,8 @@ function limpiarFormularioTransf() {
 
 function buscarProducto() {
     const origenId = parseInt(document.getElementById('selOrigen').value) || 0;
-    const q = document.getElementById('busquedaProd').value.toLowerCase().trim();
+    const textoCrudo = document.getElementById('busquedaProd').value.trim();
+    let q = textoCrudo.toLowerCase();
     if (!origenId || !prodsBySucursal[origenId]) { hideSug(); return; }
 
     let prods = [...prodsBySucursal[origenId]].sort((a, b) => {
@@ -1190,23 +1191,32 @@ function buscarProducto() {
         return a.nombre.localeCompare(b.nombre);
     });
 
+    // [FEATURE-BUSQUEDA-CODIGO] "4*1": se busca por el codigo (1) y la cantidad (4) se precarga al elegir.
+    // Si el texto completo ya es un codigo exacto, no se interpreta como cantidad.
+    let cantRapida = null;
+    const rapido = BusquedaProductos.parsearCantidadPorCodigo(textoCrudo);
+    if (rapido && !BusquedaProductos.buscarExacto(prods, textoCrudo, p => p.codigo)) {
+        cantRapida = rapido.cantidad;
+        q = rapido.codigo.toLowerCase().trim();
+    }
+
     const filtered = q === ''
         ? prods
-        : prods.filter(p => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q));
+        : BusquedaProductos.ordenar(prods, q, p => p.codigo, p => p.nombre);   // [FEATURE-BUSQUEDA-CODIGO] codigo exacto primero
 
     document.getElementById('hintBajo').style.display = filtered.some(p => p.bajo) ? 'block' : 'none';
-    renderSug(filtered);
+    renderSug(filtered, cantRapida);
 }
 
-function renderSug(prods) {
+function renderSug(prods, cantRapida) {
     const div = document.getElementById('sugerencias');
     if (!prods.length) { hideSug(); return; }
-    div.innerHTML = prods.map(p => {
+    div.innerHTML = (cantRapida ? BusquedaProductos.htmlAvisoCantidad(cantRapida) : '') + prods.map(p => {
         const esSuelto = p.tipo_venta === 'Suelto';
         const stockFmt = esSuelto ? parseFloat(p.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(p.stock);
         const miStockFmt = esSuelto ? parseFloat(p.mi_stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(p.mi_stock);
         return `
-        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${escAtribJs(p.nombre)}', '${escAtribJs(p.codigo)}', ${p.stock}, ${p.mi_stock}, ${p.bajo}, '${p.tipo_venta||'Unidad'}')">
+        <div class="sug-item" onclick="seleccionarProd(${p.id}, '${escAtribJs(p.nombre)}', '${escAtribJs(p.codigo)}', ${p.stock}, ${p.mi_stock}, ${p.bajo}, '${p.tipo_venta||'Unidad'}'${cantRapida ? ', ' + cantRapida : ''})">
             <div>
                 <span class="sug-nombre">${esc(p.nombre)}</span>
                 <span class="sug-codigo">${esc(p.codigo)}</span>
@@ -1224,7 +1234,60 @@ function renderSug(prods) {
 
 function hideSug() { document.getElementById('sugerencias').style.display = 'none'; }
 
-function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta) {
+// [FEATURE-BUSQUEDA-CODIGO] Captura rapida con Enter en el buscador: "4*codigo" agrega 4 piezas de ese producto
+// a la lista (se SUMAN a lo que ya estuviera pedido); un codigo exacto solo elige el producto para capturar la
+// cantidad. Si hay un resultado resaltado con las flechas, Enter lo elige (lo maneja dropdown_keynav.js).
+function agregarRapidoTransf(p, cant) {
+    const esSuelto = p.tipo_venta === 'Suelto';
+    if (!esSuelto && !Number.isInteger(cant)) {
+        BusquedaProductos.aviso('Este producto no es granel: la cantidad debe ser un número entero.', true, 4000);
+        return;
+    }
+    cant = parseFloat(cant.toFixed(3));
+    const existe = itemsTransf.find(i => i.id === p.id);
+    const total  = parseFloat(((existe ? existe.cantidad : 0) + cant).toFixed(3));
+    const stock  = parseFloat(p.stock) || 0;
+    if (total > stock + 0.0005) {
+        const stockFmt = esSuelto ? parseFloat(stock.toFixed(3)) : Math.floor(stock);
+        BusquedaProductos.aviso('La sucursal origen solo tiene ' + stockFmt + ' disponible(s) de "' + p.nombre + '"' +
+            (existe ? ' (ya pediste ' + existe.cantidad + ').' : '.'), true, 5000);
+        return;
+    }
+    if (existe) { existe.cantidad = total; existe.tipo_venta = p.tipo_venta || 'Unidad'; }
+    else { itemsTransf.push({ id: p.id, nombre: p.nombre + ' (' + p.codigo + ')', cantidad: total, tipo_venta: p.tipo_venta || 'Unidad' }); }
+    prodSelId = null;
+    document.getElementById('busquedaProd').value = '';
+    document.getElementById('prodSeleccionado').style.display = 'none';
+    document.getElementById('hintBajo').style.display = 'none';
+    hideSug();
+    renderItems();
+    BusquedaProductos.aviso(cant + ' × ' + p.nombre + ' agregado' + (existe ? ' (total ' + total + ')' : ''), false, 2500);
+}
+
+document.getElementById('busquedaProd').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    if (BusquedaProductos.hayResaltado(document.getElementById('sugerencias'))) return;
+    const val = this.value.trim();
+    if (!val) return;
+    const origenId = parseInt(document.getElementById('selOrigen').value) || 0;
+    if (!origenId || !prodsBySucursal[origenId]) return;
+    const lista = prodsBySucursal[origenId];
+    const r = BusquedaProductos.resolverRapido(val, c => BusquedaProductos.buscarExacto(lista, c, p => p.codigo));
+    if (!r) return;                       // no es un codigo exacto ni cantidad*codigo: todo como siempre
+    e.preventDefault();
+    if (r.noExiste) {
+        BusquedaProductos.aviso('No existe ningún producto con el código "' + r.noExiste + '" en la sucursal origen.', true, 4000);
+        return;
+    }
+    const p = r.item;
+    if (!r.explicita) {                   // codigo exacto sin cantidad: se elige el producto y se captura la cantidad
+        seleccionarProd(p.id, p.nombre, p.codigo, p.stock, p.mi_stock, p.bajo, p.tipo_venta || 'Unidad');
+        return;
+    }
+    agregarRapidoTransf(p, r.cantidad);
+});
+
+function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta, cantidadRapida) {
     prodSelId    = id;
     prodSelTipo  = tipoVenta || 'Unidad';
     prodSelStock = parseFloat(stock) || 0;
@@ -1247,7 +1310,8 @@ function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta) {
     inpCant.min         = esSuelto ? '0.001' : '1';
     inpCant.inputMode   = esSuelto ? 'decimal' : 'numeric';
     inpCant.placeholder = esSuelto ? 'Cantidad (ej. 2.5)' : 'Cantidad (número entero)';
-    inpCant.value = '';
+    // [FEATURE-BUSQUEDA-CODIGO] cantidad pedida con "4*codigo": se precarga (agregarItem valida entero y stock)
+    inpCant.value = (cantidadRapida !== undefined && cantidadRapida !== null) ? cantidadRapida : '';
 
     document.getElementById('prodSeleccionado').style.display = 'block';
     inpCant.focus();
@@ -1655,6 +1719,7 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 </div>
 
+<script src="../includes/busqueda_productos.js"></script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>
 // [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
@@ -1664,5 +1729,6 @@ attachDropdownKeyNav(
     hideSug
 );
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

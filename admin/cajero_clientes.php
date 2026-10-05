@@ -581,6 +581,7 @@ function toggleCredito(checked) {
     document.getElementById('creditoCampos').classList.toggle('visible', checked);
 }
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>
 

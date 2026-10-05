@@ -491,5 +491,6 @@ function confirmarCierre() {
     return confirm('¿Confirmas el cierre de caja?');
 }
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

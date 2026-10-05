@@ -526,6 +526,10 @@ if (isset($_GET['catalogo_disponible'])) {
     $params = [$_SESSION['sucursal_id']];
     // [FIX-BUSCAR-ESPACIOS-DOBLES-SQL] (mismo fix que admin/inventario_productos.php)
     if ($busq) { $where .= " AND (REGEXP_REPLACE(p.nombre_producto, ' +', ' ') LIKE ? OR p.codigo LIKE ?)"; $busqNorm = preg_replace('/\s+/', ' ', $busq); $params[] = '%'.$busqNorm.'%'; $params[] = '%'.$busq.'%'; }
+    // [FEATURE-BUSQUEDA-CODIGO] El producto cuyo codigo es EXACTAMENTE lo escrito va primero, luego los codigos
+    // que empiezan con eso (antes solo se ordenaba por nombre y, con paginado/LIMIT, el codigo buscado podia
+    // quedar en otra pagina o fuera de la lista). $pdo->quote() escapa el texto; en el LIKE se escapan % y _.
+    $ordenCodigo = $busq !== '' ? "(p.codigo = " . $pdo->quote($busq) . ") DESC, (p.codigo LIKE " . $pdo->quote(addcslashes($busq, '%_\\') . '%') . ") DESC, " : '';
     $stmt = $pdo->prepare("
         SELECT p.producto_id, p.codigo, p.nombre_producto, p.precio_venta, p.precio_mayoreo,
                c.nombre AS categoria
@@ -533,7 +537,7 @@ if (isset($_GET['catalogo_disponible'])) {
         LEFT JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ?
         LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
         $where
-        ORDER BY p.nombre_producto ASC
+        ORDER BY {$ordenCodigo}p.nombre_producto ASC
         LIMIT 80
     ");
     $stmt->execute($params);
@@ -712,6 +716,9 @@ if ($categoria) { $where .= " AND p.categoria_id = ?"; $params[] = $categoria; }
 if ($stock_bajo) { $where .= " AND ss.stock_actual <= ss.stock_minimo"; }
 if ($ocultarStockBajo) { $where .= " AND ss.stock_actual > ss.stock_minimo"; }
 if ($busqueda !== '') { $where .= " AND (REGEXP_REPLACE(p.nombre_producto, ' +', ' ') LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$busquedaNorm.'%'; $params[] = '%'.$busqueda.'%'; }
+// [FEATURE-BUSQUEDA-CODIGO] Con texto de busqueda, el codigo exacto va primero y luego los que empiezan con eso
+// (ver includes/busqueda_productos.js); sin busqueda el orden de siempre. $pdo->quote() escapa el texto.
+$ordenCodigo = $busqueda !== '' ? "(p.codigo = " . $pdo->quote($busqueda) . ") DESC, (p.codigo LIKE " . $pdo->quote(addcslashes($busqueda, '%_\\') . '%') . ") DESC, " : '';
 
 $stmtTotal = $pdo->prepare("
     SELECT COUNT(*) FROM productos p
@@ -731,7 +738,7 @@ $stmt = $pdo->prepare("
     INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
     LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
     $where
-    ORDER BY ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC
+    ORDER BY {$ordenCodigo}ss.stock_actual <= ss.stock_minimo DESC, p.nombre_producto ASC
     LIMIT {$porPagina} OFFSET {$offset}
 ");
 $stmt->execute($params);
@@ -1542,5 +1549,6 @@ document.getElementById('modalCatalogo').addEventListener('click', function(e) {
 });
 </script>
 <script src="../includes/auto_filter.js"></script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

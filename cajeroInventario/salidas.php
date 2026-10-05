@@ -404,9 +404,8 @@ function filtrarProductos(q) {
     const drop = document.getElementById('dropProductos');
     if (!q.trim()) { drop.style.display = 'none'; return; }
     const norm = normalizar(q);
-    const matches = productosData.filter(function(p) {
-        return normalizar(p.nombre_producto).includes(norm) || normalizar(p.codigo).includes(norm);
-    }).slice(0, 25);
+    // [FEATURE-BUSQUEDA-CODIGO] ordenado por relevancia: codigo exacto primero (ver includes/busqueda_productos.js)
+    const matches = BusquedaProductos.ordenar(productosData, q, function(p) { return p.codigo; }, function(p) { return p.nombre_producto; }).slice(0, 25);
     if (!matches.length) {
         drop.innerHTML = '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>';
     } else {
@@ -493,6 +492,7 @@ document.querySelectorAll('.msg-flash').forEach(function(el) {
     }, 5000);
 });
 </script>
+<script src="../includes/busqueda_productos.js"></script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>
 // [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
@@ -502,6 +502,7 @@ attachDropdownKeyNav(
     function () { document.getElementById('dropProductos').style.display = 'none'; }
 );
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>
 

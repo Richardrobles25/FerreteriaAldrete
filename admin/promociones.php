@@ -39,9 +39,10 @@ if (isset($_GET['buscar_prods'])) {
                         WHERE ss2.producto_id = p.producto_id AND ss2.sucursal_id = s2.sucursal_id AND ss2.activo = 1
                     )
               )
-            ORDER BY p.nombre_producto ASC LIMIT 30
+            ORDER BY (p.codigo = ?) DESC, (p.codigo LIKE ?) DESC, p.nombre_producto ASC LIMIT 30
         ");
-        $stmt->execute([$like, $like]);
+        // [FEATURE-BUSQUEDA-CODIGO] el producto cuyo codigo es exactamente lo escrito va primero
+        $stmt->execute([$like, $like, $q, $q . '%']);
     } else {
         $sucursalId = intval($sucursalParam);
         if (!$sucursalId) { echo json_encode([]); exit(); }
@@ -51,9 +52,9 @@ if (isset($_GET['buscar_prods'])) {
             INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id AND ss.sucursal_id = ? AND ss.activo = 1
             WHERE p.activo = 1
               AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)
-            ORDER BY p.nombre_producto ASC LIMIT 30
+            ORDER BY (p.codigo = ?) DESC, (p.codigo LIKE ?) DESC, p.nombre_producto ASC LIMIT 30
         ");
-        $stmt->execute([$sucursalId, $like, $like]);
+        $stmt->execute([$sucursalId, $like, $like, $q, $q . '%']);
     }
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit();
@@ -746,5 +747,6 @@ attachDropdownKeyNav(
     function () { document.getElementById('sugProd').style.display = 'none'; }
 );
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

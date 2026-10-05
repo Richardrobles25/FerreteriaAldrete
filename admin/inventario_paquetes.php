@@ -516,6 +516,7 @@ let itemsPaquete = <?= json_encode(array_map(fn($p) => [
 
 const prodsCatalogo = <?= json_encode(array_values(array_map(fn($p) => [
     'producto_id'    => intval($p['producto_id']),
+    'codigo'         => $p['codigo'],
     'nombre_producto'=> $p['nombre_producto'],
     'precio_venta'   => floatval($p['precio_venta']),
     'precio_compra'  => floatval($p['precio_compra']),
@@ -527,14 +528,23 @@ let prodSelId = null, prodSelNombre = '', prodSelPrecio = 0, prodSelCosto = 0, p
 const prodsMap = {};
 prodsCatalogo.forEach(p => prodsMap[p.producto_id] = p);
 
+let _cantRapidaPaq = null;   // [FEATURE-BUSQUEDA-CODIGO] cantidad escrita como "4*codigo" (null = busqueda normal)
 function filtrarProductos(q) {
     const drop = document.getElementById('prodDropdown');
-    const term = q.trim().toLowerCase();
+    let term = q.trim().toLowerCase();
     if (!term) { drop.style.display = 'none'; return; }
-    const matches = prodsCatalogo.filter(p => p.nombre_producto.toLowerCase().includes(term)).slice(0, 25);
+    // [FEATURE-BUSQUEDA-CODIGO] antes solo buscaba por nombre; ahora tambien por codigo, con el codigo exacto primero.
+    // "4*codigo": se busca por el codigo y la cantidad se precarga al elegir el producto.
+    _cantRapidaPaq = null;
+    const rapido = BusquedaProductos.parsearCantidadPorCodigo(q);
+    if (rapido && !BusquedaProductos.buscarExacto(prodsCatalogo, q.trim(), p => p.codigo)) {
+        _cantRapidaPaq = rapido.cantidad;
+        term = rapido.codigo.toLowerCase();
+    }
+    const matches = BusquedaProductos.ordenar(prodsCatalogo, term, p => p.codigo, p => p.nombre_producto).slice(0, 25);
     if (!matches.length) { drop.style.display = 'none'; return; }
-    drop.innerHTML = matches.map(p =>
-        `<div class="prod-resultado" onmousedown="seleccionarProd(${p.producto_id})">${esc(p.nombre_producto)}</div>`
+    drop.innerHTML = (_cantRapidaPaq ? BusquedaProductos.htmlAvisoCantidad(_cantRapidaPaq) : '') + matches.map(p =>
+        `<div class="prod-resultado" onmousedown="seleccionarProd(${p.producto_id})">${esc(p.nombre_producto)} <span style="color:#aaa;font-size:11px;">· ${esc(p.codigo)}</span></div>`
     ).join('');
     drop.style.display = 'block';
 }
@@ -555,8 +565,40 @@ function seleccionarProd(id) {
     inpCant.step   = esSuelto ? '0.001' : '1';
     inpCant.min    = esSuelto ? '0.001' : '1';
     inpCant.value  = '';
+    // [FEATURE-BUSQUEDA-CODIGO] cantidad pedida con "4*codigo": se precarga (agregarProdPaquete la valida)
+    if (_cantRapidaPaq) { inpCant.value = _cantRapidaPaq; _cantRapidaPaq = null; }
     inpCant.focus();
 }
+
+// [FEATURE-BUSQUEDA-CODIGO] Captura rapida con Enter en el buscador: "4*codigo" agrega 4 piezas de ese producto
+// al paquete; un codigo exacto solo elige el producto para capturar la cantidad. Si hay un resultado resaltado
+// con las flechas, Enter lo elige (lo maneja dropdown_keynav.js).
+document.getElementById('buscarProd').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    if (BusquedaProductos.hayResaltado(document.getElementById('prodDropdown'))) return;
+    const val = this.value.trim();
+    if (!val) return;
+    const r = BusquedaProductos.resolverRapido(val, c => BusquedaProductos.buscarExacto(prodsCatalogo, c, p => p.codigo));
+    if (!r) return;                       // no es un codigo exacto ni cantidad*codigo: todo como siempre
+    e.preventDefault();
+    if (r.noExiste) {
+        BusquedaProductos.aviso('No existe ningún producto con el código "' + r.noExiste + '".', true, 4000);
+        return;
+    }
+    const p = r.item;
+    seleccionarProd(p.producto_id);
+    if (!r.explicita) return;             // codigo exacto sin cantidad: se elige el producto y se captura la cantidad
+    if (p.tipo_venta !== 'Suelto' && !Number.isInteger(r.cantidad)) {
+        BusquedaProductos.aviso('Este producto se maneja por pieza: la cantidad debe ser un número entero.', true, 4000);
+        document.getElementById('cantPaq').value = r.cantidad;
+        return;
+    }
+    document.getElementById('cantPaq').value = r.cantidad;
+    agregarProdPaquete();                 // si el producto ya estaba en el paquete pide confirmar el reemplazo
+    // Si se agrego (agregarProdPaquete limpia prodSelId), el cursor vuelve al buscador para capturar el siguiente
+    // codigo; seleccionarProd lo habia mandado a la cantidad. Si no se agrego, se queda ahi.
+    if (prodSelId === null) document.getElementById('buscarProd').focus();
+});
 
 document.addEventListener('click', function(e) {
     if (!e.target.closest('.buscar-prod-wrap')) {
@@ -730,6 +772,7 @@ function esc(str) {
 renderListaPaq();
 actualizarHintAhorro();
 </script>
+<script src="../includes/busqueda_productos.js"></script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>
 // [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
@@ -740,6 +783,7 @@ attachDropdownKeyNav(
     function () { document.getElementById('prodDropdown').style.display = 'none'; }
 );
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>
 

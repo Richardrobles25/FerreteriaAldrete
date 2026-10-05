@@ -1274,6 +1274,7 @@ function confirmarEliminarTodosClientes() {
 }
 </script>
 <script src="../includes/auto_filter.js"></script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>
 

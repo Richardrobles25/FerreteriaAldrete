@@ -752,6 +752,7 @@ function limpiarFormularioCompra() {
 }
 
 // ── Autocomplete de producto en compra ──────────────────────────────────────
+let _cantRapidaCompra = null;   // [FEATURE-BUSQUEDA-CODIGO] cantidad escrita como "4*codigo" (null = busqueda normal)
 function filtrarProductosCompra(q) {
     const drop = document.getElementById('dropProdCompra');
     if (!q.trim()) { drop.style.display = 'none'; return; }
@@ -760,17 +761,24 @@ function filtrarProductosCompra(q) {
     const provId = parseInt(document.getElementById('proveedorIdCompra').value, 10);
     if (!provId) { drop.style.display = 'none'; return; }
     const norm = normalizar(q);
-    const matches = productosData.filter(p =>
-        p.proveedor_ids.includes(provId) &&
-        (normalizar(p.nombre_producto).includes(norm) || normalizar(p.codigo).includes(norm))
-    ).slice(0, 25);
-    drop.innerHTML = matches.length
+    // [FEATURE-BUSQUEDA-CODIGO] ordenado por relevancia: codigo exacto primero (ver includes/busqueda_productos.js)
+    // "4*codigo": se busca por el codigo y la cantidad se precarga al elegir el producto.
+    const delProveedor = productosData.filter(p => p.proveedor_ids.includes(provId));
+    let qBusqueda = q;
+    _cantRapidaCompra = null;
+    const rapido = BusquedaProductos.parsearCantidadPorCodigo(q);
+    if (rapido && !BusquedaProductos.buscarExacto(delProveedor, q.trim(), p => p.codigo)) {
+        _cantRapidaCompra = rapido.cantidad;
+        qBusqueda = rapido.codigo;
+    }
+    const matches = BusquedaProductos.ordenar(delProveedor, qBusqueda, p => p.codigo, p => p.nombre_producto).slice(0, 25);
+    drop.innerHTML = (_cantRapidaCompra ? BusquedaProductos.htmlAvisoCantidad(_cantRapidaCompra) : '') + (matches.length
         ? matches.map(p =>
             '<div class="prod-drop-item" onclick="seleccionarProdCompra(' + p.producto_id + ')">'
             + '<div><strong>' + esc(p.nombre_producto) + '</strong><span style="color:#aaa;font-size:11px;"> · ' + esc(p.codigo) + '</span></div>'
             + '<span style="font-size:12px;color:#888;">$' + parseFloat(p.precio_compra || 0).toFixed(2) + '</span>'
             + '</div>').join('')
-        : '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>';
+        : '<div style="padding:10px 14px;color:#aaa;font-size:13px;">Sin resultados</div>');
     drop.style.display = 'block';
 }
 function seleccionarProdCompra(id) {
@@ -781,8 +789,43 @@ function seleccionarProdCompra(id) {
     document.getElementById('buscarProdCompra').value    = p.nombre_producto;
     document.getElementById('precioCompra').value        = p.precio_compra || '';
     document.getElementById('dropProdCompra').style.display = 'none';
+    // [FEATURE-BUSQUEDA-CODIGO] cantidad pedida con "4*codigo": se precarga (agregarProdCompra valida enteros)
+    if (_cantRapidaCompra) { document.getElementById('cantCompra').value = _cantRapidaCompra; _cantRapidaCompra = null; }
     document.getElementById('cantCompra').focus();
 }
+
+// [FEATURE-BUSQUEDA-CODIGO] Captura rapida con Enter en el buscador: "4*codigo" agrega 4 piezas de ese producto
+// a la compra (con el precio de compra que ya tiene); un codigo exacto solo elige el producto. Solo entre los
+// productos ligados al proveedor elegido. Si hay un resultado resaltado con las flechas, Enter lo elige.
+document.getElementById('buscarProdCompra').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    if (BusquedaProductos.hayResaltado(document.getElementById('dropProdCompra'))) return;
+    const val = this.value.trim();
+    if (!val) return;
+    const provId = parseInt(document.getElementById('proveedorIdCompra').value, 10);
+    if (!provId) return;
+    const lista = productosData.filter(p => p.proveedor_ids.includes(provId));
+    const r = BusquedaProductos.resolverRapido(val, c => BusquedaProductos.buscarExacto(lista, c, p => p.codigo));
+    if (!r) return;                       // no es un codigo exacto ni cantidad*codigo: todo como siempre
+    e.preventDefault();
+    if (r.noExiste) {
+        BusquedaProductos.aviso('No hay ningún producto con el código "' + r.noExiste + '" ligado a este proveedor.', true, 4000);
+        return;
+    }
+    const p = r.item;
+    seleccionarProdCompra(p.producto_id);
+    if (!r.explicita) return;             // codigo exacto sin cantidad: se elige el producto y se captura la cantidad
+    document.getElementById('cantCompra').value = r.cantidad;
+    if (parseFloat(document.getElementById('precioCompra').value) > 0) {
+        agregarProdCompra();              // valida enteros; si el producto ya estaba pide confirmar la suma
+        // Si se agrego (agregarProdCompra limpia prodCompraId), el cursor vuelve al buscador para capturar el
+        // siguiente codigo; seleccionarProdCompra lo habia mandado a la cantidad. Si no se agrego, se queda ahi.
+        if (!document.getElementById('prodCompraId').value) document.getElementById('buscarProdCompra').focus();
+    } else {
+        BusquedaProductos.aviso('Falta el precio de compra de "' + p.nombre_producto + '": captúralo y presiona +.', true, 4500);
+        document.getElementById('precioCompra').focus();
+    }
+});
 
 function calcularNuevosPrecios(prod, nuevoPrecioCompra) {
     const compraViejo   = parseFloat(prod.precio_compra || 0);
@@ -950,6 +993,7 @@ document.addEventListener('click', function(e) {
     if (extra && extra.notas) document.getElementById('notasCompra').value = extra.notas;
 })();
 </script>
+<script src="../includes/busqueda_productos.js"></script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>
 // [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
@@ -965,5 +1009,6 @@ attachDropdownKeyNav(
 );
 </script>
 <script src="../includes/auto_filter.js"></script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

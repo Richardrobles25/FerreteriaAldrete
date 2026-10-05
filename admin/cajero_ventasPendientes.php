@@ -670,8 +670,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // [FIX-ALTO-D1-03] Ver nota en cajero_nuevaVenta.php: guardar $sumaItems y
                 // $descuentoCliente (ya recalculados y acotados en el servidor) en vez del
                 // subtotal/descuento crudos del navegador.
-                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,0,?,?,?,0,?,'Pendiente',?,?)")
-                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], round($sumaItems + $sumaDescuentoAjustes, 2), round($descuentoCliente + $sumaDescuentoAjustes, 2), $total, $metodo_pago, $monto_efectivo, $cambio, $notas, $ref_transf]);
+                // [FEATURE-CREDITO-LIQUIDA-AL-CREAR] Una venta a domicilio A CREDITO no espera al
+                // repartidor (no hay dinero que traer de regreso), asi que nace ya liquidada: estado
+                // 'Completada' y su credito se crea aqui mismo, en la misma transaccion. El limite de
+                // credito y que haya cliente ya se validaron arriba (con FOR UPDATE sobre el cliente).
+                // Efectivo y Transferencia siguen quedando 'Pendiente' hasta que el repartidor regrese.
+                $esCreditoDirecto = ($metodo_pago === 'Credito' && $cliente_id);
+                $estadoNuevaVenta = $esCreditoDirecto ? 'Completada' : 'Pendiente';
+                $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,0,?,?,?,0,?,?,?,?)")
+                    ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], round($sumaItems + $sumaDescuentoAjustes, 2), round($descuentoCliente + $sumaDescuentoAjustes, 2), $total, $metodo_pago, $monto_efectivo, $cambio, $estadoNuevaVenta, $notas, $ref_transf]);
                 $venta_id = $pdo->lastInsertId();
 
                 // [FIX-STOCK-PENDIENTE-INMEDIATO] Antes el stock NO se descontaba al crear la
@@ -717,10 +724,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ->execute([$venta_id, $item['producto_id'], $cantidadItem, $precioOrig, $precioFinal, ($descuentoAjustePorIdx[$idxVP] ?? 0.0), $subtotalItem, $paqId, ($notaAjuste !== '' ? $notaAjuste : null)]);
                 }
 
+                if ($esCreditoDirecto) {
+                    // Mismo plazo que Nueva venta y que la liquidacion de siempre: 15 dias desde hoy.
+                    $fechaLimiteCredDirecto = date('Y-m-d', strtotime('+15 days'));
+                    $pdo->prepare("INSERT INTO creditos (cliente_id, venta_id, monto_total, saldo_pendiente, estado, fecha_limite) VALUES (?, ?, ?, ?, 'Activo', ?)")
+                        ->execute([$cliente_id, $venta_id, $total, $total, $fechaLimiteCredDirecto]);
+                }
+
                 $pdo->commit();
                 $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
                 // Pasar venta_id para auto-abrir el ticket de impresión al volver
-                header('Location: cajero_ventasPendientes.php?msg=creado&ticket=' . $venta_id);
+                header('Location: cajero_ventasPendientes.php?msg=' . ($esCreditoDirecto ? 'creado_credito' : 'creado') . '&ticket=' . $venta_id);
                 exit();
             } catch (Exception $e) {
                 $pdo->rollBack();
@@ -924,6 +938,7 @@ if (!$cajaActualId) {
                 // [AUTOFIX] BUG-06: Agregar todos los mensajes posibles con su clase correcta
                 $msgsExito = [
                     'creado'    => 'Venta a domicilio registrada.',
+                    'creado_credito' => 'Venta a domicilio a crédito registrada y liquidada: ya quedó en los créditos del cliente.',
                     'liquidado' => 'Venta liquidada correctamente.',
                     'cancelado' => 'Venta cancelada y stock devuelto.',
                 ];
@@ -1202,6 +1217,11 @@ if (!$cajaActualId) {
                         </select>
                     </div>
 
+                    <!-- [FEATURE-CREDITO-LIQUIDA-AL-CREAR] -->
+                    <div id="avisoCreditoPend" style="display:none;background:#e8f5e9;border:1px solid #c8e6c9;border-radius:6px;padding:8px 12px;margin-bottom:13px;font-size:12px;color:#2e7d32;">
+                        A crédito no se espera al repartidor: la venta queda <strong>liquidada</strong> al registrarla y se agrega a los créditos del cliente.
+                    </div>
+
                     <!-- Efectivo: monto a cobrar + cambio -->
                     <div id="camposEfectivoPend" style="display:none;background:#f0faf4;border:1px solid #c8e6c9;border-radius:6px;padding:10px 12px;margin-bottom:13px;font-size:13px;">
                         <!-- [AUTOFIX] Emoji eliminado del encabezado del panel de efectivo -->
@@ -1458,18 +1478,32 @@ function calcularStockComboPend(productos) {
 }
 
 /* ── Búsqueda de productos (+ paquetes) ── */
+// [FEATURE-BUSQUEDA-CODIGO] Cantidad pedida con la forma "4*codigo" mientras se busca (null = busqueda normal).
+let _busquedaCantidadPend = null;
+
 function filtrarProductosPendientes(q) {
     const drop = document.getElementById('dropdownProdsPend');
-    const qn = normalizar(q);
+    let qn = normalizar(q);
 
-    // Filtrar paquetes
+    // [FEATURE-BUSQUEDA-CODIGO] "4*1": los resultados se buscan por el codigo (1) y la cantidad (4) se
+    // precarga al elegir uno. Si el texto completo ya es un codigo exacto, no se interpreta como cantidad.
+    _busquedaCantidadPend = null;
+    const rapido = BusquedaProductos.parsearCantidadPorCodigo(q);
+    if (rapido && !BusquedaProductos.buscarExacto(prodsPend, q, p => p.codigo)
+               && !BusquedaProductos.buscarExacto(paqsData, q, p => p.codigo)) {
+        _busquedaCantidadPend = rapido.cantidad;
+        qn = normalizar(rapido.codigo);
+    }
+    const cantArgPend = _busquedaCantidadPend ? `,${_busquedaCantidadPend}` : '';
+
+    // Filtrar paquetes (ordenados por relevancia: codigo exacto primero)
     const paqsFiltrados = (qn
-        ? paqsData.filter(pq => normalizar(pq.texto).includes(qn))
+        ? BusquedaProductos.ordenar(paqsData, qn, pq => pq.codigo, pq => pq.nombre)
         : paqsData.slice(0, 10)
     ).map(pq => ({ ...pq, maxCombos: calcularStockComboPend(pq.productos) }));
 
-    // Filtrar productos
-    const resultados = qn ? prodsPend.filter(p => normalizar(p.texto).includes(qn)) : prodsPend.slice(0, 40);
+    // Filtrar productos (ordenados por relevancia: codigo exacto primero, luego codigo que empieza con...)
+    const resultados = qn ? BusquedaProductos.ordenar(prodsPend, qn, p => p.codigo, p => p.nombre) : prodsPend.slice(0, 40);
 
     if (!paqsFiltrados.length && !resultados.length) {
         drop.innerHTML = '<div style="padding:12px;text-align:center;color:#aaa;font-size:13px;">Sin resultados</div>';
@@ -1478,6 +1512,10 @@ function filtrarProductosPendientes(q) {
     }
 
     let html = '';
+    if (_busquedaCantidadPend) {
+        // <div> sin onclick: dropdown_keynav.js no lo cuenta como resultado
+        html += `<div style="padding:7px 12px;background:#e8f5e9;color:#2e7d32;font-size:12px;border-bottom:1px solid #c8e6c9;">Se precargarán <strong>${_busquedaCantidadPend}</strong> al elegir (o presiona Enter con el código exacto para agregarlas directo)</div>`;
+    }
 
     // Sección productos (primero)
     if (resultados.length) {
@@ -1489,7 +1527,7 @@ function filtrarProductosPendientes(q) {
                 ? p.stock.toFixed(3).replace(/\.?0+$/, '')
                 : Math.floor(p.stock);
             const stockColor = p.stock <= 0 ? '#c0392b' : (p.stock <= 5 ? '#e67e22' : '#2e7d32');
-            return `<div onclick="seleccionarProdPend(${p.producto_id})"
+            return `<div onclick="seleccionarProdPend(${p.producto_id}${cantArgPend})"
                 style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f5f5f5;display:flex;align-items:center;gap:8px;min-width:0;"
                 onmouseover="this.style.background='#f0f9ff'" onmouseout="this.style.background=''">
                 <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;">${esc(p.nombre)}</span>
@@ -1510,7 +1548,7 @@ function filtrarProductosPendientes(q) {
                 : 'Sin stock';
             const labelColor = disponible ? '#2e7d32' : '#c0392b';
             const subprods = pq.productos.map(p => `${p.nombre_producto}×${p.cantidad_requerida}`).join(', ');
-            return `<div onclick="${disponible ? `seleccionarPaqPend(${pq.paquete_id})` : 'alert(\'Sin stock suficiente para armar este combo.\')'}"
+            return `<div onclick="${disponible ? `seleccionarPaqPend(${pq.paquete_id}${cantArgPend})` : 'alert(\'Sin stock suficiente para armar este combo.\')'}"
                 style="padding:8px 12px;cursor:pointer;border-bottom:0.5px solid #fff3e0;display:flex;align-items:center;gap:8px;min-width:0;background:#fffde7;${!disponible ? 'opacity:.6;' : ''}"
                 onmouseover="this.style.background='#fff3e0'" onmouseout="this.style.background='#fffde7'">
                 <div style="flex:1;min-width:0;">
@@ -1529,11 +1567,64 @@ function filtrarProductosPendientes(q) {
     drop.style.display = 'block';
 }
 
+// [FEATURE-BUSQUEDA-CODIGO] Enter en el buscador: si lo escrito es EXACTAMENTE un codigo se agrega ese
+// producto (1 pieza); si es "cantidad*codigo" (ej. 4*1) se agregan esas piezas del producto con ese codigo.
+// Si hay un resultado resaltado con las flechas, Enter lo elige (lo maneja dropdown_keynav.js).
+function resolverCodigoRapidoPend(val) {
+    const BP = BusquedaProductos;
+    const buscar = c => {
+        const prod = BP.buscarExacto(prodsPend, c, x => x.codigo);
+        if (prod) return { prod };
+        const paq = BP.buscarExacto(paqsData, c, x => x.codigo);
+        return paq ? { paq } : null;
+    };
+    let hit = buscar(val);
+    if (hit) return { ...hit, cantidad: 1, explicita: false };
+    const rapido = BP.parsearCantidadPorCodigo(val);
+    if (!rapido) return null;
+    hit = buscar(rapido.codigo);
+    if (!hit) return { noExiste: rapido.codigo };
+    return { ...hit, cantidad: rapido.cantidad, explicita: true };
+}
+
+document.getElementById('buscarProductoPendiente').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    if (BusquedaProductos.hayResaltado(document.getElementById('dropdownProdsPend'))) return;
+    const val = this.value.trim();
+    if (!val) return;
+    const r = resolverCodigoRapidoPend(val);
+    if (!r) return;                       // no es un codigo exacto ni cantidad*codigo: todo como siempre
+    e.preventDefault();
+    if (r.noExiste) {
+        mostrarNotifTemporal(`${ICONS.warning} No existe ningún producto con el código "${esc(r.noExiste)}"`, 'error', 4000);
+        return;
+    }
+    if (r.prod) {
+        seleccionarProdPend(r.prod.producto_id, r.explicita ? r.cantidad : undefined);
+        confirmarAgregarProdPend();
+        // confirmarAgregarProdPend deja prodSelPendActual en null SOLO si agrego; si fallo (stock, enteros)
+        // el panel queda abierto con la cantidad pedida para corregirla.
+        if (prodSelPendActual === null) {
+            mostrarNotifTemporal(`${ICONS.checkBig} ${r.cantidad} × ${esc(r.prod.nombre)}`, 'exito', 2500);
+        }
+    } else {
+        if (!Number.isInteger(r.cantidad)) {
+            mostrarNotifTemporal(`${ICONS.warning} Los combos se agregan en cantidades enteras.`, 'error', 4000);
+            return;
+        }
+        seleccionarPaqPend(r.paq.paquete_id, r.explicita ? r.cantidad : undefined);
+        confirmarAgregarPaqPend();
+        if (paqSelPendActual === null) {
+            mostrarNotifTemporal(`${ICONS.checkBig} ${r.cantidad} × ${esc(r.paq.nombre)}`, 'exito', 2500);
+        }
+    }
+});
+
 function ocultarDropPend() {
     document.getElementById('dropdownProdsPend').style.display = 'none';
 }
 
-function seleccionarProdPend(id) {
+function seleccionarProdPend(id, cantidadRapida) {
     const prod = prodsPend.find(p => p.producto_id === id);
     if (!prod) return;
     prodSelPendActual = prod;
@@ -1566,6 +1657,8 @@ function seleccionarProdPend(id) {
     }
     inp.max = disponible > 0 ? disponible : 0;
     inp.value = disponible > 0 ? (prod.tipo === 'Suelto' ? Math.min(1, disponible) : 1) : '';
+    // [FEATURE-BUSQUEDA-CODIGO] cantidad pedida con "4*codigo": se precarga (confirmarAgregarProdPend valida stock y enteros)
+    if (cantidadRapida !== undefined && cantidadRapida !== null) inp.value = cantidadRapida;
     document.getElementById('prodSelPend').style.display = 'block';
     setTimeout(() => inp.select(), 50);
 }
@@ -1583,6 +1676,10 @@ function confirmarAgregarProdPend() {
     if (!prodSelPendActual) return;
     const cantidad = parseFloat(document.getElementById('inputCantPend').value) || 0;
     if (cantidad <= 0) { alert('Ingresa una cantidad válida.'); return; }
+    if (prodSelPendActual.tipo !== 'Suelto' && !Number.isInteger(cantidad)) {
+        alert('Este producto se vende por pieza: la cantidad debe ser un número entero.');
+        return;
+    }
 
     // Validar que no supere el stock disponible (incluyendo lo que consumen paquetes)
     const enCarrito  = carritoP.filter(i => i.tipo !== 'paquete' && i.producto_id === prodSelPendActual.producto_id).reduce((a, i) => a + i.cantidad, 0);
@@ -1629,7 +1726,7 @@ function cancelarSelPend() {
 }
 
 /* ── Paquetes ── */
-function seleccionarPaqPend(paqueteId) {
+function seleccionarPaqPend(paqueteId, cantidadRapida) {
     const paq = paqsData.find(p => p.paquete_id === paqueteId);
     if (!paq) return;
     const maxCombos = calcularStockComboPend(paq.productos);
@@ -1651,6 +1748,7 @@ function seleccionarPaqPend(paqueteId) {
     const inp = document.getElementById('inputCantPaq');
     inp.max   = maxCombos;
     inp.value = 1;
+    if (cantidadRapida !== undefined && cantidadRapida !== null) inp.value = cantidadRapida;
     document.getElementById('paqSelPend').style.display = 'block';
     setTimeout(() => inp.select(), 50);
 }
@@ -2225,6 +2323,11 @@ function cambiarMetodoPend(valor) {
     // Mostrar/ocultar paneles según método
     document.getElementById('camposEfectivoPend').style.display = valor === 'Efectivo'      ? 'block' : 'none';
     document.getElementById('refTransfPendGrupo').style.display = valor === 'Transferencia' ? 'block' : 'none';
+    // [FEATURE-CREDITO-LIQUIDA-AL-CREAR] A credito se liquida al registrar: avisarlo y rotular el boton.
+    const _avisoCred = document.getElementById('avisoCreditoPend');
+    if (_avisoCred) _avisoCred.style.display = valor === 'Credito' ? 'block' : 'none';
+    const _btnReg = document.querySelector('#formPendiente .btn-guardar');
+    if (_btnReg) _btnReg.textContent = valor === 'Credito' ? 'Registrar y liquidar a crédito' : 'Registrar venta a domicilio';
 
     if (valor === 'Efectivo') {
         document.getElementById('montoEfectivoPend').value     = '';
@@ -2643,6 +2746,7 @@ function imprimirTicketPend() {
     recalcularTotalPend();
 })();
 </script>
+<script src="../includes/busqueda_productos.js"></script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>
 // [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
@@ -2657,5 +2761,6 @@ attachDropdownKeyNav(
     ocultarDropClientes
 );
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

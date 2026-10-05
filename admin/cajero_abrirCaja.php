@@ -276,5 +276,6 @@ function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
 }
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

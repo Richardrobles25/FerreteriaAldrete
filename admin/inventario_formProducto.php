@@ -1045,6 +1045,7 @@ document.querySelectorAll('.prov-entrada').forEach(function (entrada) {
     }
 });
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>
 

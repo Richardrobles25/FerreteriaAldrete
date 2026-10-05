@@ -368,7 +368,12 @@ if (isset($_GET['inventario_sucursal'])) {
     $where       = "WHERE p.activo = 1 AND ss.activo = 1 AND ss.sucursal_id = ?";
     $params      = [$sucursal_id];
     if ($buscar) { $where .= " AND (p.nombre_producto LIKE ? OR p.codigo LIKE ?)"; $params[] = '%'.$buscar.'%'; $params[] = '%'.$buscar.'%'; }
-    $stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_venta, p.precio_compra, p.precio_mayoreo, p.tipo_venta, p.unidad_medida FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id $where ORDER BY p.nombre_producto ASC LIMIT 50");
+    // [FEATURE-BUSQUEDA-CODIGO] con texto de busqueda, el producto cuyo codigo es EXACTAMENTE lo escrito va
+    // primero, luego los codigos que empiezan con eso (antes solo se ordenaba por nombre y, con LIMIT 50,
+    // el codigo buscado podia quedar fuera de la lista).
+    $ordenInv = "p.nombre_producto ASC";
+    if ($buscar) { $ordenInv = "(p.codigo = ?) DESC, (p.codigo LIKE ?) DESC, p.nombre_producto ASC"; $params[] = $buscar; $params[] = $buscar . '%'; }
+    $stmt = $pdo->prepare("SELECT p.producto_id, p.codigo, p.nombre_producto, ss.stock_actual, p.precio_venta, p.precio_compra, p.precio_mayoreo, p.tipo_venta, p.unidad_medida FROM productos p INNER JOIN stock_sucursal ss ON ss.producto_id = p.producto_id $where ORDER BY $ordenInv LIMIT 50");
     $stmt->execute($params);
     $filasInv = $stmt->fetchAll(PDO::FETCH_ASSOC);
     // [FIX-CONSISTENCIA] Igual que admin/cajero_nuevaVenta.php (FIX-MEDIO-D1-09): consultar
@@ -2325,23 +2330,37 @@ function procesarScan(codigo) {
 
 // ── Búsqueda local: filtra productosGlobales y paquetesGlobales en JS ────────
 let toProd;
+// [FEATURE-BUSQUEDA-CODIGO] Cantidad pedida con la forma "4*codigo" mientras se busca (null = busqueda normal).
+let _busquedaCantidad = null;
 document.getElementById('inputProducto').addEventListener('input', function() {
     clearTimeout(toProd);
     const val = this.value.trim();
-    if (!val) { document.getElementById('dropdownProductos').classList.remove('visible'); return; }
+    if (!val) { _busquedaCantidad = null; document.getElementById('dropdownProductos').classList.remove('visible'); return; }
 
     // Sin debounce pesado: 60ms solo para no disparar en cada tecla de un paste
     toProd = setTimeout(() => {
-        const q = normalizar(val);
+        let q = normalizar(val);
 
-        // Filtrar productos localmente
-        const productos = productosGlobales
-            .filter(p => normalizar(p.codigo).includes(q) || normalizar(p.nombre_producto).includes(q))
+        // [FEATURE-BUSQUEDA-CODIGO] "4*1": se buscan los resultados por el codigo (1) y la cantidad (4)
+        // se aplica al elegir uno. Si el texto completo ya es un codigo exacto (un producto con
+        // codigo "4*1"), manda el codigo y NO se interpreta como cantidad.
+        const rapido = BusquedaProductos.parsearCantidadPorCodigo(val);
+        if (rapido && !BusquedaProductos.buscarExacto(productosGlobales, val, p => p.codigo)
+                   && !BusquedaProductos.buscarExacto(paquetesGlobales, val, p => p.codigo)) {
+            _busquedaCantidad = rapido.cantidad;
+            q = normalizar(rapido.codigo);
+        } else {
+            _busquedaCantidad = null;
+        }
+
+        // [FEATURE-BUSQUEDA-CODIGO] Ordenar por relevancia: codigo exacto, codigo que empieza con lo
+        // escrito, nombre que empieza... (antes solo se tomaban los primeros 10 "que contienen" en el
+        // orden del catalogo, y el producto cuyo codigo es justo el escrito podia quedar fuera).
+        const productos = BusquedaProductos.ordenar(productosGlobales, q, p => p.codigo, p => p.nombre_producto)
             .slice(0, 10);
 
         // Filtrar paquetes localmente y calcular disponibilidad
-        const paquetes = paquetesGlobales
-            .filter(paq => normalizar(paq.codigo).includes(q) || normalizar(paq.nombre).includes(q))
+        const paquetes = BusquedaProductos.ordenar(paquetesGlobales, q, paq => paq.codigo, paq => paq.nombre)
             .map(paq => {
                 const maxCombos = calcularStockComboAjustado(paq.productos);
                 return {
@@ -2356,9 +2375,64 @@ document.getElementById('inputProducto').addEventListener('input', function() {
     }, 60);
 });
 
+// [FEATURE-BUSQUEDA-CODIGO] Enter en el buscador: si lo escrito es EXACTAMENTE un codigo, se agrega ese
+// producto (1 pieza); si es "cantidad*codigo" (ej. 4*1) se agregan esas piezas del producto con ese codigo.
+// Si hay un resultado resaltado con las flechas, Enter lo elige (lo maneja dropdown_keynav.js).
+function resolverCodigoRapido(val) {
+    const BP = BusquedaProductos;
+    const buscar = c => {
+        const prod = BP.buscarExacto(productosGlobales, c, x => x.codigo);
+        if (prod) return { prod };
+        const paq = BP.buscarExacto(paquetesGlobales, c, x => x.codigo);
+        return paq ? { paq } : null;
+    };
+    let hit = buscar(val);
+    if (hit) return { ...hit, cantidad: 1, explicita: false };
+    const rapido = BP.parsearCantidadPorCodigo(val);
+    if (!rapido) return null;
+    hit = buscar(rapido.codigo);
+    if (!hit) return { noExiste: rapido.codigo };
+    return { ...hit, cantidad: rapido.cantidad, explicita: true };
+}
+
+document.getElementById('inputProducto').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    if (BusquedaProductos.hayResaltado(document.getElementById('dropdownProductos'))) return;
+    const val = this.value.trim();
+    if (!val) return;
+    const r = resolverCodigoRapido(val);
+    if (!r) return;                       // no es un codigo exacto ni cantidad*codigo: todo como siempre
+    e.preventDefault();
+    if (r.noExiste) {
+        mostrarNotifTemporal(`${ICONS.warning} No existe ningún producto con el código "${esc(r.noExiste)}"`, 'error', 4000);
+        return;
+    }
+    const cant = r.explicita ? r.cantidad : undefined;
+    let agregado;
+    let nombre;
+    if (r.prod) {
+        const p = r.prod;
+        nombre = p.nombre_producto;
+        agregado = agregarProducto(p.producto_id, p.nombre_producto, p.precio_venta, p.stock_actual, p.tipo_venta,
+            parseFloat(p.precio_compra || 0), p.unidad_medida || '', parseFloat(p.precio_mayoreo || 0), cant);
+    } else {
+        nombre = r.paq.nombre;
+        agregado = agregarPaquete(r.paq.paquete_id, cant);
+    }
+    if (agregado) {
+        mostrarNotifTemporal(`${ICONS.checkBig} ${r.cantidad} × ${esc(nombre)}`, 'exito', 2500);
+    }
+});
+
 function mostrarResultadosCombinados(productos, paquetes) {
     const drop = document.getElementById('dropdownProductos');
     let html   = '';
+    // [FEATURE-BUSQUEDA-CODIGO] Con "4*codigo": aviso de cuantas se agregaran al elegir. Es un <div> sin
+    // onclick, asi que dropdown_keynav.js no lo cuenta como resultado.
+    const cantArg = _busquedaCantidad ? `,${_busquedaCantidad}` : '';
+    if (_busquedaCantidad) {
+        html += `<div style="padding:7px 12px;background:#e8f5e9;color:#2e7d32;font-size:12px;border-bottom:1px solid #c8e6c9;">Se agregarán <strong>${_busquedaCantidad}</strong> al elegir (o presiona Enter con el código exacto)</div>`;
+    }
 
     paquetes.forEach(paq => {
         const cls   = paq.disponible ? 'stock-ok' : 'stock-bajo';
@@ -2375,7 +2449,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
         // mas seguido que antes, asi que esta rama ahora se dispara de verdad.
         html += `<div class="resultado-item" style="background:#fffde7;"
             onclick="${paq.disponible
-                ? `agregarPaquete(${paq.paquete_id})`
+                ? `agregarPaquete(${paq.paquete_id}${cantArg})`
                 : "alert('Stock insuficiente')"}" >
             <div>
                 <div class="resultado-nombre">${ICONS.package} ${esc(paq.nombre)}</div>
@@ -2396,7 +2470,7 @@ function mostrarResultadosCombinados(productos, paquetes) {
         const cls   = stockAjustado > 0 ? 'stock-ok' : 'stock-bajo';
         const label = stockAjustado > 0 ? `Stock: ${parseFloat(stockAjustado).toFixed(p.tipo_venta==='Suelto'?3:0)}` : 'Sin stock';
         html += `<div class="resultado-item"
-            onclick="agregarProducto(${p.producto_id},'${escAtribJs(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${escAtribJs(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)})">
+            onclick="agregarProducto(${p.producto_id},'${escAtribJs(p.nombre_producto)}',${p.precio_venta},${p.stock_actual},'${p.tipo_venta}',${parseFloat(p.precio_compra||0)},'${escAtribJs(p.unidad_medida||'')}',${parseFloat(p.precio_mayoreo||0)}${cantArg})">
             <div>
                 <div class="resultado-nombre">${esc(p.nombre_producto)}</div>
                 <div class="resultado-codigo">${esc(p.codigo)}</div>
@@ -2408,14 +2482,27 @@ function mostrarResultadosCombinados(productos, paquetes) {
         </div>`;
     });
 
-    if (!html) html = '<div style="padding:14px;text-align:center;color:#aaa;font-size:13px;">No se encontraron resultados</div>';
+    if (!productos.length && !paquetes.length) html += '<div style="padding:14px;text-align:center;color:#aaa;font-size:13px;">No se encontraron resultados</div>';
     drop.innerHTML = html;
     drop.classList.add('visible');
 }
 
 // ── Agregar producto ─────────────────────────────────────────────────────────
-function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, precioMayoreo) {
+function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, precioMayoreo, cantidadAgregar) {
     id    = parseInt(id);
+    // [FEATURE-BUSQUEDA-CODIGO] cantidadAgregar (opcional) = piezas a agregar de golpe ("4*codigo").
+    // Sin ese argumento el comportamiento es el de siempre: suma 1. Devuelve true si agrego algo.
+    const cantExplicita = (cantidadAgregar !== undefined && cantidadAgregar !== null);
+    let cantAdd = 1;
+    if (cantExplicita) {
+        cantAdd = parseFloat(cantidadAgregar);
+        if (!(cantAdd > 0) || !isFinite(cantAdd)) { alert('La cantidad debe ser mayor a cero.'); return false; }
+        if (tipo !== 'Suelto' && !Number.isInteger(cantAdd)) {
+            alert('Este producto se vende por pieza: la cantidad debe ser un número entero.');
+            return false;
+        }
+        cantAdd = parseFloat(cantAdd.toFixed(3));
+    }
     // [FEATURE-PESTAÑAS-CARRITO] `stock` es el stock BRUTO de la sucursal (tal cual llega
     // del catalogo/scanner/inventario); antes de usarlo se descuenta lo que YA esta
     // apartado en el carrito de otras pestañas abiertas, para no vender lo mismo dos veces
@@ -2455,11 +2542,17 @@ function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, 
         else { alert(`Stock máximo: ${stock}`); }
         return;
     }
+    if (cantExplicita && totalEnCarrito + cantAdd > stock + 0.0005) {
+        const libre    = Math.max(0, stock - totalEnCarrito);
+        const libreTxt = tipo === 'Suelto' ? parseFloat(libre.toFixed(3)) : Math.floor(libre);
+        alert(`Stock insuficiente para ${cantAdd}: solo hay ${libreTxt} disponible(s)` + (totalEnCarrito > 0 ? ` (ya tienes ${totalEnCarrito} en el carrito).` : '.'));
+        return false;
+    }
 
     // Incrementar solo una fila sin ajuste de daño; si todas están dañadas, crear fila nueva limpia
     const existeLimpio = carrito.find(it => it.producto_id === id && !it.ajuste_activo);
     if (existeLimpio) {
-        existeLimpio.cantidad++;
+        existeLimpio.cantidad = parseFloat((parseFloat(existeLimpio.cantidad) + cantAdd).toFixed(3));
     } else {
         carrito.push({
             producto_id:    id,
@@ -2475,7 +2568,7 @@ function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, 
             ajuste_activo:  false,
             precio_ajuste:  null,
             nota_ajuste:    '',
-            cantidad:       1,
+            cantidad:       cantAdd,
             stock,
             tipo,
             unidad:         unidad||''
@@ -2487,6 +2580,7 @@ function agregarProducto(id, nombre, precio, stock, tipo, precioCompra, unidad, 
     recalcularTodo();
     verificarRecomendaciones();
     if (document.getElementById('chkAjusteDano').checked) actualizarSelectProductos();
+    return true;
 }
 
 // ── Stock disponible para un paquete (mínimo de floor(stock/qty_req) por producto) ──
@@ -2500,7 +2594,7 @@ function calcularStockCombo(productos) {
 }
 
 // ── Agregar paquete ──────────────────────────────────────────────────────────
-function agregarPaquete(paq) {
+function agregarPaquete(paq, cantidadCombos) {
     // [AUTOFIX] OBS-01: aceptar ID numerico (desde el dropdown) — busca en paquetesGlobales
     if (typeof paq === 'number') {
         paq = paquetesGlobales.find(p => p.paquete_id === paq);
@@ -2512,7 +2606,26 @@ function agregarPaquete(paq) {
     const maxCombos = calcularStockComboAjustado(paq.productos);
     if (maxCombos < 1) {
         alert('No hay stock suficiente para armar ni un combo de "' + paq.nombre + '".');
-        return;
+        return false;
+    }
+    // [FEATURE-BUSQUEDA-CODIGO] "3*codigo-de-paquete" agrega 3 combos de una vez (sin argumento = 1, como siempre).
+    const nCombos = (cantidadCombos === undefined || cantidadCombos === null) ? 1 : cantidadCombos;
+    if (!Number.isInteger(nCombos) || nCombos < 1) {
+        alert('Los combos se agregan en cantidades enteras.');
+        return false;
+    }
+    if (maxCombos < nCombos) {
+        alert('Solo hay stock para ' + maxCombos + ' combo(s) de "' + paq.nombre + '".');
+        return false;
+    }
+    if (cantidadCombos !== undefined && cantidadCombos !== null) {
+        // maxCombos es el techo TOTAL del paquete: lo que ya hay de este mismo paquete en el carrito cuenta.
+        const yaEnCarrito = carrito.filter(i => i.tipo === 'paquete' && parseInt(i.paquete_id) === parseInt(paq.paquete_id))
+            .reduce((s, i) => s + parseFloat(i.cantidad), 0);
+        if (yaEnCarrito + nCombos > maxCombos) {
+            alert('Solo hay stock para ' + maxCombos + ' combo(s) de "' + paq.nombre + '" (ya tienes ' + yaEnCarrito + ' en el carrito).');
+            return false;
+        }
     }
     // [FIX] Antes se eliminaban del carrito TODAS las filas sueltas de estos productos,
     // sin importar cuanto tenia cada una, aunque el paquete solo necesitara una parte
@@ -2521,7 +2634,7 @@ function agregarPaquete(paq) {
     // el resto se queda visible en el carrito como fila suelta.
     const reqPorProducto = {};
     paq.productos.forEach(p => {
-        reqPorProducto[parseInt(p.producto_id)] = parseFloat(p.cantidad_requerida || p.cantidad_req || 1);
+        reqPorProducto[parseInt(p.producto_id)] = parseFloat(p.cantidad_requerida || p.cantidad_req || 1) * nCombos;
     });
     Object.keys(reqPorProducto).forEach(idStr => {
         const pid = parseInt(idStr);
@@ -2540,7 +2653,7 @@ function agregarPaquete(paq) {
         paquete_id:        parseInt(paq.paquete_id),
         nombre:            paq.nombre,
         precio:            parseFloat(paq.precio_paquete),
-        cantidad:          1,
+        cantidad:          nCombos,
         stock:             maxCombos,
         tipo:              'paquete',
         productos_paquete: paq.productos.map(p => ({
@@ -2554,6 +2667,7 @@ function agregarPaquete(paq) {
     renderCarrito();
     recalcularTodo();
     verificarRecomendaciones();
+    return true;
 }
 
 // ── Render carrito ───────────────────────────────────────────────────────────
@@ -4005,6 +4119,7 @@ document.querySelectorAll('.js-zero-default').forEach((input) => {
     renderCarrito();
 })();
 </script>
+<script src="../includes/busqueda_productos.js"></script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>
 // [FEATURE-DROPDOWN-KEYNAV] Navegar los resultados de búsqueda con flechas y Enter.
@@ -4019,5 +4134,6 @@ attachDropdownKeyNav(
     function () { document.getElementById('dropdownClientes').classList.remove('visible'); }
 );
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

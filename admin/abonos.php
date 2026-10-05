@@ -1798,5 +1798,6 @@ document.addEventListener('keydown', e => {
 abrirDetalles(<?= intval($deepLinkCliente['cliente_id']) ?>, <?= json_encode($deepLinkCliente['nombre_completo'], JSON_UNESCAPED_UNICODE) ?>);
 <?php endif; ?>
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

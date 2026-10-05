@@ -670,5 +670,6 @@ function toggleCredito(checked) {
 }
 
 </script>
+<script src="../includes/seleccionar_cantidad.js"></script>
 </body>
 </html>

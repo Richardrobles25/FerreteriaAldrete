@@ -779,6 +779,9 @@ $totales = $pdo->query("
     #ticketImprimir .t-bold   { font-weight: bold; }
     #ticketImprimir .t-grande { font-size: 13px; font-weight: bold; }
     .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 5px 11px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; }
+    .btn-estado-cuenta { background: #fff; color: #2e7d32; border: 1px solid #2e7d32; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-estado-cuenta:hover { background: #e8f5e9; }
+    .btn-estado-cuenta:disabled { opacity: .6; cursor: wait; }
     </style>
 
 <!-- Ticket oculto para impresión -->
@@ -957,7 +960,10 @@ $totales = $pdo->query("
         </div>
         <div class="modal-footer-pago" id="modalFooterPago" style="display:none;">
             <div class="modal-footer-total" id="modalFooterTotal"></div>
-            <button class="btn-abonar-modal" style="padding:8px 20px;font-size:13px;" onclick="abrirAbonar()">Registrar pago →</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+                <button type="button" class="btn-estado-cuenta" onclick="imprimirEstadoCuenta()">Imprimir estado de cuenta</button>
+                <button class="btn-abonar-modal" style="padding:8px 20px;font-size:13px;" onclick="abrirAbonar()">Registrar pago →</button>
+            </div>
         </div>
     </div>
 </div>
@@ -1487,6 +1493,125 @@ function generarTicketAbonoHTML(pago) {
         <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve su ticket</div>`;
 
     document.getElementById('ticketImprimir').innerHTML = html;
+}
+
+// [FEATURE-ESTADO-CUENTA] Estado de cuenta del cliente: lo que debe de TODAS sus compras a
+// credito (los creditos son globales entre sucursales), impreso con el formato de ticket de la
+// sucursal (logo, datos, fuente, ancho y pie). Vuelve a pedir los creditos al servidor para
+// imprimir el saldo vigente y no el que se cargo al abrir la ventana.
+function imprimirEstadoCuenta() {
+    if (!_clienteIdActual) return;
+    const btn = document.querySelector('.btn-estado-cuenta');
+    if (btn) btn.disabled = true;
+    const nombreCliente = document.getElementById('modalTitulo').textContent;
+    fetch('cajero_creditos.php?get_creditos_cliente=' + encodeURIComponent(_clienteIdActual))
+        .then(r => r.json())
+        .then(creditos => {
+            if (!Array.isArray(creditos)) { alert('No se pudo cargar el estado de cuenta.'); return; }
+            if (!creditos.length) { alert('Este cliente no tiene créditos pendientes.'); return; }
+            generarTicketEstadoCuentaHTML(nombreCliente, creditos);
+            let estilo = document.getElementById('__ticketPageStyle');
+            if (!estilo) {
+                estilo = document.createElement('style');
+                estilo.id = '__ticketPageStyle';
+                document.head.appendChild(estilo);
+            }
+            estilo.textContent = `@page { size: ${datosTicket.ticket_ancho_mm}mm auto; margin: 0; }`;
+            const _doImprimir = () => setTimeout(() => window.print(), 150);
+            const imgTicket = document.querySelector('#ticketImprimir img');
+            if (imgTicket && !imgTicket.complete) {
+                imgTicket.onload  = _doImprimir;
+                imgTicket.onerror = _doImprimir;
+            } else {
+                _doImprimir();
+            }
+        })
+        .catch(() => alert('No se pudo cargar el estado de cuenta.'))
+        .finally(() => { if (btn) btn.disabled = false; });
+}
+
+function generarTicketEstadoCuentaHTML(nombreCliente, creditos) {
+    const elTicket = document.getElementById('ticketImprimir');
+    elTicket.style.fontSize = datosTicket.ticket_font_size + 'px';
+    elTicket.style.width    = datosTicket.ticket_ancho_mm  + 'mm';
+    const dinero = n => '$' + (parseFloat(n) || 0).toFixed(2);
+    const fechaCorta = str => {
+        if (!str) return '';
+        const t = String(str).replace(' ', 'T');
+        const d = new Date(t.length === 10 ? t + 'T00:00:00' : t);
+        return isNaN(d) ? '' : d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    };
+
+    let html = '';
+    if (datosTicket.ticket_logo) {
+        const maxW = datosTicket.ticket_ancho_mm >= 80 ? '140px' : '100px';
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${esc(datosTicket.ticket_logo)}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    }
+    html += `<div class="t-centro t-bold t-grande">${esc(datosTicket.nombre)}</div>`;
+    if (datosTicket.datos_ticket) {
+        html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(datosTicket.datos_ticket)}</div>`;
+    } else {
+        if (datosTicket.rfc)       html += `<div class="t-centro">RFC: ${esc(datosTicket.rfc)}</div>`;
+        if (datosTicket.direccion) html += `<div class="t-centro">${esc(datosTicket.direccion)}</div>`;
+        if (datosTicket.telefono)  html += `<div class="t-centro">Tel: ${esc(datosTicket.telefono)}</div>`;
+    }
+
+    const ahora = new Date();
+    const fechaHoy = ahora.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        + ' ' + ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-centro t-bold">ESTADO DE CUENTA</div>
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Fecha:</span><span>${esc(fechaHoy)}</span></div>
+        <div class="t-fila"><span>Cliente:</span><span style="text-align:right;">${esc(nombreCliente)}</span></div>
+        <div class="t-linea"></div>
+        <div class="t-centro t-bold">COMPRAS A CRÉDITO PENDIENTES</div>`;
+
+    let totalSaldo = 0, totalMora = 0, hayVencido = false;
+    creditos.forEach(cr => {
+        const saldo   = parseFloat(cr.saldo_pendiente) || 0;
+        const mora    = parseFloat(cr.mora_acumulada)  || 0;
+        const abonado = parseFloat(cr.total_abonado)   || 0;
+        const vencido = cr.estado === 'Vencido';
+        totalSaldo += saldo;
+        totalMora  += mora;
+        if (vencido) hayVencido = true;
+        const etiqueta = cr.folio ? 'Folio ' + cr.folio : 'Crédito #' + (parseInt(cr.credito_id, 10) || 0);
+        html += `
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>${esc(etiqueta)}</span><span>${esc(fechaCorta(cr.fecha_venta || cr.created_at))}</span></div>`;
+        (cr.productos || []).forEach(p => {
+            const cant = Number.isInteger(p.cantidad) ? p.cantidad : parseFloat(p.cantidad).toFixed(2).replace(/\.?0+$/, '');
+            html += `<div style="font-size:10px;">${esc(cant)} x ${esc(p.nombre)}</div>`;
+        });
+        html += `<div class="t-fila"><span>Monto original</span><span>${dinero(cr.monto_total)}</span></div>`;
+        if (abonado > 0.001) html += `<div class="t-fila"><span>Abonado</span><span>-${dinero(abonado)}</span></div>`;
+        if (mora > 0.001)    html += `<div class="t-fila"><span>Mora (incluida)</span><span>+${dinero(mora)}</span></div>`;
+        html += `<div class="t-fila t-bold"><span>Saldo</span><span>${dinero(saldo)}</span></div>`;
+        if (vencido) {
+            html += `<div class="t-fila t-bold"><span>VENCIDO${cr.fecha_limite ? ' el ' + esc(fechaCorta(cr.fecha_limite)) : ''}</span><span></span></div>`;
+        } else if (cr.fecha_limite) {
+            html += `<div class="t-fila"><span>Fecha límite</span><span>${esc(fechaCorta(cr.fecha_limite))}</span></div>`;
+        }
+    });
+
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold t-grande"><span>TOTAL ADEUDADO</span><span>${dinero(totalSaldo)}</span></div>`;
+    if (totalMora > 0.001) {
+        html += `<div class="t-fila" style="font-size:10px;"><span>Incluye mora de</span><span>${dinero(totalMora)}</span></div>`;
+    }
+    if (hayVencido) {
+        html += `<div class="t-centro t-bold" style="margin-top:4px;">Tiene saldo vencido</div>`;
+    }
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Impreso por:</span><span>${esc(cajeroNombre)}</span></div>
+        <div class="t-linea"></div>
+        <div class="t-centro">${esc(datosTicket.ticket_pie || 'Gracias por su preferencia')}</div>`;
+
+    elTicket.innerHTML = html;
 }
 
 function seleccionarMetodoAb(metodo, btn) {

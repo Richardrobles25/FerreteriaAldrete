@@ -1491,7 +1491,7 @@ function buscarVenta() {
                         precioHtml = `<div style="font-size:11px;margin-top:2px;">
                             <span style="text-decoration:line-through;color:#bbb;">$${precioOrig.toFixed(2)}</span>
                             <span style="color:#e67e22;font-weight:700;margin-left:4px;">$${precioFinal.toFixed(2)}</span>
-                            <span style="background:#fff3e0;color:#e67e22;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px;">${ICONS.warning} Ajuste por da&#241;o: ${p.nota_ajuste}</span>
+                            <span style="background:#fff3e0;color:#e67e22;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:700;margin-left:4px;">${ICONS.warning} Ajuste de precio: ${p.nota_ajuste}</span>
                         </div>`;
                     } else if (tienePromo) {
                         precioHtml = `<div style="font-size:11px;margin-top:2px;">

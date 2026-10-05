@@ -11,6 +11,112 @@ verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
+// [FEATURE-TICKET-ENVIO-TRANSF] Cada producto de una solicitud de transferencia es UNA fila en
+// `transferencias` (todas creadas en el mismo INSERT-loop: mismo origen, destino, solicitante y
+// segundo de creacion). "Pedido" = ese conjunto de filas. Esta funcion carga la fila pedida y todas
+// las de su mismo pedido (tolerancia de 2 s por si el loop cruza el cambio de segundo).
+function transfCargarPedido(PDO $pdo, int $id): ?array {
+    $st = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ?");
+    $st->execute([$id]);
+    $base = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$base) return null;
+    $st = $pdo->prepare("
+        SELECT t.*, p.nombre_producto, p.codigo, p.tipo_venta, p.unidad_medida
+        FROM transferencias t
+        JOIN productos p ON p.producto_id = t.producto_id
+        WHERE t.sucursal_origen_id = ? AND t.sucursal_destino_id = ? AND t.usuario_solicita_id = ?
+          AND t.created_at BETWEEN DATE_SUB(?, INTERVAL 2 SECOND) AND DATE_ADD(?, INTERVAL 2 SECOND)
+        ORDER BY t.transferencias_id ASC
+    ");
+    $st->execute([$base['sucursal_origen_id'], $base['sucursal_destino_id'], $base['usuario_solicita_id'], $base['created_at'], $base['created_at']]);
+    return ['base' => $base, 'filas' => $st->fetchAll(PDO::FETCH_ASSOC)];
+}
+
+// [FEATURE-TICKET-ENVIO-TRANSF] Datos del ticket de envio de un pedido: lista de lo enviado (para
+// que la sucursal destino verifique que llego completo) y, aparte, lo que NO se envio.
+if (isset($_GET['ticket_envio'])) {
+    header('Content-Type: application/json');
+    try {
+        $idTk  = intval(is_scalar($_GET['ticket_envio'] ?? null) ? $_GET['ticket_envio'] : 0);
+        $ped   = $idTk > 0 ? transfCargarPedido($pdo, $idTk) : null;
+        $sucTk = intval($sucursalVista);
+        $base  = $ped ? $ped['base'] : null;
+        // Solo las sucursales involucradas (origen o destino) pueden ver el ticket.
+        if (!$ped || !($sucTk === 0 || $base['sucursal_origen_id'] == $sucTk || $base['sucursal_destino_id'] == $sucTk)) { echo json_encode(null); exit(); }
+
+        $stmtSucO = $pdo->prepare("SELECT nombre, rfc, direccion, telefono, datos_ticket, ticket_logo, ticket_font_size, ticket_ancho_mm FROM sucursales WHERE sucursal_id = ?");
+        $stmtSucO->execute([$base['sucursal_origen_id']]);
+        $sucO = $stmtSucO->fetch(PDO::FETCH_ASSOC) ?: [];
+        $stmtSucD = $pdo->prepare("SELECT nombre FROM sucursales WHERE sucursal_id = ?");
+        $stmtSucD->execute([$base['sucursal_destino_id']]);
+        $nombreDest = $stmtSucD->fetchColumn() ?: '';
+        $stmtSol = $pdo->prepare("SELECT nombre_completo FROM usuarios WHERE usuario_id = ?");
+        $stmtSol->execute([$base['usuario_solicita_id']]);
+        $nombreSol = $stmtSol->fetchColumn() ?: '';
+
+        $enviados = [];
+        $noEnviados = [];
+        $fechaEnvio = null;
+        $enviadoPor = null;
+        $idsPedido  = [];
+        foreach ($ped['filas'] as $f) {
+            $idsPedido[] = intval($f['transferencias_id']);
+            $item = [
+                'codigo'     => $f['codigo'],
+                'nombre'     => $f['nombre_producto'],
+                'cantidad'   => floatval($f['cantidad']),
+                'unidad'     => $f['unidad_medida'] ?? '',
+                'tipo_venta' => $f['tipo_venta'],
+                'estado'     => $f['estado'],
+            ];
+            if (in_array($f['estado'], ['En tránsito', 'Entregada'], true)) {
+                $enviados[] = $item;
+                // Fecha y usuario reales del envio: el movimiento "Transferencia enviada #id" del origen.
+                $stmtMov = $pdo->prepare("
+                    SELECT m.created_at, u.nombre_completo
+                    FROM movimientos_inventario m
+                    LEFT JOIN usuarios u ON u.usuario_id = m.usuario_id
+                    WHERE m.tipo = 'Transferencia' AND m.sucursal_id = ? AND m.motivo = ?
+                    ORDER BY m.created_at ASC LIMIT 1
+                ");
+                $stmtMov->execute([$f['sucursal_origen_id'], 'Transferencia enviada #' . $f['transferencias_id']]);
+                $mov = $stmtMov->fetch(PDO::FETCH_ASSOC);
+                $fechaFila = $mov['created_at'] ?? $f['updated_at'];
+                if ($fechaEnvio === null || $fechaFila < $fechaEnvio) {
+                    $fechaEnvio = $fechaFila;
+                    $enviadoPor = $mov['nombre_completo'] ?? null;
+                }
+            } else {
+                $noEnviados[] = $item;
+            }
+        }
+        echo json_encode([
+            'pedido'      => min($idsPedido),
+            'ids'         => $idsPedido,
+            'origen'      => [
+                'nombre'           => $sucO['nombre'] ?? '',
+                'rfc'              => $sucO['rfc'] ?? '',
+                'direccion'        => $sucO['direccion'] ?? '',
+                'telefono'         => $sucO['telefono'] ?? '',
+                'datos_ticket'     => $sucO['datos_ticket'] ?? '',
+                'ticket_logo'      => $sucO['ticket_logo'] ?? null,
+                'ticket_font_size' => intval($sucO['ticket_font_size'] ?? 12),
+                'ticket_ancho_mm'  => intval($sucO['ticket_ancho_mm'] ?? 58),
+            ],
+            'destino'     => $nombreDest,
+            'solicitante' => $nombreSol,
+            'enviado_por' => $enviadoPor,
+            'fecha_envio' => $fechaEnvio ? date('d/m/Y H:i', strtotime($fechaEnvio)) : null,
+            'enviados'    => $enviados,
+            'no_enviados' => $noEnviados,
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        error_log('[Ferreteria/admin/transferencias] Error ticket_envio: ' . $e->getMessage());
+        echo json_encode(['error' => 'No se pudo cargar el ticket de envío.']);
+    }
+    exit();
+}
+
 // Acciones sobre transferencia existente
 $_accionData = $_POST + $_GET;
 if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['id']))) {
@@ -172,6 +278,83 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
         } else {
             header('Location: inventario_transferencias.php?msg=error_ya_no_transito'); exit();
         }
+    } elseif ($accion === 'cancelar_solicitud') {
+        // [FEATURE-CANCELAR-TRANSFERENCIA] Cancelar una solicitud por error: SOLO la sucursal que la
+        // pidio (destino) y SOLO mientras sigue Pendiente (el origen aun no la aprueba). Una vez
+        // aprobada, modificada o enviada ya no se puede cancelar desde aqui (la sucursal origen
+        // tiene "Rechazar" mientras esta Pendiente, y una "En tránsito" se cancela con 'cancelar').
+        // Cancelar no mueve inventario: el stock del origen se descuenta hasta "Marcar enviado".
+        $notaCancelSol = 'Cancelada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '.';
+        $stmtCancelSol = $pdo->prepare("
+            UPDATE transferencias
+            SET estado = 'Cancelada',
+                notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?))
+            WHERE transferencias_id = ?
+              AND estado = 'Pendiente'
+              AND sucursal_destino_id = ?
+        ");
+        $stmtCancelSol->execute([$notaCancelSol, $id, $miSucursal]);
+        if ($stmtCancelSol->rowCount() === 0) {
+            header('Location: inventario_transferencias.php?msg=error_ya_no_cancelable'); exit();
+        }
+    } elseif ($accion === 'enviar_pedido') {
+        // [FEATURE-TICKET-ENVIO-TRANSF] "Marcar enviado" para TODOS los productos Aprobados del mismo
+        // pedido de una sola vez (misma logica que 'enviar', fila por fila, dentro de UNA transaccion:
+        // si algun producto no se puede enviar, no se envia ninguno) y despues se abre el ticket con
+        // la lista completa.
+        $ped = transfCargarPedido($pdo, $id);
+        $idsEnviar = [];
+        $nombresPed = [];
+        if ($ped && $ped['base']['sucursal_origen_id'] == $miSucursal) {
+            foreach ($ped['filas'] as $f) {
+                if ($f['estado'] === 'Aprobada' && $f['sucursal_origen_id'] == $miSucursal) {
+                    $idsEnviar[] = intval($f['transferencias_id']);
+                    $nombresPed[intval($f['transferencias_id'])] = $f['nombre_producto'];
+                }
+            }
+        }
+        if (!$idsEnviar) {
+            header('Location: inventario_transferencias.php?msg=error_ya_no_aprobada'); exit();
+        }
+        $pdo->beginTransaction();
+        try {
+            foreach ($idsEnviar as $idEnv) {
+                $stmtLockEnvP = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+                $stmtLockEnvP->execute([$idEnv]);
+                $transfP = $stmtLockEnvP->fetch(PDO::FETCH_ASSOC);
+                if (!$transfP || $transfP['estado'] !== 'Aprobada' || $transfP['sucursal_origen_id'] != $miSucursal) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_ya_no_aprobada'); exit();
+                }
+                $stmtActivoEnvP = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+                $stmtActivoEnvP->execute([$transfP['producto_id'], $miSucursal]);
+                if (!$stmtActivoEnvP->fetchColumn()) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_producto_inactivo_transf&det=' . urlencode($nombresPed[$idEnv] ?? '')); exit();
+                }
+                $stmtOrP = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+                $stmtOrP->execute([$transfP['producto_id'], $miSucursal]);
+                $stockOrP = $stmtOrP->fetchColumn();
+                if ($stockOrP === false || floatval($stockOrP) < floatval($transfP['cantidad'])) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_stock_envio&det=' . urlencode($nombresPed[$idEnv] ?? '')); exit();
+                }
+                $stockAntOrP   = floatval($stockOrP);
+                $stockNuevoOrP = $stockAntOrP - floatval($transfP['cantidad']);
+                $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                    ->execute([$stockNuevoOrP, $transfP['producto_id'], $miSucursal]);
+                // Misma marca "#id" que usa 'enviar': 'recibir' la usa para no descontar doble.
+                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
+                    ->execute([$transfP['producto_id'], $_SESSION['usuario_id'], $miSucursal, $transfP['cantidad'], $stockAntOrP, $stockNuevoOrP, 'Transferencia enviada #' . $idEnv]);
+                $pdo->prepare("UPDATE transferencias SET estado='En tránsito' WHERE transferencias_id=? AND estado='Aprobada' AND sucursal_origen_id=?")
+                    ->execute([$idEnv, $miSucursal]);
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/admin/transferencias] Error al enviar pedido (fila base #' . $id . '): ' . $e->getMessage());
+            header('Location: inventario_transferencias.php?msg=error_envio'); exit();
+        }
     } elseif ($accion === 'enviar') {
         // El stock del origen se descuenta AL ENVIAR (no hasta que el destino confirma
         // recepcion), para que el origen no pueda seguir vendiendo mercancia ya en camino.
@@ -319,7 +502,9 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
             header('Location: inventario_transferencias.php?msg=error_ya_no_transito'); exit();
         }
     }
-    header('Location: inventario_transferencias.php?msg='.$accion); exit();
+    // [FEATURE-TICKET-ENVIO-TRANSF] Tras enviar (uno o todo el pedido) se abre el ticket de envio.
+    $ticketQs = in_array($accion, ['enviar', 'enviar_pedido'], true) ? '&abrir_ticket=' . $id : '';
+    header('Location: inventario_transferencias.php?msg='.$accion . $ticketQs); exit();
 }
 
 // Nueva solicitud — multi-producto, YO soy el DESTINO (quien pide), ORIGEN = otra sucursal
@@ -693,6 +878,9 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                     'error_sucursal'        => 'Selecciona una sucursal específica para poder operar transferencias.',
                     'cancelar'              => 'Transferencia cancelada. El stock regresó a tu sucursal.',
                     'error_cancelar'        => 'Error al cancelar la transferencia. Intenta de nuevo.',
+                    'cancelar_solicitud'    => 'Solicitud cancelada.',
+                    'error_ya_no_cancelable' => 'No se pudo cancelar: solo se puede cancelar una solicitud propia mientras sigue Pendiente (la otra sucursal aun no la aprueba). Si ya fue aprobada, ya no se puede cancelar.',
+                    'enviar_pedido'         => 'Pedido enviado: todos los productos aprobados se marcaron como enviados y el stock ya se desconto de tu sucursal. Imprime el ticket para que la sucursal destino verifique el pedido.',
                     'error_ya_no_transito'  => 'No se pudo completar: la transferencia ya no está "En tránsito" (alguien más ya la modificó).',
                     'error_ya_no_pendiente' => 'No se pudo completar: la solicitud ya no está pendiente (alguien más ya la aprobó, rechazó, o no eres la sucursal origen).',
                     'error_ya_no_aprobada'  => 'No se pudo completar: la transferencia ya no está "Aprobada" (alguien más ya la modificó, o no eres la sucursal origen).',
@@ -701,7 +889,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 ]; ?>
                 <?php $msgKeyTransf = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
                 <?php $esMsgError = str_starts_with($msgKeyTransf, 'error'); ?>
-                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$msgKeyTransf] ?? '') ?></div>
+                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$msgKeyTransf] ?? '') ?><?php $detMsgTransf = is_scalar($_GET['det'] ?? null) ? mb_substr((string)$_GET['det'], 0, 150) : ''; if ($esMsgError && $detMsgTransf !== ''): ?> Producto: <strong><?= htmlspecialchars($detMsgTransf) ?></strong><?php endif; ?></div>
             <?php endif; ?>
 
             <!-- Filtros -->
@@ -722,7 +910,7 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                         <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Estado</label>
                         <select name="estado_f" style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
                             <option value="">Todos</option>
-                            <?php foreach (['Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada'] as $est): ?>
+                            <?php foreach (['Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada','Cancelada'] as $est): ?>
                             <option value="<?= $est ?>" <?= $filtroEstado === $est ? 'selected' : '' ?>><?= $est ?></option>
                             <?php endforeach; ?>
                         </select>
@@ -751,6 +939,27 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                                 'Cancelada'   => 'badge-rechazada',
                             ];
                             $bc = $badgeMap[$t['estado']] ?? 'badge-pendiente';
+                            // [FEATURE-CANCELAR-TRANSFERENCIA] / [FEATURE-TICKET-ENVIO-TRANSF]
+                            $_sucMiaTransf = intval($sucursalVista);
+                            $esMiDestino   = $t['sucursal_destino_id'] == $_sucMiaTransf;
+                            $puedeCancelarSolic = $_sucMiaTransf !== 0 && $t['estado'] === 'Pendiente' && $esMiDestino;
+                            $mostrarTicketTransf = in_array($t['estado'], ['En tránsito','Entregada'], true);
+                            // ¿Hay mas de un producto Aprobado en este mismo pedido? (mismo origen, destino,
+                            // solicitante y momento de creacion) -> se ofrece enviar todo el pedido junto.
+                            $hayLoteAprobado = false;
+                            if ($t['estado'] === 'Aprobada' && $esMiOrigen) {
+                                $nLote = 0;
+                                foreach ($transferencias as $uT) {
+                                    if ($uT['estado'] === 'Aprobada'
+                                        && $uT['sucursal_origen_id'] == $t['sucursal_origen_id']
+                                        && $uT['sucursal_destino_id'] == $t['sucursal_destino_id']
+                                        && $uT['usuario_solicita_id'] == $t['usuario_solicita_id']
+                                        && abs(strtotime($uT['created_at']) - strtotime($t['created_at'])) <= 2) {
+                                        $nLote++;
+                                    }
+                                }
+                                $hayLoteAprobado = $nLote > 1;
+                            }
                         ?>
                         <tr>
                             <td>
@@ -782,6 +991,9 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                                     <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
                                         <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
                                         <button class="btn-accion btn-enviar" type="button" onclick="return ejecutarAccionTransf('enviar', <?= $t['transferencias_id'] ?>, '¿Confirmar que ya enviaste los productos?')">Marcar enviado</button>
+                                        <?php if ($hayLoteAprobado): ?>
+                                        <button class="btn-accion btn-enviar" type="button" style="background:#e1f5fe;" onclick="return ejecutarAccionTransf('enviar_pedido', <?= $t['transferencias_id'] ?>, '¿Confirmar que ya enviaste TODOS los productos aprobados de este pedido? Se descontará el stock de cada uno y se generará el ticket con la lista.')">Marcar todo el pedido enviado</button>
+                                        <?php endif; ?>
                                     <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
                                         <button class="btn-accion btn-aceptar-mod" type="button"
                                            onclick="return ejecutarAccionTransf('aceptar_modificacion', <?= $t['transferencias_id'] ?>, '¿Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
@@ -800,8 +1012,16 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                                              "En tránsito" nunca recibida quedaba con el stock descontado del origen para
                                              siempre, sin forma de recuperarlo. -->
                                         <button class="btn-accion" type="button" style="background:#fdecea;color:#c0392b;border:none;cursor:pointer;" onclick="return ejecutarAccionTransf('cancelar', <?= $t['transferencias_id'] ?>, '¿Cancelar esta transferencia? El stock regresara a tu sucursal. Solo hazlo si de verdad recuperaste la mercancia enviada.')">Cancelar</button>
-                                    <?php else: ?>
+                                    <?php elseif (!$puedeCancelarSolic && !$mostrarTicketTransf): ?>
                                         <span style="color:#aaa;font-size:11px;">—</span>
+                                    <?php endif; ?>
+                                    <?php if ($puedeCancelarSolic): ?>
+                                        <!-- [FEATURE-CANCELAR-TRANSFERENCIA] Solo para corregir un error: la solicitud sigue Pendiente. -->
+                                        <button class="btn-accion" type="button" style="background:#fdecea;color:#c0392b;border:none;cursor:pointer;" onclick="return ejecutarAccionTransf('cancelar_solicitud', <?= $t['transferencias_id'] ?>, '¿Cancelar esta solicitud? Aún no la ha aprobado la otra sucursal, así que no pasa nada con el inventario; quedará como Cancelada.')">Cancelar</button>
+                                    <?php endif; ?>
+                                    <?php if ($mostrarTicketTransf): ?>
+                                        <!-- [FEATURE-TICKET-ENVIO-TRANSF] Lista de lo enviado en este pedido. -->
+                                        <button class="btn-accion" type="button" style="background:#eef8ff;color:#1565c0;border:none;cursor:pointer;" onclick="abrirTicketEnvio(<?= $t['transferencias_id'] ?>)"><?= icono('printer') ?> Ticket</button>
                                     <?php endif; ?>
                                 </div>
                             </td>
@@ -1199,6 +1419,168 @@ document.addEventListener('keydown', function(e) {
         }
     }
     if (extra && extra.notas) document.getElementById('notasTransf').value = extra.notas;
+})();
+</script>
+
+<!-- [FEATURE-TICKET-ENVIO-TRANSF] Ticket de envio: lista de productos enviados en un pedido, para que
+     la sucursal destino verifique que llego completo. -->
+<style>
+@page { size: 80mm auto; margin: 0; }
+@media print {
+    html, body { height: auto !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; }
+    body > * { display: none !important; }
+    #ticketImprimir { display: block !important; page-break-after: avoid; break-after: avoid; }
+}
+#ticketImprimir { display: none; font-family: 'Courier New', monospace; font-size: 11px; width: 72mm; margin: 0; padding: 3mm 4mm 2mm; color: #000; }
+#ticketImprimir .t-centro, #ticketEnvioContenido .t-centro { text-align: center; }
+#ticketImprimir .t-linea  { border-top: 1px dashed #000; margin: 4px 0; }
+#ticketEnvioContenido .t-linea { border-top: 1px dashed #aaa; margin: 4px 0; }
+#ticketImprimir .t-fila, #ticketEnvioContenido .t-fila { display: flex; justify-content: space-between; gap: 8px; }
+#ticketImprimir .t-bold, #ticketEnvioContenido .t-bold { font-weight: bold; }
+#ticketImprimir .t-grande, #ticketEnvioContenido .t-grande { font-size: 13px; font-weight: bold; }
+#ticketEnvioContenido { font-family: 'Courier New', monospace; font-size: 12px; color: #222; }
+</style>
+<div id="modalTicketEnvio" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;padding:20px;" aria-hidden="true">
+    <div style="background:#fff;border-radius:8px;padding:22px;width:340px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.3);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #e8e8e8;">
+            <h3 style="margin:0;font-size:15px;color:#333;">Ticket de envío</h3>
+            <button type="button" onclick="cerrarTicketEnvio()" style="background:none;border:none;font-size:24px;color:#aaa;cursor:pointer;line-height:1;">×</button>
+        </div>
+        <div id="ticketEnvioContenido" style="margin-bottom:14px;"></div>
+        <div style="display:flex;gap:10px;justify-content:center;border-top:1px solid #e8e8e8;padding-top:14px;">
+            <button type="button" onclick="imprimirTicketEnvio()" style="background:#14ace7;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:700;"><?= icono('printer') ?> Imprimir</button>
+            <button type="button" onclick="cerrarTicketEnvio()" style="background:#f0f0f0;color:#666;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Cerrar</button>
+        </div>
+    </div>
+</div>
+<div id="ticketImprimir"></div>
+<script>
+// [FEATURE-TICKET-ENVIO-TRANSF]
+let _ticketEnvioAncho = 58;
+
+function fmtCantEnvio(c) {
+    const n = parseFloat(c) || 0;
+    return Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, '');
+}
+
+function generarTicketEnvioHTML(d) {
+    const o  = d.origen || {};
+    const el = document.getElementById('ticketImprimir');
+    _ticketEnvioAncho = o.ticket_ancho_mm || 58;
+    el.style.fontSize = (o.ticket_font_size || 12) + 'px';
+    el.style.width    = _ticketEnvioAncho + 'mm';
+
+    let html = '';
+    // Logo: el de la sucursal origen; si esa sucursal no tiene uno configurado se usa el logo
+    // de la empresa (logoIcono.png, el mismo icono de la casa), para que el ticket nunca salga sin logo.
+    {
+        const logoTicket = o.ticket_logo || 'logoIcono.png';
+        const maxW = _ticketEnvioAncho >= 80 ? '140px' : '100px';
+        html += `<div class="t-centro" style="margin-bottom:6px;"><img src="../${esc(logoTicket)}" style="max-width:${maxW};max-height:50px;object-fit:contain;"></div>`;
+    }
+    html += `<div class="t-centro t-bold t-grande">${esc(o.nombre || 'Ferretería Aldrete')}</div>`;
+    if (o.datos_ticket) {
+        html += `<div class="t-centro" style="white-space:pre-line;font-size:11px;">${esc(o.datos_ticket)}</div>`;
+    } else {
+        if (o.rfc)       html += `<div class="t-centro">RFC: ${esc(o.rfc)}</div>`;
+        if (o.direccion) html += `<div class="t-centro">${esc(o.direccion)}</div>`;
+        if (o.telefono)  html += `<div class="t-centro">Tel: ${esc(o.telefono)}</div>`;
+    }
+    html += `
+        <div class="t-linea"></div>
+        <div class="t-centro t-bold">ENVÍO A SUCURSAL</div>
+        <div class="t-linea"></div>
+        <div class="t-fila"><span>Pedido:</span><span>#${esc(d.pedido)}</span></div>
+        <div class="t-fila"><span>Fecha envío:</span><span>${esc(d.fecha_envio || '—')}</span></div>
+        <div class="t-fila"><span>Origen:</span><span style="text-align:right;">${esc(o.nombre || '')}</span></div>
+        <div class="t-fila"><span>Destino:</span><span style="text-align:right;">${esc(d.destino || '')}</span></div>
+        <div class="t-fila"><span>Solicitó:</span><span style="text-align:right;">${esc(d.solicitante || '—')}</span></div>
+        <div class="t-fila"><span>Envió:</span><span style="text-align:right;">${esc(d.enviado_por || '—')}</span></div>
+        <div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>Producto enviado</span><span>Cant.</span></div>
+        <div class="t-linea"></div>`;
+
+    (d.enviados || []).forEach(p => {
+        html += `<div>[&nbsp;&nbsp;] ${esc(p.nombre)}</div>
+            <div class="t-fila" style="font-size:10px;"><span>${esc(p.codigo)}</span><span class="t-bold" style="font-size:12px;">${fmtCantEnvio(p.cantidad)}${p.unidad ? ' ' + esc(p.unidad) : ''}</span></div>`;
+    });
+    html += `<div class="t-linea"></div>
+        <div class="t-fila t-bold"><span>Total de productos:</span><span>${(d.enviados || []).length}</span></div>`;
+
+    const noEnv = d.no_enviados || [];
+    if (noEnv.length) {
+        const etiqueta = e => (e === 'Rechazada' ? 'Rechazado' : (e === 'Cancelada' ? 'Cancelado' : 'Pendiente de envío'));
+        html += `<div class="t-linea"></div>
+            <div class="t-bold">NO ENVIADOS EN ESTE PEDIDO</div>`;
+        noEnv.forEach(p => {
+            html += `<div style="font-size:11px;">- ${esc(p.nombre)} (${fmtCantEnvio(p.cantidad)}) — ${esc(etiqueta(p.estado))}</div>`;
+        });
+    }
+
+    html += `
+        <div class="t-linea"></div>
+        <div style="margin-top:6px;">¿Pedido completo?  [ ] Sí   [ ] No</div>
+        <div style="margin-top:8px;">Observaciones:</div>
+        <div style="margin-top:16px;border-top:1px solid #000;"></div>
+        <div style="margin-top:16px;border-top:1px solid #000;"></div>
+        <div style="margin-top:16px;border-top:1px solid #000;"></div>
+        <div style="margin-top:16px;border-top:1px solid #000;"></div>
+        <div style="margin-top:16px;border-top:1px solid #000;"></div>
+        <div style="margin-top:16px;border-top:1px solid #000;"></div>
+        <div class="t-linea"></div>
+        <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve este comprobante</div>`;
+
+    el.innerHTML = html;
+}
+
+function abrirTicketEnvio(id) {
+    fetch('inventario_transferencias.php?ticket_envio=' + encodeURIComponent(id))
+        .then(r => r.json())
+        .then(d => {
+            if (!d || d.error) { alert((d && d.error) || 'No se pudo cargar el ticket de envío.'); return; }
+            if (!d.enviados || !d.enviados.length) { alert('Este pedido todavía no tiene productos enviados.'); return; }
+            generarTicketEnvioHTML(d);
+            document.getElementById('ticketEnvioContenido').innerHTML = document.getElementById('ticketImprimir').innerHTML;
+            const m = document.getElementById('modalTicketEnvio');
+            m.style.display = 'flex';
+            m.setAttribute('aria-hidden', 'false');
+        })
+        .catch(() => alert('No se pudo cargar el ticket de envío.'));
+}
+
+function cerrarTicketEnvio() {
+    const m = document.getElementById('modalTicketEnvio');
+    m.style.display = 'none';
+    m.setAttribute('aria-hidden', 'true');
+}
+
+function imprimirTicketEnvio() {
+    cerrarTicketEnvio();
+    const _doImprimirEnv = () => {
+        let estilo = document.getElementById('__ticketPageStyleEnv');
+        if (!estilo) {
+            estilo = document.createElement('style');
+            estilo.id = '__ticketPageStyleEnv';
+            document.head.appendChild(estilo);
+        }
+        estilo.textContent = `@page { size: ${_ticketEnvioAncho}mm auto; margin: 0; }`;
+        setTimeout(() => window.print(), 150);
+    };
+    const img = document.querySelector('#ticketImprimir img');
+    if (img && !img.complete) { img.onload = _doImprimirEnv; img.onerror = _doImprimirEnv; }
+    else { _doImprimirEnv(); }
+}
+
+// Al volver de "Marcar enviado" / "Enviar pedido" (?abrir_ticket=ID) se abre solo el ticket del pedido.
+// (No usar el nombre ticket_envio: ese parametro es el endpoint JSON que devuelve los datos.)
+(function() {
+    const p = new URLSearchParams(window.location.search);
+    const t = parseInt(p.get('abrir_ticket') || '0', 10);
+    if (t > 0) {
+        abrirTicketEnvio(t);
+        p.delete('abrir_ticket');
+        try { history.replaceState(null, '', window.location.pathname + (p.toString() ? '?' + p.toString() : '')); } catch (e) {}
+    }
 })();
 </script>
 

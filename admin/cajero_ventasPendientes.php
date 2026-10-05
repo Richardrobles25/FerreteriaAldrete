@@ -377,7 +377,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // [FIX-CANTIDAD-ENTERA-VENTA] tipo_venta de cada producto del carrito, para
                 // rechazar una cantidad fraccionaria en un producto que NO es "Suelto" —
                 // igual que nuevaVenta.php y devoluciones.php (FIX-CANTIDAD-ENTERA-DEVOLUCION).
-                $idsProdsCarrito = array_unique(array_map(fn($x) => intval($x['producto_id'] ?? 0), $items));
+                $idsProdsCarrito = array_values(array_unique(array_map(fn($x) => intval($x['producto_id'] ?? 0), $items)));
                 $tiposVentaCarrito = [];
                 if (!empty($idsProdsCarrito)) {
                     $inPlaceholdersCarrito = implode(',', array_fill(0, count($idsProdsCarrito), '?'));
@@ -697,7 +697,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $notaAjuste   = $paqId ? '' : trim(is_scalar($item['nota_ajuste'] ?? null) ? (string)$item['nota_ajuste'] : '');
                     $motivoMovimientoPend = 'Venta a domicilio';
                     if ($notaAjuste !== '') {
-                        $motivoMovimientoPend = 'Venta a domicilio - Ajuste por daño: ' . mb_substr($notaAjuste, 0, 120);
+                        $motivoMovimientoPend = 'Venta a domicilio - Ajuste de precio: ' . mb_substr($notaAjuste, 0, 120);
                     }
 
                     $stmtStockActual = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
@@ -1102,7 +1102,7 @@ if (!$cajaActualId) {
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#555;font-weight:600;user-select:none;">
                         <input type="checkbox" id="chkAjusteDano" onchange="togglePanelAjuste(this.checked)"
                             style="width:15px;height:15px;accent-color:#e65100;cursor:pointer;">
-                        <?= icono('triangle-alert') ?> Ajuste de precio por daño
+                        <?= icono('tag') ?> Ajuste de precio
                     </label>
                     <div id="panelAjusteDano" style="display:none;margin-top:10px;padding:12px;background:#fff8f0;border:1px solid #f0c080;border-radius:8px;">
                         <div style="font-size:12px;color:#888;margin-bottom:8px;">Selecciona el producto del carrito al que deseas aplicar el ajuste:</div>
@@ -1127,7 +1127,7 @@ if (!$cajaActualId) {
                                         oninput="ajustePrecioCambia(this.value)">
                                 </div>
                                 <div>
-                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">CANT. DAÑADA</label>
+                                    <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">CANTIDAD A AJUSTAR</label>
                                     <input type="number" id="inputCantAjuste" min="1" step="1"
                                         placeholder="Ej. 2"
                                         style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
@@ -1136,16 +1136,12 @@ if (!$cajaActualId) {
                             <div id="infoMinPrecio" style="font-size:11px;color:#888;margin-bottom:8px;"></div>
                             <label style="font-size:11px;color:#888;font-weight:600;display:block;margin-bottom:3px;">NOTA OBLIGATORIA</label>
                             <textarea id="textareaNotaAjuste" rows="2" maxlength="255"
-                                placeholder="¿Por qué se ajusta el precio? Ej: Producto golpeado, caja dañada..."
+                                placeholder="Motivo del ajuste. Ej: producto golpeado, descuento especial al cliente..."
                                 style="width:100%;padding:7px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;resize:none;"
                                 oninput="actualizarNotaAjuste(this.value)"></textarea>
                             <button type="button" onclick="aplicarAjuste()"
                                 style="width:100%;margin-top:8px;background:#e65100;color:white;border:none;padding:9px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
                                 Aplicar ajuste
-                            </button>
-                            <button type="button" onclick="quitarAjusteProducto()"
-                                style="width:100%;margin-top:4px;background:white;color:#888;border:1px solid #ddd;padding:7px;border-radius:6px;font-size:12px;cursor:pointer;">
-                                Quitar ajuste de este producto
                             </button>
                         </div>
                     </div>
@@ -1349,6 +1345,7 @@ if (!$cajaActualId) {
 const ICONS = <?= json_encode([
     'package'  => icono('package', '', 14),
     'warning'  => icono('triangle-alert', '', 14),
+    'tag'      => icono('tag', '', 14),
     'checkBig' => icono('circle-check-big', '', 14),
 ]) ?>;
 // [FIX-BORRADOR-PENDIENTE] Igual que nuevaVenta.php: si venimos de crear la venta con exito
@@ -1752,7 +1749,7 @@ function renderCarritoMini() {
         const lineaAjuste = tieneAjuste ? (() => {
             const pctDesc   = ((1 - i.precio_ajuste / i.precio) * 100).toFixed(1);
             const montoDesc = (i.precio - i.precio_ajuste).toFixed(2);
-            return `<div style="width:100%;font-size:10px;color:#e65100;margin-top:2px;">${ICONS.warning} Ajuste por daño &nbsp;·&nbsp; -${pctDesc}% (-$${montoDesc}/u)</div>`;
+            return `<div style="width:100%;font-size:10px;color:#e65100;margin-top:2px;">${ICONS.tag} Ajuste de precio &nbsp;·&nbsp; -${pctDesc}% (-$${montoDesc}/u) &nbsp;<a href="#" onclick="quitarAjusteLinea(${idx});return false;" style="color:#c0392b;font-weight:600;text-decoration:underline;">Quitar ajuste</a></div>`;
         })() : '';
         return `<div class="item-mini"${tieneAjuste ? ' style="flex-wrap:wrap;"' : ''}>
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(i.nombre)}</span>
@@ -1892,15 +1889,11 @@ function tipoItemPend(item) {
 }
 
 function togglePanelAjuste(activo) {
+    // [FIX-AJUSTE-CHECKBOX-ACCIDENTAL] Desmarcar el checkbox SOLO oculta el panel: los ajustes ya
+    // aplicados se conservan (antes se borraban todos de golpe y un clic de mas hacia perder el
+    // trabajo). Para deshacer un ajuste se usa "Quitar ajuste" en la propia linea del carrito.
     document.getElementById('panelAjusteDano').style.display = activo ? 'block' : 'none';
-    if (!activo) {
-        // Si se desactiva el checkbox, quitar ajustes de todos los productos
-        carritoP.forEach(item => { item.ajuste_activo = false; item.precio_ajuste = null; item.nota_ajuste = ''; item.cant_danada = undefined; });
-        resetPanelAjuste();
-        renderCarritoMini();
-    } else {
-        actualizarSelectProductos();
-    }
+    if (activo) actualizarSelectProductos();
 }
 
 function resetPanelAjuste() {
@@ -1918,8 +1911,8 @@ function actualizarSelectProductos() {
     const sel = document.getElementById('selProductoAjuste');
     const idx = idxAjusteActual;
     sel.innerHTML = '<option value="">— Elige un producto —</option>' +
-        carritoP.map((item, i) => item.tipo !== 'paquete'
-            ? `<option value="${i}" ${i===idx?'selected':''}>${esc(item.nombre)} — $${item.precio.toFixed(2)}</option>`
+        carritoP.map((item, i) => (item.tipo !== 'paquete' && !item.ajuste_activo)
+            ? `<option value="${i}" ${i===idx?'selected':''}>${esc(item.nombre)} — $${item.precio.toFixed(2)}${item.es_mayoreo ? ' (mayoreo)' : ''}</option>`
             : '').join('');
     if (idx >= 0) seleccionarProductoAjuste();
 }
@@ -1991,6 +1984,39 @@ function actualizarNotaAjuste(val) {
     carritoP[idxAjusteActual].nota_ajuste = val.trim();
 }
 
+// [FIX-LINEAS-DUPLICADAS] Une las lineas del carrito que ya son identicas. Al aplicar/quitar un
+// ajuste por daño la linea se divide (dañadas + normales), pero nunca se volvian a juntar: quitar
+// un ajuste dejaba dos lineas normales del mismo producto, aplicar el mismo ajuste dos veces
+// dejaba dos lineas ajustadas iguales, etc. -- el carrito se iba llenando de renglones repetidos.
+// Dos lineas son "iguales" si son del mismo producto, mismo precio, misma promo/mayoreo y, si
+// tienen ajuste, el mismo precio ajustado y la misma nota. Las cantidades se suman (el total de
+// piezas y de dinero no cambia). Las lineas con notas distintas SI se quedan separadas.
+function consolidarCarrito() {
+    const clave = it => (it.tipo === 'paquete') ? null : [
+        it.producto_id,
+        it.precio,
+        it.tiene_promo ? 1 : 0,
+        it.es_mayoreo ? 1 : 0,
+        it.ajuste_activo ? 1 : 0,
+        it.ajuste_activo ? it.precio_ajuste : '',
+        it.ajuste_activo ? (it.nota_ajuste || '') : ''
+    ].join('|');
+    const vistos = {};
+    for (let i = 0; i < carritoP.length; i++) {
+        const k = clave(carritoP[i]);
+        if (k === null) continue;
+        if (vistos[k] === undefined) { vistos[k] = i; continue; }
+        const destino = carritoP[vistos[k]];
+        destino.cantidad = parseFloat((parseFloat(destino.cantidad) + parseFloat(carritoP[i].cantidad)).toFixed(3));
+        if (destino.ajuste_activo) destino.cant_danada = destino.cantidad;
+        // Mantener apuntando al mismo producto el indice del panel de ajuste
+        if (idxAjusteActual === i) idxAjusteActual = vistos[k];
+        else if (idxAjusteActual > i) idxAjusteActual--;
+        carritoP.splice(i, 1);
+        i--;
+    }
+}
+
 function aplicarAjuste() {
     if (idxAjusteActual < 0) { alert('Selecciona un producto primero.'); return; }
     const item      = carritoP[idxAjusteActual];
@@ -2006,8 +2032,8 @@ function aplicarAjuste() {
     if (nuevo > item.precio)               { alert(`El precio ajustado no puede ser mayor al precio original ($${item.precio.toFixed(2)}).`); return; }
     if (minPrecio > 0 && nuevo < minPrecio){ alert(`El precio ajustado ($${nuevo.toFixed(2)}) no puede ser menor al precio de compra ($${minPrecio.toFixed(2)}).`); return; }
     if (!nota)                             { alert('La nota es obligatoria. Escribe el motivo del ajuste.'); document.getElementById('textareaNotaAjuste').focus(); return; }
-    if (isNaN(cantDanada) || cantDanada <= 0) { alert('Ingresa una cantidad dañada válida.'); return; }
-    if (cantDanada > item.cantidad)        { alert(`La cantidad dañada (${cantDanada}) no puede ser mayor a la cantidad en el carrito (${item.cantidad}).`); return; }
+    if (isNaN(cantDanada) || cantDanada <= 0) { alert('Ingresa una cantidad válida a ajustar.'); return; }
+    if (cantDanada > item.cantidad)        { alert(`La cantidad a ajustar (${cantDanada}) no puede ser mayor a la cantidad en el carrito (${item.cantidad}).`); return; }
 
     const cantRestante = parseFloat((item.cantidad - cantDanada).toFixed(3));
 
@@ -2041,22 +2067,24 @@ function aplicarAjuste() {
         item.cant_danada   = cantDanada;
     }
 
+    consolidarCarrito();
+    resetPanelAjuste();
     renderCarritoMini();
     actualizarSelectProductos();
     mostrarNotifTemporal(`${ICONS.checkBig} Ajuste aplicado: ${esc(item.nombre)} × ${cantDanada} → $${nuevo.toFixed(2)}`, 'exito');
 }
 
-function quitarAjusteProducto() {
-    if (idxAjusteActual < 0) return;
-    const item = carritoP[idxAjusteActual];
+// [FIX-AJUSTE-SELECT] Quita el ajuste de UNA linea del carrito (boton "Quitar ajuste" que aparece
+// en la propia linea ajustada). El selector del panel ya no lista las lineas con ajuste, asi que
+// esta es la forma de deshacerlo; la linea vuelve a ser normal y se junta con las iguales.
+function quitarAjusteLinea(i) {
+    const item = carritoP[i];
+    if (!item) return;
     item.ajuste_activo = false;
     item.precio_ajuste = null;
     item.nota_ajuste   = '';
     item.cant_danada   = undefined;
-    document.getElementById('inputPrecioAjuste').value  = '';
-    document.getElementById('inputPctAjuste').value     = '';
-    document.getElementById('inputCantAjuste').value    = '';
-    document.getElementById('textareaNotaAjuste').value = '';
+    consolidarCarrito();
     renderCarritoMini();
     actualizarSelectProductos();
 }
@@ -2379,31 +2407,60 @@ function generarTicketHTML(venta) {
         }
     });
 
-    // Renderizar paquetes primero
+    // [FIX-TICKET-FORMATO-IGUAL-NUEVAVENTA] Las lineas del ticket de una venta a domicilio se
+    // imprimen con EXACTAMENTE el mismo formato que el ticket de Nueva venta (generarTicketHTML de
+    // nuevaVenta.php): paquetes como "Paquete: nombre / N x $precio", promociones con el precio
+    // normal tachado y "-X% (-$Y)", ajuste de precio con el precio original tachado y
+    // "(-X% / -$Y)", y cantidades sin ceros de mas ("2 x", "1.5 x"). Antes aqui el ajuste solo
+    // llevaba un asterisco y la nota, y las cantidades salian como "2.00 x".
     Object.values(paqMap).forEach(pq => {
         const combos    = pq.precio_paquete > 0.001 ? Math.round(pq.subtotal / pq.precio_paquete) : 1;
-        const combosStr = combos + (combos === 1 ? ' combo' : ' combos');
-        html += `<div>${ICONS.package} ${esc(pq.nombre)}</div>`;
-        html += `<div class="t-fila"><span>${combosStr}</span><span>$${fmt(pq.subtotal)}</span></div>`;
+        const precioPaq = pq.precio_paquete > 0.001 ? pq.precio_paquete : (combos > 0 ? pq.subtotal / combos : pq.subtotal);
+        html += `<div>${esc('Paquete: ' + pq.nombre)}</div>`;
+        html += `<div class="t-fila"><span>${combos} x $${fmt(precioPaq)}</span><span>$${fmt(pq.subtotal)}</span></div>`;
     });
 
-    // Renderizar productos sueltos
     prodsSueltos.forEach(p => {
-        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '';
-        const precioOrig  = parseFloat(p.precio_unitario);
-        const precioFinal = parseFloat(p.precio_final || p.precio_unitario);
-        const tienePromo  = !tieneAjuste && precioFinal < precioOrig - 0.001;
-
-        if (tienePromo) ahorroPromoTicket += (precioOrig - precioFinal) * parseFloat(p.cantidad);
+        const cantidadRestante = parseFloat(p.cantidad);
+        if (!(cantidadRestante > 0)) return;
+        const precioOrig  = parseFloat(p.precio_unitario);                                  // precio antes de promo/ajuste
+        const precioFinal = p.precio_final ? parseFloat(p.precio_final) : precioOrig;       // precio cobrado
+        const tieneAjuste = p.nota_ajuste && p.nota_ajuste.trim() !== '' && precioFinal < precioOrig;
+        const tienePromo  = !tieneAjuste && precioFinal < precioOrig;
 
         html += `<div>${esc(p.nombre_producto)}</div>`;
+
         if (tienePromo) {
-            html += `<div style="font-size:10px;text-decoration:line-through;color:#888;">$${fmt(precioOrig)}/u (precio normal)</div>`;
-            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioFinal)}</span><span>$${fmt(p.subtotal)}</span></div>`;
+            const pctPromo   = ((1 - precioFinal / precioOrig) * 100).toFixed(0);
+            const ahorroUnit = (precioOrig - precioFinal).toFixed(2);
+            ahorroPromoTicket += cantidadRestante * (precioOrig - precioFinal);
+            html += `
+            <div class="t-fila" style="text-decoration:line-through;color:#aaa;font-size:10px;">
+                <span>${cantidadRestante} x $${precioOrig.toFixed(2)}</span>
+                <span>$${(cantidadRestante * precioOrig).toFixed(2)}</span>
+            </div>
+            <div class="t-fila">
+                <span>${cantidadRestante} x $${precioFinal.toFixed(2)} <span style="font-size:10px;">-${pctPromo}% (-$${ahorroUnit})</span></span>
+                <span>$${(cantidadRestante * precioFinal).toFixed(2)}</span>
+            </div>`;
+        } else if (tieneAjuste) {
+            const pctDesc   = ((1 - precioFinal / precioOrig) * 100).toFixed(1);
+            const montoDesc = (precioOrig - precioFinal).toFixed(2);
+            html += `
+            <div class="t-fila" style="text-decoration:line-through;color:#aaa;font-size:10px;">
+                <span>${cantidadRestante} x $${precioOrig.toFixed(2)}</span>
+                <span>$${(cantidadRestante * precioOrig).toFixed(2)}</span>
+            </div>
+            <div class="t-fila">
+                <span>${cantidadRestante} x $${precioFinal.toFixed(2)} <span style="font-size:10px;">(-${pctDesc}% / -$${montoDesc})</span></span>
+                <span>$${(cantidadRestante * precioFinal).toFixed(2)}</span>
+            </div>`;
         } else {
-            const precioUsado = tieneAjuste ? precioFinal : precioOrig;
-            html += `<div class="t-fila"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span><span>$${fmt(p.subtotal)}</span></div>`;
-            if (tieneAjuste) html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
+            html += `
+            <div class="t-fila">
+                <span>${cantidadRestante} x $${precioOrig.toFixed(2)}</span>
+                <span>$${(cantidadRestante * precioOrig).toFixed(2)}</span>
+            </div>`;
         }
     });
 

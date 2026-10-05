@@ -1205,7 +1205,7 @@ function renderDetalle(v) {
                 <span style="${tdLineThru}">${esc(p.nombre_producto)}</span>
                 ${todoDev    ? '<span style="background:#fdecea;color:#c0392b;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Devuelto</span>' : ''}
                 ${parcialDev ? `<span style="background:#fff3e0;color:#e65100;border-radius:99px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:5px;">Dev. parcial (${devuelta % 1 === 0 ? devuelta : devuelta.toFixed(2)})</span>` : ''}
-                ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">${ICONS.warning} Ajuste por daño: ${esc(p.nota_ajuste)}</div>` : ''}
+                ${tieneAjuste ? `<div style="font-size:11px;color:#e65100;margin-top:2px;">${ICONS.warning} Ajuste de precio: ${esc(p.nota_ajuste)}</div>` : ''}
                 ${tienePromo  ? `<div style="font-size:11px;color:#2e7d32;margin-top:2px;">Precio de promoción</div>` : ''}
             </td>
             <td style="text-align:right;${tdLineThru}">${parseFloat(p.cantidad).toFixed(2)}</td>
@@ -1451,7 +1451,7 @@ function generarTicketHTML(venta) {
         } else {
             const precioUsado = tieneAjuste ? precioFinal : precioOrig;
             html += `<div class="t-fila" style="${ltStyle}"><span>${parseFloat(p.cantidad).toFixed(2)} x $${fmt(precioUsado)}${tieneAjuste ? ' *' : ''}</span><span>$${fmt(p.subtotal)}</span></div>`;
-            if (tieneAjuste) html += `<div style="font-size:10px;color:#666;">* Ajuste daño: ${esc(p.nota_ajuste)}</div>`;
+            if (tieneAjuste) html += `<div style="font-size:10px;color:#666;">* Ajuste: ${esc(p.nota_ajuste)}</div>`;
         }
     });
 

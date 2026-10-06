@@ -674,9 +674,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // repartidor (no hay dinero que traer de regreso), asi que nace ya liquidada: estado
                 // 'Completada' y su credito se crea aqui mismo, en la misma transaccion. El limite de
                 // credito y que haya cliente ya se validaron arriba (con FOR UPDATE sobre el cliente).
-                // Efectivo y Transferencia siguen quedando 'Pendiente' hasta que el repartidor regrese.
-                $esCreditoDirecto = ($metodo_pago === 'Credito' && $cliente_id);
-                $estadoNuevaVenta = $esCreditoDirecto ? 'Completada' : 'Pendiente';
+                // [FEATURE-TRANSFERENCIA-LIQUIDA-AL-CREAR] Igual con TRANSFERENCIA: el pago ya se recibio por
+                // el banco (la referencia es obligatoria y ya se valido arriba), no hay nada que cobrar al
+                // entregar, asi que tambien nace 'Completada' y cuenta en el corte de ESTA caja.
+                // Solo Efectivo queda 'Pendiente' hasta que el repartidor regrese con el dinero.
+                $esCreditoDirecto       = ($metodo_pago === 'Credito' && $cliente_id);
+                $esTransferenciaDirecta = ($metodo_pago === 'Transferencia');
+                $estadoNuevaVenta = ($esCreditoDirecto || $esTransferenciaDirecta) ? 'Completada' : 'Pendiente';
                 $pdo->prepare("INSERT INTO ventas (folio, caja_id, cliente_id, usuario_id, subtotal, descuento, comision_terminal, total, metodo_pago, monto_efectivo, monto_terminal, cambio, estado, notas, referencia_transferencia) VALUES (?,?,?,?,?,?,0,?,?,?,0,?,?,?,?)")
                     ->execute([$folio, $caja, $cliente_id, $_SESSION['usuario_id'], round($sumaItems + $sumaDescuentoAjustes, 2), round($descuentoCliente + $sumaDescuentoAjustes, 2), $total, $metodo_pago, $monto_efectivo, $cambio, $estadoNuevaVenta, $notas, $ref_transf]);
                 $venta_id = $pdo->lastInsertId();
@@ -734,7 +738,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
                 $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
                 // Pasar venta_id para auto-abrir el ticket de impresión al volver
-                header('Location: cajero_ventasPendientes.php?msg=' . ($esCreditoDirecto ? 'creado_credito' : 'creado') . '&ticket=' . $venta_id);
+                header('Location: cajero_ventasPendientes.php?msg=' . ($esCreditoDirecto ? 'creado_credito' : ($esTransferenciaDirecta ? 'creado_transferencia' : 'creado')) . '&ticket=' . $venta_id);
                 exit();
             } catch (Exception $e) {
                 $pdo->rollBack();
@@ -940,6 +944,7 @@ if (!$cajaActualId) {
                 $msgsExito = [
                     'creado'    => 'Venta a domicilio registrada.',
                     'creado_credito' => 'Venta a domicilio a crédito registrada y liquidada: ya quedó en los créditos del cliente.',
+                    'creado_transferencia' => 'Venta a domicilio por transferencia registrada y liquidada: ya cuenta en el corte de tu caja.',
                     'liquidado' => 'Venta liquidada correctamente.',
                     'cancelado' => 'Venta cancelada y stock devuelto.',
                 ];
@@ -2326,9 +2331,18 @@ function cambiarMetodoPend(valor) {
     document.getElementById('refTransfPendGrupo').style.display = valor === 'Transferencia' ? 'block' : 'none';
     // [FEATURE-CREDITO-LIQUIDA-AL-CREAR] A credito se liquida al registrar: avisarlo y rotular el boton.
     const _avisoCred = document.getElementById('avisoCreditoPend');
-    if (_avisoCred) _avisoCred.style.display = valor === 'Credito' ? 'block' : 'none';
+    if (_avisoCred) {
+        // [FEATURE-TRANSFERENCIA-LIQUIDA-AL-CREAR] Tambien por transferencia: el pago ya esta recibido.
+        if (valor === 'Transferencia') {
+            _avisoCred.innerHTML = 'Por transferencia el pago ya se recibió: la venta queda <strong>liquidada</strong> al registrarla y cuenta en el corte de tu caja.';
+        } else {
+            _avisoCred.innerHTML = 'A crédito no se espera al repartidor: la venta queda <strong>liquidada</strong> al registrarla y se agrega a los créditos del cliente.';
+        }
+        _avisoCred.style.display = (valor === 'Credito' || valor === 'Transferencia') ? 'block' : 'none';
+    }
     const _btnReg = document.querySelector('#formPendiente .btn-guardar');
-    if (_btnReg) _btnReg.textContent = valor === 'Credito' ? 'Registrar y liquidar a crédito' : 'Registrar venta a domicilio';
+    if (_btnReg) _btnReg.textContent = valor === 'Credito' ? 'Registrar y liquidar a crédito'
+        : (valor === 'Transferencia' ? 'Registrar y liquidar (transferencia)' : 'Registrar venta a domicilio');
 
     if (valor === 'Efectivo') {
         document.getElementById('montoEfectivoPend').value     = '';

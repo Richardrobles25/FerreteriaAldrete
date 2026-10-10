@@ -987,8 +987,20 @@ $filtroEstado = trim(is_scalar($_GET['estado_f'] ?? null) ? (string)$_GET['estad
 
 $whereExtra = '';
 $paramsExtra = [];
-if ($filtroDesde) { $whereExtra .= ' AND DATE(t.created_at) >= ?'; $paramsExtra[] = $filtroDesde; }
-if ($filtroHasta) { $whereExtra .= ' AND DATE(t.created_at) <= ?'; $paramsExtra[] = $filtroHasta; }
+// [FIX-FILTRO-PEDIDOS-EN-PROCESO 2026-10-10] Con las fechas predeterminadas (hoy - 2 dias a hoy) un pedido que sigue
+// EN PROCESO (Pendiente, Aprobada, Modificada o En transito) no debe esconderse solo por ser mas viejo: la tarjeta del
+// inicio cuenta todos los pendientes y la lista los ocultaba. Si el usuario escribe otras fechas, se respetan tal cual.
+$estadosEnProceso = ['Pendiente', 'Aprobada', 'Modificada', 'En tránsito'];
+$fechasPredeterminadas = ($filtroDesde === date('Y-m-d', strtotime('-2 days')) && $filtroHasta === date('Y-m-d'));
+if ($fechasPredeterminadas && !$filtroEstado) {
+    $whereExtra .= " AND (DATE(t.created_at) >= ? OR t.estado IN ('Pendiente','Aprobada','Modificada','En tránsito'))";
+    $paramsExtra[] = $filtroDesde;
+} elseif ($fechasPredeterminadas && in_array($filtroEstado, $estadosEnProceso, true)) {
+    // filtrando por un estado en proceso con las fechas de siempre: se muestran todos, sin importar la antiguedad
+} else {
+    if ($filtroDesde) { $whereExtra .= ' AND DATE(t.created_at) >= ?'; $paramsExtra[] = $filtroDesde; }
+    if ($filtroHasta) { $whereExtra .= ' AND DATE(t.created_at) <= ?'; $paramsExtra[] = $filtroHasta; }
+}
 if ($filtroEstado) { $whereExtra .= ' AND t.estado = ?'; $paramsExtra[] = $filtroEstado; }
 
 // Transferencias de esta sucursal (como origen o destino)

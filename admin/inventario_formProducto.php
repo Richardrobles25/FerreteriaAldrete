@@ -428,7 +428,7 @@ if ($editando && $editando['categoria_id']) {
             <p><?= $editando ? 'Modifica los datos del producto.' : 'Completa el formulario para agregar un producto al inventario.' ?></p>
             <?php if ($todasSucursales): ?>
             <div style="background:#e3f2fd;color:#1565c0;border-left:3px solid #1565c0;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:18px;">
-                ✦ El producto se agregará al <strong>catálogo global</strong>. Para agregarlo a una sucursal específica, usa el botón <em>"Agregar del catálogo"</em> desde el inventario de esa sucursal.
+                <?= icono('info', '', 16) ?> El producto se agregará al <strong>catálogo global</strong>. Para agregarlo a una sucursal específica, usa el botón <em>"Agregar del catálogo"</em> desde el inventario de esa sucursal.
             </div>
             <?php endif; ?>
 
@@ -485,7 +485,7 @@ if ($editando && $editando['categoria_id']) {
                             <?php if ($categoriaNombreActual): ?>
                                 <div class="ac-tag cat-tag" id="tagCategoria">
                                     <?= htmlspecialchars($categoriaNombreActual) ?>
-                                    <button type="button" onclick="limpiarCategoria()">×</button>
+                                    <button type="button" onclick="limpiarCategoria()"><?= icono('x', '', 12) ?></button>
                                 </div>
                             <?php else: ?>
                                 <div class="ac-tag cat-tag" id="tagCategoria" style="display:none;"></div>
@@ -716,6 +716,8 @@ if ($editando && $editando['categoria_id']) {
 </div>
 
 <script>
+// Iconos del paquete (en lugar de emojis) para los textos que arma el JS.
+const ICONS = <?= json_encode(['ok' => icono('circle-check-big', '', 14), 'warn' => icono('triangle-alert', '', 14), 'x' => icono('x', '', 12)]) ?>;
 // ── Datos para autocomplete ────────────────────────────────────────────────
 const CATEGORIAS = <?= json_encode(array_map(fn($c) => [
     'id'     => $c['categoria_id'],
@@ -779,7 +781,7 @@ function seleccionarCategoria(id, nombre) {
     document.getElementById('dropCategoria').classList.remove('visible');
 
     const tag = document.getElementById('tagCategoria');
-    tag.innerHTML = `${esc(nombre)} <button type="button" onclick="limpiarCategoria()">×</button>`;
+    tag.innerHTML = `${esc(nombre)} <button type="button" onclick="limpiarCategoria()">${ICONS.x}</button>`;
     tag.className = 'ac-tag cat-tag';
     tag.style.display = 'inline-flex';
 }
@@ -888,9 +890,9 @@ function calcularMargen() {
         const margen   = ((utilidad / compra) * 100).toFixed(1);
         preview.style.display = 'block';
         preview.className = `margen-preview ${utilidad >= 0 ? 'positivo' : 'negativo'}`;
-        preview.textContent = utilidad >= 0
-            ? `✅ Utilidad: $${utilidad.toFixed(2)} · Margen: ${margen}%`
-            : `⚠ Precio de venta menor al costo · Pérdida: $${Math.abs(utilidad).toFixed(2)}`;
+        preview.innerHTML = utilidad >= 0
+            ? `${ICONS.ok} Utilidad: $${utilidad.toFixed(2)} · Margen: ${margen}%`
+            : `${ICONS.warn} Precio de venta menor al costo · Pérdida: $${Math.abs(utilidad).toFixed(2)}`;
         // Actualizar el campo % solo si el usuario no lo está editando en este momento
         if (document.activeElement !== margenInput) {
             margenInput.value = margen;

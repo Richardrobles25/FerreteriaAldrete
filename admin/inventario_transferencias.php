@@ -32,6 +32,116 @@ function transfCargarPedido(PDO $pdo, int $id): ?array {
     return ['base' => $base, 'filas' => $st->fetchAll(PDO::FETCH_ASSOC)];
 }
 
+// [FEATURE-PEDIDO-TRANSFERENCIA 2026-10-06] Un pedido (todas las filas de una misma solicitud) se
+// muestra y se opera como UN solo carrito: una fila en el listado, un boton por accion para todo el
+// pedido. Agrupa las filas del listado (mismo origen, destino, solicitante y momento de creacion).
+function transfAgruparPedidos(array $filas): array {
+    $grupos = [];
+    foreach ($filas as $f) {
+        $ts = strtotime($f['created_at']);
+        $colocado = false;
+        foreach ($grupos as &$g) {
+            if ($g['origen'] == $f['sucursal_origen_id'] && $g['destino'] == $f['sucursal_destino_id']
+                && $g['solicitante'] == $f['usuario_solicita_id'] && abs($g['ts'] - $ts) <= 2) {
+                $g['filas'][] = $f;
+                $colocado = true;
+                break;
+            }
+        }
+        unset($g);
+        if (!$colocado) {
+            $grupos[] = ['origen' => $f['sucursal_origen_id'], 'destino' => $f['sucursal_destino_id'],
+                         'solicitante' => $f['usuario_solicita_id'], 'ts' => $ts, 'filas' => [$f]];
+        }
+    }
+    foreach ($grupos as &$g) {
+        usort($g['filas'], fn($a, $b) => intval($a['transferencias_id']) <=> intval($b['transferencias_id']));
+    }
+    unset($g);
+    return $grupos;
+}
+
+// [FEATURE-PEDIDO-TRANSFERENCIA] Misma logica de 'recibir' (una fila) pero reutilizable dentro de la
+// transaccion de 'recibir_pedido'. Devuelve null si todo salio bien o la llave de mensaje de error.
+function transfRecibirFila(PDO $pdo, int $id, int $miSucursal, int $usuarioId): ?string {
+    $stmtLock = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+    $stmtLock->execute([$id]);
+    $transf = $stmtLock->fetch(PDO::FETCH_ASSOC);
+    if (!$transf || $transf['estado'] !== 'En tránsito' || $transf['sucursal_destino_id'] != $miSucursal) {
+        return 'error_ya_no_transito';
+    }
+    $stmtMarca = $pdo->prepare("SELECT COUNT(*) FROM movimientos_inventario WHERE tipo = 'Transferencia' AND motivo = ? AND sucursal_id = ?");
+    $stmtMarca->execute(['Transferencia enviada #' . $id, $transf['sucursal_origen_id']]);
+    if (intval($stmtMarca->fetchColumn()) === 0) {
+        // Ruta de compatibilidad: transferencia enviada con la logica anterior (descuenta el origen al recibir).
+        $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+        $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
+        $stockOrLegacy = $stmtOrigen->fetchColumn();
+        if ($stockOrLegacy === false || floatval($stockOrLegacy) < floatval($transf['cantidad'])) {
+            return 'error_stock_recibir';
+        }
+        $stockAntOrigen   = floatval($stockOrLegacy);
+        $stockNuevoOrigen = $stockAntOrigen - floatval($transf['cantidad']);
+        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+            ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
+        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
+            ->execute([$transf['producto_id'], $usuarioId, $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
+    }
+    $stmtActivoRec = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+    $stmtActivoRec->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
+    $activoDestRec = $stmtActivoRec->fetchColumn();
+    if ($activoDestRec !== false && !intval($activoDestRec)) {
+        return 'error_producto_inactivo_transf';
+    }
+    $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+    $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
+    $stockDest = $stmtDest->fetchColumn();
+    if ($stockDest !== false) {
+        $stockAntDest   = floatval($stockDest);
+        $stockNuevoDest = $stockAntDest + floatval($transf['cantidad']);
+        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+            ->execute([$stockNuevoDest, $transf['producto_id'], $transf['sucursal_destino_id']]);
+    } else {
+        $stockNuevoDest = floatval($transf['cantidad']);
+        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
+            ->execute([$transf['producto_id'], $transf['sucursal_destino_id'], $stockNuevoDest]);
+        $stockAntDest = 0;
+    }
+    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
+        ->execute([$transf['producto_id'], $usuarioId, $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest, 'Transferencia recibida #' . $id]);
+    $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
+        ->execute([$usuarioId, $id]);
+    return null;
+}
+
+// [FEATURE-PEDIDO-TRANSFERENCIA] Misma logica de 'cancelar' (una fila En transito, regresa el stock al
+// origen) reutilizable dentro de la transaccion de 'cancelar_pedido'.
+function transfCancelarTransitoFila(PDO $pdo, int $id, int $miSucursal, int $usuarioId): ?string {
+    $stmtLockCancel = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
+    $stmtLockCancel->execute([$id]);
+    $tc = $stmtLockCancel->fetch(PDO::FETCH_ASSOC);
+    if (!$tc || $tc['estado'] !== 'En tránsito' || $tc['sucursal_origen_id'] != $miSucursal) {
+        return 'error_ya_no_transito';
+    }
+    $stmtOrCancel = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+    $stmtOrCancel->execute([$tc['producto_id'], $miSucursal]);
+    $stockOrCancel = $stmtOrCancel->fetchColumn();
+    $stockAnt   = ($stockOrCancel !== false) ? floatval($stockOrCancel) : 0.0;
+    $stockNuevo = $stockAnt + floatval($tc['cantidad']);
+    if ($stockOrCancel !== false) {
+        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+            ->execute([$stockNuevo, $tc['producto_id'], $miSucursal]);
+    } else {
+        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
+            ->execute([$tc['producto_id'], $miSucursal, $stockNuevo]);
+    }
+    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,?)")
+        ->execute([$tc['producto_id'], $usuarioId, $miSucursal, $tc['cantidad'], $stockAnt, $stockNuevo, 'Transferencia #' . $id . ' cancelada en tránsito — stock regresado al origen']);
+    $pdo->prepare("UPDATE transferencias SET estado='Cancelada' WHERE transferencias_id=? AND estado='En tránsito' AND sucursal_origen_id=?")
+        ->execute([$id, $miSucursal]);
+    return null;
+}
+
 // [FEATURE-TICKET-ENVIO-TRANSF] Datos del ticket de envio de un pedido: lista de lo enviado (para
 // que la sucursal destino verifique que llego completo) y, aparte, lo que NO se envio.
 if (isset($_GET['ticket_envio'])) {
@@ -297,6 +407,245 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
         if ($stmtCancelSol->rowCount() === 0) {
             header('Location: inventario_transferencias.php?msg=error_ya_no_cancelable'); exit();
         }
+    } elseif ($accion === 'aprobar_pedido' || $accion === 'rechazar_pedido') {
+        // [FEATURE-PEDIDO-TRANSFERENCIA] Aceptar o rechazar TODO el pedido (todas sus filas Pendientes) de un
+        // jalon; si un producto ya no se puede aceptar (dado de baja), no se acepta ninguno.
+        $ped = transfCargarPedido($pdo, $id);
+        $filasAcc = [];
+        if ($ped) {
+            foreach ($ped['filas'] as $f) {
+                if ($f['estado'] === 'Pendiente' && $f['sucursal_origen_id'] == $miSucursal) $filasAcc[] = $f;
+            }
+        }
+        if (!$filasAcc) { header('Location: inventario_transferencias.php?msg=error_ya_no_pendiente'); exit(); }
+        if ($accion === 'aprobar_pedido') {
+            $stmtActPed = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+            foreach ($filasAcc as $f) {
+                $stmtActPed->execute([$f['producto_id'], $miSucursal]);
+                if (!$stmtActPed->fetchColumn()) {
+                    header('Location: inventario_transferencias.php?msg=error_producto_inactivo_transf&det=' . urlencode($f['nombre_producto'])); exit();
+                }
+            }
+            $notaPed = 'Aceptada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '. Preparar envio a sucursal destino.';
+            $stmtUpPed = $pdo->prepare("
+                UPDATE transferencias
+                SET estado='Aprobada', usuario_aprueba_id=?,
+                    notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?))
+                WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?
+            ");
+            $argsPed = fn($f) => [$_SESSION['usuario_id'], $notaPed, $f['transferencias_id'], $miSucursal];
+        } else {
+            $stmtUpPed = $pdo->prepare("UPDATE transferencias SET estado='Rechazada', usuario_aprueba_id=? WHERE transferencias_id=? AND estado='Pendiente' AND sucursal_origen_id=?");
+            $argsPed = fn($f) => [$_SESSION['usuario_id'], $f['transferencias_id'], $miSucursal];
+        }
+        $pdo->beginTransaction();
+        try {
+            foreach ($filasAcc as $f) {
+                $stmtUpPed->execute($argsPed($f));
+                if ($stmtUpPed->rowCount() === 0) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_ya_no_pendiente'); exit();
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/admin/transferencias] Error en ' . $accion . ' (fila base #' . $id . '): ' . $e->getMessage());
+            header('Location: inventario_transferencias.php?msg=error_pedido'); exit();
+        }
+    } elseif ($accion === 'cancelar_solicitud_pedido') {
+        // [FEATURE-PEDIDO-TRANSFERENCIA] La sucursal que pidio cancela TODO el pedido mientras sigue Pendiente.
+        $ped = transfCargarPedido($pdo, $id);
+        $filasAcc = [];
+        if ($ped) {
+            foreach ($ped['filas'] as $f) {
+                if ($f['estado'] === 'Pendiente' && $f['sucursal_destino_id'] == $miSucursal) $filasAcc[] = $f;
+            }
+        }
+        if (!$filasAcc) { header('Location: inventario_transferencias.php?msg=error_ya_no_cancelable'); exit(); }
+        $notaCancelPed = 'Cancelada el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '.';
+        $stmtCancPed = $pdo->prepare("
+            UPDATE transferencias
+            SET estado = 'Cancelada',
+                notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?))
+            WHERE transferencias_id = ? AND estado = 'Pendiente' AND sucursal_destino_id = ?
+        ");
+        $pdo->beginTransaction();
+        try {
+            foreach ($filasAcc as $f) {
+                $stmtCancPed->execute([$notaCancelPed, $f['transferencias_id'], $miSucursal]);
+                if ($stmtCancPed->rowCount() === 0) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_ya_no_cancelable'); exit();
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/admin/transferencias] Error al cancelar pedido (fila base #' . $id . '): ' . $e->getMessage());
+            header('Location: inventario_transferencias.php?msg=error_pedido'); exit();
+        }
+    } elseif ($accion === 'editar_pedido') {
+        // [FEATURE-PEDIDO-TRANSFERENCIA] El origen revisa TODO el pedido en una sola pantalla: los productos con
+        // cantidad distinta quedan "Modificada" (el destino debe confirmar), los que no cambian quedan
+        // aceptados y un producto Pendiente con cantidad 0 se retira del pedido (Rechazada). Todo o nada.
+        $ped = transfCargarPedido($pdo, $id);
+        $cants = (isset($_POST['cant']) && is_array($_POST['cant'])) ? $_POST['cant'] : [];
+        $filasEd = [];
+        $otrasActivas = 0;
+        if ($ped) {
+            foreach ($ped['filas'] as $f) {
+                if (in_array($f['estado'], ['Pendiente', 'Aprobada'], true) && $f['sucursal_origen_id'] == $miSucursal) $filasEd[] = $f;
+                elseif ($f['estado'] === 'Modificada') $otrasActivas++;
+            }
+        }
+        if (!$filasEd) { header('Location: inventario_transferencias.php?msg=error_ya_no_pendiente'); exit(); }
+        $stmtStockEd = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
+        $cambios = [];   // id => [fila, nueva]
+        $quitar  = [];   // filas Pendientes que se retiran
+        foreach ($filasEd as $f) {
+            $fid = $f['transferencias_id'];
+            if (!array_key_exists($fid, $cants) || !is_scalar($cants[$fid])) continue;
+            $raw = trim((string)$cants[$fid]);
+            if ($raw === '') continue;
+            if (!is_numeric($raw)) { header('Location: inventario_transferencias.php?msg=error_cantidad_pedido&det=' . urlencode($f['nombre_producto'])); exit(); }
+            $nueva = floatval($raw);
+            if ($f['tipo_venta'] !== 'Suelto') $nueva = floor($nueva);
+            if ($nueva < 0) { header('Location: inventario_transferencias.php?msg=error_cantidad_pedido&det=' . urlencode($f['nombre_producto'])); exit(); }
+            if ($nueva == 0) {
+                // Un producto Aprobado ya no se retira (el destino ya cuenta con el); solo uno Pendiente.
+                if ($f['estado'] !== 'Pendiente') { header('Location: inventario_transferencias.php?msg=error_cantidad_pedido&det=' . urlencode($f['nombre_producto'])); exit(); }
+                $quitar[$fid] = $f;
+                continue;
+            }
+            if (abs($nueva - floatval($f['cantidad'])) < 0.0005) continue;
+            $stmtStockEd->execute([$f['producto_id'], $miSucursal]);
+            $stockEd = $stmtStockEd->fetchColumn();
+            if ($stockEd === false || $nueva > floatval($stockEd)) {
+                header('Location: inventario_transferencias.php?msg=error_stock_editar&det=' . urlencode($f['nombre_producto'])); exit();
+            }
+            $cambios[$fid] = [$f, $nueva];
+        }
+        if (!$cambios && !$quitar) { header('Location: inventario_transferencias.php?msg=error_pedido_sin_cambios'); exit(); }
+        if (count($filasEd) - count($quitar) + $otrasActivas <= 0) { header('Location: inventario_transferencias.php?msg=error_pedido_vacio'); exit(); }
+
+        $fechaEd = date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'];
+        $stmtMod = $pdo->prepare("UPDATE transferencias SET cantidad = ?, estado = 'Modificada', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado IN ('Pendiente','Aprobada') AND sucursal_origen_id = ?");
+        $stmtQuit = $pdo->prepare("UPDATE transferencias SET estado = 'Rechazada', usuario_aprueba_id = ?, notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado = 'Pendiente' AND sucursal_origen_id = ?");
+        $stmtOk = $pdo->prepare("UPDATE transferencias SET estado = 'Aprobada', usuario_aprueba_id = ?, notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado = 'Pendiente' AND sucursal_origen_id = ?");
+        $pdo->beginTransaction();
+        try {
+            foreach ($filasEd as $f) {
+                $fid = $f['transferencias_id'];
+                if (isset($cambios[$fid])) {
+                    [$fila, $nueva] = $cambios[$fid];
+                    $nota = 'Cantidad modificada por origen de ' . number_format($fila['cantidad'], 2) . ' a ' . number_format($nueva, 2) . ' el ' . $fechaEd . '. Pendiente de confirmacion por destino.';
+                    $stmtMod->execute([$nueva, $nota, $fid, $miSucursal]);
+                    $afectadas = $stmtMod->rowCount();
+                } elseif (isset($quitar[$fid])) {
+                    $stmtQuit->execute([$_SESSION['usuario_id'], 'Producto retirado del pedido por origen el ' . $fechaEd . '.', $fid, $miSucursal]);
+                    $afectadas = $stmtQuit->rowCount();
+                } elseif ($f['estado'] === 'Pendiente') {
+                    // Sin cambios en este producto: queda aceptado junto con el resto de la respuesta del origen.
+                    $stmtOk->execute([$_SESSION['usuario_id'], 'Aceptada el ' . $fechaEd . '. Preparar envio a sucursal destino.', $fid, $miSucursal]);
+                    $afectadas = $stmtOk->rowCount();
+                } else {
+                    continue;
+                }
+                if ($afectadas === 0) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_ya_no_pendiente'); exit();
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/admin/transferencias] Error al editar pedido (fila base #' . $id . '): ' . $e->getMessage());
+            header('Location: inventario_transferencias.php?msg=error_pedido'); exit();
+        }
+    } elseif ($accion === 'aceptar_modificacion_pedido' || $accion === 'rechazar_modificacion_pedido') {
+        // [FEATURE-PEDIDO-TRANSFERENCIA] El destino acepta o rechaza TODOS los cambios de cantidad del pedido.
+        $ped = transfCargarPedido($pdo, $id);
+        $filasAcc = [];
+        if ($ped) {
+            foreach ($ped['filas'] as $f) {
+                if ($f['estado'] === 'Modificada' && $f['sucursal_destino_id'] == $miSucursal) $filasAcc[] = $f;
+            }
+        }
+        if (!$filasAcc) { header('Location: inventario_transferencias.php?msg=error_ya_no_modificada'); exit(); }
+        if ($accion === 'aceptar_modificacion_pedido') {
+            $stmtModPed = $pdo->prepare("UPDATE transferencias SET estado = 'Aprobada' WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?");
+            $argsMod = fn($f) => [$f['transferencias_id'], $miSucursal];
+        } else {
+            $notaRechPed = 'Modificacion de cantidad rechazada por destino el ' . date('d/m/Y H:i') . ' por ' . $_SESSION['nombre_completo'] . '.';
+            $stmtModPed = $pdo->prepare("UPDATE transferencias SET estado = 'Pendiente', notas = TRIM(CONCAT(COALESCE(notas, ''), CASE WHEN COALESCE(notas, '') = '' THEN '' ELSE '\n' END, ?)) WHERE transferencias_id = ? AND estado = 'Modificada' AND sucursal_destino_id = ?");
+            $argsMod = fn($f) => [$notaRechPed, $f['transferencias_id'], $miSucursal];
+        }
+        $pdo->beginTransaction();
+        try {
+            foreach ($filasAcc as $f) {
+                $stmtModPed->execute($argsMod($f));
+                if ($stmtModPed->rowCount() === 0) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=error_ya_no_modificada'); exit();
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/admin/transferencias] Error en ' . $accion . ' (fila base #' . $id . '): ' . $e->getMessage());
+            header('Location: inventario_transferencias.php?msg=error_pedido'); exit();
+        }
+    } elseif ($accion === 'recibir_pedido') {
+        // [FEATURE-PEDIDO-TRANSFERENCIA] Confirmar la recepcion de TODO el pedido (todo o nada, una transaccion).
+        $ped = transfCargarPedido($pdo, $id);
+        $filasAcc = [];
+        if ($ped) {
+            foreach ($ped['filas'] as $f) {
+                if ($f['estado'] === 'En tránsito' && $f['sucursal_destino_id'] == $miSucursal) $filasAcc[] = $f;
+            }
+        }
+        if (!$filasAcc) { header('Location: inventario_transferencias.php?msg=error_ya_no_transito'); exit(); }
+        $pdo->beginTransaction();
+        try {
+            foreach ($filasAcc as $f) {
+                $err = transfRecibirFila($pdo, intval($f['transferencias_id']), intval($miSucursal), intval($_SESSION['usuario_id']));
+                if ($err !== null) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=' . $err . '&det=' . urlencode($f['nombre_producto'])); exit();
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/admin/transferencias] Error al recibir pedido (fila base #' . $id . '): ' . $e->getMessage());
+            header('Location: inventario_transferencias.php?msg=error_recibir'); exit();
+        }
+    } elseif ($accion === 'cancelar_pedido') {
+        // [FEATURE-PEDIDO-TRANSFERENCIA] El origen cancela el envio de TODO el pedido En transito (el stock regresa).
+        $ped = transfCargarPedido($pdo, $id);
+        $filasAcc = [];
+        if ($ped) {
+            foreach ($ped['filas'] as $f) {
+                if ($f['estado'] === 'En tránsito' && $f['sucursal_origen_id'] == $miSucursal) $filasAcc[] = $f;
+            }
+        }
+        if (!$filasAcc) { header('Location: inventario_transferencias.php?msg=error_ya_no_transito'); exit(); }
+        $pdo->beginTransaction();
+        try {
+            foreach ($filasAcc as $f) {
+                $err = transfCancelarTransitoFila($pdo, intval($f['transferencias_id']), intval($miSucursal), intval($_SESSION['usuario_id']));
+                if ($err !== null) {
+                    $pdo->rollBack();
+                    header('Location: inventario_transferencias.php?msg=' . $err . '&det=' . urlencode($f['nombre_producto'])); exit();
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/admin/transferencias] Error al cancelar envio de pedido (fila base #' . $id . '): ' . $e->getMessage());
+            header('Location: inventario_transferencias.php?msg=error_cancelar'); exit();
+        }
     } elseif ($accion === 'enviar_pedido') {
         // [FEATURE-TICKET-ENVIO-TRANSF] "Marcar enviado" para TODOS los productos Aprobados del mismo
         // pedido de una sola vez (misma logica que 'enviar', fila por fila, dentro de UNA transaccion:
@@ -310,6 +659,15 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
                 if ($f['estado'] === 'Aprobada' && $f['sucursal_origen_id'] == $miSucursal) {
                     $idsEnviar[] = intval($f['transferencias_id']);
                     $nombresPed[intval($f['transferencias_id'])] = $f['nombre_producto'];
+                }
+            }
+        }
+        // [FEATURE-PEDIDO-TRANSFERENCIA] El pedido sale completo: si aun tiene productos sin aceptar o con un cambio
+        // de cantidad pendiente de confirmar, no se envia parte del carrito.
+        if ($ped) {
+            foreach ($ped['filas'] as $f) {
+                if (in_array($f['estado'], ['Pendiente', 'Modificada'], true) && $f['sucursal_origen_id'] == $miSucursal) {
+                    header('Location: inventario_transferencias.php?msg=error_pedido_incompleto'); exit();
                 }
             }
         }
@@ -570,6 +928,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // <= 0 tras redondear (p. ej. un producto no-granel pedido en 0.5), el "continue"
         // los saltaba a todos y la solicitud quedaba vacia, pero igual se mostraba exito.
         $insertados = 0;
+        // [FEATURE-PEDIDO-TRANSFERENCIA] Mismo momento de creacion para todas las filas: identifica al pedido.
+        $tsPedido = $pdo->query("SELECT NOW()")->fetchColumn();
         foreach ($items as $item) {
             $prodId   = intval($item['id']);
             $cantidad = floatval($item['cantidad']);
@@ -578,8 +938,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tvRow3 = $stmtTV3->fetch(PDO::FETCH_ASSOC);
             if ($tvRow3 && $tvRow3['tipo_venta'] !== 'Suelto') { $cantidad = floor($cantidad); }
             if ($cantidad <= 0) continue;
-            $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado) VALUES (?,?,?,?,?,?,'Pendiente')")
-                ->execute([$prodId, $sucursal_origen_id, $sucursalVista, $_SESSION['usuario_id'], $cantidad, $notas]);
+            $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado, created_at) VALUES (?,?,?,?,?,?,'Pendiente',?)")
+                ->execute([$prodId, $sucursal_origen_id, $sucursalVista, $_SESSION['usuario_id'], $cantidad, $notas, $tsPedido]);
             $insertados++;
         }
         if ($insertados > 0) {
@@ -590,7 +950,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Filtro de fechas para el historial
-$filtroDesde = $_GET['desde'] ?? date('Y-m-01');
+// El historial abre mostrando desde DOS DIAS ANTES de hoy (antes: desde el dia 1 del mes).
+$filtroDesde = $_GET['desde'] ?? date('Y-m-d', strtotime('-2 days'));
 $filtroHasta = $_GET['hasta'] ?? date('Y-m-d');
 $filtroEstado = trim(is_scalar($_GET['estado_f'] ?? null) ? (string)$_GET['estado_f'] : '');
 
@@ -782,6 +1143,48 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
     .btn-rechazar { background: #fdecea; color: #c0392b; }
     .btn-enviar   { background: #e3f2fd; color: #1565c0; }
     .btn-recibir  { background: #f3e5f5; color: #6a1b9a; }
+    /* [DISENO-PEDIDOS] Tabla de pedidos de transferencia: una fila limpia por pedido */
+    .tabla-pedidos { width: 100%; border-collapse: collapse; }
+    .tabla-pedidos th { padding: 11px 14px; }
+    .tabla-pedidos td { padding: 14px; vertical-align: top; border-bottom: 1px solid #eef0f2; }
+    .tabla-pedidos tr:hover td { background: #fcfdfe; }
+    .tabla-pedidos tr:last-child td { border-bottom: none; }
+    .tabla-pedidos .c-ped { width: 150px; }
+    .tabla-pedidos .c-ruta { width: 200px; }
+    .tabla-pedidos .c-est { width: 150px; }
+    .tabla-pedidos .c-acc { width: 178px; }
+    .ped-id { font-size: 16px; font-weight: 700; color: #1d2733; line-height: 1.2; }
+    .ped-meta { font-size: 11px; color: #8a96a3; margin-top: 3px; line-height: 1.4; }
+    .ped-rol { display: inline-block; margin-top: 8px; font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 99px; letter-spacing: .02em; }
+    .rol-envia { background: #fff3e0; color: #c25b00; }
+    .rol-recibe { background: #e3f2fd; color: #1565c0; }
+    .ruta { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; line-height: 1.35; margin-bottom: 6px; color: #1d2733; }
+    .ruta-l { flex: none; width: 18px; font-size: 10px; font-weight: 700; color: #9aa5b1; text-transform: uppercase; }
+    .ped-n { font-size: 11px; color: #8a96a3; margin-bottom: 5px; font-weight: 600; }
+    .ped-items { list-style: none; margin: 0; padding: 0; }
+    .ped-items li { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; font-size: 12.5px; line-height: 1.35; color: #1d2733; }
+    .ped-items .q { flex: none; min-width: 38px; text-align: right; font-weight: 700; color: #1565c0; font-variant-numeric: tabular-nums; }
+    .ped-items .nm { flex: 1; min-width: 0; }
+    .ped-items .badge { font-size: 10px; padding: 1px 7px; flex: none; }
+    .ped-mas summary { cursor: pointer; font-size: 11.5px; font-weight: 600; color: #1565c0; margin-top: 4px; list-style: none; }
+    .ped-mas summary::-webkit-details-marker { display: none; }
+    .ped-mas[open] summary { margin-bottom: 2px; }
+    .est-otros { font-size: 11px; color: #8a96a3; margin-top: 6px; line-height: 1.45; }
+    .c-acc .acciones { flex-direction: column; align-items: stretch; gap: 6px; }
+    .bt { display: block; width: 100%; text-align: center; padding: 8px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1.5px solid transparent; font-family: inherit; line-height: 1.2; }
+    .bt svg { margin-right: 3px; }
+    .bt-ok { background: #1f9d55; color: #fff; }
+    .bt-ok:hover { background: #17824a; }
+    .bt-azul { background: #14ace7; color: #fff; }
+    .bt-azul:hover { background: #0e93c9; }
+    .bt-warn { background: #fff; color: #c25b00; border-color: #f0b27a; }
+    .bt-warn:hover { background: #fff3e0; }
+    .bt-mal { background: #fff; color: #c0392b; border-color: #e6a5a0; }
+    .bt-mal:hover { background: #fdecea; }
+    .bt-tk { background: #fff; color: #1565c0; border-color: #a9cdf0; }
+    .bt-tk:hover { background: #e3f2fd; }
+    .bt-espera { font-size: 11.5px; color: #283593; font-style: italic; text-align: center; padding: 4px 2px; }
+    .sin-acc { color: #b4bcc5; text-align: center; font-size: 12px; }
     .sin-resultados { padding: 30px; text-align: center; color: #aaa; font-size: 13px; }
     .form-group { margin-bottom: 13px; }
     .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 5px; font-weight: 600; }
@@ -882,6 +1285,19 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                     'cancelar_solicitud'    => 'Solicitud cancelada.',
                     'error_ya_no_cancelable' => 'No se pudo cancelar: solo se puede cancelar una solicitud propia mientras sigue Pendiente (la otra sucursal aun no la aprueba). Si ya fue aprobada, ya no se puede cancelar.',
                     'enviar_pedido'         => 'Pedido enviado: todos los productos aprobados se marcaron como enviados y el stock ya se desconto de tu sucursal. Imprime el ticket para que la sucursal destino verifique el pedido.',
+                    'aprobar_pedido'        => 'Pedido aceptado. Prepara el envío de todos los productos y márcalo como enviado cuando salga.',
+                    'rechazar_pedido'       => 'Pedido rechazado.',
+                    'cancelar_solicitud_pedido' => 'Pedido cancelado.',
+                    'editar_pedido'         => 'Pedido modificado. Los productos con cantidad distinta esperan la confirmación de la sucursal destino; el resto quedó aceptado.',
+                    'aceptar_modificacion_pedido'  => 'Cambios aceptados. El pedido continúa como Aprobado.',
+                    'rechazar_modificacion_pedido' => 'Cambios rechazados. Los productos modificados volvieron a Pendiente.',
+                    'recibir_pedido'        => 'Recepción confirmada. El stock de todos los productos del pedido fue sumado a tu sucursal.',
+                    'cancelar_pedido'       => 'Envío cancelado. El stock de todos los productos regresó a tu sucursal.',
+                    'error_pedido'          => 'No se pudo completar la operación sobre el pedido. Intenta de nuevo.',
+                    'error_pedido_incompleto' => 'No se puede enviar el pedido todavía: tiene productos sin aceptar o con un cambio de cantidad pendiente de confirmar por la sucursal destino.',
+                    'error_cantidad_pedido' => 'No se pudo guardar: revisa las cantidades (no pueden ser negativas y solo un producto Pendiente se puede retirar con 0).',
+                    'error_pedido_vacio'    => 'No se pudo guardar: no puedes retirar todos los productos del pedido. Si no vas a enviar nada, usa "Rechazar pedido".',
+                    'error_pedido_sin_cambios' => 'No cambiaste ninguna cantidad. Si todo está bien, usa "Aceptar pedido".',
                     'error_ya_no_transito'  => 'No se pudo completar: la transferencia ya no está "En tránsito" (alguien más ya la modificó).',
                     'error_ya_no_pendiente' => 'No se pudo completar: la solicitud ya no está pendiente (alguien más ya la aprobó, rechazó, o no eres la sucursal origen).',
                     'error_ya_no_aprobada'  => 'No se pudo completar: la transferencia ya no está "Aprobada" (alguien más ya la modificó, o no eres la sucursal origen).',
@@ -921,109 +1337,154 @@ if (isset($_GET['exportar']) && in_array($_GET['exportar'], ['pdf','excel'])) {
                 </form>
             </div>
 
-            <div class="card" style="padding:0;">
+            <div class="card" style="padding:0;overflow-x:auto;">
                 <?php if (count($transferencias) > 0): ?>
-                <table>
+                <?php
+                $_sucMiaTransf = intval($sucursalVista);
+                $pedidos = transfAgruparPedidos($transferencias);
+                $badgeMap = [
+                    'Pendiente'   => 'badge-pendiente',
+                    'Aprobada'    => 'badge-aprobada',
+                    'Modificada'  => 'badge-modificada',
+                    'En tránsito' => 'badge-transito',
+                    'Entregada'   => 'badge-entregada',
+                    'Rechazada'   => 'badge-rechazada',
+                    'Cancelada'   => 'badge-rechazada',
+                ];
+                $ordenEstados = ['Modificada', 'Pendiente', 'Aprobada', 'En tránsito', 'Entregada', 'Rechazada', 'Cancelada'];
+                $plural = ['Modificada' => 'Modificadas', 'Pendiente' => 'Pendientes', 'Aprobada' => 'Aprobadas', 'En tránsito' => 'En tránsito',
+                           'Entregada' => 'Entregadas', 'Rechazada' => 'Rechazadas', 'Cancelada' => 'Canceladas'];
+                $nombreCorto = fn($n) => trim(preg_replace('/^Ferremateriales\s+Aldrete\s*/iu', '', (string)$n)) ?: (string)$n;
+                $fmtCantPed = fn($c) => ($s = rtrim(rtrim(number_format((float)$c, 3, '.', ''), '0'), '.')) === '' ? '0' : $s;
+                ?>
+                <table class="tabla-pedidos">
                     <thead>
-                        <tr><th>Producto</th><th>Cant.</th><th>Origen → Destino</th><th>Estado</th><th>Solicitante</th><th>Fecha</th><th>Acciones</th></tr>
+                        <tr><th>Pedido</th><th>Ruta</th><th>Productos</th><th>Estado</th><th>Acciones</th></tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($transferencias as $t):
-                            $esMiOrigen = $t['sucursal_origen_id'] == $sucursalVista;
-                            $badgeMap = [
-                                'Pendiente'   => 'badge-pendiente',
-                                'Aprobada'    => 'badge-aprobada',
-                                'Modificada'  => 'badge-modificada',
-                                'En tránsito' => 'badge-transito',
-                                'Entregada'   => 'badge-entregada',
-                                'Rechazada'   => 'badge-rechazada',
-                                'Cancelada'   => 'badge-rechazada',
-                            ];
-                            $bc = $badgeMap[$t['estado']] ?? 'badge-pendiente';
-                            // [FEATURE-CANCELAR-TRANSFERENCIA] / [FEATURE-TICKET-ENVIO-TRANSF]
-                            $_sucMiaTransf = intval($sucursalVista);
-                            $esMiDestino   = $t['sucursal_destino_id'] == $_sucMiaTransf;
-                            $puedeCancelarSolic = $_sucMiaTransf !== 0 && $t['estado'] === 'Pendiente' && $esMiDestino;
-                            $mostrarTicketTransf = in_array($t['estado'], ['En tránsito','Entregada'], true);
-                            // ¿Hay mas de un producto Aprobado en este mismo pedido? (mismo origen, destino,
-                            // solicitante y momento de creacion) -> se ofrece enviar todo el pedido junto.
-                            $hayLoteAprobado = false;
-                            if ($t['estado'] === 'Aprobada' && $esMiOrigen) {
-                                $nLote = 0;
-                                foreach ($transferencias as $uT) {
-                                    if ($uT['estado'] === 'Aprobada'
-                                        && $uT['sucursal_origen_id'] == $t['sucursal_origen_id']
-                                        && $uT['sucursal_destino_id'] == $t['sucursal_destino_id']
-                                        && $uT['usuario_solicita_id'] == $t['usuario_solicita_id']
-                                        && abs(strtotime($uT['created_at']) - strtotime($t['created_at'])) <= 2) {
-                                        $nLote++;
-                                    }
-                                }
-                                $hayLoteAprobado = $nLote > 1;
+                        <?php foreach ($pedidos as $g):
+                            // [FEATURE-PEDIDO-TRANSFERENCIA] Un pedido = UNA fila: todos sus productos juntos y
+                            // un solo juego de botones que actua sobre el pedido completo.
+                            $filasG      = $g['filas'];
+                            $t           = $filasG[0];
+                            $idRep       = intval($t['transferencias_id']);
+                            $esMiOrigen  = intval($t['sucursal_origen_id']) === $_sucMiaTransf;
+                            $esMiDestino = intval($t['sucursal_destino_id']) === $_sucMiaTransf;
+                            $conteo = [];
+                            foreach ($filasG as $f) { $conteo[$f['estado']] = ($conteo[$f['estado']] ?? 0) + 1; }
+                            $estadoPrincipal = 'Pendiente';
+                            foreach ($ordenEstados as $est) { if (isset($conteo[$est])) { $estadoPrincipal = $est; break; } }
+                            $hayPend  = isset($conteo['Pendiente']);
+                            $hayAprob = isset($conteo['Aprobada']);
+                            $hayModif = isset($conteo['Modificada']);
+                            $hayTrans = isset($conteo['En tránsito']);
+                            $mostrarTicketTransf = $hayTrans || isset($conteo['Entregada']);
+                            $datosEdicion = [];
+                            foreach ($filasG as $f) {
+                                $datosEdicion[] = [
+                                    'id'       => intval($f['transferencias_id']),
+                                    'nombre'   => $f['nombre_producto'],
+                                    'codigo'   => $f['codigo'],
+                                    'cantidad' => floatval($f['cantidad']),
+                                    'estado'   => $f['estado'],
+                                    'suelto'   => $f['tipo_venta'] === 'Suelto',
+                                    'stock'    => floatval($f['stock_origen'] ?? 0),
+                                ];
                             }
+                            $jsonEdicion = htmlspecialchars(json_encode($datosEdicion, JSON_UNESCAPED_UNICODE), ENT_QUOTES);
+                            $visibles = array_slice($filasG, 0, 3);
+                            $resto    = array_slice($filasG, 3);
+                            $pintarItem = function ($f) use ($estadoPrincipal, $badgeMap, $fmtCantPed) { ?>
+                                <li>
+                                    <span class="q"><?= $fmtCantPed($f['cantidad']) ?></span>
+                                    <span class="nm" title="Código: <?= htmlspecialchars($f['codigo']) ?>"><?= htmlspecialchars($f['nombre_producto']) ?></span>
+                                    <?php if ($f['estado'] !== $estadoPrincipal): ?><span class="badge <?= $badgeMap[$f['estado']] ?? 'badge-pendiente' ?>"><?= htmlspecialchars($f['estado']) ?></span><?php endif; ?>
+                                </li>
+                            <?php };
                         ?>
                         <tr>
-                            <td>
-                                <strong><?= htmlspecialchars($t['nombre_producto']) ?></strong>
-                                <div style="font-size:10px;color:#aaa;"><?= htmlspecialchars($t['codigo']) ?></div>
-                                <span class="direction-badge <?= $esMiOrigen ? 'dir-enviada' : 'dir-recibida' ?>">
-                                    <?= $esMiOrigen ? 'Enviada' : 'Recibida' ?>
-                                </span>
+                            <td class="c-ped">
+                                <div class="ped-id">#<?= $idRep ?></div>
+                                <div class="ped-meta"><?= date('d/m/Y', strtotime($t['created_at'])) ?></div>
+                                <div class="ped-meta">Pidió: <?= htmlspecialchars($t['solicitante']) ?></div>
+                                <?php if ($esMiOrigen || $esMiDestino): ?>
+                                <span class="ped-rol <?= $esMiOrigen ? 'rol-envia' : 'rol-recibe' ?>"><?= $esMiOrigen ? 'Tú envías' : 'Tú recibes' ?></span>
+                                <?php endif; ?>
                             </td>
-                            <td><?= number_format($t['cantidad'], 2) ?></td>
-                            <td style="font-size:11px;">
-                                <?= htmlspecialchars($t['sucursal_origen']) ?> → <?= htmlspecialchars($t['sucursal_destino']) ?>
+                            <td class="c-ruta">
+                                <div class="ruta"><span class="ruta-l">De</span><span><?= htmlspecialchars($nombreCorto($t['sucursal_origen'])) ?></span></div>
+                                <div class="ruta"><span class="ruta-l">A</span><span><?= htmlspecialchars($nombreCorto($t['sucursal_destino'])) ?></span></div>
                             </td>
-                            <td><span class="badge <?= $bc ?>"><?= htmlspecialchars($t['estado']) ?></span></td>
-                            <td style="font-size:11px;"><?= htmlspecialchars($t['solicitante']) ?></td>
-                            <td style="color:#aaa;font-size:11px;"><?= date('d/m/Y', strtotime($t['created_at'])) ?></td>
-                            <td>
+                            <td class="c-prod">
+                                <div class="ped-n"><?= count($filasG) ?> producto<?= count($filasG) === 1 ? '' : 's' ?></div>
+                                <ul class="ped-items">
+                                    <?php foreach ($visibles as $f) { $pintarItem($f); } ?>
+                                </ul>
+                                <?php if ($resto): ?>
+                                <details class="ped-mas">
+                                    <summary>Ver <?= count($resto) ?> más</summary>
+                                    <ul class="ped-items">
+                                        <?php foreach ($resto as $f) { $pintarItem($f); } ?>
+                                    </ul>
+                                </details>
+                                <?php endif; ?>
+                            </td>
+                            <td class="c-est">
+                                <span class="badge <?= $badgeMap[$estadoPrincipal] ?>"><?= htmlspecialchars($estadoPrincipal) ?></span>
+                                <?php
+                                $otros = [];
+                                foreach ($ordenEstados as $est) {
+                                    if ($est === $estadoPrincipal || !isset($conteo[$est])) continue;
+                                    $otros[] = $conteo[$est] . ' ' . ($conteo[$est] === 1 ? $est : $plural[$est]);
+                                }
+                                if ($otros): ?>
+                                <div class="est-otros">Además: <?= htmlspecialchars(implode(', ', $otros)) ?></div>
+                                <?php endif; ?>
+                            </td>
+                            <td class="c-acc">
                                 <div class="acciones">
-                                    <?php
-                                        $tvJs = $t['tipo_venta'] === 'Suelto' ? 'Suelto' : 'Unidad';
-                                        $stockOrigenJs = floatval($t['stock_origen'] ?? 0);
-                                    ?>
-                                <?php if ($sucursalVista === 0): ?>
-                                        <span style="color:#aaa;font-size:11px;">Elige una sucursal para operar</span>
-                                <?php elseif ($t['estado'] === 'Pendiente' && $esMiOrigen): ?>
-                                        <button class="btn-accion btn-aprobar" type="button" onclick="return ejecutarAccionTransf('aprobar', <?= $t['transferencias_id'] ?>, '¿Aprobar esta solicitud y comprometerse a enviar los productos?')">Aprobar</button>
-                                        <button class="btn-accion btn-rechazar" type="button" onclick="return ejecutarAccionTransf('rechazar', <?= $t['transferencias_id'] ?>, '¿Rechazar esta solicitud de transferencia?')">Rechazar</button>
-                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
-                                    <?php elseif ($t['estado'] === 'Aprobada' && $esMiOrigen): ?>
-                                        <button class="btn-accion" type="button" style="background:#fff8e1;color:#e65100;border:none;cursor:pointer;" onclick="abrirModalEditarCantidad(<?= $t['transferencias_id'] ?>, <?= $t['cantidad'] ?>, '<?= $tvJs ?>', <?= $stockOrigenJs ?>)">Editar cantidad</button>
-                                        <button class="btn-accion btn-enviar" type="button" onclick="return ejecutarAccionTransf('enviar', <?= $t['transferencias_id'] ?>, '¿Confirmar que ya enviaste los productos?')">Marcar enviado</button>
-                                        <?php if ($hayLoteAprobado): ?>
-                                        <button class="btn-accion btn-enviar" type="button" style="background:#e1f5fe;" onclick="return ejecutarAccionTransf('enviar_pedido', <?= $t['transferencias_id'] ?>, '¿Confirmar que ya enviaste TODOS los productos aprobados de este pedido? Se descontará el stock de cada uno y se generará el ticket con la lista.')">Marcar todo el pedido enviado</button>
+                                    <?php $hayAcciones = false; ?>
+                                    <?php if ($_sucMiaTransf === 0): ?>
+                                        <span class="bt-espera">Elige una sucursal para operar</span>
+                                        <?php $hayAcciones = true; ?>
+                                    <?php else: ?>
+                                        <?php if ($esMiOrigen && $hayPend): $hayAcciones = true; ?>
+                                            <button class="bt bt-ok" type="button" onclick="return ejecutarAccionTransf('aprobar_pedido', <?= $idRep ?>, '¿Aceptar este pedido completo y comprometerse a enviar todos sus productos?')">Aceptar pedido</button>
                                         <?php endif; ?>
-                                    <?php elseif ($t['estado'] === 'Modificada' && !$esMiOrigen): ?>
-                                        <button class="btn-accion btn-aceptar-mod" type="button"
-                                           onclick="return ejecutarAccionTransf('aceptar_modificacion', <?= $t['transferencias_id'] ?>, '¿Aceptar la nueva cantidad de <?= number_format($t['cantidad'], 2) ?>? La transferencia continuara como Aprobada.')">
-                                            <?= icono('circle-check-big') ?> Aceptar cantidad
-                                        </button>
-                                        <button class="btn-accion btn-rechazar-mod" type="button"
-                                           onclick="return ejecutarAccionTransf('rechazar_modificacion', <?= $t['transferencias_id'] ?>, '¿Rechazar el cambio de cantidad? La transferencia volvera a Pendiente.')">
-                                            <?= icono('x') ?> Rechazar cambio
-                                        </button>
-                                    <?php elseif ($t['estado'] === 'Modificada' && $esMiOrigen): ?>
-                                        <span style="color:#283593;font-size:11px;font-style:italic;">Esperando confirmacion del destino</span>
-                                    <?php elseif ($t['estado'] === 'En tránsito' && !$esMiOrigen): ?>
-                                        <button class="btn-accion btn-recibir" type="button" onclick="return ejecutarAccionTransf('recibir', <?= $t['transferencias_id'] ?>, '¿Confirmar recepcion? Esto movera el stock en ambas sucursales.')">Confirmar recepcion</button>
-                                    <?php elseif ($t['estado'] === 'En tránsito' && $esMiOrigen): ?>
-                                        <!-- [FIX-MEDIO-C-11] Antes no habia ninguna accion disponible aqui: una transferencia
-                                             "En tránsito" nunca recibida quedaba con el stock descontado del origen para
-                                             siempre, sin forma de recuperarlo. -->
-                                        <button class="btn-accion" type="button" style="background:#fdecea;color:#c0392b;border:none;cursor:pointer;" onclick="return ejecutarAccionTransf('cancelar', <?= $t['transferencias_id'] ?>, '¿Cancelar esta transferencia? El stock regresara a tu sucursal. Solo hazlo si de verdad recuperaste la mercancia enviada.')">Cancelar</button>
-                                    <?php elseif (!$puedeCancelarSolic && !$mostrarTicketTransf): ?>
-                                        <span style="color:#aaa;font-size:11px;">—</span>
+                                        <?php if ($esMiOrigen && $hayAprob && !$hayPend && !$hayModif): $hayAcciones = true; ?>
+                                            <button class="bt bt-azul" type="button" onclick="return ejecutarAccionTransf('enviar_pedido', <?= $idRep ?>, '¿Confirmar que ya enviaste TODOS los productos de este pedido? Se descontará el stock de cada uno y se generará el ticket con la lista.')">Marcar pedido enviado</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiDestino && $hayModif): $hayAcciones = true; ?>
+                                            <button class="bt bt-ok" type="button" onclick="return ejecutarAccionTransf('aceptar_modificacion_pedido', <?= $idRep ?>, '¿Aceptar las nuevas cantidades del pedido? El pedido continuará como Aprobado.')">Aceptar cambios</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiDestino && $hayTrans): $hayAcciones = true; ?>
+                                            <button class="bt bt-ok" type="button" onclick="return ejecutarAccionTransf('recibir_pedido', <?= $idRep ?>, '¿Confirmar la recepción del pedido completo? Esto moverá el stock de todos sus productos en ambas sucursales.')">Confirmar recepción</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiOrigen && $hayModif): $hayAcciones = true; ?>
+                                            <span class="bt-espera">Esperando confirmación del destino</span>
+                                        <?php endif; ?>
+                                        <?php if ($esMiOrigen && ($hayPend || $hayAprob)): $hayAcciones = true; ?>
+                                            <button class="bt bt-warn" type="button" data-id="<?= $idRep ?>" data-filas="<?= $jsonEdicion ?>" onclick="abrirModalEditarPedido(this)">Editar pedido</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiOrigen && $hayPend): $hayAcciones = true; ?>
+                                            <button class="bt bt-mal" type="button" onclick="return ejecutarAccionTransf('rechazar_pedido', <?= $idRep ?>, '¿Rechazar este pedido completo de transferencia?')">Rechazar pedido</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiDestino && $hayModif): $hayAcciones = true; ?>
+                                            <button class="bt bt-mal" type="button" onclick="return ejecutarAccionTransf('rechazar_modificacion_pedido', <?= $idRep ?>, '¿Rechazar los cambios de cantidad? Los productos modificados volverán a Pendiente.')">Rechazar cambios</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiDestino && $hayPend): $hayAcciones = true; ?>
+                                            <!-- Solo para corregir un error: el pedido sigue Pendiente (el origen aun no lo acepta). -->
+                                            <button class="bt bt-mal" type="button" onclick="return ejecutarAccionTransf('cancelar_solicitud_pedido', <?= $idRep ?>, '¿Cancelar este pedido completo? Aún no lo ha aceptado la otra sucursal, así que no pasa nada con el inventario; quedará como Cancelado.')">Cancelar pedido</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiOrigen && $hayTrans): $hayAcciones = true; ?>
+                                            <button class="bt bt-mal" type="button" onclick="return ejecutarAccionTransf('cancelar_pedido', <?= $idRep ?>, '¿Cancelar el envío de este pedido completo? El stock de todos los productos regresará a tu sucursal. Solo hazlo si de verdad recuperaste la mercancía enviada.')">Cancelar envío</button>
+                                        <?php endif; ?>
                                     <?php endif; ?>
-                                    <?php if ($puedeCancelarSolic): ?>
-                                        <!-- [FEATURE-CANCELAR-TRANSFERENCIA] Solo para corregir un error: la solicitud sigue Pendiente. -->
-                                        <button class="btn-accion" type="button" style="background:#fdecea;color:#c0392b;border:none;cursor:pointer;" onclick="return ejecutarAccionTransf('cancelar_solicitud', <?= $t['transferencias_id'] ?>, '¿Cancelar esta solicitud? Aún no la ha aprobado la otra sucursal, así que no pasa nada con el inventario; quedará como Cancelada.')">Cancelar</button>
-                                    <?php endif; ?>
-                                    <?php if ($mostrarTicketTransf): ?>
+                                    <?php if ($mostrarTicketTransf): $hayAcciones = true; ?>
                                         <!-- [FEATURE-TICKET-ENVIO-TRANSF] Lista de lo enviado en este pedido. -->
-                                        <button class="btn-accion" type="button" style="background:#eef8ff;color:#1565c0;border:none;cursor:pointer;" onclick="abrirTicketEnvio(<?= $t['transferencias_id'] ?>)"><?= icono('printer') ?> Ticket</button>
+                                        <button class="bt bt-tk" type="button" onclick="abrirTicketEnvio(<?= $idRep ?>)"><?= icono('printer', '', 14) ?> Ticket</button>
                                     <?php endif; ?>
+                                    <?php if (!$hayAcciones): ?><span class="sin-acc">—</span><?php endif; ?>
                                 </div>
                             </td>
                         </tr>
@@ -1396,74 +1857,104 @@ if (_busquedaProdEl) {
     });
 }
 
-// ── Editar cantidad transferencia ────────────────────────────────────────────
-let _modalEditTipoVenta  = 'Unidad';
-let _modalEditStockOrigen = 0;
-
-function abrirModalEditarCantidad(id, cantActual, tipoVenta, stockOrigen) {
-    _modalEditTipoVenta   = tipoVenta   || 'Unidad';
-    _modalEditStockOrigen = parseFloat(stockOrigen) || 0;
-    const esSuelto = _modalEditTipoVenta === 'Suelto';
-
-    const cantFmt = esSuelto
-        ? parseFloat(cantActual).toFixed(3).replace(/\.?0+$/,'')
-        : Math.floor(cantActual);
-    document.getElementById('modalEditCantidadActual').textContent = cantFmt;
-
-    const stockFmt = esSuelto
-        ? _modalEditStockOrigen.toFixed(3).replace(/\.?0+$/, '')
-        : Math.floor(_modalEditStockOrigen);
-    const stockDiv = document.getElementById('modalEditStockDisponible');
-    if (stockDiv) {
-        stockDiv.textContent = 'Stock disponible en origen: ' + stockFmt;
-        stockDiv.style.display = 'block';
-    }
-
-    const inp = document.getElementById('inputNuevaCantidadModal');
-    inp.step        = esSuelto ? '0.001' : '1';
-    inp.min         = esSuelto ? '0.001' : '1';
-    inp.max         = _modalEditStockOrigen > 0 ? _modalEditStockOrigen : '';
-    inp.inputMode   = esSuelto ? 'decimal' : 'numeric';
-    inp.placeholder = esSuelto ? 'Ej. 2.5' : 'Ej. 5';
-    inp.value       = '';
-
-    document.getElementById('modalEditGranelHint').style.display = esSuelto ? 'block' : 'none';
-
-    document.getElementById('inputEditarTransfId').value      = id;
-    document.getElementById('inputEditarNuevaCantidad').value  = '';
-    document.getElementById('modalEditCantidad').style.display = 'flex';
-    setTimeout(() => inp.focus(), 80);
+// ── Editar pedido de transferencia (todos sus productos en una sola pantalla) ────────────────
+function fmtCantPed(n, suelto) {
+    return suelto ? parseFloat(n).toFixed(3).replace(/\.?0+$/, '') : String(Math.floor(n));
 }
 
-function cerrarModalEditarCantidad() {
-    document.getElementById('modalEditCantidad').style.display = 'none';
-}
-
-function confirmarEditarCantidad() {
-    const esSuelto = _modalEditTipoVenta === 'Suelto';
-    let val = parseFloat(document.getElementById('inputNuevaCantidadModal').value);
-    if (!val || val <= 0) { alert('Ingresa una cantidad válida mayor a 0.'); return; }
-    if (!esSuelto) {
-        if (val !== Math.floor(val)) {
-            alert('Este producto no es granel. La cantidad debe ser un número entero (sin decimales).');
-            return;
+function abrirModalEditarPedido(btn) {
+    let filas = [];
+    try { filas = JSON.parse(btn.getAttribute('data-filas') || '[]'); } catch (e) { filas = []; }
+    const lista = document.getElementById('modalEditPedidoLista');
+    lista.innerHTML = '';
+    filas.forEach(function (f) {
+        const editable = (f.estado === 'Pendiente' || f.estado === 'Aprobada');
+        const fila = document.createElement('div');
+        fila.className = 'mep-fila';
+        const info = document.createElement('div');
+        info.className = 'mep-info';
+        const nom = document.createElement('strong');
+        nom.textContent = f.nombre;
+        const cod = document.createElement('span');
+        cod.className = 'mep-cod';
+        cod.textContent = f.codigo + (f.estado === 'Modificada' ? ' · esperando confirmación del destino' : '');
+        const det = document.createElement('div');
+        det.className = 'mep-det';
+        det.textContent = 'Pedido: ' + fmtCantPed(f.cantidad, f.suelto) + (editable ? ' · Stock en origen: ' + fmtCantPed(f.stock, f.suelto) : '');
+        info.appendChild(nom); info.appendChild(cod); info.appendChild(det);
+        fila.appendChild(info);
+        if (editable) {
+            const inp = document.createElement('input');
+            inp.type = 'number';
+            inp.name = 'cant[' + f.id + ']';
+            inp.value = fmtCantPed(f.cantidad, f.suelto);
+            inp.step = f.suelto ? '0.001' : '1';
+            inp.min = '0';
+            inp.inputMode = f.suelto ? 'decimal' : 'numeric';
+            inp.className = 'mep-input';
+            inp.dataset.suelto = f.suelto ? '1' : '0';
+            inp.dataset.stock = String(f.stock);
+            inp.dataset.orig = String(f.cantidad);
+            inp.dataset.estado = f.estado;
+            inp.dataset.nombre = f.nombre;
+            fila.appendChild(inp);
         }
-        val = Math.floor(val);
+        lista.appendChild(fila);
+    });
+    document.getElementById('inputEditarPedidoId').value = btn.getAttribute('data-id');
+    document.getElementById('modalEditPedido').style.display = 'flex';
+    const primero = lista.querySelector('input');
+    if (primero) setTimeout(function () { primero.focus(); primero.select(); }, 80);
+}
+
+function cerrarModalEditarPedido() {
+    document.getElementById('modalEditPedido').style.display = 'none';
+}
+
+function confirmarEditarPedido() {
+    const inputs = document.querySelectorAll('#modalEditPedidoLista .mep-input');
+    let cambios = 0, quedan = 0;
+    for (const inp of inputs) {
+        const suelto = inp.dataset.suelto === '1';
+        const nombre = inp.dataset.nombre;
+        const stock  = parseFloat(inp.dataset.stock) || 0;
+        const orig   = parseFloat(inp.dataset.orig) || 0;
+        const raw    = inp.value.trim();
+        if (raw === '') { quedan++; continue; }
+        let val = parseFloat(raw);
+        if (isNaN(val) || val < 0) { alert('"' + nombre + '": ingresa una cantidad válida (0 o mayor).'); inp.focus(); return; }
+        if (!suelto && val !== Math.floor(val)) { alert('"' + nombre + '" no es granel: la cantidad debe ser un número entero.'); inp.focus(); return; }
+        if (val === 0) {
+            if (inp.dataset.estado !== 'Pendiente') { alert('"' + nombre + '" ya fue aceptado: la cantidad mínima es 1. Si no lo vas a enviar, cancela el pedido.'); inp.focus(); return; }
+            cambios++;
+            continue;
+        }
+        quedan++;
+        if (Math.abs(val - orig) > 0.0004) {
+            if (stock > 0 && val > stock) { alert('"' + nombre + '": la cantidad (' + fmtCantPed(val, suelto) + ') supera el stock disponible en tu sucursal (' + fmtCantPed(stock, suelto) + ').'); inp.focus(); return; }
+            if (stock <= 0) { alert('"' + nombre + '": no hay stock disponible en tu sucursal para esa cantidad.'); inp.focus(); return; }
+            cambios++;
+        }
     }
-    if (_modalEditStockOrigen > 0 && val > _modalEditStockOrigen) {
-        const stockFmt = esSuelto
-            ? _modalEditStockOrigen.toFixed(3).replace(/\.?0+$/, '')
-            : Math.floor(_modalEditStockOrigen);
-        alert('No se puede guardar: la cantidad (' + val + ') supera el stock disponible en la sucursal origen (' + stockFmt + ').');
-        return;
-    }
-    document.getElementById('inputEditarNuevaCantidad').value = val;
-    document.getElementById('formEditarCantidadTransf').submit();
+    const hayModificadas = document.querySelectorAll('#modalEditPedidoLista .mep-fila').length > inputs.length;
+    if (cambios === 0) { alert('No cambiaste ninguna cantidad. Si todo está bien, cierra esta ventana y usa "Aceptar pedido".'); return; }
+    if (quedan === 0 && !hayModificadas) { alert('No puedes retirar todos los productos del pedido. Si no vas a enviar nada, usa "Rechazar pedido".'); return; }
+    const frm = document.getElementById('formEditarPedido');
+    frm.querySelectorAll('input[data-cant-copia]').forEach(function (x) { x.remove(); });
+    inputs.forEach(function (inp) {
+        const h = document.createElement('input');
+        h.type = 'hidden';
+        h.name = inp.name;
+        h.value = inp.value.trim();
+        h.setAttribute('data-cant-copia', '1');
+        frm.appendChild(h);
+    });
+    frm.submit();
 }
 
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-        cerrarModalEditarCantidad();
+        cerrarModalEditarPedido();
     }
 });
 
@@ -1649,12 +2140,11 @@ function imprimirTicketEnvio() {
 })();
 </script>
 
-<!-- Form editar cantidad -->
-<form id="formEditarCantidadTransf" method="POST" action="inventario_transferencias.php" style="display:none;">
+<!-- [FEATURE-PEDIDO-TRANSFERENCIA] Editar todo el pedido: las cantidades viajan como cant[id]. -->
+<form id="formEditarPedido" method="POST" action="inventario_transferencias.php" style="display:none;">
     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-    <input type="hidden" name="accion" value="editar_cantidad">
-    <input type="hidden" id="inputEditarTransfId" name="id">
-    <input type="hidden" id="inputEditarNuevaCantidad" name="nueva_cantidad">
+    <input type="hidden" name="accion" value="editar_pedido">
+    <input type="hidden" id="inputEditarPedidoId" name="id">
 </form>
 
 <!-- [FIX-MEDIO-C-15] Form reutilizable para aprobar/rechazar/enviar/recibir/cancelar/
@@ -1679,43 +2169,32 @@ function ejecutarAccionTransf(accion, id, mensajeConfirm) {
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('modalEditCantidad').addEventListener('click', function(e) {
-        if (e.target === this) cerrarModalEditarCantidad();
+    document.getElementById('modalEditPedido').addEventListener('click', function(e) {
+        if (e.target === this) cerrarModalEditarPedido();
     });
 });
 </script>
-<div id="modalEditCantidad" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:8px;padding:22px;width:320px;box-shadow:0 8px 32px rgba(0,0,0,.3);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-            <span style="font-size:14px;font-weight:700;color:#333;">Modificar cantidad a enviar</span>
-            <button onclick="cerrarModalEditarCantidad()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;line-height:1;">×</button>
+<style>
+    .mep-fila { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+    .mep-fila:last-child { border-bottom: none; }
+    .mep-info { min-width: 0; font-size: 13px; color: #333; }
+    .mep-cod { font-size: 10px; color: #aaa; margin-left: 6px; }
+    .mep-det { font-size: 11px; color: #777; margin-top: 2px; }
+    .mep-input { width: 100px; flex-shrink: 0; padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; text-align: right; }
+</style>
+<div id="modalEditPedido" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;align-items:center;justify-content:center;padding:16px;">
+    <div style="background:#fff;border-radius:8px;padding:22px;width:560px;max-width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.3);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <span style="font-size:14px;font-weight:700;color:#333;">Editar pedido</span>
+            <button type="button" onclick="cerrarModalEditarPedido()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;line-height:1;">×</button>
         </div>
-        <div style="font-size:13px;color:#555;margin-bottom:8px;">
-            Cantidad actual: <strong id="modalEditCantidadActual" style="color:#1565c0;"></strong>
+        <div style="font-size:12px;color:#888;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:10px;">
+            <?= icono('triangle-alert') ?> Los productos con <strong>cantidad distinta</strong> pasarán a <strong>Modificada</strong> y la sucursal destino deberá aceptar el cambio; los demás quedarán aceptados. Pon <strong>0</strong> en un producto Pendiente para retirarlo del pedido.
         </div>
-        <div id="modalEditStockDisponible" style="display:none;font-size:12px;color:#2e7d32;font-weight:600;margin-bottom:12px;"></div>
-        <div style="font-size:12px;color:#888;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:14px;">
-            <?= icono('triangle-alert') ?> Al guardar, la transferencia pasará a estado <strong>Modificada</strong> y la sucursal destino deberá aceptar o rechazar el cambio.
-        </div>
-        <div id="modalEditGranelHint" style="display:none;font-size:12px;color:#555;background:#e8f5e9;border:1px solid #c8e6c9;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
-            <?= icono('wheat') ?> Producto a granel — acepta decimales (ej. 2.5 kg)
-        </div>
-        <div style="margin-bottom:16px;">
-            <label style="display:block;font-size:12px;color:#555;font-weight:600;margin-bottom:6px;">Nueva cantidad *</label>
-            <input type="number" id="inputNuevaCantidadModal" step="1" min="1"
-                   placeholder="Ej. 5"
-                   style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;"
-                   onkeydown="if(event.key==='Enter') confirmarEditarCantidad()">
-        </div>
-        <div style="display:flex;gap:8px;">
-            <button onclick="confirmarEditarCantidad()"
-                    style="flex:1;background:#14ace7;color:#fff;border:none;padding:10px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
-                Guardar cambio
-            </button>
-            <button onclick="cerrarModalEditarCantidad()"
-                    style="background:#f0f0f0;color:#555;border:none;padding:10px 16px;border-radius:6px;font-size:13px;cursor:pointer;">
-                Cancelar
-            </button>
+        <div id="modalEditPedidoLista" style="overflow-y:auto;flex:1;min-height:0;"></div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+            <button type="button" onclick="confirmarEditarPedido()" style="flex:1;background:#14ace7;color:#fff;border:none;padding:10px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">Guardar cambios</button>
+            <button type="button" onclick="cerrarModalEditarPedido()" style="background:#f0f0f0;color:#555;border:none;padding:10px 16px;border-radius:6px;font-size:13px;cursor:pointer;">Cancelar</button>
         </div>
     </div>
 </div>

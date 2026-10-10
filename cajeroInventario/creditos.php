@@ -9,34 +9,13 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
-// [FIX-QUINCENA-FIJA] Los cortes de credito NO son "15 dias despues de hoy" (rodante) sino
-// fechas fijas de calendario: el dia 15 y el ultimo dia de cada mes, iguales para todos los
-// clientes (asi es como realmente se cobra). Si el corte cae en domingo (la tienda cierra ese
-// dia), se recorre al lunes siguiente para que el cliente sí tenga oportunidad de ir a pagar
-// antes de que se le considere vencido.
-// [FIX-MORA-QUINCENA-FIJA 2026-09-29] Revierte [FIX-MORA-CADA-SABADO 2026-09-21] -- ese cambio
-// fue un error, la mora recurrente NO se cobra cada sabado. La politica real de la ferreteria
-// es cortes FIJOS de calendario: dia 15 y ultimo dia de cada mes, iguales para TODOS los
-// clientes (no cada quien con su propio conteo). Si el corte cae domingo (la tienda cierra
-// ese dia) se recorre al lunes siguiente para que el cliente si tenga oportunidad de pagar.
-function siguienteCorteQuincenal(string $fechaDesde): string {
-    $ts   = strtotime($fechaDesde);
-    $dia  = (int)date('j', $ts);
-    $mes  = (int)date('n', $ts);
-    $anio = (int)date('Y', $ts);
-    $ultimoDiaMes = (int)date('t', $ts);
-
-    if ($dia < 15) {
-        $corte = mktime(0, 0, 0, $mes, 15, $anio);
-    } elseif ($dia < $ultimoDiaMes) {
-        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
-    } else {
-        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
-    }
-    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
-        $corte = strtotime('+1 day', $corte);
-    }
-    return date('Y-m-d', $corte);
+// [FEATURE-MORA-CADA-15-DIAS 2026-10-06] Plazo del credito y de la mora: SIEMPRE se cuenta desde la fecha
+// de la COMPRA. El credito vence a los 15 dias de comprarlo (fecha_limite, ya asignada al crearlo); si no
+// se paga, se cobra la mora y se le conceden OTROS 15 dias (la nueva fecha_limite es la anterior + 15 dias),
+// y asi sucesivamente. Ya NO se usan los cortes fijos del dia 15 y ultimo dia del mes (ni se recorre a
+// lunes los domingos): cada credito lleva su propio ritmo de 15 en 15 dias a partir de su compra.
+function siguienteVencimientoMora(string $fechaDesde): string {
+    return date('Y-m-d', strtotime($fechaDesde . ' +15 days'));
 }
 
 // Datos bancarios de la sucursal
@@ -128,7 +107,7 @@ try {
             // corte (no "hoy"), para que el historial de mora no muestre la misma fecha repetida
             // cuando se ponen al dia varios sabados atrasados en una sola carga de pagina.
             $fechaEstaMora     = $fechaLimiteActual;
-            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
+            $fechaLimiteActual = siguienteVencimientoMora($fechaLimiteActual);
             $ultimaMora        = $moraAmt;
             $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
                 ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);
@@ -790,7 +769,7 @@ $totales = $pdo->query("
     #ticketImprimir .t-bold   { font-weight: bold; }
     #ticketImprimir .t-grande { font-size: 13px; font-weight: bold; }
     .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 5px 11px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; }
-    .btn-estado-cuenta { background: #fff; color: #2e7d32; border: 1px solid #2e7d32; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-estado-cuenta { background: #fff; color: #2e7d32; border: 1px solid #2e7d32; padding: 8px 14px; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
     .btn-estado-cuenta:hover { background: #e8f5e9; }
     .btn-estado-cuenta:disabled { opacity: .6; cursor: wait; }
     </style>
@@ -1029,7 +1008,7 @@ $totales = $pdo->query("
         <div class="modal-footer-pago" id="modalFooterPago" style="display:none;">
             <div class="modal-footer-total" id="modalFooterTotal"></div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-                <button type="button" class="btn-estado-cuenta" onclick="imprimirEstadoCuenta()">Imprimir estado de cuenta</button>
+                <button type="button" class="btn-estado-cuenta" onclick="imprimirEstadoCuenta()" title="Imprimir estado de cuenta del cliente"><?= icono('printer', '', 16) ?> Estado de Cuenta</button>
                 <button class="btn-abonar-modal" style="padding:8px 20px;font-size:13px;" onclick="abrirAbonar()">Registrar pago →</button>
             </div>
         </div>
@@ -1639,6 +1618,8 @@ function generarTicketEstadoCuentaHTML(nombreCliente, creditos) {
         <div class="t-linea"></div>
         <div class="t-centro t-bold">COMPRAS A CRÉDITO PENDIENTES</div>`;
 
+    const _hoy = new Date();
+    const hoyIso = _hoy.getFullYear() + '-' + String(_hoy.getMonth() + 1).padStart(2, '0') + '-' + String(_hoy.getDate()).padStart(2, '0');
     let totalSaldo = 0, totalMora = 0, hayVencido = false;
     creditos.forEach(cr => {
         const saldo   = parseFloat(cr.saldo_pendiente) || 0;
@@ -1661,7 +1642,11 @@ function generarTicketEstadoCuentaHTML(nombreCliente, creditos) {
         if (mora > 0.001)    html += `<div class="t-fila"><span>Mora (incluida)</span><span>+${dinero(mora)}</span></div>`;
         html += `<div class="t-fila t-bold"><span>Saldo</span><span>${dinero(saldo)}</span></div>`;
         if (vencido) {
-            html += `<div class="t-fila t-bold"><span>VENCIDO${cr.fecha_limite ? ' el ' + esc(fechaCorta(cr.fecha_limite)) : ''}</span><span></span></div>`;
+            // Tras cobrar la mora, fecha_limite se recorre 15 dias adelante: si esa fecha ya es futura NO es
+            // cuando vencio sino cuando se cobrara la siguiente mora.
+            const proxima = cr.fecha_limite && String(cr.fecha_limite).slice(0, 10) >= hoyIso;
+            html += `<div class="t-fila t-bold"><span>VENCIDO${cr.fecha_limite && !proxima ? ' el ' + esc(fechaCorta(cr.fecha_limite)) : ''}</span><span></span></div>`;
+            if (proxima) html += `<div class="t-fila"><span>Próxima mora</span><span>${esc(fechaCorta(cr.fecha_limite))}</span></div>`;
         } else if (cr.fecha_limite) {
             html += `<div class="t-fila"><span>Fecha límite</span><span>${esc(fechaCorta(cr.fecha_limite))}</span></div>`;
         }

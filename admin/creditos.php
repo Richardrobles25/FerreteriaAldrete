@@ -10,29 +10,13 @@ verificarSesion();
 verificarRol(['Administrador']);
 require_once '../includes/topbar_info.php';
 
-// [FIX-MORA-QUINCENA-FIJA 2026-09-29] Revierte [FIX-MORA-CADA-SABADO 2026-09-21] -- ese cambio
-// fue un error, la mora recurrente NO se cobra cada sabado. La politica real de la ferreteria
-// es cortes FIJOS de calendario: dia 15 y ultimo dia de cada mes, iguales para TODOS los
-// clientes (no cada quien con su propio conteo). Si el corte cae domingo (la tienda cierra
-// ese dia) se recorre al lunes siguiente para que el cliente si tenga oportunidad de pagar.
-function siguienteCorteQuincenal(string $fechaDesde): string {
-    $ts   = strtotime($fechaDesde);
-    $dia  = (int)date('j', $ts);
-    $mes  = (int)date('n', $ts);
-    $anio = (int)date('Y', $ts);
-    $ultimoDiaMes = (int)date('t', $ts);
-
-    if ($dia < 15) {
-        $corte = mktime(0, 0, 0, $mes, 15, $anio);
-    } elseif ($dia < $ultimoDiaMes) {
-        $corte = mktime(0, 0, 0, $mes, $ultimoDiaMes, $anio);
-    } else {
-        $corte = mktime(0, 0, 0, $mes + 1, 15, $anio);
-    }
-    if ((int)date('N', $corte) === 7) { // ISO-8601: 7 = domingo
-        $corte = strtotime('+1 day', $corte);
-    }
-    return date('Y-m-d', $corte);
+// [FEATURE-MORA-CADA-15-DIAS 2026-10-06] Plazo del credito y de la mora: SIEMPRE se cuenta desde la fecha
+// de la COMPRA. El credito vence a los 15 dias de comprarlo (fecha_limite, ya asignada al crearlo); si no
+// se paga, se cobra la mora y se le conceden OTROS 15 dias (la nueva fecha_limite es la anterior + 15 dias),
+// y asi sucesivamente. Ya NO se usan los cortes fijos del dia 15 y ultimo dia del mes (ni se recorre a
+// lunes los domingos): cada credito lleva su propio ritmo de 15 en 15 dias a partir de su compra.
+function siguienteVencimientoMora(string $fechaDesde): string {
+    return date('Y-m-d', strtotime($fechaDesde . ' +15 days'));
 }
 
 try {
@@ -113,7 +97,7 @@ try {
             // (no "hoy"), para que el historial de mora no muestre la misma fecha repetida
             // cuando se ponen al día varios sabados atrasados en una sola carga de pagina.
             $fechaEstaMora     = $fechaLimiteActual;
-            $fechaLimiteActual = siguienteCorteQuincenal($fechaLimiteActual);
+            $fechaLimiteActual = siguienteVencimientoMora($fechaLimiteActual);
             $ultimaMora        = $moraAmt;
             $pdo->prepare("INSERT INTO movimientos_mora (credito_id, monto, saldo_base, porcentaje, created_at) VALUES (?,?,?,?,?)")
                 ->execute([$cm['credito_id'], $moraAmt, $saldoBase, $pct, $fechaEstaMora]);

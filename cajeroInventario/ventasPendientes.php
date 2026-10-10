@@ -4,6 +4,7 @@ ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../includes/icons.php';
+require_once '../includes/venta_mensajes.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 verificarSesion();
@@ -11,9 +12,8 @@ verificarRol(['Administrador', 'Cajero', 'Inventario/Cajero']);
 
 // [FIX-PLAZO-15-DIAS 2026-09-21] El plazo de un credito fiado es 15 dias desde la fecha de
 // COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
-// clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una
-// vez que el credito ya esta vencido) si sigue un corte fijo, pero ahora es "cada sabado" en vez
-// de "dia 15/fin de mes": ver siguienteCorteQuincenal() en creditos.php/abonos.php.
+// clientes. Si no lo paga, la mora se cobra y se le conceden otros 15 dias (siempre desde la fecha
+// anterior, sin cortes de dia 15/fin de mes): ver siguienteVencimientoMora() en creditos.php/abonos.php.
 
 // Caja abierta del usuario (se usa al liquidar). [FIX-CAJA-REDIRECT-AJAX] (portado de
 // admin/cajero_ventasPendientes.php) El redirect por falta de caja ya NO es incondicional
@@ -386,12 +386,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $cantVal = $it['cantidad'];
                     $precVal = floatval($it['precio'] ?? -1);
                     if ($cantVal <= 0 || $precVal < 0) {
-                        throw new Exception('El carrito contiene cantidades o precios inválidos.');
+                        throw new Exception(ventaMsgCantidadPrecioInvalido(ventaNombreProducto($pdo, $it['producto_id'] ?? 0), $cantVal <= 0));
                     }
                     $pqIdChk = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
                     $pidChk  = intval($it['producto_id'] ?? 0);
                     if ($pqIdChk === null && ($tiposVentaCarrito[$pidChk] ?? null) !== 'Suelto' && floor($cantVal) != $cantVal) {
-                        throw new Exception('La cantidad debe ser un número entero para este producto.');
+                        throw new Exception(ventaMsgCantidadEntera(ventaNombreProducto($pdo, $pidChk), $cantVal));
                     }
 
                     // [FIX-PRODUCTO-INACTIVO-PENDIENTE] Igual que cajero_nuevaVenta.php
@@ -411,7 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtActivoChkPend->execute([$_SESSION['sucursal_id'], intval($it['producto_id'] ?? 0)]);
                     $filaActivoChkPend = $stmtActivoChkPend->fetch(PDO::FETCH_ASSOC);
                     if (!$filaActivoChkPend || !$filaActivoChkPend['producto_activo'] || !$filaActivoChkPend['stock_activo']) {
-                        throw new Exception('Uno de los productos del carrito ya no está disponible en esta sucursal. Recarga la página e intenta de nuevo.');
+                        throw new Exception(ventaMsgNoDisponible(ventaNombreProducto($pdo, $it['producto_id'] ?? 0)));
                     }
                     $sumaItems += $cantVal * $precVal;
 
@@ -436,7 +436,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $precioPromoChkPend = $stmtPromoChkPend->fetchColumn();
                         $esPrecioPromoValidoPend = ($precioPromoChkPend !== false && abs(floatval($precioPromoChkPend) - $precVal) < 0.005);
 
-                        $stmtPC = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
+                        $stmtPC = $pdo->prepare("SELECT nombre_producto, precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
                         $stmtPC->execute([intval($it['producto_id'] ?? 0)]);
                         $filaPreciosPend = $stmtPC->fetch(PDO::FETCH_ASSOC);
                         $precioCompraVal = floatval($filaPreciosPend['precio_compra'] ?? 0);
@@ -454,9 +454,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         if (!$esPrecioPromoValidoPend) {
                             if ($referenciaFloorPend > 0 && $precVal < $referenciaFloorPend - 0.005) {
-                                throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                                throw new Exception(ventaMsgPrecioBajo((string)($filaPreciosPend['nombre_producto'] ?? 'Producto'), $precVal, $referenciaFloorPend, $precioCompraVal > 0));
                             } elseif ($referenciaFloorPend <= 0 && $precVal <= 0) {
-                                throw new Exception('Precio inválido para uno de los productos. Verifica el carrito.');
+                                throw new Exception(ventaMsgPrecioCero((string)($filaPreciosPend['nombre_producto'] ?? 'Producto')));
                             }
                         }
                     }
@@ -711,7 +711,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stockActual = floatval($stmtStockActual->fetchColumn() ?: 0);
 
                     if ($stockActual < $cantidadItem) {
-                        throw new Exception('Stock insuficiente para uno o más productos. Disponible: ' . number_format(max(0, $stockActual), 2));
+                        throw new Exception(ventaMsgStock(ventaNombreProducto($pdo, $item['producto_id']), $cantidadItem, $stockActual));
                     }
                     $stockNvoPend = max(0, $stockActual - $cantidadItem);
                     $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")

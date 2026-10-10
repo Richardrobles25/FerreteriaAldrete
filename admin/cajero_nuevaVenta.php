@@ -4,6 +4,7 @@ ini_set('session.cookie_samesite', 'Lax');
 session_start();
 require_once '../includes/auth.php';
 require_once '../includes/icons.php';
+require_once '../includes/venta_mensajes.php';
 require_once '../config/database.php';
 require_once __DIR__ . '/_admin_sidebar.php';
 verificarSesion();
@@ -24,9 +25,8 @@ if ($sucursalVista === 0) {
 
 // [FIX-PLAZO-15-DIAS 2026-09-21] El plazo de un credito fiado es 15 dias desde la fecha de
 // COMPRA (compro el 5, vence el 20), no un corte fijo de calendario compartido entre todos los
-// clientes. Reemplaza al viejo siguienteCorteQuincenal() -- el cobro RECURRENTE de mora (una
-// vez que el credito ya esta vencido) si sigue un corte fijo, pero ahora es "cada sabado" en vez
-// de "dia 15/fin de mes": ver siguienteCorteQuincenal() en cajero_creditos.php/abonos.php.
+// clientes. Si no lo paga, la mora se cobra y se le conceden otros 15 dias (siempre desde la fecha
+// anterior, sin cortes de dia 15/fin de mes): ver siguienteVencimientoMora() en cajero_creditos.php/abonos.php.
 
 $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' ORDER BY abierta_en DESC LIMIT 1");
 $stmt->execute([$_SESSION['usuario_id'], $sucursalVista]);
@@ -663,12 +663,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 $cantVal = $it['cantidad'];
                 $precVal = floatval($it['precio'] ?? -1);
                 if ($cantVal <= 0 || $precVal < 0) {
-                    throw new Exception('El carrito contiene cantidades o precios inválidos.');
+                    throw new Exception(ventaMsgCantidadPrecioInvalido(ventaNombreProducto($pdo, $it['producto_id'] ?? 0), $cantVal <= 0));
                 }
                 $pqIdChk = (!empty($it['paquete_id']) && intval($it['paquete_id']) > 0) ? intval($it['paquete_id']) : null;
                 $pidChk  = intval($it['producto_id'] ?? 0);
                 if ($pqIdChk === null && ($tiposVentaCarrito[$pidChk] ?? null) !== 'Suelto' && floor($cantVal) != $cantVal) {
-                    throw new Exception('La cantidad debe ser un número entero para este producto.');
+                    throw new Exception(ventaMsgCantidadEntera(ventaNombreProducto($pdo, $pidChk), $cantVal));
                 }
                 $sumaItems += $cantVal * $precVal;
             }
@@ -962,7 +962,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 $stmtActivoChk->execute([$sucursalVista, $item['producto_id']]);
                 $filaActivoChk = $stmtActivoChk->fetch(PDO::FETCH_ASSOC);
                 if (!$filaActivoChk || !$filaActivoChk['producto_activo'] || !$filaActivoChk['stock_activo']) {
-                    throw new Exception("Uno de los productos del carrito ya no está disponible en esta sucursal. Recarga la página e intenta de nuevo.");
+                    throw new Exception(ventaMsgNoDisponible(ventaNombreProducto($pdo, $item['producto_id'])));
                 }
 
                 // [FIX-MEDIO-D1-11] Antes el piso solo era estricto (100% del costo) cuando el
@@ -992,7 +992,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                     // precio de catálogo (el menor entre precio_venta y precio_mayoreo, si este
                     // último está configurado), aplicando exactamente la misma regla del 50%/100%
                     // que ya existía — no se endurece nada para productos que sí tienen costo.
-                    $stmtPrecioComp = $pdo->prepare("SELECT precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
+                    $stmtPrecioComp = $pdo->prepare("SELECT nombre_producto, precio_compra, precio_venta, precio_mayoreo FROM productos WHERE producto_id = ?");
                     $stmtPrecioComp->execute([$item['producto_id']]);
                     $filaPrecios = $stmtPrecioComp->fetch(PDO::FETCH_ASSOC);
                     $precioCompraDB = floatval($filaPrecios['precio_compra'] ?? 0);
@@ -1012,13 +1012,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                         if ($referenciaFloor > 0) {
                             $pisoMinimo = $referenciaFloor;
                             if ($precioFinal < $pisoMinimo - 0.005) {
-                                throw new Exception("Precio inválido para el producto. Verifica el carrito.");
+                                throw new Exception(ventaMsgPrecioBajo((string)($filaPrecios['nombre_producto'] ?? 'Producto'), $precioFinal, $pisoMinimo, $precioCompraDB > 0));
                             }
                         } elseif ($precioFinal <= 0) {
                             // Producto sin ningún precio de referencia capturado (compra/venta/mayoreo
                             // en $0) — no hay forma de validar proporción, pero un precio de $0 o
                             // negativo nunca es válido para una venta.
-                            throw new Exception("Precio inválido para el producto. Verifica el carrito.");
+                            throw new Exception(ventaMsgPrecioCero((string)($filaPrecios['nombre_producto'] ?? 'Producto')));
                         }
                     }
                 }
@@ -1034,7 +1034,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 
                 // Validar stock en servidor antes de descontar
                 if ($stockAnterior < $item['cantidad']) {
-                    throw new Exception("Stock insuficiente para uno de los productos. Verifica el carrito e intenta de nuevo.");
+                    throw new Exception(ventaMsgStock(ventaNombreProducto($pdo, $item['producto_id']), floatval($item['cantidad']), $stockAnterior));
                 }
 
                 $stockNuevo = $stockAnterior - $item['cantidad'];
@@ -1247,7 +1247,7 @@ if (!$caja) {
     #_notifVentaOk { padding: 8px 12px !important; font-size: 12px !important; gap: 0; }
     /* [FEATURE-NOTIF-FLOTANTE] (espejo de cajeroInventario/nuevaVenta.php) */
     #_notifFlotante { position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:9999;
-        white-space:nowrap; padding:8px 12px; font-size:12px; border-radius:6px; gap:6px;
+        white-space:normal; max-width:min(680px, 92vw); line-height:1.4; padding:8px 12px; font-size:12px; border-radius:6px; gap:6px;
         display:none; align-items:center; box-shadow:0 2px 10px rgba(0,0,0,.15); }
     #_notifFlotante.exito { background:#e8f5e9; color:#2e7d32; border-left:3px solid #2e7d32; }
     #_notifFlotante.error { background:#fdecea; color:#c0392b; border-left:3px solid #c0392b; }
@@ -3624,7 +3624,7 @@ document.getElementById('formVenta').addEventListener('submit', function(e) {
         })
         .catch(err => {
             const msg = err.message || 'No se pudo procesar la venta.';
-            mostrarNotifTemporal(`${ICONS.warning} ${esc(msg)}`, 'error', 6000);
+            mostrarNotifTemporal(`${ICONS.warning} ${esc(msg)}`, 'error', 12000);
         })
         .finally(() => {
             btn.disabled = false;

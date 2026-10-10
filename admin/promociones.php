@@ -11,6 +11,13 @@ verificarRol(['Administrador']);
 
 $msg    = '';
 $error  = '';
+// [FIX-PROMO-PRG 2026-10-10] Tras crear/pausar/activar/eliminar con exito se redirige (patron POST-redirect-GET)
+// y el mensaje viaja por sesion: antes la pagina quedaba "viva" como POST y al recargar (F5) el navegador
+// preguntaba si reenviar el formulario o repetia la accion.
+if (!empty($_SESSION['promo_flash'])) {
+    $msg = (string)$_SESSION['promo_flash'];
+    unset($_SESSION['promo_flash']);
+}
 if (($_GET['msg'] ?? '') === 'error_token') {
     $error = 'La sesión expiró o el formulario no es válido. Recarga la página e intenta de nuevo.';
 }
@@ -20,7 +27,7 @@ if (isset($_GET['buscar_prods'])) {
     $sucursalParam = is_scalar($_GET['sucursal_id'] ?? null) ? (string)$_GET['sucursal_id'] : '';
     $q             = trim(is_scalar($_GET['q'] ?? null) ? (string)$_GET['q'] : '');
     header('Content-Type: application/json');
-    $like = '%' . $q . '%';
+    $like = '%' . addcslashes($q, '%_\\') . '%';
     if ($sucursalParam === 'ambas') {
         // [FEATURE-PROMO-AMBAS-SUCURSALES] "Ambas sucursales" solo debe ofrecer productos que
         // tengan stock activo en TODAS las sucursales activas -- si faltara en una, esa
@@ -81,7 +88,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $sucursalIdRaw    = is_scalar($_POST['sucursal_id'] ?? null) ? (string)$_POST['sucursal_id'] : '';
         $esAmbas          = $sucursalIdRaw === 'ambas';
         $sucursalId       = $esAmbas ? 0 : intval($sucursalIdRaw);
-        $precioPromo      = floatval(is_scalar($_POST['precio_promocional'] ?? null) ? $_POST['precio_promocional'] : 0);
+        // [FIX-PROMO-PRECIO-DECIMALES 2026-10-10] El precio llegaba como float y se comparaba ANTES de que MySQL lo
+        // redondeara a centavos: 109.996 sobre un producto de $110.00 pasaba la validacion "menor al normal" y se
+        // guardaba como $110.00 (una promocion sin descuento). Ahora se exige un monto con maximo 2 decimales.
+        $precioRaw        = trim(is_scalar($_POST['precio_promocional'] ?? null) ? (string)$_POST['precio_promocional'] : '');
+        $precioFormatoOk  = (bool)preg_match('/^\d{1,8}(\.\d{1,2})?$/', $precioRaw);
+        $precioPromo      = $precioFormatoOk ? floatval($precioRaw) : 0.0;
         $fechaInicio      = trim(is_scalar($_POST['fecha_inicio'] ?? null) ? (string)$_POST['fecha_inicio'] : '');
         $fechaFin         = trim(is_scalar($_POST['fecha_fin'] ?? null) ? (string)$_POST['fecha_fin'] : '');
         $descripcion      = trim(is_scalar($_POST['descripcion'] ?? null) ? (string)$_POST['descripcion'] : '');
@@ -98,11 +110,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fechaInicioValida = preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fechaInicio, $mFI) && checkdate((int)$mFI[2], (int)$mFI[3], (int)$mFI[1]);
         $fechaFinValida    = preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fechaFin, $mFF)    && checkdate((int)$mFF[2], (int)$mFF[3], (int)$mFF[1]);
 
+        // [FIX-PROMO-FECHAS 2026-10-10] Antes se aceptaban fechas absurdas (0001-01-01 a 9999-12-31) y promociones
+        // cuya fecha de fin ya pasó (nacian "Vencida" sin servir para nada). Tambien la descripcion: la columna es
+        // VARCHAR(255) y una mas larga se truncaba en silencio en local y daba error 500 en el servidor (modo estricto).
+        $anioOk = $fechaInicioValida && $fechaFinValida
+            && (int)$mFI[1] >= 2000 && (int)$mFI[1] <= 2100 && (int)$mFF[1] >= 2000 && (int)$mFF[1] <= 2100;
         if (!$productoId)         $error = 'Selecciona un producto.';
         elseif (!$esAmbas && !$sucursalId) $error = 'Selecciona la sucursal donde aplicará la promoción.';
+        elseif ($precioRaw !== '' && !$precioFormatoOk) $error = 'Escribe el precio promocional solo con números y máximo 2 decimales (ej. 45.50).';
         elseif ($precioPromo < 0.01) $error = 'El precio promocional debe ser de al menos $0.01.';
         elseif (!$fechaInicioValida || !$fechaFinValida) $error = 'Ingresa fechas válidas para la promoción.';
+        elseif (!$anioOk) $error = 'Las fechas de la promoción deben estar entre los años 2000 y 2100.';
         elseif ($fechaFin < $fechaInicio)    $error = 'La fecha de fin no puede ser anterior al inicio.';
+        elseif ($fechaFin < date('Y-m-d'))   $error = 'La fecha de fin (' . date('d/m/Y', strtotime($fechaFin)) . ') ya pasó: la promoción nacería vencida. Elige una fecha de fin de hoy en adelante.';
+        elseif (mb_strlen($descripcion) > 255) $error = 'La descripción no puede tener más de 255 caracteres (escribiste ' . mb_strlen($descripcion) . ').';
         else {
             // Verificar que el precio promo es menor al precio normal
             $stmtP = $pdo->prepare("SELECT precio_venta, nombre_producto FROM productos WHERE producto_id = ?");
@@ -223,8 +244,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($accion === 'desactivar') {
         $id = intval(is_scalar($_POST['promocion_id'] ?? null) ? $_POST['promocion_id'] : 0);
-        $pdo->prepare("UPDATE promociones SET activo = 0 WHERE promocion_id = ?")->execute([$id]);
-        $msg = 'Promoción desactivada.';
+        $stmtDes = $pdo->prepare("UPDATE promociones SET activo = 0 WHERE promocion_id = ?");
+        $stmtDes->execute([$id]);
+        // [FIX-PROMO-MSG-FALSO 2026-10-10] Antes decia "desactivada" aunque el id no existiera.
+        $stmtExiste = $pdo->prepare("SELECT 1 FROM promociones WHERE promocion_id = ?");
+        $stmtExiste->execute([$id]);
+        if (!$stmtExiste->fetchColumn()) { $error = 'Esa promoción ya no existe.'; }
+        else { $msg = 'Promoción desactivada.'; }
 
     } elseif ($accion === 'activar') {
         $id = intval(is_scalar($_POST['promocion_id'] ?? null) ? $_POST['promocion_id'] : 0);
@@ -236,6 +262,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $promAct = $stmtProm->fetch(PDO::FETCH_ASSOC);
         if (!$promAct) {
             $error = 'Promoción no encontrada.';
+        } elseif ($promAct['fecha_fin'] < date('Y-m-d')) {
+            // [FIX-PROMO-REACTIVAR-VENCIDA 2026-10-10] Antes decia "reactivada" y la promocion seguia Vencida.
+            $error = 'No se puede reactivar: esa promoción ya venció el ' . date('d/m/Y', strtotime($promAct['fecha_fin'])) . '. Crea una nueva con fechas vigentes.';
         } else {
             // [FIX-ALTO-B-09] Traslape acotado a la misma sucursal (o promos legacy sin
             // sucursal_id), igual que al crear.
@@ -272,8 +301,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($accion === 'eliminar') {
         $id = intval(is_scalar($_POST['promocion_id'] ?? null) ? $_POST['promocion_id'] : 0);
-        $pdo->prepare("DELETE FROM promociones WHERE promocion_id = ?")->execute([$id]);
-        $msg = 'Promoción eliminada.';
+        $stmtEli = $pdo->prepare("DELETE FROM promociones WHERE promocion_id = ?");
+        $stmtEli->execute([$id]);
+        if ($stmtEli->rowCount() === 0) { $error = 'Esa promoción ya no existe.'; }
+        else { $msg = 'Promoción eliminada.'; }
+    }
+
+    // [FIX-PROMO-PRG 2026-10-10] Exito -> redirigir (el mensaje viaja en sesion). Error -> se queda en la pagina
+    // y, si era al crear, el formulario conserva lo que el usuario habia capturado (antes se borraba todo).
+    if ($msg !== '' && $error === '') {
+        $_SESSION['promo_flash'] = $msg;
+        header('Location: promociones.php');
+        exit();
+    }
+}
+
+// [FIX-PROMO-CONSERVAR-FORM 2026-10-10] Valores del formulario: los de un intento fallido o los predeterminados.
+$formPromo = ['sucursal' => '', 'producto_id' => 0, 'precio' => '', 'inicio' => date('Y-m-d'), 'fin' => date('Y-m-d', strtotime('+7 days')), 'descripcion' => ''];
+$prodRestaurar = null;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($accion ?? '') === 'crear' && $error !== '') {
+    $formPromo['sucursal']    = $sucursalIdRaw ?? '';
+    $formPromo['producto_id'] = $productoId ?? 0;
+    $formPromo['precio']      = $precioRaw ?? '';
+    $formPromo['inicio']      = $fechaInicio ?? $formPromo['inicio'];
+    $formPromo['fin']         = $fechaFin ?? $formPromo['fin'];
+    $formPromo['descripcion'] = $descripcion ?? '';
+    if (!empty($productoId)) {
+        $stmtPR = $pdo->prepare("SELECT producto_id, codigo, nombre_producto, precio_venta, tipo_venta FROM productos WHERE producto_id = ? AND activo = 1");
+        $stmtPR->execute([$productoId]);
+        $prodRestaurar = $stmtPR->fetch(PDO::FETCH_ASSOC) ?: null;
     }
 }
 
@@ -555,17 +611,17 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                 <form method="POST" action="promociones.php" id="formPromo" onsubmit="return validarForm()">
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="accion" value="crear">
-                    <input type="hidden" id="inputProductoId" name="producto_id">
+                    <input type="hidden" id="inputProductoId" name="producto_id" value="<?= $prodRestaurar ? intval($prodRestaurar['producto_id']) : '' ?>">
 
                     <div class="form-group">
                         <label>Sucursal *</label>
                         <select id="selSucursal" name="sucursal_id" onchange="onSucursalChange(this.value)">
                             <option value="">-- Selecciona sucursal --</option>
                             <?php if (count($sucursales) > 1): ?>
-                            <option value="ambas">Ambas sucursales</option>
+                            <option value="ambas" <?= $formPromo['sucursal'] === 'ambas' ? 'selected' : '' ?>>Ambas sucursales</option>
                             <?php endif; ?>
                             <?php foreach ($sucursales as $s): ?>
-                            <option value="<?= $s['sucursal_id'] ?>"><?= htmlspecialchars($s['nombre']) ?></option>
+                            <option value="<?= $s['sucursal_id'] ?>" <?= (string)$formPromo['sucursal'] === (string)$s['sucursal_id'] ? 'selected' : '' ?>><?= htmlspecialchars($s['nombre']) ?></option>
                             <?php endforeach; ?>
                         </select>
                         <!-- [FEATURE-PROMO-AMBAS-SUCURSALES] Aviso de que el buscador solo
@@ -597,29 +653,30 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                         <label>Precio promocional ($) *</label>
                         <input type="number" name="precio_promocional" id="inputPrecioPromo"
                                step="0.01" min="0.01" placeholder="Ej. 45.00"
+                               value="<?= htmlspecialchars($formPromo['precio']) ?>"
                                oninput="actualizarPreview()">
                     </div>
 
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                         <div class="form-group">
                             <label>Fecha inicio *</label>
-                            <input type="date" name="fecha_inicio" id="inputFechaInicio"
-                                   value="<?= date('Y-m-d') ?>">
+                            <input type="date" name="fecha_inicio" id="inputFechaInicio" min="2000-01-01" max="2100-12-31"
+                                   value="<?= htmlspecialchars($formPromo['inicio']) ?>" onchange="sincronizarFechas()">
                         </div>
                         <div class="form-group">
                             <label>Fecha fin *</label>
-                            <input type="date" name="fecha_fin" id="inputFechaFin"
-                                   value="<?= date('Y-m-d', strtotime('+7 days')) ?>">
+                            <input type="date" name="fecha_fin" id="inputFechaFin" min="2000-01-01" max="2100-12-31"
+                                   value="<?= htmlspecialchars($formPromo['fin']) ?>">
                         </div>
                     </div>
 
                     <div class="form-group">
                         <label>Descripción (opcional)</label>
-                        <input type="text" name="descripcion" placeholder="Ej. Oferta de temporada, Liquidación, etc.">
+                        <input type="text" name="descripcion" id="inputDescripcion" maxlength="255" value="<?= htmlspecialchars($formPromo['descripcion']) ?>" placeholder="Ej. Oferta de temporada, Liquidación, etc.">
                     </div>
 
-                    <button class="btn-guardar" type="submit">
-                        Crear promocion
+                    <button class="btn-guardar" type="submit" id="btnCrearPromo">
+                        Crear promoción
                     </button>
                 </form>
             </div>
@@ -642,6 +699,10 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
 let prodSelPrecio = 0;
+let prodSelNombreTxt = '';   // nombre del producto elegido: si el usuario edita el texto, la seleccion se anula
+let _busqSeq = 0;            // evita que una respuesta lenta pise a otra mas reciente
+// Iconos del paquete (en lugar de emojis).
+const ICONS = <?= json_encode(['warn' => icono('triangle-alert', '', 14)]) ?>;
 
 function onSucursalChange(val) {
     const inp = document.getElementById('busqProd');
@@ -653,15 +714,35 @@ function onSucursalChange(val) {
     document.getElementById('sugProd').style.display = 'none';
     document.getElementById('hintSucursal').style.display = val === 'ambas' ? 'block' : 'none';
     prodSelPrecio = 0;
+    prodSelNombreTxt = '';
+    actualizarPreview();
+}
+
+// [FIX-PROMO-PRODUCTO-DESINCRONIZADO 2026-10-10] Si ya habias elegido un producto y luego cambias el texto del
+// buscador, el producto elegido SEGUIA guardado (producto_id oculto) aunque el campo mostrara otra cosa: la
+// promocion se creaba para el producto viejo. Ahora al editar el texto se anula la seleccion.
+function anularSeleccionSiCambio() {
+    const idInp = document.getElementById('inputProductoId');
+    if (!idInp.value) return;
+    if (document.getElementById('busqProd').value !== prodSelNombreTxt) {
+        idInp.value = '';
+        prodSelPrecio = 0;
+        prodSelNombreTxt = '';
+        document.getElementById('prodSelBox').style.display = 'none';
+        actualizarPreview();
+    }
 }
 
 function buscarProd() {
+    anularSeleccionSiCambio();
     const suc = document.getElementById('selSucursal').value;
     const q   = document.getElementById('busqProd').value.trim();
     if (!suc) return;
+    const miSeq = ++_busqSeq;
     fetch(`promociones.php?buscar_prods=1&sucursal_id=${suc}&q=${encodeURIComponent(q)}`)
         .then(r => r.json())
         .then(prods => {
+            if (miSeq !== _busqSeq) return;   // llego una busqueda mas nueva: se ignora esta
             const div = document.getElementById('sugProd');
             if (!prods.length) { div.style.display = 'none'; return; }
             div.innerHTML = prods.map(p => `
@@ -680,6 +761,8 @@ function selProd(id, nombre, codigo, precio, tipo) {
     document.getElementById('busqProd').value = nombre;
     document.getElementById('sugProd').style.display = 'none';
     prodSelPrecio = parseFloat(precio);
+    prodSelNombreTxt = nombre;
+    _busqSeq++;   // descarta busquedas en vuelo
 
     document.getElementById('prodSelNombre').textContent = nombre;
     document.getElementById('prodSelInfo').textContent   = 'Código: ' + codigo + ' · Precio normal: $' + parseFloat(precio).toFixed(2) + (tipo === 'Suelto' ? ' (granel)' : '');
@@ -696,7 +779,7 @@ function actualizarPreview() {
     const pct    = ((ahorro / prodSelPrecio) * 100).toFixed(1);
     if (ahorro <= 0) {
         div.style.color = '#c0392b';
-        div.textContent = '⚠ El precio promo debe ser menor al precio normal.';
+        div.innerHTML = ICONS.warn + ' El precio promo debe ser menor al precio normal.';
     } else {
         div.style.color = '#2e7d32';
         div.textContent = `Ahorro: $${ahorro.toFixed(2)} (${pct}% de descuento)`;
@@ -712,14 +795,37 @@ function validarForm() {
     }
     const promo = parseFloat(document.getElementById('inputPrecioPromo').value) || 0;
     if (!promo) { alert('Ingresa el precio promocional.'); return false; }
+    if (promo < 0.01) { alert('El precio promocional debe ser de al menos $0.01.'); return false; }
+    if (Math.abs(promo * 100 - Math.round(promo * 100)) > 1e-6) { alert('El precio promocional solo puede tener hasta 2 decimales (ej. 45.50).'); return false; }
     if (prodSelPrecio > 0 && promo >= prodSelPrecio) {
         alert('El precio promocional debe ser menor al precio normal ($' + prodSelPrecio.toFixed(2) + ').'); return false;
     }
     const ini = document.getElementById('inputFechaInicio').value;
     const fin = document.getElementById('inputFechaFin').value;
     if (!ini || !fin) { alert('Ingresa las fechas de la promoción.'); return false; }
+    if (ini < '2000-01-01' || fin > '2100-12-31') { alert('Las fechas deben estar entre los años 2000 y 2100.'); return false; }
     if (fin < ini) { alert('La fecha de fin no puede ser anterior al inicio.'); return false; }
+    const hoy = new Date(); const hoyIso = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+    if (fin < hoyIso) { alert('La fecha de fin ya pasó: la promoción nacería vencida. Elige una fecha de fin de hoy en adelante.'); return false; }
+    const desc = document.getElementById('inputDescripcion').value;
+    if (desc.length > 255) { alert('La descripción no puede tener más de 255 caracteres (escribiste ' + desc.length + ').'); return false; }
+    // Evita crear la promocion dos veces con un doble clic.
+    const btn = document.getElementById('btnCrearPromo');
+    if (btn.dataset.enviando === '1') return false;
+    btn.dataset.enviando = '1';
+    btn.textContent = 'Creando...';
     return true;
+}
+
+// Si la fecha de inicio queda despues de la de fin, la de fin se corre 7 dias despues del inicio.
+function sincronizarFechas() {
+    const ini = document.getElementById('inputFechaInicio').value;
+    const finEl = document.getElementById('inputFechaFin');
+    if (ini && finEl.value && finEl.value < ini) {
+        const d = new Date(ini + 'T00:00:00');
+        d.setDate(d.getDate() + 7);
+        finEl.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
 }
 
 function esc(s) {
@@ -737,6 +843,32 @@ function escAtribJs(s) {
 document.getElementById('busqProd').addEventListener('blur', function() {
     setTimeout(() => { document.getElementById('sugProd').style.display = 'none'; }, 200);
 });
+// Al volver con "Atras" el navegador puede restaurar la pagina con el boton en "Creando...": se rehabilita.
+window.addEventListener('pageshow', function() {
+    const btn = document.getElementById('btnCrearPromo');
+    if (btn) { btn.dataset.enviando = '0'; btn.textContent = 'Crear promoción'; }
+});
+// Enter dentro del buscador no debe enviar el formulario (la lista de resultados maneja Enter para elegir).
+document.getElementById('busqProd').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') e.preventDefault();
+});
+
+// Si un intento de crear fallo en el servidor, se vuelve a mostrar lo que el usuario habia capturado.
+<?php if ($prodRestaurar || $formPromo['sucursal'] !== ''): ?>
+(function restaurarFormulario() {
+    const suc = <?= json_encode((string)$formPromo['sucursal']) ?>;
+    if (suc) {
+        const inp = document.getElementById('busqProd');
+        inp.disabled = false;
+        inp.placeholder = 'Escribe nombre o código...';
+        document.getElementById('hintSucursal').style.display = suc === 'ambas' ? 'block' : 'none';
+    }
+    <?php if ($prodRestaurar): ?>
+    selProd(<?= intval($prodRestaurar['producto_id']) ?>, <?= json_encode($prodRestaurar['nombre_producto'], JSON_UNESCAPED_UNICODE) ?>, <?= json_encode($prodRestaurar['codigo'], JSON_UNESCAPED_UNICODE) ?>, <?= floatval($prodRestaurar['precio_venta']) ?>, <?= json_encode($prodRestaurar['tipo_venta']) ?>);
+    document.getElementById('sugProd').style.display = 'none';
+    <?php endif; ?>
+})();
+<?php endif; ?>
 </script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>

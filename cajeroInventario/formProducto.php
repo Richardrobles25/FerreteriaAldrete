@@ -495,7 +495,7 @@ if ($editando && $editando['categoria_id']) {
                             <?php if ($categoriaNombreActual): ?>
                                 <div class="ac-tag cat-tag" id="tagCategoria">
                                     <?= htmlspecialchars($categoriaNombreActual) ?>
-                                    <button type="button" onclick="limpiarCategoria()">×</button>
+                                    <button type="button" onclick="limpiarCategoria()"><?= icono('x', '', 12) ?></button>
                                 </div>
                             <?php else: ?>
                                 <div class="ac-tag cat-tag" id="tagCategoria" style="display:none;"></div>
@@ -713,6 +713,8 @@ if ($editando && $editando['categoria_id']) {
 </div>
 
 <script>
+// Iconos del paquete (en lugar de emojis) para los textos que arma el JS.
+const ICONS = <?= json_encode(['ok' => icono('circle-check-big', '', 14), 'warn' => icono('triangle-alert', '', 14), 'x' => icono('x', '', 12)]) ?>;
 // ── Datos para autocomplete ────────────────────────────────────────────────
 const CATEGORIAS = <?= json_encode(array_map(fn($c) => [
     'id'     => $c['categoria_id'],
@@ -776,7 +778,7 @@ function seleccionarCategoria(id, nombre) {
     document.getElementById('dropCategoria').classList.remove('visible');
 
     const tag = document.getElementById('tagCategoria');
-    tag.innerHTML = `${esc(nombre)} <button type="button" onclick="limpiarCategoria()">×</button>`;
+    tag.innerHTML = `${esc(nombre)} <button type="button" onclick="limpiarCategoria()">${ICONS.x}</button>`;
     tag.className = 'ac-tag cat-tag';
     tag.style.display = 'inline-flex';
 }
@@ -888,9 +890,9 @@ function calcularMargen() {
         }
         preview.style.display = 'block';
         preview.className = `margen-preview ${utilidad >= 0 ? 'positivo' : 'negativo'}`;
-        preview.textContent = utilidad >= 0
-            ? `✅ Utilidad: $${utilidad.toFixed(2)} · Margen: ${margen}%`
-            : `⚠ Precio de venta menor al costo · Pérdida: $${Math.abs(utilidad).toFixed(2)}`;
+        preview.innerHTML = utilidad >= 0
+            ? `${ICONS.ok} Utilidad: $${utilidad.toFixed(2)} · Margen: ${margen}%`
+            : `${ICONS.warn} Precio de venta menor al costo · Pérdida: $${Math.abs(utilidad).toFixed(2)}`;
     } else {
         preview.style.display = 'none';
         if (inputGanancia && document.activeElement !== inputGanancia) {

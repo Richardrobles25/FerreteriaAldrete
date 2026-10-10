@@ -370,19 +370,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="fila"><span>+ Ventas en efectivo</span><span>$<?= number_format($resumen['ef'],2) ?></span></div>
                     <div class="fila"><span>+ Efectivo de pagos mixtos</span><span>$<?= number_format($resumen['mixto_ef'],2) ?></span></div>
                     <?php if (floatval($resumen['transf']) > 0): ?>
-                    <div class="fila" style="font-size:12px;color:#888;"><span>↗ Transferencias bancarias <em style="font-size:11px;">(no entran a caja física)</em></span><span>$<?= number_format($resumen['transf'],2) ?></span></div>
+                    <div class="fila" style="font-size:12px;color:#888;"><span><?= icono('arrow-up-right', '', 13) ?> Transferencias bancarias <em style="font-size:11px;">(no entran a caja física)</em></span><span>$<?= number_format($resumen['transf'],2) ?></span></div>
                     <?php endif; ?>
                     <?php if ($totalIngresosCash > 0): ?>
                     <div class="fila positivo"><span>+ Ingresos en efectivo</span><span>+$<?= number_format($totalIngresosCash,2) ?></span></div>
                     <?php endif; ?>
                     <?php if ($totalIngresosNoCash > 0): ?>
-                    <div class="fila" style="font-size:12px;color:#888;"><span>↗ Pagos crédito terminal/transferencia <em style="font-size:11px;">(no afectan caja física)</em></span><span>$<?= number_format($totalIngresosNoCash,2) ?></span></div>
+                    <div class="fila" style="font-size:12px;color:#888;"><span><?= icono('arrow-up-right', '', 13) ?> Pagos crédito terminal/transferencia <em style="font-size:11px;">(no afectan caja física)</em></span><span>$<?= number_format($totalIngresosNoCash,2) ?></span></div>
                     <?php endif; ?>
                     <?php if ($totalRetiros > 0): ?>
                     <div class="fila negativo"><span>- Retiros de caja (efectivo)</span><span>-$<?= number_format($totalRetiros,2) ?></span></div>
                     <?php endif; ?>
                     <?php if ($totalRetirosNoCash > 0): ?>
-                    <div class="fila" style="font-size:12px;color:#888;"><span>↙ Devoluciones antiguas terminal/transferencia <em style="font-size:11px;">(registros previos al cambio; no restan del físico)</em></span><span>-$<?= number_format($totalRetirosNoCash,2) ?></span></div>
+                    <div class="fila" style="font-size:12px;color:#888;"><span><?= icono('arrow-down-left', '', 13) ?> Devoluciones antiguas terminal/transferencia <em style="font-size:11px;">(registros previos al cambio; no restan del físico)</em></span><span>-$<?= number_format($totalRetirosNoCash,2) ?></span></div>
                     <?php endif; ?>
                     <div class="fila total-ef">
                         <span>Total esperado en caja</span>
@@ -445,6 +445,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <script>
 const efectivoEsperado = <?= $efectivoEsperado ?>;
+// Iconos del sistema (en vez de emojis) para el aviso de diferencia al cerrar la caja.
+const ICONS = <?= json_encode([
+    'cuadrada' => icono('circle-check-big', '', 18),
+    'faltante' => icono('triangle-alert', '', 18),
+    'sobrante' => icono('pin', '', 18),
+]) ?>;
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
@@ -459,13 +465,13 @@ function calcularDiferencia(val) {
 
     if (Math.abs(diferencia) < 0.01) {
         div.className  = 'diferencia-preview dif-cuadrado';
-        div.textContent = '✅ Caja cuadrada — Sin diferencia';
+        div.innerHTML = ICONS.cuadrada + ' Caja cuadrada — Sin diferencia';
     } else if (diferencia < 0) {
         div.className  = 'diferencia-preview dif-faltante';
-        div.textContent = `⚠ Faltante: $${Math.abs(diferencia).toFixed(2)} (contaste menos de lo esperado)`;
+        div.innerHTML = ICONS.faltante + ` Faltante: $${Math.abs(diferencia).toFixed(2)} (contaste menos de lo esperado)`;
     } else {
         div.className  = 'diferencia-preview dif-sobrante';
-        div.textContent = `📌 Sobrante: $${diferencia.toFixed(2)} (contaste más de lo esperado)`;
+        div.innerHTML = ICONS.sobrante + ` Sobrante: $${diferencia.toFixed(2)} (contaste más de lo esperado)`;
     }
 }
 

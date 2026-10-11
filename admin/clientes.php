@@ -57,6 +57,114 @@ if (isset($_GET['toggle'])) {
     exit();
 }
 
+// [FEATURE-ELIMINAR-CLIENTE 2026-10-11] Borra a los clientes indicados y TODO lo que cuelga de
+// ellos, en el orden que exigen las llaves foraneas (todas son RESTRICT). Debe llamarse dentro de
+// una transaccion abierta por quien la use. Notas:
+//  - movimientos_caja.devolucion_id tambien es RESTRICT: los retiros/ingresos de caja que generaron
+//    las devoluciones de estos clientes se borran con ellas (el "Eliminar todos" original no los
+//    contemplaba y se revertia completo si existia alguna devolucion con reembolso).
+//  - movimientos_inventario NO tiene llave foranea hacia devoluciones/venta_productos: el movimiento
+//    se conserva (la mercancia si salio/regreso al almacen) y solo se le quita la referencia.
+//  - El stock NO se modifica: lo vendido ya salio fisicamente de la tienda.
+function borrarClientesEnCascada(PDO $pdo, array $ids): void {
+    if (!$ids) return;
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $subCred = "SELECT credito_id FROM creditos WHERE cliente_id IN ($ph)";
+    $subVta  = "SELECT venta_id FROM ventas WHERE cliente_id IN ($ph)";
+    $subDev  = "SELECT devolucion_id FROM devoluciones WHERE venta_id IN ($subVta)";
+    $sentencias = [
+        "DELETE FROM abonos WHERE credito_id IN ($subCred)",
+        "DELETE FROM movimientos_mora WHERE credito_id IN ($subCred)",
+        "DELETE FROM mora_cancelaciones WHERE credito_id IN ($subCred)",
+        "DELETE FROM movimientos_caja WHERE devolucion_id IN ($subDev)",
+        "UPDATE movimientos_inventario SET devolucion_id = NULL WHERE devolucion_id IN ($subDev)",
+        "UPDATE movimientos_inventario SET venta_productos_id = NULL WHERE venta_productos_id IN (SELECT venta_productos_id FROM venta_productos WHERE venta_id IN ($subVta))",
+        "DELETE FROM devoluciones WHERE venta_id IN ($subVta)",
+        "DELETE FROM venta_productos WHERE venta_id IN ($subVta)",
+        "DELETE FROM creditos WHERE cliente_id IN ($ph)",
+        "DELETE FROM ventas WHERE cliente_id IN ($ph)",
+        "DELETE FROM clientes WHERE cliente_id IN ($ph)",
+    ];
+    foreach ($sentencias as $sql) {
+        // el mismo conjunto de ids se repite una vez por cada "$ph" que aparece en la sentencia
+        $veces = substr_count($sql, $ph);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute(array_merge(...array_fill(0, $veces, $ids)));
+    }
+}
+
+// [FEATURE-ELIMINAR-CLIENTE 2026-10-11] Resumen (solo lectura) de lo que se borraria con un cliente,
+// para mostrarlo en la confirmacion antes de eliminar.
+if (isset($_GET['resumen_eliminar'])) {
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    $ridRaw = is_scalar($_GET['resumen_eliminar']) ? (string)$_GET['resumen_eliminar'] : '';
+    $rid = (ctype_digit($ridRaw) && strlen($ridRaw) <= 10) ? intval($ridRaw) : 0;
+    $stmtR = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE cliente_id = ?");
+    $stmtR->execute([$rid]);
+    $nombreR = $stmtR->fetchColumn();
+    if ($nombreR === false) { echo json_encode(['ok' => false, 'error' => 'Cliente no encontrado.']); exit(); }
+    $cuenta = function (string $sql) use ($pdo, $rid) { $q = $pdo->prepare($sql); $q->execute([$rid]); return $q->fetchColumn(); };
+    echo json_encode([
+        'ok'           => true,
+        'nombre'       => $nombreR,
+        'ventas'       => (int)$cuenta("SELECT COUNT(*) FROM ventas WHERE cliente_id = ?"),
+        'pendientes'   => (int)$cuenta("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'"),
+        'creditos'     => (int)$cuenta("SELECT COUNT(*) FROM creditos WHERE cliente_id = ?"),
+        'saldo'        => (float)$cuenta("SELECT COALESCE(SUM(saldo_pendiente),0) FROM creditos WHERE cliente_id = ? AND estado IN ('Activo','Vencido')"),
+        'abonos'       => (int)$cuenta("SELECT COUNT(*) FROM abonos WHERE credito_id IN (SELECT credito_id FROM creditos WHERE cliente_id = ?)"),
+        'devoluciones' => (int)$cuenta("SELECT COUNT(*) FROM devoluciones WHERE venta_id IN (SELECT venta_id FROM ventas WHERE cliente_id = ?)"),
+        // Ventas y abonos que viven en una caja que sigue ABIERTA: borrarlos cambia el "efectivo esperado" de esa caja.
+        'ventas_caja_abierta' => (int)$cuenta("SELECT COUNT(*) FROM ventas v JOIN cajas ca ON ca.caja_id = v.caja_id WHERE v.cliente_id = ? AND ca.estado = 'Abierta' AND v.estado IN ('Completada','Modificado','Devuelto')"),
+        'abonos_caja_abierta' => (int)$cuenta("SELECT COUNT(*) FROM abonos a JOIN cajas ca ON ca.caja_id = a.caja_id WHERE ca.estado = 'Abierta' AND a.credito_id IN (SELECT credito_id FROM creditos WHERE cliente_id = ?)"),
+    ]);
+    exit();
+}
+
+// [FEATURE-ELIMINAR-CLIENTE 2026-10-11] Elimina UN cliente y todo lo relacionado con el. A
+// diferencia de "Desactivar" (que conserva el historial), esto es permanente. Se bloquea si el
+// cliente tiene ventas a domicilio pendientes de entrega (esas todavia reservan mercancia).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_cliente'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'clientes.php');
+    // Solo digitos puros: intval("2138abc") o intval("2139.9") darian 2138/2139 y borrarian a un cliente que nadie eligio.
+    $eidRaw = is_scalar($_POST['eliminar_cliente_id'] ?? null) ? (string)$_POST['eliminar_cliente_id'] : '';
+    $eid   = (ctype_digit($eidRaw) && strlen($eidRaw) <= 10) ? intval($eidRaw) : 0;
+    $frase = trim(is_scalar($_POST['confirmacion_texto'] ?? null) ? (string)$_POST['confirmacion_texto'] : '');
+    if ($frase !== 'ELIMINAR') {
+        header('Location: clientes.php?error=confirmacion_cliente_invalida');
+        exit();
+    }
+    $nombreEliminado = null;
+    $pdo->beginTransaction();
+    try {
+        $stmtE = $pdo->prepare("SELECT nombre_completo FROM clientes WHERE cliente_id = ? FOR UPDATE");
+        $stmtE->execute([$eid]);
+        $nombreEliminado = $stmtE->fetchColumn();
+        if ($nombreEliminado === false) {
+            $pdo->rollBack();
+            header('Location: clientes.php?msg=no_encontrado');
+            exit();
+        }
+        $stmtP = $pdo->prepare("SELECT COUNT(*) FROM ventas WHERE cliente_id = ? AND estado = 'Pendiente'");
+        $stmtP->execute([$eid]);
+        if ($stmtP->fetchColumn() > 0) {
+            $pdo->rollBack();
+            header('Location: clientes.php?error=eliminar_tiene_pendientes');
+            exit();
+        }
+        borrarClientesEnCascada($pdo, [$eid]);
+        $pdo->commit();
+    } catch (\Throwable $eElim) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('[Ferreteria/clientes] Error al eliminar el cliente ' . $eid . ': ' . $eElim->getMessage());
+        header('Location: clientes.php?error=eliminar_fallo');
+        exit();
+    }
+    $_SESSION['import_clientes_flash'] = ['exito' => 'Cliente "' . $nombreEliminado . '" eliminado junto con sus créditos, abonos, ventas y devoluciones.', 'errores' => []];
+    header('Location: clientes.php');
+    exit();
+}
+
 // [FEATURE-ELIMINAR-TODOS-CLIENTES 2026-09-24] Borra TODOS los clientes (y en cascada sus
 // creditos/ventas/abonos asociados) para poder reimportar el archivo del sistema anterior desde
 // cero sin duplicar -- necesario porque ese modo de importacion siempre crea, nunca actualiza
@@ -75,20 +183,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_todos_client
     $idsBorrar = $pdo->query("SELECT cliente_id FROM clientes")->fetchAll(PDO::FETCH_COLUMN);
     $totalClientesBorrados = count($idsBorrar);
     if ($idsBorrar) {
-        $ph = implode(',', array_fill(0, count($idsBorrar), '?'));
         $pdo->beginTransaction();
         try {
-            $pdo->prepare("DELETE FROM abonos WHERE credito_id IN (SELECT credito_id FROM creditos WHERE cliente_id IN ($ph))")->execute($idsBorrar);
-            $pdo->prepare("DELETE FROM movimientos_mora WHERE credito_id IN (SELECT credito_id FROM creditos WHERE cliente_id IN ($ph))")->execute($idsBorrar);
-            $pdo->prepare("DELETE FROM mora_cancelaciones WHERE credito_id IN (SELECT credito_id FROM creditos WHERE cliente_id IN ($ph))")->execute($idsBorrar);
-            $pdo->prepare("DELETE FROM devoluciones WHERE venta_id IN (SELECT venta_id FROM ventas WHERE cliente_id IN ($ph))")->execute($idsBorrar);
-            $pdo->prepare("DELETE FROM venta_productos WHERE venta_id IN (SELECT venta_id FROM ventas WHERE cliente_id IN ($ph))")->execute($idsBorrar);
-            $pdo->prepare("DELETE FROM creditos WHERE cliente_id IN ($ph)")->execute($idsBorrar);
-            $pdo->prepare("DELETE FROM ventas WHERE cliente_id IN ($ph)")->execute($idsBorrar);
-            $pdo->prepare("DELETE FROM clientes WHERE cliente_id IN ($ph)")->execute($idsBorrar);
+            borrarClientesEnCascada($pdo, array_map('intval', $idsBorrar));
             $pdo->commit();
         } catch (\Throwable $eBorrar) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) $pdo->rollBack();
             error_log('[Ferreteria/clientes] Error al eliminar todos los clientes: ' . $eBorrar->getMessage());
             header('Location: clientes.php?error=eliminar_fallo');
             exit();
@@ -967,6 +1067,8 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
     tr:hover td { background: #fafafa; }
     tr.inactivo td { opacity: 0.55; }
     .acciones { display: flex; gap: 5px; flex-wrap: wrap; }
+    .btn-eliminar-cliente { background: #fdecea; color: #c0392b; display: inline-flex; align-items: center; gap: 4px; }
+    .btn-eliminar-cliente:hover { background: #f8d4d0; }
     .btn-accion { padding: 5px 11px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 600; text-decoration: none; display: inline-block; }
     .btn-editar { background: #e3f2fd; color: #1565c0; }
     .btn-activar { background: #e8f5e9; color: #2e7d32; }
@@ -1071,6 +1173,12 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                     Borra permanentemente los <?= intval($totales['total_clientes'] ?? 0) ?> clientes actuales y sus <?= intval($resumenCreditos['total_creditos_abiertos'] ?? 0) ?> créditos abiertos (y ventas asociadas). Úsalo solo para reimportar el archivo original desde cero.
                 </p>
             </div>
+            <form method="POST" id="formEliminarCliente" style="display:none;">
+                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                <input type="hidden" name="eliminar_cliente" value="1">
+                <input type="hidden" name="eliminar_cliente_id" id="inputEliminarClienteId">
+                <input type="hidden" name="confirmacion_texto" id="inputConfirmacionCliente">
+            </form>
             <form method="POST" id="formEliminarTodosClientes" style="display:none;">
                 <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                 <input type="hidden" name="eliminar_todos_clientes" value="1">
@@ -1103,6 +1211,12 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
             <?php endif; ?>
             <?php if (($_GET['error'] ?? '') === 'confirmacion_invalida'): ?>
                 <div class="msg" style="background:#fdecea;color:#c0392b;">No se eliminó nada: el texto de confirmación no coincidió exactamente con "ELIMINAR TODO".</div>
+            <?php endif; ?>
+            <?php if (($_GET['error'] ?? '') === 'confirmacion_cliente_invalida'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">No se eliminó nada: el texto de confirmación no coincidió exactamente con "ELIMINAR".</div>
+            <?php endif; ?>
+            <?php if (($_GET['error'] ?? '') === 'eliminar_tiene_pendientes'): ?>
+                <div class="msg" style="background:#fdecea;color:#c0392b;">No se puede eliminar este cliente porque tiene ventas a domicilio pendientes de entrega. Entrégalas o cancélalas primero.</div>
             <?php endif; ?>
             <?php if (($_GET['error'] ?? '') === 'eliminar_fallo'): ?>
                 <div class="msg" style="background:#fdecea;color:#c0392b;">Ocurrió un error al eliminar. No se borró nada (se revirtió todo).</div>
@@ -1167,6 +1281,7 @@ $sucursales = $pdo->query("SELECT sucursal_id, nombre FROM sucursales WHERE acti
                                         <?php else: ?>
                                             <a class="btn-accion <?= $cliente['activo'] ? 'btn-desactivar' : 'btn-activar' ?>" href="clientes.php?toggle=<?= $cliente['cliente_id'] ?>&_token=<?= htmlspecialchars($_SESSION['csrf_token']) ?>" onclick="return confirm('Deseas cambiar el estado de este cliente?')"><?= $cliente['activo'] ? 'Desactivar' : 'Activar' ?></a>
                                         <?php endif; ?>
+                                        <button type="button" class="btn-accion btn-eliminar-cliente" onclick="eliminarCliente(<?= (int)$cliente['cliente_id'] ?>)" title="Eliminar permanentemente este cliente y todo lo relacionado"><?= icono('trash-2','',13) ?> Eliminar</button>
                                     </div></td>
                                 </tr>
                             <?php endforeach; ?>
@@ -1260,6 +1375,39 @@ function toggleImportCli() { document.getElementById('importCard').classList.tog
 <?php if ($exitoImportCli || !empty($erroresImportCli)): ?>
 document.getElementById('importCard').classList.add('visible');
 <?php endif; ?>
+// [FEATURE-ELIMINAR-CLIENTE] Pide al servidor el resumen de lo que se borraria, lo muestra y exige
+// escribir ELIMINAR; el servidor vuelve a validar todo (frase, CSRF y ventas pendientes).
+let eliminandoCliente = false;
+async function eliminarCliente(id) {
+    if (eliminandoCliente) return;
+    eliminandoCliente = true;
+    try {
+        const r = await fetch('clientes.php?resumen_eliminar=' + encodeURIComponent(id), { credentials: 'same-origin' });
+        const d = await r.json();
+        if (!d.ok) { alert(d.error || 'No se pudo consultar al cliente.'); eliminandoCliente = false; return; }
+        if (d.pendientes > 0) {
+            alert('No se puede eliminar a "' + d.nombre + '": tiene ' + d.pendientes + ' venta(s) a domicilio pendiente(s) de entrega. Entrégalas o cancélalas primero.');
+            eliminandoCliente = false; return;
+        }
+        let msg = 'Vas a eliminar PERMANENTEMENTE a "' + d.nombre + '" y todo lo relacionado con él:\n\n' +
+            ' • ' + d.ventas + ' venta(s) con sus productos\n' +
+            ' • ' + d.creditos + ' crédito(s), con ' + d.abonos + ' abono(s) y su mora\n' +
+            ' • ' + d.devoluciones + ' devolución(es)\n';
+        if (d.saldo > 0) msg += '\nAtención: tiene una deuda pendiente de $' + d.saldo.toFixed(2) + ' que se perdería.\n';
+        if (d.ventas_caja_abierta > 0 || d.abonos_caja_abierta > 0) msg += '\nCUIDADO: ' + d.ventas_caja_abierta + ' venta(s) y ' + d.abonos_caja_abierta + ' abono(s) de este cliente están en una caja que sigue ABIERTA. Al borrarlos cambia el efectivo esperado de esa caja y su corte puede salir con diferencia. Lo más seguro es eliminarlo después de cerrar esa caja.\n';
+        msg += '\nLas ventas dejarán de aparecer en reportes y cortes de caja. El inventario no se modifica. Esta acción no se puede deshacer.\n\n(Si solo quieres que ya no aparezca, usa "Desactivar".)\n\n¿Deseas continuar?';
+        if (!confirm(msg)) { eliminandoCliente = false; return; }
+        const frase = prompt('Para confirmar, escribe exactamente: ELIMINAR');
+        if (frase === null) { eliminandoCliente = false; return; }
+        if (frase.trim() !== 'ELIMINAR') { alert('El texto no coincidió. No se eliminó nada.'); eliminandoCliente = false; return; }
+        document.getElementById('inputEliminarClienteId').value = id;
+        document.getElementById('inputConfirmacionCliente').value = frase.trim();
+        document.getElementById('formEliminarCliente').submit();
+    } catch (e) {
+        alert('No se pudo consultar al cliente. Intenta de nuevo.');
+        eliminandoCliente = false;
+    }
+}
 // [FEATURE-ELIMINAR-TODOS-CLIENTES] Doble paso: confirm() con el numero exacto de clientes que se
 // van a borrar, y luego escribir la frase exacta -- ambos se vuelven a validar en el servidor.
 function confirmarEliminarTodosClientes() {
@@ -1275,6 +1423,7 @@ function confirmarEliminarTodosClientes() {
 </script>
 <script src="../includes/auto_filter.js"></script>
 <script src="../includes/seleccionar_cantidad.js"></script>
+<script src="../includes/anti_doble_envio.js"></script>
 </body>
 </html>
 

@@ -1790,5 +1790,6 @@ abrirDetalles(<?= intval($deepLinkCliente['cliente_id']) ?>, <?= json_encode($de
 <?php endif; ?>
 </script>
 <script src="../includes/seleccionar_cantidad.js"></script>
+<script src="../includes/anti_doble_envio.js"></script>
 </body>
 </html>

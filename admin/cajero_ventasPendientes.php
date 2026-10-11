@@ -2778,5 +2778,6 @@ attachDropdownKeyNav(
 );
 </script>
 <script src="../includes/seleccionar_cantidad.js"></script>
+<script src="../includes/anti_doble_envio.js"></script>
 </body>
 </html>

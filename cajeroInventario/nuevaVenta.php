@@ -63,6 +63,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['movimiento_caja'])) {
     requerirCSRF($_POST['_token'] ?? '', 'nuevaVenta.php');
     $tipoMovRaw = is_scalar($_POST['tipo_mov'] ?? null) ? $_POST['tipo_mov'] : '';
     $tipoMov  = in_array($tipoMovRaw, ['Retiro','Ingreso']) ? $tipoMovRaw : null;
+    // [FIX-MOVCAJA-DOBLE-ENVIO 2026-10-10] Cada vez que se arma la pagina el formulario trae un identificador unico
+    // (mov_uid). Si el mismo identificador llega otra vez -- porque con internet lento se pico varias veces el boton
+    // mientras cargaba -- NO se registra de nuevo: antes cada clic extra insertaba otro movimiento igual. El candado de
+    // sesion de PHP serializa los envios simultaneos, asi que el primero lo marca y los demas lo encuentran ya usado.
+    $movUid = is_scalar($_POST['mov_uid'] ?? null) ? (string)$_POST['mov_uid'] : '';
+    if (preg_match('/^[a-f0-9]{32}$/', $movUid)) {
+        // Esta pagina cierra la sesion al inicio (session_write_close) para no bloquear otras peticiones; aqui se
+        // vuelve a abrir SOLO para esta comprobacion: asi PHP toma el candado de la sesion y los envios simultaneos
+        // se atienden uno por uno (el primero marca el identificador, los demas lo encuentran ya usado).
+        @session_start();
+        $movUsados = is_array($_SESSION['mov_caja_uids'] ?? null) ? $_SESSION['mov_caja_uids'] : [];
+        if (isset($movUsados[$movUid])) {
+            session_write_close();
+            header('Location: nuevaVenta.php?msg_mov=' . ($tipoMov ?: 'Ingreso'));
+            exit();
+        }
+        $movUsados[$movUid] = time();
+        if (count($movUsados) > 100) $movUsados = array_slice($movUsados, -50, null, true);
+        $_SESSION['mov_caja_uids'] = $movUsados;
+        session_write_close();
+    }
     $montoMov = floatval(is_scalar($_POST['monto_mov'] ?? null) ? $_POST['monto_mov'] : 0);
     $notaMov  = trim(is_scalar($_POST['nota_mov'] ?? null) ? (string)$_POST['nota_mov'] : '');
     // [FIX] Este es el UNICO lugar donde el cajero escribe una nota totalmente libre para
@@ -1320,6 +1341,7 @@ if (!$caja) {
         <div class="modal-mov-body">
             <form method="POST" onsubmit="return validarMovCaja()">
                 <input type="hidden" name="movimiento_caja" value="1">
+                <input type="hidden" name="mov_uid" value="<?= bin2hex(random_bytes(16)) ?>">
                 <input type="hidden" name="tipo_mov" id="inputTipoMov" value="Ingreso">
 
                 <!-- [AUTOFIX] BUG-04: Token CSRF para proteger el form de movimiento de caja -->
@@ -2149,8 +2171,18 @@ function validarMovCaja() {
         err.style.display = 'block';
         return false;
     }
+    // Un solo envio: el boton se apaga y los clics siguientes se ignoran mientras carga.
+    const btnMov = document.getElementById('btnConfirmarMov');
+    if (btnMov.dataset.enviando === '1') return false;
+    btnMov.dataset.enviando = '1';
+    btnMov.textContent = 'Registrando...';
+    setTimeout(() => { btnMov.disabled = true; }, 0);
     return true;
 }
+window.addEventListener('pageshow', () => {
+    const b = document.getElementById('btnConfirmarMov');
+    if (b) { b.dataset.enviando = '0'; b.disabled = false; }
+});
 document.getElementById('modalMovCaja').addEventListener('click', function(e) {
     if (e.target === this) cerrarModalMovCaja();
 });
@@ -4136,5 +4168,6 @@ attachDropdownKeyNav(
 );
 </script>
 <script src="../includes/seleccionar_cantidad.js"></script>
+<script src="../includes/anti_doble_envio.js"></script>
 </body>
 </html>

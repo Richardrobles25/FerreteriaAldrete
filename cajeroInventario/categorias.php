@@ -77,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: categorias.php?msg=muy_largo');
         exit();
     }
+    if (textoConEmoji($nombre)) { header('Location: categorias.php?msg=emoji'); exit(); }
 
     if ($nombre) {
         // [AUTOFIX] ERROR-CAT-01 (portado de admin/inventario_categorias.php): capturar
@@ -303,6 +304,8 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">No tienes permisos para esta acción. Tu rol no puede crear, editar ni eliminar categorías del catálogo global.</div>
                 <?php elseif ($_GET['msg'] === 'duplicado'): ?>
                     <div class="msg msg-error">Ya existe una categoría con ese nombre.</div>
+                <?php elseif ($_GET['msg'] === 'emoji'): ?>
+                    <div class="msg msg-error">El nombre no puede incluir emojis ni símbolos de ese tipo. Quítalos e intenta de nuevo.</div>
                 <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
                     <div class="msg msg-error">El nombre de la categoría no puede tener más de 100 caracteres.</div>
                 <?php elseif ($_GET['msg'] === 'vacio'): ?>

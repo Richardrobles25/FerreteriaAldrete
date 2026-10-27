@@ -105,6 +105,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$fecha_ingreso || !preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fecha_ingreso, $mFecha) || !checkdate((int)$mFecha[2], (int)$mFecha[3], (int)$mFecha[1])) {
         $errores[] = 'La fecha de ingreso no es valida.';
     } elseif ($fecha_ingreso > date('Y-m-d'))               $errores[] = 'La fecha de ingreso no puede ser en el futuro.';
+    // [FIX-EMPLEADO-INGRESO-POSTERIOR-A-ASISTENCIA] Se podia mover la fecha de ingreso a una fecha
+    // POSTERIOR a registros que el empleado ya tiene (asistencia o pagos de semanas anteriores):
+    // quedaban dias "antes de que entrara" y asistencia que formAsistencia.php ya no aceptaria.
+    if ($esEdicion && $editando && empty($errores) && $fecha_ingreso) {
+        $limiteIngreso = (new DateTime(lunesDeLaSemana($fecha_ingreso)))->modify('-1 day')->format('Y-m-d');
+        $stmtPrimera = $pdo->prepare("SELECT MIN(fecha) FROM asistencia WHERE empleado_id = ?");
+        $stmtPrimera->execute([$empleado_id]);
+        $primeraAsis = $stmtPrimera->fetchColumn();
+        $stmtPrimerPago = $pdo->prepare("SELECT MIN(semana_inicio) FROM pagos_nomina WHERE empleado_id = ?");
+        $stmtPrimerPago->execute([$empleado_id]);
+        $primerPago = $stmtPrimerPago->fetchColumn();
+        if ($primeraAsis && $primeraAsis < $limiteIngreso) {
+            $errores[] = 'La fecha de ingreso no puede ser posterior a su primera asistencia registrada (' . date('d/m/Y', strtotime($primeraAsis)) . '). Corrige o elimina esos registros primero.';
+        } elseif ($primerPago && $primerPago < lunesDeLaSemana($fecha_ingreso)) {
+            $errores[] = 'La fecha de ingreso no puede ser posterior a su primer pago de nómina (semana del ' . date('d/m/Y', strtotime($primerPago)) . ').';
+        }
+    }
     if ($sueldo_semanal <= 0)                             $errores[] = 'El sueldo semanal debe ser mayor a $0.';
     // [FIX-PRECIO-MAX-SUELDO] sueldo_semanal es DECIMAL(10,2); sin tope, un valor absurdo
     // tronaba con HTTP 500 crudo en vez de un mensaje claro (verificado en vivo).
@@ -203,7 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($e->getCode() === '23000') {
                 $errores[] = 'Ya existe un empleado con ese nombre. Si es la misma persona, edita su registro existente en vez de crear uno nuevo.';
             } else {
-                $errores[] = 'No se pudo guardar el empleado. Intenta de nuevo.';
+                $errores[] = textoNoCompatibleBD($e) ? 'El texto contiene caracteres que el sistema no puede guardar (por ejemplo emojis). Quítalos e intenta de nuevo.' : 'No se pudo guardar el empleado. Intenta de nuevo.';
             }
         }
     }

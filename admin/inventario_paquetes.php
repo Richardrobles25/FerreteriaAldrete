@@ -58,6 +58,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $precio_paquete = floatval(is_scalar($_POST['precio_paquete'] ?? null) ? $_POST['precio_paquete'] : 0);
     $itemsRaw       = is_scalar($_POST['items_paquete'] ?? null) ? $_POST['items_paquete'] : '[]';
     $items          = json_decode($itemsRaw ?? '[]', true);
+    // [FIX-PAQUETE-ITEMS-NO-ARREGLO] "items_paquete" es JSON capturado por el navegador, pero un POST directo puede
+    // mandar un numero ("99999999999999999999" -> float), un texto o un arreglo de escalares: el foreach de mas abajo
+    // tronaba con un error de PHP. Si no es una lista de objetos se rechaza con un aviso claro.
+    $itemsInvalidos = false;
+    if ($items !== null && !is_array($items)) { $itemsInvalidos = true; $items = []; }
+    elseif (is_array($items)) { foreach ($items as $itemRaw) { if (!is_array($itemRaw)) { $itemsInvalidos = true; $items = []; break; } } }
     // [FIX-PAQUETE-ID-DESINCRONIZADO] Se ancla al paquete ya cargado via ?editar= (arriba),
     // no al <input hidden name="paquete_id"> del POST.
     $paquete_id     = $editando ? intval($editando['paquete_id']) : 0;
@@ -79,6 +85,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$nombre)             $errores[] = 'El nombre es obligatorio.';
     if (!$codigo)             $errores[] = 'El código es obligatorio.';
+    if ($itemsInvalidos)      $errores[] = 'Los productos del paquete no son válidos. Recarga la página e intenta de nuevo.';
+    // [FIX-PAQUETE-EMOJI] La conexion usa charset utf8 (3 bytes): un emoji en codigo/nombre/descripcion hacia fallar
+    // la consulta de codigo duplicado con "Illegal mix of collations" (error fatal).
+    if (textoConEmoji($codigo) || textoConEmoji($nombre) || textoConEmoji($descripcion))
+        $errores[] = 'El código, el nombre y la descripción no pueden incluir emojis ni símbolos de ese tipo.';
     // [FIX-PAQUETE-LARGO] (mismo patron ya corregido en categorias/proveedores/productos/
     // clientes/gastos/empleados): codigo es VARCHAR(50) y nombre VARCHAR(150) sin ningun tope
     // en el servidor — un valor mas largo se truncaba en silencio y se guardaba como "creado
@@ -170,7 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if ($codigo) {
+    if ($codigo && !textoConEmoji($codigo)) {
         $stmtCheck = $pdo->prepare("SELECT paquete_id FROM paquetes WHERE codigo = ? AND paquete_id != ?");
         $stmtCheck->execute([$codigo, $paquete_id]);
         if ($stmtCheck->fetch()) $errores[] = 'El código ya existe en otro paquete.';

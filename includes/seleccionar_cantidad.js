@@ -25,6 +25,43 @@
         return PATRON.test((el.id || '') + ' ' + (el.name || '') + ' ' + (typeof el.className === 'string' ? el.className : ''));
     }
 
+    // Tope por defecto: una caja numerica SIN max dejaba que la flechita (mantenida) subiera el valor sin parar.
+    // Al interactuar con ella se le pone el maximo de las columnas DECIMAL(10,x) de la base (99,999,999); donde la
+    // pantalla conoce un limite real (stock, restante, enviado...) ya trae su propio max y no se toca.
+    var MAX_POR_DEFECTO = '99999999';
+    function ponerTopeSiFalta(e) {
+        var el = e.target;
+        if (!el || el.tagName !== 'INPUT' || (el.type || '').toLowerCase() !== 'number') return;
+        if (el.readOnly || el.disabled || el.hasAttribute('max')) return;
+        el.setAttribute('max', MAX_POR_DEFECTO);
+    }
+    ['mouseover', 'pointerdown', 'focusin'].forEach(function (ev) { document.addEventListener(ev, ponerTopeSiFalta, true); });
+
+    // Las flechitas nativas, al mantenerlas apretadas, repiten el paso sin parar (de 1 en 1 a toda velocidad hasta el
+    // tope). Aqui cada clic en la flechita da UN solo paso (arriba suma, abajo resta) y mantenerla no repite; el teclado
+    // (flecha arriba / abajo) tambien da un paso por pulsacion aunque se deje apretada. Respeta min, max y step.
+    var ANCHO_FLECHITAS = 22;   // px del borde derecho donde Chrome/Edge dibuja la flechita
+    function darPaso(el, arriba) {
+        try { arriba ? el.stepUp() : el.stepDown(); } catch (err) { return; }   // stepUp falla si no hay paso valido
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    document.addEventListener('mousedown', function (e) {
+        var el = e.target;
+        if (e.button !== 0 || !el || el.tagName !== 'INPUT' || (el.type || '').toLowerCase() !== 'number') return;
+        if (el.readOnly || el.disabled) return;
+        var r = el.getBoundingClientRect();
+        if (e.clientX < r.right - ANCHO_FLECHITAS || e.clientX > r.right) return;
+        e.preventDefault();                       // sin esto el navegador arranca su repeticion automatica
+        if (document.activeElement !== el) el.focus();
+        darPaso(el, e.clientY < r.top + r.height / 2);
+    }, true);
+    document.addEventListener('keydown', function (e) {
+        var el = e.target;
+        if (!e.repeat || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+        if (el && el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'number') e.preventDefault();
+    }, true);
+
     var recienEnfocado = null;
 
     document.addEventListener('focusin', function (e) {

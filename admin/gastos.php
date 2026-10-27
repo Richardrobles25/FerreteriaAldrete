@@ -37,8 +37,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
 // necesitar POST ni CSRF), ademas de varios "Warning: Array to string conversion" antes
 // de llegar ahi. Se valida is_scalar() para tratar un array igual que si la llave no
 // viniera (usa el default).
-$fechaInicio = is_scalar($_GET['fecha_inicio'] ?? null) ? $_GET['fecha_inicio'] : date('Y-m-01');
-$fechaFin    = is_scalar($_GET['fecha_fin']    ?? null) ? $_GET['fecha_fin']    : date('Y-m-d');
+// [FIX-GASTOS-FILTRO-FECHAS] Las fechas del filtro llegaban crudas a la consulta (un valor imposible como
+// "2026-02-30" o texto libre) y con "Desde" posterior a "Hasta" la lista salia vacia sin explicacion. Se aceptan
+// solo fechas de calendario reales (Y-m-d); si no, se usa el default del mes, y si vienen al reves se intercambian.
+$fechaValidaGET = function ($v) {
+    return is_string($v) && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $v, $m) && checkdate((int)$m[2], (int)$m[3], (int)$m[1]);
+};
+$fechaInicio = $fechaValidaGET($_GET['fecha_inicio'] ?? null) ? $_GET['fecha_inicio'] : date('Y-m-01');
+$fechaFin    = $fechaValidaGET($_GET['fecha_fin']    ?? null) ? $_GET['fecha_fin']    : date('Y-m-d');
+if ($fechaInicio > $fechaFin) { [$fechaInicio, $fechaFin] = [$fechaFin, $fechaInicio]; }
 $sucursal    = intval(is_scalar($_GET['sucursal'] ?? null) ? $_GET['sucursal'] : 0);
 $categoria   = intval(is_scalar($_GET['categoria_gasto_id'] ?? null) ? $_GET['categoria_gasto_id'] : 0);
 

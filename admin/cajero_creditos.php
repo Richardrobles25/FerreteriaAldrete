@@ -537,7 +537,7 @@ if (isset($_GET['get_creditos_cliente'])) {
 // try/catch) — nunca se alcanzaba porque este redirect corria primero. Mismo patron ya
 // corregido para CSRF en FIX-CSRF-AJAX-CREDITOS, y espejado en cajeroInventario/creditos.php.
 if (!$cajaAbiertaId) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();
 }
 

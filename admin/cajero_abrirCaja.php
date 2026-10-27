@@ -16,6 +16,16 @@ $siguienteTurno  = null;
 $cajasAbiertas   = 0;
 $erroresApertura = [];
 
+// [FEATURE-VOLVER-TRAS-CAJA 2026-10-21] Si un modulo mando aqui por falta de caja (?msg=sinCaja), al abrirla se regresa a ese
+// modulo en vez de dejar al usuario en el Inicio. Solo estos modulos (lista blanca); si se entra desde el menu, se olvida.
+$modulosVolverTrasCaja = [
+    'abonos.php' => 'Abonos', 'cajero_creditos.php' => 'Créditos cajero', 'cajero_devoluciones.php' => 'Devoluciones',
+    'cajero_nuevaVenta.php' => 'Nueva venta', 'cajero_ventasPendientes.php' => 'Ventas a Domicilio',
+];
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !(is_scalar($_GET['msg'] ?? null) && $_GET['msg'] === 'sinCaja')) olvidarModuloDeRegreso();
+$volverTrasCaja = moduloDeRegresoTrasCaja(array_keys($modulosVolverTrasCaja));
+$destinoTrasAbrirCaja = $volverTrasCaja !== '' ? $volverTrasCaja : 'cajero_inicio.php?msg=cajaAbierta';
+
 if ($sucursalVista !== 0) {
     // Verificar si ya tiene caja abierta en la sucursal elegida
     $stmt = $pdo->prepare("SELECT * FROM cajas WHERE usuario_id = ? AND sucursal_id = ? AND estado = 'Abierta' LIMIT 1");
@@ -95,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                 $stmtRelock->execute([$_SESSION['usuario_id'], $sucursalVista]);
                 if ($stmtRelock->fetch()) {
                     $pdo->rollBack();
-                    header('Location: cajero_inicio.php?msg=cajaAbierta');
+                    olvidarModuloDeRegreso(); header('Location: ' . $destinoTrasAbrirCaja);
                     exit();
                 }
 
@@ -105,13 +115,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                 ");
                 $stmt->execute([$sucursalVista, $_SESSION['usuario_id'], $monto_apertura, $observaciones, $siguienteTurno]);
                 $pdo->commit();
-                header('Location: cajero_inicio.php?msg=cajaAbierta');
+                olvidarModuloDeRegreso(); header('Location: ' . $destinoTrasAbrirCaja);
                 exit();
             } catch (\PDOException $e) {
                 $pdo->rollBack();
                 if ($e->getCode() === '23000') {
                     // El indice UNIQUE evito una segunda caja simultanea.
-                    header('Location: cajero_inicio.php?msg=cajaAbierta');
+                    olvidarModuloDeRegreso(); header('Location: ' . $destinoTrasAbrirCaja);
                     exit();
                 }
                 throw $e;
@@ -212,7 +222,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
         <div class="form-card">
             <?php if (isset($_GET['msg']) && $_GET['msg'] === 'sinCaja'): ?>
                 <div class="alerta-box" style="background:#fff3e0;border-color:#ffb74d;color:#e65100;">
-                    <?= icono('triangle-alert') ?> Necesitas abrir una caja en esta sucursal para acceder a ese módulo.
+                    <?= icono('triangle-alert') ?> Necesitas abrir una caja en esta sucursal para acceder a ese módulo.<?php if ($volverTrasCaja !== ''): ?> Al abrirla volverás a «<?= htmlspecialchars($modulosVolverTrasCaja[$volverTrasCaja]) ?>».<?php endif; ?>
                 </div>
             <?php endif; ?>
             <?php // [FIX-MEDIO-D3-08] requerirCSRF() redirige con "?msg=error_token" si el token es
@@ -234,7 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$cajaAbierta) {
                     Abierta el <?= date('d/m/Y \a \l\a\s H:i', strtotime($cajaAbierta['abierta_en'])) ?>
                     · Monto inicial: $<?= number_format($cajaAbierta['monto_apertura'], 2) ?>
                 </div>
-                <a class="btn-ir" href="cajero_nuevaVenta.php">Ir a nueva venta</a>
+                <?php if ($volverTrasCaja !== ''): ?><a class="btn-ir" href="<?= htmlspecialchars($volverTrasCaja) ?>">Volver a <?= htmlspecialchars($modulosVolverTrasCaja[$volverTrasCaja]) ?></a><?php else: ?><a class="btn-ir" href="cajero_nuevaVenta.php">Ir a nueva venta</a><?php endif; ?>
             <?php elseif ($sucursalCerrada): ?>
                 <h1>Sucursal cerrada</h1>
                 <p><?= htmlspecialchars($nombreSucursalVista) ?> está cerrada — no se pueden abrir turnos nuevos aquí. Su historial sigue disponible para consulta en Ventas, Créditos y Cortes de caja. Para volver a operar, reábrela desde Sucursales.</p>

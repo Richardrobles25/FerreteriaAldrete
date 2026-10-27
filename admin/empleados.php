@@ -19,7 +19,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
     // vez de fallar -- intval() sobre un array no vacio se coacciona a 1, sin importar que
     // valores traiga el array. Restaurado manualmente tras la prueba.
     $eid = intval(is_scalar($_POST['toggle_id'] ?? null) ? $_POST['toggle_id'] : 0);
-    $pdo->prepare("UPDATE empleados SET activo = NOT activo WHERE empleado_id = ?")->execute([$eid]);
+    // [FIX-EMPLEADO-TOGGLE-EXPLICITO] "activo = NOT activo" alternaba el estado que tuviera la fila AL
+    // MOMENTO de procesar: con dos pestanas abiertas (o un doble envio) un "Desactivar" ya aplicado
+    // volvia a activar al empleado. Ahora el formulario manda el estado que se quiere (0/1) y se fija.
+    $nuevoActivo = (is_scalar($_POST['nuevo_activo'] ?? null) && in_array((string)$_POST['nuevo_activo'], ['0', '1'], true)) ? (int)$_POST['nuevo_activo'] : null;
+    if ($nuevoActivo !== null) {
+        $pdo->prepare("UPDATE empleados SET activo = ? WHERE empleado_id = ?")->execute([$nuevoActivo, $eid]);
+    }
     header('Location: empleados.php?msg=actualizado');
     exit();
 }
@@ -219,6 +225,7 @@ $totalActivos = count(array_filter($empleados, fn($e) => $e['activo']));
                         ?>
                         <form method="POST" style="display:inline;" onsubmit="return confirm('¿<?= $emp['activo'] ? 'Desactivar' : 'Activar' ?> a <?= htmlspecialchars(addslashes($emp['nombre']), ENT_QUOTES) ?>?<?= htmlspecialchars(addslashes($avisoAdelanto), ENT_QUOTES) ?>')">
                             <input type="hidden" name="toggle_id" value="<?= $emp['empleado_id'] ?>">
+                            <input type="hidden" name="nuevo_activo" value="<?= $emp['activo'] ? 0 : 1 ?>">
                             <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                             <button type="submit" class="<?= $emp['activo'] ? 'btn-toggle-on' : 'btn-toggle-off' ?>"><?= $emp['activo'] ? 'Desactivar' : 'Activar' ?></button>
                         </form>

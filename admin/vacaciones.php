@@ -16,7 +16,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     requerirCSRF($_POST['_token'] ?? '', 'vacaciones.php');
     // [FIX-TIPO-ARRAY-ID] (mismo patron ya corregido en varios archivos de admin/) intval()
     // sobre un array no truena, se coacciona en silencio a 1/0 en vez de fallar.
-    $pdo->prepare("DELETE FROM vacaciones WHERE vacacion_id = ?")->execute([intval(is_scalar($_POST['eliminar_id'] ?? null) ? $_POST['eliminar_id'] : 0)]);
+    $vidElim = intval(is_scalar($_POST['eliminar_id'] ?? null) ? $_POST['eliminar_id'] : 0);
+    $stElim = $pdo->prepare("SELECT empleado_id, fecha_inicio, fecha_fin, estado FROM vacaciones WHERE vacacion_id = ?");
+    $stElim->execute([$vidElim]);
+    $filaElim = $stElim->fetch(PDO::FETCH_ASSOC);
+    $pdo->prepare("DELETE FROM vacaciones WHERE vacacion_id = ?")->execute([$vidElim]);
+    // [FEATURE-VACACIONES-AUTOMATICAS] Unas vacaciones aprobadas aportaban dias pagados a Semana laboral: al borrarlas se recalculan
+    // las horas extra por dia (informativas) de esas semanas. Las semanas ya pagadas no se tocan (su pago esta congelado).
+    if ($filaElim && $filaElim['estado'] === 'Aprobado') {
+        recalcularExtrasPorVacacion($pdo, (int)$filaElim['empleado_id'], $filaElim['fecha_inicio'], $filaElim['fecha_fin']);
+    }
     header('Location: vacaciones.php?msg=eliminado');
     exit();
 }
@@ -44,7 +53,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cambiar_estado'])) {
     $estado = $_POST['nuevo_estado'];
     $estadosVal = ['Aprobado','Rechazado'];
     if (in_array($estado, $estadosVal)) {
-        $pdo->prepare("UPDATE vacaciones SET estado=? WHERE vacacion_id=? AND estado='Solicitado'")->execute([$estado, $vid]);
+        $stCambio = $pdo->prepare("UPDATE vacaciones SET estado=? WHERE vacacion_id=? AND estado='Solicitado'");
+        $stCambio->execute([$estado, $vid]);
+        // [FEATURE-VACACIONES-AUTOMATICAS] Al aprobarlas, sus dias lunes-sabado sin asistencia empiezan a pagarse solos en Semana laboral.
+        if ($estado === 'Aprobado' && $stCambio->rowCount() > 0) {
+            $stAprob = $pdo->prepare("SELECT empleado_id, fecha_inicio, fecha_fin FROM vacaciones WHERE vacacion_id = ?");
+            $stAprob->execute([$vid]);
+            if ($filaAprob = $stAprob->fetch(PDO::FETCH_ASSOC)) {
+                recalcularExtrasPorVacacion($pdo, (int)$filaAprob['empleado_id'], $filaAprob['fecha_inicio'], $filaAprob['fecha_fin']);
+            }
+        }
     }
     header('Location: vacaciones.php?msg=actualizado');
     exit();
@@ -229,6 +247,11 @@ rsort($aniosList);
         <?php elseif (isset($_GET['msg']) && $_GET['msg'] === 'registrado'): ?>
             <div class="msg msg-exito">Vacaciones registradas correctamente.</div>
         <?php endif; ?>
+
+        <div class="msg" style="background:#eef8ff;color:#1a7db5;border-left:3px solid #14ace7;">
+            Las vacaciones <strong>aprobadas</strong> se pagan solas: en Semana laboral cada d&iacute;a de lunes a s&aacute;bado de ese periodo cuenta como jornada
+            normal pagada, sin capturar asistencia. Solo registra asistencia en uno de esos d&iacute;as si el empleado s&iacute; trabaj&oacute; (o si debe descontarse una falta).
+        </div>
 
         <!-- Resumen por empleado -->
         <div class="resumen-grid">

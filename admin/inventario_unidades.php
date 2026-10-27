@@ -66,6 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: inventario_unidades.php?msg=muy_largo');
         exit();
     }
+    if (textoConEmoji($nombre)) { header('Location: inventario_unidades.php?msg=emoji'); exit(); }
 
     // [AUTOFIX] ERROR-UNIT-01: Capturar PDOException de clave duplicada en lugar de exponer el error PHP
     try {
@@ -261,6 +262,8 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">Ya existe una unidad con ese nombre. Elige un nombre diferente.</div>
                 <?php elseif ($_GET['msg'] === 'vacio'): ?>
                     <div class="msg msg-error">El nombre de la unidad de medida es obligatorio.</div>
+                <?php elseif ($_GET['msg'] === 'emoji'): ?>
+                    <div class="msg msg-error">El nombre no puede incluir emojis ni símbolos de ese tipo. Quítalos e intenta de nuevo.</div>
                 <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
                     <div class="msg msg-error">El nombre de la unidad no puede tener más de 30 caracteres.</div>
                 <?php elseif ($_GET['msg'] === 'no_encontrado'): ?>

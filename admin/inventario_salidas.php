@@ -19,6 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $producto_id = intval(is_scalar($_POST['producto_id'] ?? null) ? $_POST['producto_id'] : 0);
     $cantidad    = floatval(is_scalar($_POST['cantidad'] ?? null) ? $_POST['cantidad'] : 0);
     $motivo      = trim(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : '');
+    // [FEATURE-PRODUCTOS-DANADOS] Casillero "merma": producto dañado o caducado que se regresara al proveedor.
+    $esMerma     = is_scalar($_POST['danado'] ?? null) && (string)$_POST['danado'] === '1';
 
     if ($sucursalVista === 0) $errores[] = 'Selecciona una sucursal específica para registrar una salida.';
     if (!$producto_id) $errores[] = 'Selecciona un producto.';
@@ -28,6 +30,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // es VARCHAR(255) sin ningun tope en el servidor — se truncaba en silencio y se guardaba
     // como "salida registrada", sin ningun aviso.
     if (mb_strlen($motivo) > 255) $errores[] = 'El motivo no puede tener más de 255 caracteres.';
+    // [FIX-EMOJI-MOTIVO] La conexion usa utf8 (3 bytes): un emoji hace fallar el INSERT en el servidor (modo estricto).
+    if (textoConEmoji($motivo)) $errores[] = 'El texto contiene caracteres que el sistema no puede guardar (por ejemplo emojis). Quítalos e intenta de nuevo.';
 
     if (empty($errores)) {
         // [FIX-ACTIVO-NO-REVALIDADO] (espejo de cajeroInventario/salidas.php) "activo=1" antes
@@ -74,6 +78,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")->execute([$stockNuevo, $producto_id, $sucursalVista]);
                 $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
                     ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo]);
+                if ($esMerma) {
+                    $movSalidaId = intval($pdo->lastInsertId());
+                    $pdo->prepare("INSERT INTO productos_danados (producto_id, sucursal_id, usuario_id, cantidad, origen, movimiento_id, motivo) VALUES (?,?,?,?,'Salida',?,?)")
+                        ->execute([$producto_id, $sucursalVista, $_SESSION['usuario_id'], $cantidad, $movSalidaId, $motivo]);
+                }
                 $pdo->commit();
 
                 $stockMinimo = floatval($prod['stock_minimo'] ?? 0);
@@ -92,9 +101,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // sucursal especifica elegida; el historial en cambio muestra todo.
 if ($sucursalVista === 0) {
     $stmt = $pdo->prepare("
-        SELECT m.*, p.nombre_producto, p.codigo, p.tipo_venta
+        SELECT m.*, p.nombre_producto, p.codigo, p.tipo_venta, pd.estado AS danado_estado
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
+        LEFT JOIN productos_danados pd ON pd.movimiento_id = m.movimientos_inventario_id AND pd.estado IN ('Pendiente', 'Regresado')
         WHERE m.tipo = 'Salida'
         ORDER BY m.created_at DESC LIMIT 30
     ");
@@ -102,9 +112,10 @@ if ($sucursalVista === 0) {
     $productos = [];
 } else {
     $stmt = $pdo->prepare("
-        SELECT m.*, p.nombre_producto, p.codigo, p.tipo_venta
+        SELECT m.*, p.nombre_producto, p.codigo, p.tipo_venta, pd.estado AS danado_estado
         FROM movimientos_inventario m
         JOIN productos p ON m.producto_id = p.producto_id
+        LEFT JOIN productos_danados pd ON pd.movimiento_id = m.movimientos_inventario_id AND pd.estado IN ('Pendiente', 'Regresado')
         WHERE m.tipo = 'Salida' AND (m.sucursal_id = ? OR m.sucursal_id IS NULL)
         ORDER BY m.created_at DESC LIMIT 30
     ");
@@ -169,6 +180,10 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .motivos-rapidos { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
     .motivo-btn { background: #f0f0f0; border: none; padding: 5px 12px; border-radius: 99px; font-size: 12px; cursor: pointer; color: #555; }
     .motivo-btn:hover { background: #bbdefb; color: #1565c0; }
+    .chk-merma { display: flex; align-items: flex-start; gap: 8px; background: #fff8ee; border: 1px solid #f5c98a; border-radius: 8px; padding: 10px 12px; font-size: 13px; color: #8a5a14; cursor: pointer; text-transform: none; font-weight: 400; }
+    .chk-merma input { margin-top: 3px; width: auto; }
+    .badge-merma { display: inline-block; background: #fff3e0; color: #e67e22; border-radius: 99px; padding: 1px 8px; font-size: 10px; font-weight: 700; }
+    .badge-merma-ok { background: #e8f5e9; color: #2e7d32; }
     .btn-guardar { background: #c0392b; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; width: 100%; }
     .btn-guardar:hover { background: #a93226; }
     table { width: 100%; border-collapse: collapse; }
@@ -274,13 +289,21 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-group">
                         <label>Motivo *</label>
                         <div class="motivos-rapidos">
-                            <button type="button" class="motivo-btn" onclick="setMotivo('Merma por daño')">Daño</button>
-                            <button type="button" class="motivo-btn" onclick="setMotivo('Producto vencido')">Vencido</button>
+                            <button type="button" class="motivo-btn" onclick="setMotivo('Merma por daño', true)">Daño</button>
+                            <button type="button" class="motivo-btn" onclick="setMotivo('Producto vencido', true)">Vencido</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Error de inventario')">Error inventario</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Robo o extravío')">Robo/Extravío</button>
                             <button type="button" class="motivo-btn" onclick="setMotivo('Muestra o regalo')">Muestra</button>
                         </div>
                         <input type="text" name="motivo" id="inputMotivo" placeholder="Describe el motivo de la salida..." maxlength="255">
+                    </div>
+
+                    <!-- [FEATURE-PRODUCTOS-DANADOS] Merma: dañado o caducado, se regresara al proveedor. Aparece en Devoluciones > Productos dañados. -->
+                    <div class="form-group">
+                        <label class="chk-merma">
+                            <input type="checkbox" name="danado" value="1" id="chkMerma" <?= (is_scalar($_POST['danado'] ?? null) && (string)$_POST['danado'] === '1') ? 'checked' : '' ?>>
+                            <span><strong>Merma</strong>: producto dañado o caducado que se regresará al proveedor</span>
+                        </label>
                     </div>
 
                     <button class="btn-guardar" type="submit">Registrar salida</button>
@@ -310,7 +333,11 @@ $historial = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td style="color:#c0392b;font-weight:700;">-<?= number_format($h['cantidad'], $h['tipo_venta'] === 'Suelto' ? 2 : 0) ?></td>
                             <td><?= number_format($h['stock_anterior'],2) ?></td>
                             <td><?= number_format($h['stock_nuevo'],2) ?></td>
-                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'—') ?></td>
+                            <td style="font-size:12px;color:#888;"><?= htmlspecialchars($h['motivo']??'—') ?>
+                                <?php if (!empty($h['danado_estado'])): ?>
+                                    <div style="margin-top:3px;"><span class="badge-merma <?= $h['danado_estado'] === 'Regresado' ? 'badge-merma-ok' : '' ?>"><?= $h['danado_estado'] === 'Regresado' ? 'Merma · ya regresada al proveedor' : 'Merma · por regresar al proveedor' ?></span></div>
+                                <?php endif; ?>
+                            </td>
                             <td style="font-size:12px;color:#aaa;"><?= date('d/m/Y H:i', strtotime($h['created_at'])) ?></td>
                         </tr>
                         <?php endforeach; ?>
@@ -430,7 +457,11 @@ function filtrarTabla(q) {
     });
 }
 
-function setMotivo(texto) { document.getElementById('inputMotivo').value = texto; }
+// [FEATURE-PRODUCTOS-DANADOS] "Daño" y "Vencido" pre-marcan el casillero de merma (se puede quitar).
+function setMotivo(texto, merma) {
+    document.getElementById('inputMotivo').value = texto;
+    if (merma) { const c = document.getElementById('chkMerma'); if (c) c.checked = true; }
+}
 
 // [FEATURE-MSG-AUTODISMISS] A peticion del usuario: el mensaje de exito (o la advertencia de
 // stock bajo minimo) se quedaba en pantalla para siempre hasta que el admin recargara o

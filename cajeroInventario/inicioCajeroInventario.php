@@ -6,6 +6,7 @@ require_once '../includes/auth.php';
 require_once '../config/database.php';
 require_once '../includes/topbar_info.php';
 require_once '../includes/icons.php';
+require_once '../includes/transferencias_lib.php';   // agrupar pedidos de transferencia (folio) y dar formato a cantidades
 verificarSesion();
 verificarRol(['Inventario/Cajero']);
 
@@ -70,13 +71,32 @@ $stmt->execute([$mySuc, $mySuc]);
 $solicitudesPendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $transfParaAprobar = count($solicitudesPendientes);
 
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_origen_id = ? AND estado = 'Aprobada'");
-$stmt->execute([$mySuc]);
-$transfParaEnviar = intval($stmt->fetchColumn());
-
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM transferencias WHERE sucursal_destino_id = ? AND estado = 'En tránsito'");
-$stmt->execute([$mySuc]);
-$transfParaRecibir = intval($stmt->fetchColumn());
+// [FEATURE-ENVIO-DIRECTO] Las alertas de transferencias se cuentan por PEDIDO (todas las filas con el mismo folio), no por producto.
+// Los envios directos (el origen manda sin que el destino autorice nada) avisan en el inicio de las dos sucursales:
+//   - origen : "listos para enviar" mientras estan en preparacion (Aprobada) hasta que se marcan enviados;
+//   - destino: "en preparacion" (aviso, aun no sale) y despues "en camino" (hay que confirmar la recepcion).
+$notifPedidos = function (string $where, array $params) use ($pdo) {
+    $st = $pdo->prepare("
+        SELECT t.transferencias_id, t.folio, t.folio_periodo, t.tipo_pedido, t.cantidad, t.created_at,
+               t.sucursal_origen_id, t.sucursal_destino_id, t.usuario_solicita_id,
+               COALESCE(p.nombre_producto,'?') AS nombre_producto,
+               so.nombre AS sucursal_origen, sd.nombre AS sucursal_destino
+        FROM transferencias t
+        LEFT JOIN productos p ON t.producto_id = p.producto_id
+        JOIN sucursales so ON t.sucursal_origen_id = so.sucursal_id
+        JOIN sucursales sd ON t.sucursal_destino_id = sd.sucursal_id
+        WHERE $where
+        ORDER BY t.created_at ASC, t.transferencias_id ASC
+    ");
+    $st->execute($params);
+    return transfAgruparPedidos($st->fetchAll(PDO::FETCH_ASSOC));
+};
+$pedidosPorEnviar    = $notifPedidos("t.sucursal_origen_id = ? AND t.estado = 'Aprobada'", [$mySuc]);
+$transfParaEnviar    = count($pedidosPorEnviar);
+$pedidosEnCamino     = $notifPedidos("t.sucursal_destino_id = ? AND t.estado = 'En tránsito'", [$mySuc]);
+$transfParaRecibir   = count($pedidosEnCamino);
+// Envios directos que otra sucursal esta preparando para mi (solo aviso: aun no salen, no hay nada que hacer todavia).
+$pedidosPreparandose = $notifPedidos("t.sucursal_destino_id = ? AND t.estado = 'Aprobada' AND t.tipo_pedido = 'Directo'", [$mySuc]);
 
 // Transferencias con cantidad modificada por origen que esperan confirmación del destino (mi sucursal)
 $stmtMod = $pdo->prepare("
@@ -190,6 +210,9 @@ if ($cajaActual) {
     .notif-transf-enviar a { color: #2e7d32; font-weight: 700; text-decoration: none; }
     .notif-transf-recibir { background: #f3e5f5; border: 1px solid #e1bee7; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #6a1b9a; }
     .notif-transf-recibir a { color: #6a1b9a; font-weight: 700; text-decoration: none; }
+    .notif-transf-aviso { background: #f1f4f7; border: 1px solid #dde3e9; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; font-size: 13px; color: #4a5560; }
+    .notif-transf-aviso a { color: #4a5560; font-weight: 700; text-decoration: none; }
+    .notif-tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 99px; background: #fff3e0; color: #c25b00; font-size: 10.5px; font-weight: 700; }
     .notif-transf-modificada { background: #e8eaf6; border: 1px solid #c5cae9; border-radius: 8px; padding: 12px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start; font-size: 13px; color: #283593; }
     .notif-transf-modificada a { color: #283593; font-weight: 700; text-decoration: none; white-space: nowrap; margin-left: 16px; }
     @media (max-width: 768px) {
@@ -342,16 +365,47 @@ if ($cajaActual) {
             <a href="transferencias.php">Ver</a>
         </div>
         <?php endif; ?>
+        <?php
+        // Pinta un pedido de las alertas: folio, la otra sucursal, etiqueta de envio directo y los primeros productos.
+        $lineaPedidoNotif = function (array $pc, string $otraSucursal) {
+            $f0 = $pc['filas'][0];
+            $esDirNotif = (($f0['tipo_pedido'] ?? 'Solicitud') === 'Directo');
+            $nombresNotif = array_map(fn($f) => htmlspecialchars($f['nombre_producto']) . ' &times; ' . transfFmtCant($f['cantidad']), array_slice($pc['filas'], 0, 3)); ?>
+                <div style="font-size:12px;margin-top:6px;padding-left:6px;">
+                    &bull; <strong><?= $pc['folio'] !== null ? 'Folio ' . htmlspecialchars($pc['folio']) : '#' . intval($f0['transferencias_id']) ?></strong>
+                    <span style="opacity:.65;"><?= $otraSucursal === 'destino' ? '(para: ' . htmlspecialchars($f0['sucursal_destino']) . ')' : '(envia: ' . htmlspecialchars($f0['sucursal_origen']) . ')' ?></span>
+                    <?php if ($esDirNotif): ?><span class="notif-tag">Envío directo &mdash; no necesita autorización</span><?php endif; ?>
+                    <div style="opacity:.85;padding-left:12px;"><?= implode(', ', $nombresNotif) ?><?= count($pc['filas']) > 3 ? ' <span style="opacity:.7;">y ' . (count($pc['filas']) - 3) . ' más</span>' : '' ?></div>
+                </div>
+        <?php }; ?>
         <?php if ($transfParaEnviar > 0): ?>
-        <div class="notif-transf-enviar">
-            <span><?= icono('circle-check-big') ?> Tienes <strong><?= $transfParaEnviar ?></strong> transferencia(s) aprobada(s) listas para enviar.</span>
-            <a href="transferencias.php">Ver transferencias</a>
+        <div class="notif-transf-enviar" style="align-items:flex-start;">
+            <div>
+                <div><?= icono('circle-check-big') ?> Tienes <strong><?= $transfParaEnviar ?></strong> pedido(s) listos para enviar. Cuando salgan con el repartidor, márcalos como enviados:</div>
+                <?php foreach (array_slice($pedidosPorEnviar, 0, 5) as $pc) { $lineaPedidoNotif($pc, 'destino'); } ?>
+                <?php if ($transfParaEnviar > 5): ?><div style="font-size:12px;margin-top:6px;padding-left:6px;opacity:.75;">y <?= $transfParaEnviar - 5 ?> pedido(s) más.</div><?php endif; ?>
+            </div>
+            <a href="transferencias.php" style="white-space:nowrap;margin-left:16px;">Ver transferencias</a>
         </div>
         <?php endif; ?>
         <?php if ($transfParaRecibir > 0): ?>
-        <div class="notif-transf-recibir">
-            <span><?= icono('truck') ?> Tienes <strong><?= $transfParaRecibir ?></strong> transferencia(s) en camino. Confirma la recepcion.</span>
-            <a href="transferencias.php">Ver transferencias</a>
+        <div class="notif-transf-recibir" style="align-items:flex-start;">
+            <div>
+                <div><?= icono('truck') ?> Tienes <strong><?= $transfParaRecibir ?></strong> pedido(s) en camino. Confirma la recepcion cuando lleguen:</div>
+                <?php foreach (array_slice($pedidosEnCamino, 0, 5) as $pc) { $lineaPedidoNotif($pc, 'origen'); } ?>
+                <?php if ($transfParaRecibir > 5): ?><div style="font-size:12px;margin-top:6px;padding-left:6px;opacity:.75;">y <?= $transfParaRecibir - 5 ?> pedido(s) más.</div><?php endif; ?>
+            </div>
+            <a href="transferencias.php" style="white-space:nowrap;margin-left:16px;">Confirmar recepción</a>
+        </div>
+        <?php endif; ?>
+        <?php if (count($pedidosPreparandose) > 0): ?>
+        <div class="notif-transf-aviso" style="align-items:flex-start;">
+            <div>
+                <div><?= icono('package') ?> <strong><?= count($pedidosPreparandose) ?></strong> envío(s) directo(s) se están preparando para tu sucursal (todavía no salen):</div>
+                <?php foreach (array_slice($pedidosPreparandose, 0, 5) as $pc) { $lineaPedidoNotif($pc, 'origen'); } ?>
+                <?php if (count($pedidosPreparandose) > 5): ?><div style="font-size:12px;margin-top:6px;padding-left:6px;opacity:.75;">y <?= count($pedidosPreparandose) - 5 ?> más.</div><?php endif; ?>
+            </div>
+            <a href="transferencias.php" style="white-space:nowrap;margin-left:16px;">Ver</a>
         </div>
         <?php endif; ?>
         <?php if ($transfParaConfirmar > 0): ?>

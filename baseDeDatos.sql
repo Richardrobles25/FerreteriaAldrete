@@ -655,21 +655,25 @@ ALTER TABLE cajas ADD COLUMN observaciones_cierre TEXT NULL AFTER observaciones;
 CREATE TABLE mora_cancelaciones (
     cancelacion_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     credito_id     INT UNSIGNED NOT NULL,
+    mora_id        INT UNSIGNED NULL,
     usuario_id     INT UNSIGNED NOT NULL,
     monto          DECIMAL(10,2) NOT NULL,
     motivo         VARCHAR(255) NOT NULL,
     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
-    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id),
+    KEY idx_mora_canc_mora (mora_id)
 );
 
 CREATE TABLE mora_cancelaciones (
     cancelacion_id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     credito_id     INT UNSIGNED NOT NULL,
+    mora_id        INT UNSIGNED NULL,
     usuario_id     INT UNSIGNED NOT NULL,
     monto          DECIMAL(10,2) NOT NULL,
     motivo         VARCHAR(255) NOT NULL,
     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (credito_id) REFERENCES creditos(credito_id),
-    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id)
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(usuario_id),
+    KEY idx_mora_canc_mora (mora_id)
 );

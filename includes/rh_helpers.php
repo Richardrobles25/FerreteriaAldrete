@@ -1,6 +1,13 @@
 <?php
 // Helpers compartidos del modulo de Recursos Humanos (admin/empleados, vacaciones, formVacacion)
 
+// [FIX-RH-TEXTO-NO-COMPATIBLE] La conexion a MySQL usa charset utf8 (3 bytes): un emoji u otro caracter de
+// 4 bytes en notas/razon/nombre/motivo hace fallar el INSERT en modo estricto con "Incorrect string value",
+// y el aviso generico ("verifica que el empleado siga existiendo") mandaba a buscar el problema donde no es.
+function textoNoCompatibleBD(PDOException $e): bool {
+    return stripos($e->getMessage(), 'Incorrect string value') !== false;
+}
+
 // Un empleado ya tiene derecho a vacaciones a partir de su primer aniversario de ingreso.
 // [FIX-VACACIONES-SIMULACION-DERECHO] Antes esta funcion no aceptaba una fecha de corte y
 // siempre comparaba contra el reloj real del sistema -- vacaciones.php le pasaba $simFecha a
@@ -26,7 +33,10 @@ function tieneDerechoVacaciones(string $fechaIngreso, ?string $hastaFecha = null
 // dias frescos en enero, en vez de conservar el saldo real que traia. Ahora se simula la
 // linea de tiempo completa (aniversarios que acreditan +6 topado en 12, e historial real de
 // vacaciones que descuenta) para obtener el saldo verdadero a una fecha de corte.
-function calcSaldoVacaciones(PDO $pdo, int $empleadoId, string $fechaIngreso, ?string $hastaFecha = null, ?int $excluirVacacionId = null): int {
+// [FIX-VACACION-SALDO-POSTERIORES] $agregar permite simular un periodo hipotetico
+// (['fecha_inicio' => 'Y-m-d', 'dias_tomados' => n]) que todavia no esta en la tabla, para
+// poder revisar si guardarlo dejaria sin saldo a periodos POSTERIORES ya registrados.
+function calcSaldoVacaciones(PDO $pdo, int $empleadoId, string $fechaIngreso, ?string $hastaFecha = null, ?int $excluirVacacionId = null, ?array $agregar = null): int {
     $hasta   = $hastaFecha ? new DateTime($hastaFecha) : new DateTime();
     $ingreso = new DateTime($fechaIngreso);
     if ($ingreso > $hasta) return 0;
@@ -82,6 +92,10 @@ function calcSaldoVacaciones(PDO $pdo, int $empleadoId, string $fechaIngreso, ?s
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $u) {
         $eventos[] = ['fecha' => new DateTime($u['fecha_inicio']), 'dias' => -(int)$u['dias_tomados']];
     }
+    if ($agregar) {
+        $fAgr = new DateTime($agregar['fecha_inicio']);
+        if ($fAgr <= $hasta && $fAgr > $desde) $eventos[] = ['fecha' => $fAgr, 'dias' => -(int)$agregar['dias_tomados']];
+    }
 
     usort($eventos, fn($a, $b) => $a['fecha'] <=> $b['fecha']);
 
@@ -113,23 +127,98 @@ function recalcularHorasExtraSemana(PDO $pdo, int $empleadoId, string $fecha, fl
     $sabado          = (new DateTime($lunes))->modify('+5 days')->format('Y-m-d');
 
     $stmt = $pdo->prepare("
-        SELECT asistencia_id, horas_trabajadas
+        SELECT asistencia_id, fecha, horas_trabajadas
         FROM asistencia
         WHERE empleado_id = ? AND fecha BETWEEN ? AND ?
         ORDER BY fecha ASC, asistencia_id ASC
     ");
     $stmt->execute([$empleadoId, $domingoAnterior, $sabado]);
+    $filas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $entradas = [];
+    foreach ($filas as $r) $entradas[] = ['fecha' => $r['fecha'], 'id' => (int)$r['asistencia_id'], 'h' => floatval($r['horas_trabajadas'])];
+
+    // [FEATURE-VACACIONES-AUTOMATICAS 2026-10-26] Los dias de vacaciones aprobadas SIN registro de asistencia se pagan solos como
+    // jornada normal (ver vacacionesCreditoSemana): tambien entran al acumulado de la semana, en su fecha, para que las horas extra
+    // por dia que se ven en Asistencia cuadren con las que cobra Semana laboral. No tienen fila que actualizar.
+    $rangos = vacacionesRangosAprobadas($pdo, $empleadoId, $lunes, $sabado);
+    if ($rangos) {
+        $stmtHd = $pdo->prepare("SELECT horas_por_dia FROM empleados WHERE empleado_id = ?");
+        $stmtHd->execute([$empleadoId]);
+        $hd = floatval($stmtHd->fetchColumn() ?: 9);
+        $conRegistro = [];
+        foreach ($filas as $r) $conRegistro[$r['fecha']] = true;
+        foreach (vacacionesCreditoSemana($rangos, $lunes, $sabado, $conRegistro, $horasEsperadasSemana, $hd) as $fv => $hv) {
+            $entradas[] = ['fecha' => $fv, 'id' => null, 'h' => $hv];
+        }
+        usort($entradas, function ($a, $b) {
+            return [$a['fecha'], $a['id'] ?? PHP_INT_MAX] <=> [$b['fecha'], $b['id'] ?? PHP_INT_MAX];
+        });
+    }
 
     $acumulado = 0.0;
     $stmtUpd   = $pdo->prepare("UPDATE asistencia SET horas_extra = ? WHERE asistencia_id = ?");
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+    foreach ($entradas as $r) {
         $acumuladoAntes = $acumulado;
-        $acumulado     += floatval($r['horas_trabajadas']);
+        $acumulado     += $r['h'];
         $extraDelDia    = round(
             max(0.0, $acumulado - $horasEsperadasSemana) - max(0.0, $acumuladoAntes - $horasEsperadasSemana),
             2
         );
-        $stmtUpd->execute([$extraDelDia, $r['asistencia_id']]);
+        if ($r['id'] !== null) $stmtUpd->execute([$extraDelDia, $r['id']]);
+    }
+}
+
+// [FEATURE-VACACIONES-AUTOMATICAS 2026-10-26] Las vacaciones son semanas (o dias) PAGADOS. Antes habia que capturar a mano cada dia
+// como "Asistencia normal" (y el sabado con horario, o se pagaban horas de mas); sin eso la semana quedaba en "Faltan N dias".
+// Ahora todo dia de lunes a sabado dentro de unas vacaciones APROBADAS que no tenga registro de asistencia cuenta como jornada
+// normal: lunes a viernes = horas_por_dia del empleado y sabado = lo que le falta a su semana (horas esperadas - 5 dias), asi una
+// semana completa de vacaciones suma exactamente sus horas esperadas (sin deduccion ni bono) y una parcial se completa con los dias
+// trabajados. El domingo no cuenta (igual que los dias de vacaciones). Si el dia SI tiene registro (trabajo o falta), manda el registro.
+// $rangos = [[fecha_inicio, fecha_fin], ...] aprobados; $hasta = ultimo dia a considerar (el corte de la semana en curso);
+// $fechasConRegistro = [fecha => true]. Devuelve [fecha => horas]. El total nunca pasa de las horas esperadas de la semana.
+function vacacionesCreditoSemana(array $rangos, string $lunes, string $hasta, array $fechasConRegistro, float $horasEsperadasSemana, float $horasPorDia): array {
+    $credito = [];
+    if (!$rangos || $hasta === '') return $credito;
+    $horasSabado = max(0.0, $horasEsperadasSemana - 5 * $horasPorDia);
+    $restante    = max(0.0, $horasEsperadasSemana);
+    $dt = new DateTime($lunes);
+    for ($k = 0; $k < 6; $k++, $dt->modify('+1 day')) {
+        $d = $dt->format('Y-m-d');
+        if ($d > $hasta) break;
+        if (isset($fechasConRegistro[$d])) continue;
+        $enVacaciones = false;
+        foreach ($rangos as $rg) {
+            if ($d >= $rg[0] && $d <= $rg[1]) { $enVacaciones = true; break; }
+        }
+        if (!$enVacaciones) continue;
+        $h = min($k === 5 ? $horasSabado : $horasPorDia, $restante);
+        $restante -= $h;
+        $credito[$d] = round($h, 2);
+    }
+    return $credito;
+}
+
+// Vacaciones APROBADAS de un empleado que tocan el rango [desde, hasta]: [[fecha_inicio, fecha_fin], ...]
+function vacacionesRangosAprobadas(PDO $pdo, int $empleadoId, string $desde, string $hasta): array {
+    $st = $pdo->prepare("SELECT fecha_inicio, fecha_fin FROM vacaciones WHERE empleado_id = ? AND estado = 'Aprobado' AND fecha_inicio <= ? AND fecha_fin >= ?");
+    $st->execute([$empleadoId, $hasta, $desde]);
+    return array_map(function ($r) { return [$r['fecha_inicio'], $r['fecha_fin']]; }, $st->fetchAll(PDO::FETCH_ASSOC));
+}
+
+// Al aprobar, mover o borrar unas vacaciones cambia el acumulado semanal de las semanas que tocan: se recalculan las horas extra por
+// dia de Asistencia (informativas) de cada una, menos las que ya estan pagadas (su pago ya esta congelado).
+function recalcularExtrasPorVacacion(PDO $pdo, int $empleadoId, string $ini, string $fin): void {
+    $st = $pdo->prepare("SELECT horas_esperadas_semana FROM empleados WHERE empleado_id = ?");
+    $st->execute([$empleadoId]);
+    $hs = floatval($st->fetchColumn() ?: 51);
+    $stPago = $pdo->prepare("SELECT COUNT(*) FROM pagos_nomina WHERE empleado_id = ? AND semana_inicio = ?");
+    $lun    = new DateTime(lunesDeLaSemana($ini));
+    $limite = new DateTime($fin);
+    for ($i = 0; $i < 60 && $lun <= $limite; $i++, $lun->modify('+7 days')) {
+        $l = $lun->format('Y-m-d');
+        $stPago->execute([$empleadoId, $l]);
+        if (!$stPago->fetchColumn()) recalcularHorasExtraSemana($pdo, $empleadoId, $l, $hs);
     }
 }
 

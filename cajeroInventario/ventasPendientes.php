@@ -37,7 +37,7 @@ if (isset($_GET['liquidar'])) {
     // [FIX-CAJA-REDIRECT-AJAX] Este handler SI necesita una caja abierta (reasigna la venta
     // a $cajaActualId) y responde por redirect, no JSON.
     if (!$cajaActualId) {
-        header('Location: abrirCaja.php?msg=sinCaja');
+        recordarModuloSinCaja(); header('Location: abrirCaja.php?msg=sinCaja');
         exit();
     }
     $venta_id = intval(is_scalar($_GET['liquidar'] ?? null) ? $_GET['liquidar'] : 0);
@@ -337,6 +337,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($errores) && $metodo_pago === 'Transferencia' && mb_strlen($ref_transf) > 100) {
             $errores[] = 'La referencia bancaria no puede tener más de 100 caracteres.';
         }
+        // [FIX-EMOJI-FOLIO-VENTA] (espejo de nuevaVenta.php) un emoji en la referencia o en las notas hace fallar el INSERT en el servidor.
+        if (empty($errores) && (textoConEmoji($ref_transf) || textoConEmoji($notas))) {
+            $errores[] = 'La referencia y las notas no pueden llevar emojis. Quítalos e intenta de nuevo.';
+        }
 
         // [FIX-CREDITO-SIN-CLIENTE] Igual que cajero_nuevaVenta.php (AUTOFIX N-03): sin este
         // candado, "Credito" + cliente_id vacio se colaba hasta el INSERT sin pasar por
@@ -457,6 +461,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 throw new Exception(ventaMsgPrecioBajo((string)($filaPreciosPend['nombre_producto'] ?? 'Producto'), $precVal, $referenciaFloorPend, $precioCompraVal > 0));
                             } elseif ($referenciaFloorPend <= 0 && $precVal <= 0) {
                                 throw new Exception(ventaMsgPrecioCero((string)($filaPreciosPend['nombre_producto'] ?? 'Producto')));
+                            }
+                        }
+
+                        // [FIX-PRECIO-SIN-NOTA] Igual que en Nueva venta: sin nota de ajuste, el precio debe ser uno vigente del producto
+                        // (venta, mayoreo o promocion activa); un precio menor solo es valido como "Ajuste de precio" con su nota.
+                        $notaPendChk = trim(is_scalar($it['nota_ajuste'] ?? null) ? (string)$it['nota_ajuste'] : '');
+                        if ($notaPendChk === '') {
+                            $preciosListaPend = ventaPreciosDeLista($pdo, intval($it['producto_id'] ?? 0), $_SESSION['sucursal_id']);
+                            if ($preciosListaPend && !ventaPrecioEsDeLista($preciosListaPend, $precVal)) {
+                                throw new Exception(ventaMsgPrecioSinNota((string)($filaPreciosPend['nombre_producto'] ?? 'Producto'), $precVal, $preciosListaPend));
                             }
                         }
                     }
@@ -738,7 +752,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } catch (Exception $e) {
                 $pdo->rollBack();
                 $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($folioLock) . ")");
-                $errores[] = $e->getMessage();
+                error_log('[Ferreteria/ventasPendientes] Error al registrar: ' . $e->getMessage());
+                $errores[] = mensajeSeguroDeError($e, 'No se pudo registrar la venta por un problema interno. Intenta de nuevo; si continúa, avisa al administrador.');
             }
             } // fin if lockAdquirido
         }
@@ -842,7 +857,7 @@ $paquesData = array_values($paqAgrupados);
 // [FIX-CAJA-REDIRECT-AJAX] Redirect por falta de caja, aplicado unicamente aqui — justo antes
 // de renderizar la pagina completa — para no romper el contrato JSON de get_ticket_venta.
 if (!$cajaActualId) {
-    header('Location: abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: abrirCaja.php?msg=sinCaja');
     exit();
 }
 ?>

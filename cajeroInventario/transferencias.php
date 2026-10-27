@@ -9,218 +9,33 @@ require_once '../includes/topbar_info.php';
 verificarSesion();
 verificarRol(['Administrador', 'Inventario', 'Inventario/Cajero']);
 
-// [FEATURE-TICKET-ENVIO-TRANSF] Cada producto de una solicitud de transferencia es UNA fila en
-// `transferencias` (todas creadas en el mismo INSERT-loop: mismo origen, destino, solicitante y
-// segundo de creacion). "Pedido" = ese conjunto de filas. Esta funcion carga la fila pedida y todas
-// las de su mismo pedido (tolerancia de 2 s por si el loop cruza el cambio de segundo).
-function transfCargarPedido(PDO $pdo, int $id): ?array {
-    $st = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ?");
-    $st->execute([$id]);
-    $base = $st->fetch(PDO::FETCH_ASSOC);
-    if (!$base) return null;
-    $st = $pdo->prepare("
-        SELECT t.*, p.nombre_producto, p.codigo, p.tipo_venta, p.unidad_medida
-        FROM transferencias t
-        JOIN productos p ON p.producto_id = t.producto_id
-        WHERE t.sucursal_origen_id = ? AND t.sucursal_destino_id = ? AND t.usuario_solicita_id = ?
-          AND t.created_at BETWEEN DATE_SUB(?, INTERVAL 2 SECOND) AND DATE_ADD(?, INTERVAL 2 SECOND)
-        ORDER BY t.transferencias_id ASC
-    ");
-    $st->execute([$base['sucursal_origen_id'], $base['sucursal_destino_id'], $base['usuario_solicita_id'], $base['created_at'], $base['created_at']]);
-    return ['base' => $base, 'filas' => $st->fetchAll(PDO::FETCH_ASSOC)];
-}
-
-// [FEATURE-PEDIDO-TRANSFERENCIA 2026-10-06] Un pedido (todas las filas de una misma solicitud) se
-// muestra y se opera como UN solo carrito: una fila en el listado, un boton por accion para todo el
-// pedido. Agrupa las filas del listado (mismo origen, destino, solicitante y momento de creacion).
-function transfAgruparPedidos(array $filas): array {
-    $grupos = [];
-    foreach ($filas as $f) {
-        $ts = strtotime($f['created_at']);
-        $colocado = false;
-        foreach ($grupos as &$g) {
-            if ($g['origen'] == $f['sucursal_origen_id'] && $g['destino'] == $f['sucursal_destino_id']
-                && $g['solicitante'] == $f['usuario_solicita_id'] && abs($g['ts'] - $ts) <= 2) {
-                $g['filas'][] = $f;
-                $colocado = true;
-                break;
-            }
-        }
-        unset($g);
-        if (!$colocado) {
-            $grupos[] = ['origen' => $f['sucursal_origen_id'], 'destino' => $f['sucursal_destino_id'],
-                         'solicitante' => $f['usuario_solicita_id'], 'ts' => $ts, 'filas' => [$f]];
-        }
-    }
-    foreach ($grupos as &$g) {
-        usort($g['filas'], fn($a, $b) => intval($a['transferencias_id']) <=> intval($b['transferencias_id']));
-    }
-    unset($g);
-    return $grupos;
-}
-
-// [FEATURE-PEDIDO-TRANSFERENCIA] Misma logica de 'recibir' (una fila) pero reutilizable dentro de la
-// transaccion de 'recibir_pedido'. Devuelve null si todo salio bien o la llave de mensaje de error.
-function transfRecibirFila(PDO $pdo, int $id, int $miSucursal, int $usuarioId): ?string {
-    $stmtLock = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
-    $stmtLock->execute([$id]);
-    $transf = $stmtLock->fetch(PDO::FETCH_ASSOC);
-    if (!$transf || $transf['estado'] !== 'En tránsito' || $transf['sucursal_destino_id'] != $miSucursal) {
-        return 'error_ya_no_transito';
-    }
-    $stmtMarca = $pdo->prepare("SELECT COUNT(*) FROM movimientos_inventario WHERE tipo = 'Transferencia' AND motivo = ? AND sucursal_id = ?");
-    $stmtMarca->execute(['Transferencia enviada #' . $id, $transf['sucursal_origen_id']]);
-    if (intval($stmtMarca->fetchColumn()) === 0) {
-        // Ruta de compatibilidad: transferencia enviada con la logica anterior (descuenta el origen al recibir).
-        $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
-        $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
-        $stockOrLegacy = $stmtOrigen->fetchColumn();
-        if ($stockOrLegacy === false || floatval($stockOrLegacy) < floatval($transf['cantidad'])) {
-            return 'error_stock_recibir';
-        }
-        $stockAntOrigen   = floatval($stockOrLegacy);
-        $stockNuevoOrigen = $stockAntOrigen - floatval($transf['cantidad']);
-        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-            ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
-        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
-            ->execute([$transf['producto_id'], $usuarioId, $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
-    }
-    $stmtActivoRec = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
-    $stmtActivoRec->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
-    $activoDestRec = $stmtActivoRec->fetchColumn();
-    if ($activoDestRec !== false && !intval($activoDestRec)) {
-        return 'error_producto_inactivo_transf';
-    }
-    $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
-    $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
-    $stockDest = $stmtDest->fetchColumn();
-    if ($stockDest !== false) {
-        $stockAntDest   = floatval($stockDest);
-        $stockNuevoDest = $stockAntDest + floatval($transf['cantidad']);
-        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-            ->execute([$stockNuevoDest, $transf['producto_id'], $transf['sucursal_destino_id']]);
-    } else {
-        $stockNuevoDest = floatval($transf['cantidad']);
-        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
-            ->execute([$transf['producto_id'], $transf['sucursal_destino_id'], $stockNuevoDest]);
-        $stockAntDest = 0;
-    }
-    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
-        ->execute([$transf['producto_id'], $usuarioId, $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest, 'Transferencia recibida #' . $id]);
-    $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
-        ->execute([$usuarioId, $id]);
-    return null;
-}
-
-// [FEATURE-PEDIDO-TRANSFERENCIA] Misma logica de 'cancelar' (una fila En transito, regresa el stock al
-// origen) reutilizable dentro de la transaccion de 'cancelar_pedido'.
-function transfCancelarTransitoFila(PDO $pdo, int $id, int $miSucursal, int $usuarioId): ?string {
-    $stmtLockCancel = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
-    $stmtLockCancel->execute([$id]);
-    $tc = $stmtLockCancel->fetch(PDO::FETCH_ASSOC);
-    if (!$tc || $tc['estado'] !== 'En tránsito' || $tc['sucursal_origen_id'] != $miSucursal) {
-        return 'error_ya_no_transito';
-    }
-    $stmtOrCancel = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
-    $stmtOrCancel->execute([$tc['producto_id'], $miSucursal]);
-    $stockOrCancel = $stmtOrCancel->fetchColumn();
-    $stockAnt   = ($stockOrCancel !== false) ? floatval($stockOrCancel) : 0.0;
-    $stockNuevo = $stockAnt + floatval($tc['cantidad']);
-    if ($stockOrCancel !== false) {
-        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-            ->execute([$stockNuevo, $tc['producto_id'], $miSucursal]);
-    } else {
-        $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
-            ->execute([$tc['producto_id'], $miSucursal, $stockNuevo]);
-    }
-    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Entrada',?,?,?,?)")
-        ->execute([$tc['producto_id'], $usuarioId, $miSucursal, $tc['cantidad'], $stockAnt, $stockNuevo, 'Transferencia #' . $id . ' cancelada en tránsito — stock regresado al origen']);
-    $pdo->prepare("UPDATE transferencias SET estado='Cancelada' WHERE transferencias_id=? AND estado='En tránsito' AND sucursal_origen_id=?")
-        ->execute([$id, $miSucursal]);
-    return null;
-}
+require_once '../includes/transferencias_lib.php';   // helpers compartidos: folio, envio directo, recepcion con merma, ticket y detalle
 
 // [FEATURE-TICKET-ENVIO-TRANSF] Datos del ticket de envio de un pedido: lista de lo enviado (para
 // que la sucursal destino verifique que llego completo) y, aparte, lo que NO se envio.
 if (isset($_GET['ticket_envio'])) {
     header('Content-Type: application/json');
     try {
-        $idTk  = intval(is_scalar($_GET['ticket_envio'] ?? null) ? $_GET['ticket_envio'] : 0);
-        $ped   = $idTk > 0 ? transfCargarPedido($pdo, $idTk) : null;
-        $sucTk = intval($_SESSION['sucursal_id']);
-        $base  = $ped ? $ped['base'] : null;
+        $idTk = intval(is_scalar($_GET['ticket_envio'] ?? null) ? $_GET['ticket_envio'] : 0);
         // Solo las sucursales involucradas (origen o destino) pueden ver el ticket.
-        if (!$ped || !($base['sucursal_origen_id'] == $sucTk || $base['sucursal_destino_id'] == $sucTk)) { echo json_encode(null); exit(); }
-
-        $stmtSucO = $pdo->prepare("SELECT nombre, rfc, direccion, telefono, datos_ticket, ticket_logo, ticket_font_size, ticket_ancho_mm FROM sucursales WHERE sucursal_id = ?");
-        $stmtSucO->execute([$base['sucursal_origen_id']]);
-        $sucO = $stmtSucO->fetch(PDO::FETCH_ASSOC) ?: [];
-        $stmtSucD = $pdo->prepare("SELECT nombre FROM sucursales WHERE sucursal_id = ?");
-        $stmtSucD->execute([$base['sucursal_destino_id']]);
-        $nombreDest = $stmtSucD->fetchColumn() ?: '';
-        $stmtSol = $pdo->prepare("SELECT nombre_completo FROM usuarios WHERE usuario_id = ?");
-        $stmtSol->execute([$base['usuario_solicita_id']]);
-        $nombreSol = $stmtSol->fetchColumn() ?: '';
-
-        $enviados = [];
-        $noEnviados = [];
-        $fechaEnvio = null;
-        $enviadoPor = null;
-        $idsPedido  = [];
-        foreach ($ped['filas'] as $f) {
-            $idsPedido[] = intval($f['transferencias_id']);
-            $item = [
-                'codigo'     => $f['codigo'],
-                'nombre'     => $f['nombre_producto'],
-                'cantidad'   => floatval($f['cantidad']),
-                'unidad'     => $f['unidad_medida'] ?? '',
-                'tipo_venta' => $f['tipo_venta'],
-                'estado'     => $f['estado'],
-            ];
-            if (in_array($f['estado'], ['En tránsito', 'Entregada'], true)) {
-                $enviados[] = $item;
-                // Fecha y usuario reales del envio: el movimiento "Transferencia enviada #id" del origen.
-                $stmtMov = $pdo->prepare("
-                    SELECT m.created_at, u.nombre_completo
-                    FROM movimientos_inventario m
-                    LEFT JOIN usuarios u ON u.usuario_id = m.usuario_id
-                    WHERE m.tipo = 'Transferencia' AND m.sucursal_id = ? AND m.motivo = ?
-                    ORDER BY m.created_at ASC LIMIT 1
-                ");
-                $stmtMov->execute([$f['sucursal_origen_id'], 'Transferencia enviada #' . $f['transferencias_id']]);
-                $mov = $stmtMov->fetch(PDO::FETCH_ASSOC);
-                $fechaFila = $mov['created_at'] ?? $f['updated_at'];
-                if ($fechaEnvio === null || $fechaFila < $fechaEnvio) {
-                    $fechaEnvio = $fechaFila;
-                    $enviadoPor = $mov['nombre_completo'] ?? null;
-                }
-            } else {
-                $noEnviados[] = $item;
-            }
-        }
-        echo json_encode([
-            'pedido'      => min($idsPedido),
-            'ids'         => $idsPedido,
-            'origen'      => [
-                'nombre'           => $sucO['nombre'] ?? '',
-                'rfc'              => $sucO['rfc'] ?? '',
-                'direccion'        => $sucO['direccion'] ?? '',
-                'telefono'         => $sucO['telefono'] ?? '',
-                'datos_ticket'     => $sucO['datos_ticket'] ?? '',
-                'ticket_logo'      => $sucO['ticket_logo'] ?? null,
-                'ticket_font_size' => intval($sucO['ticket_font_size'] ?? 12),
-                'ticket_ancho_mm'  => intval($sucO['ticket_ancho_mm'] ?? 58),
-            ],
-            'destino'     => $nombreDest,
-            'solicitante' => $nombreSol,
-            'enviado_por' => $enviadoPor,
-            'fecha_envio' => $fechaEnvio ? date('d/m/Y H:i', strtotime($fechaEnvio)) : null,
-            'enviados'    => $enviados,
-            'no_enviados' => $noEnviados,
-        ], JSON_UNESCAPED_UNICODE);
+        echo json_encode(transfDatosTicket($pdo, $idTk, intval($_SESSION['sucursal_id'])), JSON_UNESCAPED_UNICODE);
     } catch (\Throwable $e) {
         error_log('[Ferreteria/transferencias] Error ticket_envio: ' . $e->getMessage());
         echo json_encode(['error' => 'No se pudo cargar el ticket de envío.']);
+    }
+    exit();
+}
+
+// [FEATURE-FOLIO-TRANSF] Detalle / historial de un pedido (folio, quien lo pidio/envio/recibio, cantidades recibidas,
+// merma, no enviado, observaciones y bitacora). Solo lo ven las sucursales involucradas.
+if (isset($_GET['detalle_pedido'])) {
+    header('Content-Type: application/json');
+    try {
+        $idDet = intval(is_scalar($_GET['detalle_pedido'] ?? null) ? $_GET['detalle_pedido'] : 0);
+        echo json_encode(transfDetallePedido($pdo, $idDet, intval($_SESSION['sucursal_id'])), JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        error_log('[Ferreteria/transferencias] Error detalle_pedido: ' . $e->getMessage());
+        echo json_encode(['error' => 'No se pudo cargar el detalle del pedido.']);
     }
     exit();
 }
@@ -236,6 +51,7 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
     $id         = intval(is_scalar($idRaw) ? $idRaw : 0);
     $accion     = is_scalar($_accionData['accion'] ?? null) ? $_accionData['accion'] : '';
     $miSucursal = $_SESSION['sucursal_id'];
+    $extraQs    = '';   // parametros extra del redirect final (avisos de merma / no enviado)
 
     if ($accion === 'editar_cantidad') {
         $nuevaCantidad = floatval(is_scalar($_POST['nueva_cantidad'] ?? null) ? $_POST['nueva_cantidad'] : 0);
@@ -499,6 +315,15 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
             }
         }
         if (!$filasEd) { header('Location: transferencias.php?msg=error_ya_no_pendiente'); exit(); }
+        if (($ped['base']['tipo_pedido'] ?? '') === 'Directo') {
+            // [FEATURE-ENVIO-DIRECTO] El destino no autoriza nada en un envio directo: el origen ajusta su pedido en
+            // preparacion y los cambios aplican al guardar (sigue "Aprobada"); con 0 el producto sale del pedido.
+            $resEd = transfEditarDirecto($pdo, $filasEd, $cants, intval($miSucursal), intval($_SESSION['usuario_id']), (string)$_SESSION['nombre_completo']);
+            if ($resEd['err'] !== null) {
+                header('Location: transferencias.php?msg=' . $resEd['err'] . ($resEd['det'] !== '' ? '&det=' . urlencode($resEd['det']) : '')); exit();
+            }
+            header('Location: transferencias.php?msg=editar_pedido_directo'); exit();
+        }
         $stmtStockEd = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
         $cambios = [];   // id => [fila, nueva]
         $quitar  = [];   // filas Pendientes que se retiran
@@ -596,30 +421,31 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
             header('Location: transferencias.php?msg=error_pedido'); exit();
         }
     } elseif ($accion === 'recibir_pedido') {
-        // [FEATURE-PEDIDO-TRANSFERENCIA] Confirmar la recepcion de TODO el pedido (todo o nada, una transaccion).
+        // [FEATURE-RECEPCION-TRANSF] Confirmar la recepcion de TODO el pedido (todo o nada, una transaccion) con el
+        // formulario de recepcion: por producto, recibido + merma + no enviado = enviado. Recibido y merma suman al
+        // stock de esta sucursal (la merma NO sale sola: se da de baja despues desde Salidas); lo no enviado regresa al origen.
         $ped = transfCargarPedido($pdo, $id);
-        $filasAcc = [];
-        if ($ped) {
-            foreach ($ped['filas'] as $f) {
-                if ($f['estado'] === 'En tránsito' && $f['sucursal_destino_id'] == $miSucursal) $filasAcc[] = $f;
-            }
-        }
-        if (!$filasAcc) { header('Location: transferencias.php?msg=error_ya_no_transito'); exit(); }
+        if (!$ped) { header('Location: transferencias.php?msg=error_ya_no_transito'); exit(); }
         $pdo->beginTransaction();
         try {
-            foreach ($filasAcc as $f) {
-                $err = transfRecibirFila($pdo, intval($f['transferencias_id']), intval($miSucursal), intval($_SESSION['usuario_id']));
-                if ($err !== null) {
-                    $pdo->rollBack();
-                    header('Location: transferencias.php?msg=' . $err . '&det=' . urlencode($f['nombre_producto'])); exit();
-                }
+            $resRec = transfRecibirPedido($pdo, $ped['filas'], intval($miSucursal), intval($_SESSION['usuario_id']), (string)$_SESSION['nombre_completo'], $_POST);
+            if ($resRec['err'] !== null) {
+                $pdo->rollBack();
+                header('Location: transferencias.php?msg=' . $resRec['err'] . ($resRec['det'] !== '' ? '&det=' . urlencode($resRec['det']) : '')); exit();
             }
             $pdo->commit();
+            if ($resRec['merma'] > 0)     $extraQs .= '&conmerma=1';
+            if ($resRec['noenviado'] > 0) $extraQs .= '&sinenviar=1';
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
             error_log('[Ferreteria/transferencias] Error al recibir pedido (fila base #' . $id . '): ' . $e->getMessage());
             header('Location: transferencias.php?msg=error_recibir'); exit();
         }
+    } elseif ($accion === 'cancelar_preparado_pedido') {
+        // [FEATURE-ENVIO-DIRECTO] El origen cancela un envio directo que todavia no salio (en preparacion): no mueve inventario.
+        $ped = transfCargarPedido($pdo, $id);
+        $errCanc = $ped ? transfCancelarPreparado($pdo, $ped['filas'], intval($miSucursal), (string)$_SESSION['nombre_completo']) : 'error_ya_no_aprobada';
+        if ($errCanc !== null) { header('Location: transferencias.php?msg=' . $errCanc); exit(); }
     } elseif ($accion === 'cancelar_pedido') {
         // [FEATURE-PEDIDO-TRANSFERENCIA] El origen cancela el envio de TODO el pedido En transito (el stock regresa).
         $ped = transfCargarPedido($pdo, $id);
@@ -786,112 +612,46 @@ if (isset($_accionData['accion']) && (isset($_accionData['id']) || isset($_GET['
             header('Location: transferencias.php?msg=error_ya_no_aprobada'); exit();
         }
     } elseif ($accion === 'recibir') {
-        $stmt = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ?");
-        $stmt->execute([$id]);
-        $transf = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($transf && $transf['estado'] === 'En tránsito' && $transf['sucursal_destino_id'] == $miSucursal) {
-            $pdo->beginTransaction();
-            try {
-                // [FIX-C8] Volver a leer y bloquear la transferencia dentro de la transaccion.
-                // El chequeo de arriba (linea 116-120) se hizo sin candado; si dos peticiones
-                // (doble clic/doble envio) llegan casi juntas, ambas lo pasarian y ambas sumarian
-                // el stock al destino. Al relockear aqui con FOR UPDATE y revalidar el estado,
-                // la segunda peticion encuentra la transferencia ya "Entregada" y no hace nada.
-                $stmtLock = $pdo->prepare("SELECT * FROM transferencias WHERE transferencias_id = ? FOR UPDATE");
-                $stmtLock->execute([$id]);
-                $transf = $stmtLock->fetch(PDO::FETCH_ASSOC);
-                if (!$transf || $transf['estado'] !== 'En tránsito' || $transf['sucursal_destino_id'] != $miSucursal) {
-                    $pdo->rollBack();
-                    // [FIX-RECIBIR-IDOR] Antes redirigia a "msg=recibir" (mensaje de exito) aunque
-                    // la revalidacion fallara — reutiliza "error_ya_no_transito" que ya existe con
-                    // el texto correcto ("la transferencia ya no esta En transito").
-                    header('Location: transferencias.php?msg=error_ya_no_transito'); exit();
-                }
-
-                // ¿El origen ya desconto su stock al enviar? (transferencias nuevas lo hacen;
-                // las que quedaron "En tránsito" antes del cambio no, y hay que descontarlo aqui)
-                $stmtMarca = $pdo->prepare("
-                    SELECT COUNT(*) FROM movimientos_inventario
-                    WHERE tipo = 'Transferencia' AND motivo = ? AND sucursal_id = ?
-                ");
-                $stmtMarca->execute(['Transferencia enviada #' . $id, $transf['sucursal_origen_id']]);
-                $origenYaDescontado = intval($stmtMarca->fetchColumn()) > 0;
-
-                if (!$origenYaDescontado) {
-                    // Ruta de compatibilidad: transferencia enviada con la logica anterior
-                    $stmtOrigen = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
-                    $stmtOrigen->execute([$transf['producto_id'], $transf['sucursal_origen_id']]);
-                    $stockOrLegacy = $stmtOrigen->fetchColumn();
-
-                    if ($stockOrLegacy === false || floatval($stockOrLegacy) < floatval($transf['cantidad'])) {
-                        $pdo->rollBack();
-                        header('Location: transferencias.php?msg=error_stock_recibir'); exit();
-                    }
-                    $stockAntOrigen   = floatval($stockOrLegacy);
-                    $stockNuevoOrigen = $stockAntOrigen - floatval($transf['cantidad']);
-                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-                        ->execute([$stockNuevoOrigen, $transf['producto_id'], $transf['sucursal_origen_id']]);
-                    $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,'Transferencia enviada')")
-                        ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_origen_id'], $transf['cantidad'], $stockAntOrigen, $stockNuevoOrigen]);
-                }
-
-                // [FIX-TRANSF-ACTIVO-NO-REVALIDADO 2026-09-20] El producto pudo darse de baja
-                // de la sucursal DESTINO mientras la transferencia seguia "En transito" -- solo
-                // bloquea si YA existe una fila inactiva; si el producto nunca ha llegado a esta
-                // sucursal (sin fila todavia), abajo se crea una nueva activa, como siempre.
-                $stmtActivoRec = $pdo->prepare("SELECT activo FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ?");
-                $stmtActivoRec->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
-                $activoDestRec = $stmtActivoRec->fetchColumn();
-                if ($activoDestRec !== false && !intval($activoDestRec)) {
-                    $pdo->rollBack();
-                    header('Location: transferencias.php?msg=error_producto_inactivo_transf'); exit();
-                }
-
-                // Sumar stock al destino — mismo producto_id (catálogo compartido)
-                $stmtDest = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
-                $stmtDest->execute([$transf['producto_id'], $transf['sucursal_destino_id']]);
-                $stockDest = $stmtDest->fetchColumn();
-
-                if ($stockDest !== false) {
-                    $stockAntDest   = floatval($stockDest);
-                    $stockNuevoDest = $stockAntDest + floatval($transf['cantidad']);
-                    $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
-                        ->execute([$stockNuevoDest, $transf['producto_id'], $transf['sucursal_destino_id']]);
-                } else {
-                    // Primera vez que este producto llega a la sucursal destino
-                    $stockNuevoDest = floatval($transf['cantidad']);
-                    $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?,?,?,0,0,1)")
-                        ->execute([$transf['producto_id'], $transf['sucursal_destino_id'], $stockNuevoDest]);
-                    $stockAntDest = 0;
-                }
-                $pdo->prepare("INSERT INTO movimientos_inventario (producto_id, usuario_id, sucursal_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo) VALUES (?,?,?,'Transferencia',?,?,?,?)")
-                    ->execute([$transf['producto_id'], $_SESSION['usuario_id'], $transf['sucursal_destino_id'], $transf['cantidad'], $stockAntDest, $stockNuevoDest, 'Transferencia recibida #' . $id]);
-
-                $pdo->prepare("UPDATE transferencias SET estado='Entregada', usuario_aprueba_id=? WHERE transferencias_id=?")
-                    ->execute([$_SESSION['usuario_id'], $id]);
-
-                $pdo->commit();
-            } catch (\Throwable $e) {
+        // Recepcion de UNA fila, completa (sin formulario). La pantalla usa 'recibir_pedido'; esta ruta se conserva por
+        // compatibilidad y usa la misma logica de includes/transferencias_lib.php.
+        $pdo->beginTransaction();
+        try {
+            $errRec = transfRecibirFila($pdo, $id, intval($miSucursal), intval($_SESSION['usuario_id']), null, (string)$_SESSION['nombre_completo']);
+            if ($errRec !== null) {
                 $pdo->rollBack();
-                error_log('[Ferreteria/transferencias] Error al recibir #' . $id . ': ' . $e->getMessage());
-                header('Location: transferencias.php?msg=error_recibir'); exit();
+                header('Location: transferencias.php?msg=' . $errRec); exit();
             }
-        } else {
-            // [FIX-RECIBIR-IDOR] Mismo caso que arriba pero en el chequeo SIN candado previo a la
-            // transaccion: si no hay fila (no eres destino, o el estado ya no es 'En transito'),
-            // no caer al "header(...msg=$accion)" generico del final que mostraba exito.
-            header('Location: transferencias.php?msg=error_ya_no_transito'); exit();
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('[Ferreteria/transferencias] Error al recibir #' . $id . ': ' . $e->getMessage());
+            header('Location: transferencias.php?msg=error_recibir'); exit();
         }
     }
     // [FEATURE-TICKET-ENVIO-TRANSF] Tras enviar (uno o todo el pedido) se abre el ticket de envio.
-    $ticketQs = in_array($accion, ['enviar', 'enviar_pedido'], true) ? '&abrir_ticket=' . $id : '';
-    header('Location: transferencias.php?msg='.$accion . $ticketQs); exit();
+    // Al marcar enviado se abre el ticket y se manda a IMPRIMIR solo (imprimir_ticket=1): sale con la mercancia.
+    $ticketQs = in_array($accion, ['enviar', 'enviar_pedido'], true) ? '&abrir_ticket=' . $id . '&imprimir_ticket=1' : '';
+    header('Location: transferencias.php?msg='.$accion . $ticketQs . $extraQs); exit();
 }
 
 // Nueva solicitud — multi-producto, YO soy el DESTINO (quien pide), ORIGEN = otra sucursal
+// [FEATURE-ENVIO-DIRECTO] El formulario tiene dos modos: 'solicitud' (pido productos y el origen los acepta) y
+// 'directo' (yo, como ORIGEN, armo un envio para otra sucursal sin que ella lo autorice; queda "Aprobada" = en preparacion
+// y sale hasta que lo marco enviado, cuando ya llego el repartidor).
+$modoForm = (is_scalar($_POST['modo'] ?? null) && $_POST['modo'] === 'directo') ? 'directo' : 'solicitud';
 $errores = [];
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $modoForm === 'directo') {
+    requerirCSRF($_POST['_token'] ?? '', 'transferencias.php');
+    $destinoDirecto = intval(is_scalar($_POST['sucursal_destino_id'] ?? null) ? $_POST['sucursal_destino_id'] : 0);
+    $notasDirecto   = trim(is_scalar($_POST['notas'] ?? null) ? (string)$_POST['notas'] : '');
+    $itemsDirecto   = json_decode(is_scalar($_POST['items_transf'] ?? null) ? (string)$_POST['items_transf'] : '[]', true);
+    $resDirecto = transfCrearEnvioDirecto($pdo, intval($_SESSION['sucursal_id']), $destinoDirecto, intval($_SESSION['usuario_id']), (string)$_SESSION['nombre_completo'], $notasDirecto, $itemsDirecto);
+    if ($resDirecto['ok']) {
+        header('Location: transferencias.php?msg=directo_guardado&nuevo_folio=' . urlencode($resDirecto['folio'])); exit();
+    }
+    $errores = $resDirecto['errores'];
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $modoForm === 'solicitud') {
     // [FIX-A1] Verificar CSRF antes de procesar la nueva solicitud de transferencia
     requerirCSRF($_POST['_token'] ?? '', 'transferencias.php');
     $sucursal_origen_id = intval(is_scalar($_POST['sucursal_origen_id'] ?? null) ? $_POST['sucursal_origen_id'] : 0);
@@ -952,30 +712,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errores)) {
-        // [FIX-MEDIO-C-13] (portado de admin/inventario_transferencias.php): antes se
-        // redirigia SIEMPRE a "Solicitud enviada" sin comprobar si de verdad se inserto
-        // alguna fila — si todos los items terminaban con cantidad <= 0 tras redondear
-        // (p. ej. un producto no-granel pedido en 0.5), el "continue" los saltaba a todos
-        // y la solicitud quedaba vacia, pero igual se mostraba exito.
-        $insertados = 0;
-        // [FEATURE-PEDIDO-TRANSFERENCIA] Mismo momento de creacion para todas las filas: identifica al pedido.
-        $tsPedido = $pdo->query("SELECT NOW()")->fetchColumn();
-        foreach ($items as $item) {
-            $prodId   = intval($item['id']);
-            $cantidad = floatval($item['cantidad']);
-            $stmtTV3  = $pdo->prepare("SELECT tipo_venta FROM productos WHERE producto_id = ?");
-            $stmtTV3->execute([$prodId]);
-            $tvRow3 = $stmtTV3->fetch(PDO::FETCH_ASSOC);
-            if ($tvRow3 && $tvRow3['tipo_venta'] !== 'Suelto') { $cantidad = floor($cantidad); }
-            if ($cantidad <= 0) continue;
-            $pdo->prepare("INSERT INTO transferencias (producto_id, sucursal_origen_id, sucursal_destino_id, usuario_solicita_id, cantidad, notas, estado, created_at) VALUES (?,?,?,?,?,?,'Pendiente',?)")
-                ->execute([$prodId, $sucursal_origen_id, $_SESSION['sucursal_id'], $_SESSION['usuario_id'], $cantidad, $notas, $tsPedido]);
-            $insertados++;
+        // [FEATURE-FOLIO-TRANSF] Crear el pedido con su folio mensual (candado + transaccion en includes/transferencias_lib.php).
+        // [FIX-MEDIO-C-13] Solo se muestra exito si de verdad se inserto alguna fila.
+        $resSol = transfCrearSolicitud($pdo, $sucursal_origen_id, intval($_SESSION['sucursal_id']), intval($_SESSION['usuario_id']), $notas, $items);
+        if ($resSol['insertados'] > 0) {
+            header('Location: transferencias.php?msg=solicitado&nuevo_folio=' . urlencode($resSol['folio'])); exit();
         }
-        if ($insertados > 0) {
-            header('Location: transferencias.php?msg=solicitado'); exit();
-        }
-        $errores[] = 'Ningún producto tenía una cantidad válida después de ajustar por tipo de venta. Revisa las cantidades e intenta de nuevo.';
+        $errores[] = $resSol['error'] !== '' ? $resSol['error'] : 'Ningún producto tenía una cantidad válida después de ajustar por tipo de venta. Revisa las cantidades e intenta de nuevo.';
     }
 }
 
@@ -984,6 +727,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $filtroDesde = $_GET['desde'] ?? date('Y-m-d', strtotime('-2 days'));
 $filtroHasta = $_GET['hasta'] ?? date('Y-m-d');
 $filtroEstado = trim(is_scalar($_GET['estado_f'] ?? null) ? (string)$_GET['estado_f'] : '');
+$filtroFolio  = transfFiltroFolio($_GET);   // [FEATURE-FOLIO-TRANSF] buscar un pedido por su folio (NNNN + mes + anio)
 
 $whereExtra = '';
 $paramsExtra = [];
@@ -1002,11 +746,16 @@ if ($fechasPredeterminadas && !$filtroEstado) {
     if ($filtroHasta) { $whereExtra .= ' AND DATE(t.created_at) <= ?'; $paramsExtra[] = $filtroHasta; }
 }
 if ($filtroEstado) { $whereExtra .= ' AND t.estado = ?'; $paramsExtra[] = $filtroEstado; }
+// Buscando por folio se ignoran fechas y estado: el pedido debe aparecer sin importar que tan viejo sea.
+if ($filtroFolio) {
+    $whereExtra  = ' AND t.folio_periodo = ? AND CAST(t.folio AS UNSIGNED) = ?';
+    $paramsExtra = [$filtroFolio['periodo'], $filtroFolio['numero']];
+}
 
 // Transferencias de esta sucursal (como origen o destino)
 $stmt = $pdo->prepare("
     SELECT t.*,
-        p.nombre_producto, p.codigo, p.tipo_venta,
+        p.nombre_producto, p.codigo, p.tipo_venta, p.unidad_medida,
         so.nombre AS sucursal_origen,
         sd.nombre AS sucursal_destino,
         us.nombre_completo AS solicitante,
@@ -1065,6 +814,41 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
         'tipo_venta' => $p['tipo_venta'],
     ];
 }
+// [FEATURE-ENVIO-DIRECTO] Para "Enviar productos": MIS productos activos con stock y, por cada sucursal destino, el stock
+// que ella ya tiene del mismo producto. Se excluyen los que el destino tiene dados de baja (no podria recibirlos).
+// 'stock' = lo que tengo yo (tope de lo que puedo enviar); 'mi_stock' = lo que ya tiene el destino; 'bajo' = destino bajo minimo.
+$prodsEnvio = [];
+$sucEnvio = intval($_SESSION['sucursal_id']);
+if ($sucEnvio !== 0) {
+    $stmt = $pdo->prepare("
+        SELECT p.producto_id, p.codigo, p.nombre_producto, p.tipo_venta,
+               ss_mia.stock_actual AS mi_stock_real,
+               s.sucursal_id AS destino_id,
+               COALESCE(ss_dest.stock_actual, 0) AS dest_stock,
+               (ss_dest.stock_actual < ss_dest.stock_minimo AND ss_dest.stock_minimo > 0) AS bajo
+        FROM productos p
+        INNER JOIN stock_sucursal ss_mia ON ss_mia.producto_id = p.producto_id
+            AND ss_mia.sucursal_id = ? AND ss_mia.activo = 1 AND ss_mia.stock_actual > 0
+        CROSS JOIN sucursales s
+        LEFT JOIN stock_sucursal ss_dest ON ss_dest.producto_id = p.producto_id AND ss_dest.sucursal_id = s.sucursal_id
+        WHERE p.activo = 1 AND s.activo = 1 AND s.sucursal_id != ?
+          AND (ss_dest.producto_id IS NULL OR ss_dest.activo = 1)
+        ORDER BY bajo DESC, p.nombre_producto ASC
+    ");
+    $stmt->execute([$sucEnvio, $sucEnvio]);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
+        $prodsEnvio[$p['destino_id']][] = [
+            'id'         => intval($p['producto_id']),
+            'codigo'     => $p['codigo'],
+            'nombre'     => $p['nombre_producto'],
+            'stock'      => floatval($p['mi_stock_real']),
+            'mi_stock'   => floatval($p['dest_stock']),
+            'bajo'       => (bool)$p['bajo'],
+            'tipo_venta' => $p['tipo_venta'],
+        ];
+    }
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -1209,8 +993,42 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
     .btn-guardar { width: 100%; background: #14ace7; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 4px; }
     .btn-guardar:hover { background: #1196cb; }
     .hint-bajo { font-size: 11px; color: #c0392b; margin-top: 4px; }
+    .ped-tipo { display: inline-block; margin-top: 6px; font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 99px; background: #fff3e0; color: #c25b00; letter-spacing: .02em; }
+    .modo-tabs { display: flex; gap: 4px; background: #eef1f4; border-radius: 8px; padding: 3px; margin-bottom: 12px; }
+    .modo-tab { flex: 1; border: none; background: transparent; padding: 8px 6px; border-radius: 6px; font-size: 12.5px; font-weight: 600; color: #6b7785; cursor: pointer; font-family: inherit; }
+    .modo-tab.activo { background: #fff; color: #14ace7; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+    .aviso-directo { font-size: 12px; color: #5d4a00; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; padding: 9px 12px; margin-bottom: 13px; line-height: 1.5; }
+    /* Filtros del listado: dos filas (fechas y estado / busqueda por folio), mismos alturas y alineacion */
+    .tf-fil { margin-bottom: 10px; padding: 0; overflow: hidden; }
+    .tf-fil-fila { display: grid; grid-template-columns: 118px 1fr; gap: 6px 14px; align-items: center; padding: 12px 16px; margin: 0; }
+    .tf-fil-fila + .tf-fil-fila { border-top: 1px solid #eef1f4; background: #fafbfc; }
+    .tf-fil-folio.tf-fil-activa { background: #eef8ff; box-shadow: inset 3px 0 0 #14ace7; }
+    .tf-fil-apagada .tf-fil-campos { opacity: .5; }
+    .tf-fil-tit { font-size: 11px; font-weight: 700; color: #7b8794; text-transform: uppercase; letter-spacing: .04em; line-height: 1.3; }
+    .tf-fil-campos { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+    .tf-fil-campo { display: flex; flex-direction: column; gap: 4px; }
+    .tf-fil-campo label, .tf-fil-campos .filtro-group label { font-size: 11px; font-weight: 600; color: #8a96a3; text-transform: none; letter-spacing: 0; margin: 0; }
+    .tf-fil-campos .filtro-group { gap: 4px; }
+    .tf-fil-campos .filtro-group select { width: 180px; text-overflow: ellipsis; }
+    .tf-fil-campo input, .tf-fil-campo select, .tf-fil-campos .filtro-group select { box-sizing: border-box; height: 36px; padding: 0 10px; border: 1px solid #d5dbe1; border-radius: 6px; font-size: 13px; font-family: inherit; color: #333; background: #fff; }
+    .tf-fil-campo input:focus, .tf-fil-campo select:focus, .tf-fil-campos .filtro-group select:focus { outline: none; border-color: #14ace7; }
+    .tf-fil-campo .w-fecha { width: 142px; }
+    .tf-fil-campo .w-estado { width: 126px; }
+    .tf-fil-campo .w-folio { width: 100px; }
+    .tf-fil-campo .w-mes { width: 128px; }
+    .tf-fil-campo .w-anio { width: 86px; }
+    .tf-fil-btn { box-sizing: border-box; height: 36px; padding: 0 15px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; font-family: inherit; border: 1px solid transparent; }
+    .tf-fil-btn-azul { background: #14ace7; color: #fff; }
+    .tf-fil-btn-azul:hover { background: #0e93c9; }
+    .tf-fil-btn-gris { background: #fff; color: #666; border-color: #d5dbe1; }
+    .tf-fil-btn-gris:hover { background: #f3f5f7; }
+    .tf-fil-nota { font-size: 11.5px; color: #8a96a3; align-self: center; }
     @media (max-width: 768px) {
         body { overflow-x: hidden; }
+        .tf-fil-fila { grid-template-columns: 1fr; padding: 12px; }
+        .tf-fil-campo .w-fecha, .tf-fil-campo .w-estado, .tf-fil-campo .w-mes { width: 100%; }
+        .tf-fil-campo { flex: 1 1 120px; }
+        .tf-fil-nota { flex-basis: 100%; }
         .sidebar { position: fixed; top: 0; left: 0; height: 100%; z-index: 300; width: 0; transition: width 0.3s; }
         .sidebar.collapsed { width: 260px; box-shadow: 4px 0 16px rgba(0,0,0,.15); }
         .main { width: 100%; }
@@ -1310,6 +1128,9 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
             <?php if (isset($_GET['msg'])): ?>
                 <?php $msgs = [
                     'solicitado'      => 'Solicitud enviada. La sucursal origen debe aprobarla.',
+                    'directo_guardado' => 'Pedido de envío guardado: queda en preparación y todavía NO se descuenta tu stock. Cuando salga con el repartidor, márcalo como enviado desde el botón "Marcar pedido enviado" (ahí se descuenta y se imprime el ticket).',
+                    'editar_pedido_directo' => 'Pedido actualizado. Los cambios ya aplican; la sucursal destino no tiene que confirmar nada.',
+                    'cancelar_preparado_pedido' => 'Pedido de envío cancelado. No se movió inventario porque aún no había salido.',
                     'aprobar'         => 'Transferencia aprobada. Se agrego una nota para la sucursal que recibira el pedido.',
                     'rechazar'        => 'Transferencia rechazada.',
                     'enviar'          => 'Productos enviados. El stock ya se desconto de tu sucursal; la sucursal destino debe confirmar la recepcion.',
@@ -1333,7 +1154,11 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                     'editar_pedido'         => 'Pedido modificado. Los productos con cantidad distinta esperan la confirmación de la sucursal destino; el resto quedó aceptado.',
                     'aceptar_modificacion_pedido'  => 'Cambios aceptados. El pedido continúa como Aprobado.',
                     'rechazar_modificacion_pedido' => 'Cambios rechazados. Los productos modificados volvieron a Pendiente.',
-                    'recibir_pedido'        => 'Recepción confirmada. El stock de todos los productos del pedido fue sumado a tu sucursal.',
+                    'recibir_pedido'        => 'Recepción confirmada. Recibido y merma se sumaron al stock de tu sucursal.',
+                    'error_recepcion_suma'  => 'No se pudo confirmar la recepción: en un producto, Recibido + Merma + No enviado no es igual a lo Enviado.',
+                    'error_recepcion_datos' => 'No se pudo confirmar la recepción: captura una cantidad válida (0 o mayor) en Recibido, Merma y No enviado de todos los productos.',
+                    'error_recepcion_entero' => 'No se pudo confirmar la recepción: ese producto no es granel, sus cantidades deben ser números enteros.',
+                    'error_recepcion_emoji' => 'No se pudo confirmar la recepción: las observaciones no pueden llevar emojis. Quítalos e intenta de nuevo.',
                     'cancelar_pedido'       => 'Envío cancelado. El stock de todos los productos regresó a tu sucursal.',
                     'error_pedido'          => 'No se pudo completar la operación sobre el pedido. Intenta de nuevo.',
                     'error_pedido_incompleto' => 'No se puede enviar el pedido todavía: tiene productos sin aceptar o con un cambio de cantidad pendiente de confirmar por la sucursal destino.',
@@ -1348,33 +1173,69 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                 ]; ?>
                 <?php $msgKeyTransf = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : ''; ?>
                 <?php $esMsgError = str_starts_with($msgKeyTransf, 'error'); ?>
-                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$msgKeyTransf] ?? '') ?><?php $detMsgTransf = is_scalar($_GET['det'] ?? null) ? mb_substr((string)$_GET['det'], 0, 150) : ''; if ($esMsgError && $detMsgTransf !== ''): ?> Producto: <strong><?= htmlspecialchars($detMsgTransf) ?></strong><?php endif; ?></div>
+                <div class="msg <?= $esMsgError ? 'errores' : 'msg-exito' ?>"><?= htmlspecialchars($msgs[$msgKeyTransf] ?? '') ?><?php
+                    // (el folio del aviso viaja como nuevo_folio: el parametro 'folio' es el de la BUSQUEDA por folio)
+                    $folioMsgT = (is_scalar($_GET['nuevo_folio'] ?? null) && ctype_digit((string)$_GET['nuevo_folio']) && strlen((string)$_GET['nuevo_folio']) <= 9) ? (string)$_GET['nuevo_folio'] : '';
+                    if (!$esMsgError && $folioMsgT !== '' && in_array($msgKeyTransf, ['solicitado', 'directo_guardado'], true)): ?> Folio: <strong><?= htmlspecialchars($folioMsgT) ?></strong>.<?php endif;
+                    if ($msgKeyTransf === 'recibir_pedido'):
+                        if (($_GET['conmerma'] ?? '') === '1'): ?> La merma ya cuenta en tu stock: dala de baja desde <strong>Salidas y mermas</strong>.<?php endif;
+                        if (($_GET['sinenviar'] ?? '') === '1'): ?> Lo que no llegó regresó al stock de la sucursal origen.<?php endif;
+                    endif;
+                    $detMsgTransf = is_scalar($_GET['det'] ?? null) ? mb_substr((string)$_GET['det'], 0, 150) : ''; if ($esMsgError && $detMsgTransf !== ''): ?> Producto: <strong><?= htmlspecialchars($detMsgTransf) ?></strong><?php endif; ?></div>
             <?php endif; ?>
 
-            <!-- Filtro de fechas -->
-            <div class="card" style="margin-bottom:10px;">
-                <form method="GET" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
-                    <div>
-                        <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Desde</label>
-                        <input type="date" name="desde" value="<?= htmlspecialchars($filtroDesde) ?>"
-                               style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+            <!-- Filtros: fechas y estado, y aparte la busqueda por folio -->
+            <div class="card tf-fil">
+                <form method="GET" class="tf-fil-fila<?= $filtroFolio ? ' tf-fil-apagada' : '' ?>">
+                    <div class="tf-fil-tit">Fechas y estado</div>
+                    <div class="tf-fil-campos">
+                        <div class="tf-fil-campo">
+                            <label>Desde</label>
+                            <input type="date" name="desde" class="w-fecha" value="<?= htmlspecialchars($filtroDesde) ?>">
+                        </div>
+                        <div class="tf-fil-campo">
+                            <label>Hasta</label>
+                            <input type="date" name="hasta" class="w-fecha" value="<?= htmlspecialchars($filtroHasta) ?>">
+                        </div>
+                        <div class="tf-fil-campo">
+                            <label>Estado</label>
+                            <select name="estado_f" class="w-estado">
+                                <option value="">Todos</option>
+                                <?php foreach (['Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada','Cancelada'] as $est): ?>
+                                <option value="<?= $est ?>" <?= $filtroEstado === $est ? 'selected' : '' ?>><?= $est ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <button type="submit" class="tf-fil-btn tf-fil-btn-azul">Filtrar</button>
+                        <a class="tf-fil-btn tf-fil-btn-gris" href="transferencias.php">Limpiar</a>
                     </div>
-                    <div>
-                        <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Hasta</label>
-                        <input type="date" name="hasta" value="<?= htmlspecialchars($filtroHasta) ?>"
-                               style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+                </form>
+                <form method="GET" class="tf-fil-fila tf-fil-folio<?= $filtroFolio ? ' tf-fil-activa' : '' ?>">
+                    <div class="tf-fil-tit">Buscar por folio</div>
+                    <div class="tf-fil-campos">
+                        <div class="tf-fil-campo">
+                            <label>Folio</label>
+                            <input type="number" name="folio" class="w-folio" min="1" max="999999999" required placeholder="Ej. 0012" value="<?= $filtroFolio ? intval($filtroFolio['numero']) : '' ?>">
+                        </div>
+                        <div class="tf-fil-campo">
+                            <label>Mes</label>
+                            <select name="folio_mes" class="w-mes">
+                                <?php foreach ([1=>'Enero',2=>'Febrero',3=>'Marzo',4=>'Abril',5=>'Mayo',6=>'Junio',7=>'Julio',8=>'Agosto',9=>'Septiembre',10=>'Octubre',11=>'Noviembre',12=>'Diciembre'] as $mNum => $mNom): ?>
+                                <option value="<?= $mNum ?>" <?= ($filtroFolio ? $filtroFolio['mes'] : intval(date('n'))) === $mNum ? 'selected' : '' ?>><?= $mNom ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="tf-fil-campo">
+                            <label>Año</label>
+                            <select name="folio_anio" class="w-anio">
+                                <?php for ($yF = intval(date('Y')); $yF >= intval(date('Y')) - 3; $yF--): ?>
+                                <option value="<?= $yF ?>" <?= ($filtroFolio ? $filtroFolio['anio'] : intval(date('Y'))) === $yF ? 'selected' : '' ?>><?= $yF ?></option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                        <button type="submit" class="tf-fil-btn tf-fil-btn-azul">Buscar</button>
+                        <span class="tf-fil-nota">El folio se repite cada mes: elige el mes y el año del pedido. Al buscar por folio se ignoran las fechas y el estado.</span>
                     </div>
-                    <div>
-                        <label style="display:block;font-size:11px;color:#888;margin-bottom:3px;font-weight:600;">Estado</label>
-                        <select name="estado_f" style="padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
-                            <option value="">Todos</option>
-                            <?php foreach (['Pendiente','Aprobada','Modificada','En tránsito','Entregada','Rechazada','Cancelada'] as $est): ?>
-                            <option value="<?= $est ?>" <?= $filtroEstado === $est ? 'selected' : '' ?>><?= $est ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <button type="submit" style="background:#14ace7;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Filtrar</button>
-                    <a class="btn-limpiar" href="transferencias.php">Limpiar</a>
                 </form>
             </div>
 
@@ -1430,9 +1291,26 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                     'estado'   => $f['estado'],
                                     'suelto'   => $f['tipo_venta'] === 'Suelto',
                                     'stock'    => floatval($f['stock_origen'] ?? 0),
+                                    'directo'  => (($t['tipo_pedido'] ?? 'Solicitud') === 'Directo'),
                                 ];
                             }
                             $jsonEdicion = htmlspecialchars(json_encode($datosEdicion, JSON_UNESCAPED_UNICODE), ENT_QUOTES);
+                            // [FEATURE-RECEPCION-TRANSF] Datos para el formulario de recepcion (solo las filas En transito).
+                            $esDirecto = (($t['tipo_pedido'] ?? 'Solicitud') === 'Directo');
+                            $folioTxt  = ($t['folio'] !== null && $t['folio'] !== '') ? (string)$t['folio'] : '';
+                            $datosRecepcion = [];
+                            foreach ($filasG as $f) {
+                                if ($f['estado'] !== 'En tránsito') continue;
+                                $datosRecepcion[] = [
+                                    'id'       => intval($f['transferencias_id']),
+                                    'nombre'   => $f['nombre_producto'],
+                                    'codigo'   => $f['codigo'],
+                                    'cantidad' => floatval($f['cantidad']),
+                                    'suelto'   => $f['tipo_venta'] === 'Suelto',
+                                    'unidad'   => $f['unidad_medida'] ?? '',
+                                ];
+                            }
+                            $jsonRecepcion = htmlspecialchars(json_encode($datosRecepcion, JSON_UNESCAPED_UNICODE), ENT_QUOTES);
                             $visibles = array_slice($filasG, 0, 3);
                             $resto    = array_slice($filasG, 3);
                             $pintarItem = function ($f) use ($estadoPrincipal, $badgeMap, $fmtCantPed) { ?>
@@ -1445,9 +1323,10 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                         ?>
                         <tr>
                             <td class="c-ped">
-                                <div class="ped-id">#<?= $idRep ?></div>
+                                <div class="ped-id"><?= $folioTxt !== '' ? 'Folio ' . htmlspecialchars($folioTxt) : '#' . $idRep ?></div>
                                 <div class="ped-meta"><?= date('d/m/Y', strtotime($t['created_at'])) ?></div>
-                                <div class="ped-meta">Pidió: <?= htmlspecialchars($t['solicitante']) ?></div>
+                                <div class="ped-meta"><?= $esDirecto ? 'Envió' : 'Pidió' ?>: <?= htmlspecialchars($t['solicitante']) ?></div>
+                                <?php if ($esDirecto): ?><span class="ped-tipo">Envío directo</span><?php endif; ?>
                                 <?php if ($esMiOrigen || $esMiDestino): ?>
                                 <span class="ped-rol <?= $esMiOrigen ? 'rol-envia' : 'rol-recibe' ?>"><?= $esMiOrigen ? 'Tú envías' : 'Tú recibes' ?></span>
                                 <?php endif; ?>
@@ -1471,7 +1350,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                 <?php endif; ?>
                             </td>
                             <td class="c-est">
-                                <span class="badge <?= $badgeMap[$estadoPrincipal] ?>"><?= htmlspecialchars($estadoPrincipal) ?></span>
+                                <span class="badge <?= $badgeMap[$estadoPrincipal] ?>"><?= htmlspecialchars($esDirecto && $estadoPrincipal === 'Aprobada' ? 'En preparación' : $estadoPrincipal) ?></span>
                                 <?php
                                 $otros = [];
                                 foreach ($ordenEstados as $est) {
@@ -1499,13 +1378,20 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                             <button class="bt bt-ok" type="button" onclick="return ejecutarAccionTransf('aceptar_modificacion_pedido', <?= $idRep ?>, '¿Aceptar las nuevas cantidades del pedido? El pedido continuará como Aprobado.')">Aceptar cambios</button>
                                         <?php endif; ?>
                                         <?php if ($esMiDestino && $hayTrans): $hayAcciones = true; ?>
-                                            <button class="bt bt-ok" type="button" onclick="return ejecutarAccionTransf('recibir_pedido', <?= $idRep ?>, '¿Confirmar la recepción del pedido completo? Esto moverá el stock de todos sus productos en ambas sucursales.')">Confirmar recepción</button>
+                                            <button class="bt bt-ok" type="button" data-id="<?= $idRep ?>" data-folio="<?= htmlspecialchars($folioTxt) ?>" data-origen="<?= htmlspecialchars($nombreCorto($t['sucursal_origen'])) ?>" data-filas="<?= $jsonRecepcion ?>" onclick="abrirModalRecepcion(this)">Confirmar recepción</button>
                                         <?php endif; ?>
                                         <?php if ($esMiOrigen && $hayModif): $hayAcciones = true; ?>
                                             <span class="bt-espera">Esperando confirmación del destino</span>
                                         <?php endif; ?>
                                         <?php if ($esMiOrigen && ($hayPend || $hayAprob)): $hayAcciones = true; ?>
                                             <button class="bt bt-warn" type="button" data-id="<?= $idRep ?>" data-filas="<?= $jsonEdicion ?>" onclick="abrirModalEditarPedido(this)">Editar pedido</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiOrigen && $esDirecto && $hayAprob): $hayAcciones = true; ?>
+                                            <!-- Envio directo que aun no sale: el origen puede cancelarlo sin mover inventario. -->
+                                            <button class="bt bt-mal" type="button" onclick="return ejecutarAccionTransf('cancelar_preparado_pedido', <?= $idRep ?>, '¿Cancelar este pedido de envío? Aún no ha salido, así que no se mueve inventario; quedará como Cancelado.')">Cancelar pedido</button>
+                                        <?php endif; ?>
+                                        <?php if ($esMiDestino && $esDirecto && $hayAprob): $hayAcciones = true; ?>
+                                            <span class="bt-espera">El origen lo está preparando; aún no sale</span>
                                         <?php endif; ?>
                                         <?php if ($esMiOrigen && $hayPend): $hayAcciones = true; ?>
                                             <button class="bt bt-mal" type="button" onclick="return ejecutarAccionTransf('rechazar_pedido', <?= $idRep ?>, '¿Rechazar este pedido completo de transferencia?')">Rechazar pedido</button>
@@ -1521,6 +1407,9 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                             <button class="bt bt-mal" type="button" onclick="return ejecutarAccionTransf('cancelar_pedido', <?= $idRep ?>, '¿Cancelar el envío de este pedido completo? El stock de todos los productos regresará a tu sucursal. Solo hazlo si de verdad recuperaste la mercancía enviada.')">Cancelar envío</button>
                                         <?php endif; ?>
                                     <?php endif; ?>
+                                    <?php $hayAcciones = true; ?>
+                                    <!-- [FEATURE-FOLIO-TRANSF] Detalle / historial del pedido (folio, recepcion, merma, observaciones). -->
+                                    <button class="bt bt-tk" type="button" onclick="abrirDetallePedido(<?= $idRep ?>)">Detalle</button>
                                     <?php if ($mostrarTicketTransf): $hayAcciones = true; ?>
                                         <!-- [FEATURE-TICKET-ENVIO-TRANSF] Lista de lo enviado en este pedido. -->
                                         <button class="bt bt-tk" type="button" onclick="abrirTicketEnvio(<?= $idRep ?>)"><?= icono('printer', '', 14) ?> Ticket</button>
@@ -1532,8 +1421,11 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+                <?php if ($filtroFolio && count($pedidos) === 1): ?>
+                <script>document.addEventListener('DOMContentLoaded', function () { abrirDetallePedido(<?= intval($pedidos[0]['filas'][0]['transferencias_id']) ?>); });</script>
+                <?php endif; ?>
                 <?php else: ?>
-                    <div class="sin-resultados">No hay transferencias registradas.</div>
+                    <div class="sin-resultados"><?= $filtroFolio ? 'No se encontró ningún pedido con el folio ' . str_pad((string)$filtroFolio['numero'], 4, '0', STR_PAD_LEFT) . ' de ' . str_pad((string)$filtroFolio['mes'], 2, '0', STR_PAD_LEFT) . '/' . $filtroFolio['anio'] . ' en esta sucursal. Revisa el número, el mes y el año.' : 'No hay transferencias registradas.' ?></div>
                 <?php endif; ?>
             </div>
         </div>
@@ -1541,8 +1433,11 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
         <!-- Formulario: solicitar productos de otra sucursal -->
         <div>
             <div class="card">
-                <h3>Solicitar productos</h3>
-                <p style="font-size:12px;color:#aaa;margin:-8px 0 14px;">Pide productos de otra sucursal a la tuya.</p>
+                <div class="modo-tabs">
+                    <button type="button" class="modo-tab activo" id="tabSolicitud" onclick="cambiarModoTransf('solicitud')">Solicitar productos</button>
+                    <button type="button" class="modo-tab" id="tabDirecto" onclick="cambiarModoTransf('directo')">Enviar productos</button>
+                </div>
+                <p id="modoDescripcion" style="font-size:12px;color:#aaa;margin:0 0 14px;">Pide productos de otra sucursal a la tuya. Ella debe aceptar el pedido.</p>
 
                 <?php if (!empty($errores)): ?>
                     <div class="errores"><ul><?php foreach ($errores as $e):?><li><?= htmlspecialchars($e) ?></li><?php endforeach;?></ul></div>
@@ -1552,9 +1447,11 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                     <!-- [FIX-A1] Token CSRF para proteger la nueva solicitud de transferencia -->
                     <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="items_transf" id="inputItemsTransf">
+                    <input type="hidden" name="modo" id="inputModo" value="solicitud">
+                    <div class="aviso-directo" id="avisoDirecto" style="display:none;">Envío directo: la otra sucursal <strong>no tiene que autorizarlo</strong>. Guardas el pedido para <em>prepararlo</em> (todavía no se descuenta tu stock); cuando llegue el repartidor lo marcas como <strong>enviado</strong> desde la lista: ahí se descuenta y queda <em>En tránsito</em>. Ella solo confirma la recepción (con lo recibido, merma y lo que no llegó).</div>
 
                     <div class="form-group">
-                        <label>Sucursal origen *</label>
+                        <label id="lblSucursal">Sucursal origen *</label>
                         <select name="sucursal_origen_id" id="selOrigen" onchange="onOrigenChange(this.value)">
                             <option value="">-- Selecciona sucursal --</option>
                             <?php foreach ($sucursalesOrigen as $s): ?>
@@ -1574,14 +1471,14 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                                    disabled>
                             <div class="sugerencias" id="sugerencias"></div>
                         </div>
-                        <div class="hint-bajo" id="hintBajo" style="display:none;">&#9650; Productos marcados en rojo tienen stock bajo en tu sucursal.</div>
+                        <div class="hint-bajo" id="hintBajo" style="display:none;">&#9650; <span id="hintBajoTxt">Productos marcados en rojo tienen stock bajo en tu sucursal.</span></div>
                     </div>
 
                     <div class="prod-seleccionado" id="prodSeleccionado">
                         <div class="prod-sel-nombre" id="prodSelNombre"></div>
                         <div class="prod-sel-stock" id="prodSelStock"></div>
                         <div class="cant-row">
-                            <input type="number" id="cantProd" placeholder="Cantidad a pedir" step="1" min="1">
+                            <input type="number" id="cantProd" placeholder="Cantidad" step="1" min="1">
                             <button type="button" class="btn-add" onclick="agregarItem()">+ Agregar</button>
                         </div>
                     </div>
@@ -1595,9 +1492,7 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
                         <input type="text" name="notas" id="notasTransf" placeholder="Motivo o indicaciones..." oninput="guardarEstadoTransf()">
                     </div>
 
-                    <button class="btn-guardar" type="submit" onclick="return prepararEnvio()">
-                        Enviar solicitud
-                    </button>
+                    <button class="btn-guardar" type="submit" id="btnGuardarTransf" onclick="return prepararEnvio()">Enviar solicitud</button>
                     <button type="button" onclick="limpiarFormularioTransf()" style="width:100%;margin-top:8px;background:none;border:none;color:#aaa;font-size:12px;cursor:pointer;">Limpiar formulario</button>
                 </form>
             </div>
@@ -1607,31 +1502,72 @@ foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
 
 <script>
 const prodsBySucursal = <?= json_encode($prodsBySucursal) ?>;
-// [FIX-BORRADOR-TRANSF] Igual que nuevaVenta.php: si venimos de enviar la solicitud con exito
-// (?msg=solicitado), limpiar el borrador ANTES de restaurarlo.
-(function() {
-    if (new URLSearchParams(window.location.search).get('msg') === 'solicitado') {
-        localStorage.removeItem('itemsTransfDraft');
-        localStorage.removeItem('transfExtra');
+// [FEATURE-ENVIO-DIRECTO] Productos de MI sucursal por sucursal destino. Misma forma que prodsBySucursal:
+// 'stock' = lo que tengo yo (tope de lo que puedo enviar) y 'mi_stock' = lo que ya tiene la sucursal destino.
+const prodsEnvio = <?= json_encode($prodsEnvio) ?>;
+const MI_SUCURSAL = <?= intval($_SESSION['sucursal_id']) ?>;
+
+// El mismo formulario sirve para dos cosas: SOLICITAR productos a otra sucursal (ella debe aceptarlos) y ENVIAR
+// productos directo (sin autorizacion del destino). Cada modo tiene su propio borrador en localStorage.
+const MODOS = {
+    solicitud: {
+        data: prodsBySucursal, selName: 'sucursal_origen_id', lblSuc: 'Sucursal origen *',
+        selPlaceholder: 'Selecciona primero la sucursal origen...',
+        lblA: 'Origen', lblB: 'Tu sucursal', lblBSel: 'Destino (tu sucursal)',
+        btn: 'Enviar solicitud', verbo: 'pedir', quien: 'La sucursal origen', yaCuenta: 'ya pediste',
+        desc: 'Pide productos de otra sucursal a la tuya. Ella debe aceptar el pedido.',
+        hintBajo: 'Productos marcados en rojo tienen stock bajo en tu sucursal.',
+        draft: 'itemsTransfDraft', draftSuc: 'itemsTransfDraft_sucursal_id', extra: 'transfExtra', exito: 'solicitado',
+        vacio: 'Selecciona la sucursal de origen antes de enviar la solicitud.'
+    },
+    directo: {
+        data: prodsEnvio, selName: 'sucursal_destino_id', lblSuc: 'Sucursal destino *',
+        selPlaceholder: 'Selecciona primero la sucursal destino...',
+        lblA: 'Tu sucursal', lblB: 'Destino', lblBSel: 'Destino',
+        btn: 'Guardar pedido de envío', verbo: 'enviar', quien: 'Tu sucursal', yaCuenta: 'ya agregaste',
+        desc: 'Arma un envío para otra sucursal sin que ella tenga que autorizarlo.',
+        hintBajo: 'Productos marcados en rojo tienen stock bajo en la sucursal destino.',
+        draft: 'itemsEnvioDraft', draftSuc: 'itemsEnvioDraft_sucursal_id', extra: 'envioExtra', exito: 'directo_guardado',
+        vacio: 'Selecciona la sucursal destino antes de enviar los productos.'
     }
-})();
-let itemsTransf = (function() {
-    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] (espejo de admin/inventario_transferencias.php)
-    // misma clave de localStorage compartida en el mismo origen con la version de admin, que
-    // SI puede cambiar de sucursal a medio armado de un borrador.
+};
+// Al volver de un guardado exitoso se limpia el borrador de ESE modo (antes de restaurarlo).
+(function() {
     try {
-        const miSuc = <?= intval($_SESSION['sucursal_id']) ?>;
-        const sucGuardada = parseInt(localStorage.getItem('itemsTransfDraft_sucursal_id'));
-        if (sucGuardada !== miSuc) return [];
-        const guardado = JSON.parse(localStorage.getItem('itemsTransfDraft'));
+        const msg = new URLSearchParams(window.location.search).get('msg');
+        Object.keys(MODOS).forEach(function(k) {
+            if (msg === MODOS[k].exito) {
+                localStorage.removeItem(MODOS[k].draft);
+                localStorage.removeItem(MODOS[k].extra);
+                localStorage.setItem('transfModo', k);
+            }
+        });
+    } catch (e) {}
+})();
+let modoTransf = (function() {
+    if (<?= ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($errores)) ? 'true' : 'false' ?>) return <?= json_encode($modoForm) ?>;
+    try { const g = localStorage.getItem('transfModo'); if (g === 'directo' || g === 'solicitud') return g; } catch (e) {}
+    return 'solicitud';
+})();
+function M() { return MODOS[modoTransf]; }
+
+function cargarItemsBorrador(modo) {
+    // [FIX-CARRITO-CROSS-SUCURSAL 2026-09-12] El borrador solo se restaura si es de ESTA sucursal: el
+    // Administrador puede cambiar de sucursal a medio armado, y el stock de referencia guardado seria de la otra.
+    try {
+        const m = MODOS[modo];
+        const sucGuardada = parseInt(localStorage.getItem(m.draftSuc));
+        if (sucGuardada !== MI_SUCURSAL) return [];
+        const guardado = JSON.parse(localStorage.getItem(m.draft));
         return Array.isArray(guardado) ? guardado : [];
     } catch (e) {
         return [];
     }
-})();
+}
+let itemsTransf = cargarItemsBorrador(modoTransf);
 let prodSelId    = null;
 let prodSelTipo  = 'Unidad'; // 'Suelto' o 'Unidad'
-let prodSelStock = 0;        // stock disponible en sucursal origen del producto seleccionado
+let prodSelStock = 0;        // stock disponible (origen en una solicitud; mi sucursal en un envio) del producto seleccionado
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
@@ -1646,11 +1582,47 @@ function escAtribJs(s) {
     return esc(String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
 }
 
+// Pinta las etiquetas/placeholders segun el modo (solicitar o enviar).
+function aplicarModoUI() {
+    const m = M();
+    document.getElementById('tabSolicitud').classList.toggle('activo', modoTransf === 'solicitud');
+    document.getElementById('tabDirecto').classList.toggle('activo', modoTransf === 'directo');
+    document.getElementById('inputModo').value = modoTransf;
+    document.getElementById('modoDescripcion').textContent = m.desc;
+    document.getElementById('lblSucursal').textContent = m.lblSuc;
+    document.getElementById('selOrigen').name = m.selName;
+    document.getElementById('btnGuardarTransf').textContent = m.btn;
+    document.getElementById('hintBajoTxt').textContent = m.hintBajo;
+    document.getElementById('avisoDirecto').style.display = modoTransf === 'directo' ? 'block' : 'none';
+}
+
+function cambiarModoTransf(modo) {
+    if (modo === modoTransf || !MODOS[modo]) return;
+    guardarEstadoTransf();                       // deja guardado el estado del modo que se abandona
+    modoTransf = modo;
+    try { localStorage.setItem('transfModo', modo); } catch (e) {}
+    itemsTransf = cargarItemsBorrador(modo);
+    prodSelId = null;
+    document.getElementById('prodSeleccionado').style.display = 'none';
+    document.getElementById('busquedaProd').value = '';
+    hideSug();
+    aplicarModoUI();
+    // restaurar sucursal y notas guardadas de ESTE modo
+    let extra = null;
+    try { extra = JSON.parse(localStorage.getItem(M().extra)); } catch (e) {}
+    const sel = document.getElementById('selOrigen');
+    const quiere = (extra && extra.sucursalOrigenId && Array.from(sel.options).some(o => o.value === extra.sucursalOrigenId)) ? extra.sucursalOrigenId : '';
+    sel.value = quiere;
+    document.getElementById('notasTransf').value = (extra && extra.notas) ? extra.notas : '';
+    onOrigenChange(quiere);
+    renderItems();
+}
+
 function onOrigenChange(val) {
     const input = document.getElementById('busquedaProd');
     input.value = '';
     input.disabled = !val;
-    input.placeholder = val ? 'Escribe nombre o código...' : 'Selecciona primero la sucursal origen...';
+    input.placeholder = val ? 'Escribe nombre o código...' : M().selPlaceholder;
     document.getElementById('prodSeleccionado').style.display = 'none';
     prodSelId = null;
     hideSug();
@@ -1658,16 +1630,16 @@ function onOrigenChange(val) {
     guardarEstadoTransf();
 }
 
-// [FIX-BORRADOR-TRANSF] Persistencia de la sucursal origen — mismo patrón que
+// [FIX-BORRADOR-TRANSF] Persistencia de la sucursal elegida y las notas — mismo patrón que
 // guardarEstadoVenta() en nuevaVenta.php (los items ya se guardan en renderItems()).
 function guardarEstadoTransf() {
-    localStorage.setItem('transfExtra', JSON.stringify({
+    localStorage.setItem(M().extra, JSON.stringify({
         sucursalOrigenId: document.getElementById('selOrigen')?.value || '',
         notas:            document.getElementById('notasTransf')?.value || ''
     }));
 }
 
-// [FIX-BORRADOR-TRANSF] Botón "Limpiar formulario" — reinicia lista, sucursal origen y notas
+// [FIX-BORRADOR-TRANSF] Botón "Limpiar formulario" — reinicia lista, sucursal y notas
 // por si el usuario quiere empezar de cero sin recargar la página.
 function limpiarFormularioTransf() {
     if (itemsTransf.length > 0 && !confirm('¿Reiniciar el formulario? Se perderán los productos agregados.')) return;
@@ -1682,9 +1654,10 @@ function buscarProducto() {
     const origenId = parseInt(document.getElementById('selOrigen').value) || 0;
     const textoCrudo = document.getElementById('busquedaProd').value.trim();
     let q = textoCrudo.toLowerCase();
-    if (!origenId || !prodsBySucursal[origenId]) { hideSug(); return; }
+    const data = M().data;
+    if (!origenId || !data[origenId]) { hideSug(); return; }
 
-    let prods = [...prodsBySucursal[origenId]].sort((a, b) => {
+    let prods = [...data[origenId]].sort((a, b) => {
         if (a.bajo !== b.bajo) return b.bajo ? 1 : -1;
         return a.nombre.localeCompare(b.nombre);
     });
@@ -1709,6 +1682,7 @@ function buscarProducto() {
 function renderSug(prods, cantRapida) {
     const div = document.getElementById('sugerencias');
     if (!prods.length) { hideSug(); return; }
+    const m = M();
     div.innerHTML = (cantRapida ? BusquedaProductos.htmlAvisoCantidad(cantRapida) : '') + prods.map(p => {
         const esSuelto = p.tipo_venta === 'Suelto';
         const stockFmt = esSuelto ? parseFloat(p.stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(p.stock);
@@ -1722,8 +1696,8 @@ function renderSug(prods, cantRapida) {
                 ${esSuelto ? '<span style="font-size:10px;color:#888;margin-left:4px;">granel</span>' : ''}
             </div>
             <div class="sug-stocks">
-                <span class="sug-stock-row sug-stock-orig">Origen: ${stockFmt}</span>
-                <span class="sug-stock-row sug-stock-dest">Tu sucursal: ${miStockFmt}</span>
+                <span class="sug-stock-row sug-stock-orig">${m.lblA}: ${stockFmt}</span>
+                <span class="sug-stock-row sug-stock-dest">${m.lblB}: ${miStockFmt}</span>
             </div>
         </div>`;
     }).join('');
@@ -1733,7 +1707,7 @@ function renderSug(prods, cantRapida) {
 function hideSug() { document.getElementById('sugerencias').style.display = 'none'; }
 
 // [FEATURE-BUSQUEDA-CODIGO] Captura rapida con Enter en el buscador: "4*codigo" agrega 4 piezas de ese producto
-// a la lista (se SUMAN a lo que ya estuviera pedido); un codigo exacto solo elige el producto para capturar la
+// a la lista (se SUMAN a lo que ya estuviera en ella); un codigo exacto solo elige el producto para capturar la
 // cantidad. Si hay un resultado resaltado con las flechas, Enter lo elige (lo maneja dropdown_keynav.js).
 function agregarRapidoTransf(p, cant) {
     const esSuelto = p.tipo_venta === 'Suelto';
@@ -1747,8 +1721,9 @@ function agregarRapidoTransf(p, cant) {
     const stock  = parseFloat(p.stock) || 0;
     if (total > stock + 0.0005) {
         const stockFmt = esSuelto ? parseFloat(stock.toFixed(3)) : Math.floor(stock);
-        BusquedaProductos.aviso('La sucursal origen solo tiene ' + stockFmt + ' disponible(s) de "' + p.nombre + '"' +
-            (existe ? ' (ya pediste ' + existe.cantidad + ').' : '.'), true, 5000);
+        const m = M();
+        BusquedaProductos.aviso((modoTransf === 'directo' ? 'Tu sucursal solo tiene ' : 'La sucursal origen solo tiene ') + stockFmt + ' disponible(s) de "' + p.nombre + '"' +
+            (existe ? ' (' + m.yaCuenta + ' ' + existe.cantidad + ').' : '.'), true, 5000);
         return;
     }
     if (existe) { existe.cantidad = total; existe.tipo_venta = p.tipo_venta || 'Unidad'; }
@@ -1762,34 +1737,39 @@ function agregarRapidoTransf(p, cant) {
     BusquedaProductos.aviso(cant + ' × ' + p.nombre + ' agregado' + (existe ? ' (total ' + total + ')' : ''), false, 2500);
 }
 
-document.getElementById('busquedaProd').addEventListener('keydown', function(e) {
-    if (e.key !== 'Enter') return;
-    if (BusquedaProductos.hayResaltado(document.getElementById('sugerencias'))) return;
-    const val = this.value.trim();
-    if (!val) return;
-    const origenId = parseInt(document.getElementById('selOrigen').value) || 0;
-    if (!origenId || !prodsBySucursal[origenId]) return;
-    const lista = prodsBySucursal[origenId];
-    const r = BusquedaProductos.resolverRapido(val, c => BusquedaProductos.buscarExacto(lista, c, p => p.codigo));
-    if (!r) return;                       // no es un codigo exacto ni cantidad*codigo: todo como siempre
-    e.preventDefault();
-    if (r.noExiste) {
-        BusquedaProductos.aviso('No existe ningún producto con el código "' + r.noExiste + '" en la sucursal origen.', true, 4000);
-        return;
-    }
-    const p = r.item;
-    if (!r.explicita) {                   // codigo exacto sin cantidad: se elige el producto y se captura la cantidad
-        seleccionarProd(p.id, p.nombre, p.codigo, p.stock, p.mi_stock, p.bajo, p.tipo_venta || 'Unidad');
-        return;
-    }
-    agregarRapidoTransf(p, r.cantidad);
-});
+const _busquedaProdEl = document.getElementById('busquedaProd');
+if (_busquedaProdEl) {
+    _busquedaProdEl.addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter') return;
+        if (BusquedaProductos.hayResaltado(document.getElementById('sugerencias'))) return;
+        const val = this.value.trim();
+        if (!val) return;
+        const origenId = parseInt(document.getElementById('selOrigen').value) || 0;
+        const data = M().data;
+        if (!origenId || !data[origenId]) return;
+        const lista = data[origenId];
+        const r = BusquedaProductos.resolverRapido(val, c => BusquedaProductos.buscarExacto(lista, c, p => p.codigo));
+        if (!r) return;                       // no es un codigo exacto ni cantidad*codigo: todo como siempre
+        e.preventDefault();
+        if (r.noExiste) {
+            BusquedaProductos.aviso('No existe ningún producto con el código "' + r.noExiste + '" ' + (modoTransf === 'directo' ? 'disponible en tu sucursal para enviar.' : 'en la sucursal origen.'), true, 4000);
+            return;
+        }
+        const p = r.item;
+        if (!r.explicita) {                   // codigo exacto sin cantidad: se elige el producto y se captura la cantidad
+            seleccionarProd(p.id, p.nombre, p.codigo, p.stock, p.mi_stock, p.bajo, p.tipo_venta || 'Unidad');
+            return;
+        }
+        agregarRapidoTransf(p, r.cantidad);
+    });
+}
 
 function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta, cantidadRapida) {
     prodSelId    = id;
     prodSelTipo  = tipoVenta || 'Unidad';
     prodSelStock = parseFloat(stock) || 0;
     const esSuelto = prodSelTipo === 'Suelto';
+    const m = M();
 
     document.getElementById('busquedaProd').value = nombre;
     hideSug();
@@ -1798,8 +1778,8 @@ function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta, c
     const stockFmt   = esSuelto ? parseFloat(stock).toFixed(3).replace(/\.?0+$/,'')    : Math.floor(stock);
     const miStockFmt = esSuelto ? parseFloat(mi_stock).toFixed(3).replace(/\.?0+$/,'') : Math.floor(mi_stock);
     document.getElementById('prodSelStock').innerHTML =
-        'Origen: <strong style="color:#1565c0;">' + stockFmt + '</strong>' +
-        ' &nbsp;|&nbsp; Destino (tu sucursal): <strong style="color:#2e7d32;">' + miStockFmt + '</strong>' +
+        m.lblA + ': <strong style="color:#1565c0;">' + stockFmt + '</strong>' +
+        ' &nbsp;|&nbsp; ' + m.lblBSel + ': <strong style="color:#2e7d32;">' + miStockFmt + '</strong>' +
         (bajo ? ' <span style="color:#c0392b;font-size:11px;">(stock bajo)</span>' : '') +
         (esSuelto ? ' <span style="font-size:11px;color:#888;">&nbsp;— granel (acepta decimales)</span>' : '');
 
@@ -1807,8 +1787,9 @@ function seleccionarProd(id, nombre, codigo, stock, mi_stock, bajo, tipoVenta, c
     inpCant.step        = esSuelto ? '0.001' : '1';
     inpCant.min         = esSuelto ? '0.001' : '1';
     inpCant.inputMode   = esSuelto ? 'decimal' : 'numeric';
+    inpCant.max         = String(prodSelStock);   // la flechita no pasa de lo disponible
     inpCant.placeholder = esSuelto ? 'Cantidad (ej. 2.5)' : 'Cantidad (número entero)';
-    // [FEATURE-BUSQUEDA-CODIGO] cantidad pedida con "4*codigo": se precarga (agregarItem valida entero y stock)
+    // [FEATURE-BUSQUEDA-CODIGO] cantidad con "4*codigo": se precarga (agregarItem valida entero y stock)
     inpCant.value = (cantidadRapida !== undefined && cantidadRapida !== null) ? cantidadRapida : '';
 
     document.getElementById('prodSeleccionado').style.display = 'block';
@@ -1827,12 +1808,13 @@ function agregarItem() {
         }
         cant = Math.floor(cant);
     }
-    // Validar que la cantidad no supere el stock disponible en la sucursal origen
+    // Validar que la cantidad no supere el stock disponible (en origen al solicitar; en mi sucursal al enviar)
     if (cant > prodSelStock) {
         const stockFmt = esSuelto
             ? parseFloat(prodSelStock).toFixed(3).replace(/\.?0+$/, '')
             : Math.floor(prodSelStock);
-        alert('No se puede pedir ' + cant + ' unidades. La sucursal origen solo tiene ' + stockFmt + ' disponibles.');
+        const m = M();
+        alert('No se puede ' + m.verbo + ' ' + cant + ' unidades. ' + m.quien + ' solo tiene ' + stockFmt + ' disponibles.');
         return;
     }
 
@@ -1850,8 +1832,8 @@ function agregarItem() {
 
 function renderItems() {
     // [FIX-BORRADOR-TRANSF] Persistir la lista en cada render, igual que nuevaVenta.php.
-    localStorage.setItem('itemsTransfDraft', JSON.stringify(itemsTransf));
-    localStorage.setItem('itemsTransfDraft_sucursal_id', String(<?= intval($_SESSION['sucursal_id']) ?>));
+    localStorage.setItem(M().draft, JSON.stringify(itemsTransf));
+    localStorage.setItem(M().draftSuc, String(MI_SUCURSAL));
     const div = document.getElementById('listaItems');
     if (!itemsTransf.length) {
         div.innerHTML = '<div class="items-vacio">Sin productos agregados</div>';
@@ -1874,11 +1856,11 @@ function quitarItem(idx) {
 }
 
 function prepararEnvio() {
-    // [AUTOFIX] BUG-07: Validar explícitamente que se haya seleccionado una sucursal de origen
-    const origen = document.getElementById('selOrigen').value;
-    if (!origen) {
-        alert('Selecciona la sucursal de origen antes de enviar la solicitud.');
-        document.getElementById('selOrigen').focus();
+    // [AUTOFIX] BUG-07: Validar explícitamente que se haya seleccionado una sucursal
+    const sel = document.getElementById('selOrigen');
+    if (!sel.value) {
+        alert(M().vacio);
+        sel.focus();
         return false;
     }
     if (!itemsTransf.length) { alert('Agrega al menos un producto.'); return false; }
@@ -1889,18 +1871,30 @@ function prepararEnvio() {
 }
 
 // Cerrar sugerencias al perder foco (delay para permitir click en una sugerencia)
-document.getElementById('busquedaProd').addEventListener('blur', function() {
-    setTimeout(hideSug, 200);
-});
+if (_busquedaProdEl) {
+    _busquedaProdEl.addEventListener('blur', function() {
+        setTimeout(hideSug, 200);
+    });
+}
 
 // ── Editar pedido de transferencia (todos sus productos en una sola pantalla) ────────────────
 function fmtCantPed(n, suelto) {
     return suelto ? parseFloat(n).toFixed(3).replace(/\.?0+$/, '') : String(Math.floor(n));
 }
 
+let _mepDirecto = false;
 function abrirModalEditarPedido(btn) {
     let filas = [];
     try { filas = JSON.parse(btn.getAttribute('data-filas') || '[]'); } catch (e) { filas = []; }
+    // [FEATURE-ENVIO-DIRECTO] En un envio directo el destino no autoriza nada: los cambios aplican de inmediato.
+    _mepDirecto = filas.length > 0 && !!filas[0].directo;
+    const aviso = document.getElementById('mepAviso');
+    if (aviso) {
+        if (!aviso.dataset.original) aviso.dataset.original = aviso.innerHTML;
+        aviso.innerHTML = _mepDirecto
+            ? 'Este es un <strong>envío directo</strong>: la otra sucursal no tiene que aceptar los cambios, se aplican al guardar. Pon <strong>0</strong> en un producto para quitarlo del pedido. El stock se descuenta hasta que lo marques como enviado.'
+            : aviso.dataset.original;
+    }
     const lista = document.getElementById('modalEditPedidoLista');
     lista.innerHTML = '';
     filas.forEach(function (f) {
@@ -1916,7 +1910,7 @@ function abrirModalEditarPedido(btn) {
         cod.textContent = f.codigo + (f.estado === 'Modificada' ? ' · esperando confirmación del destino' : '');
         const det = document.createElement('div');
         det.className = 'mep-det';
-        det.textContent = 'Pedido: ' + fmtCantPed(f.cantidad, f.suelto) + (editable ? ' · Stock en origen: ' + fmtCantPed(f.stock, f.suelto) : '');
+        det.textContent = (f.directo ? 'En el pedido: ' : 'Pedido: ') + fmtCantPed(f.cantidad, f.suelto) + (editable ? (f.directo ? ' · Stock en tu sucursal: ' : ' · Stock en origen: ') + fmtCantPed(f.stock, f.suelto) : '');
         info.appendChild(nom); info.appendChild(cod); info.appendChild(det);
         fila.appendChild(info);
         if (editable) {
@@ -1926,6 +1920,7 @@ function abrirModalEditarPedido(btn) {
             inp.value = fmtCantPed(f.cantidad, f.suelto);
             inp.step = f.suelto ? '0.001' : '1';
             inp.min = '0';
+            inp.max = String(f.stock);   // la flechita no pasa del stock disponible
             inp.inputMode = f.suelto ? 'decimal' : 'numeric';
             inp.className = 'mep-input';
             inp.dataset.suelto = f.suelto ? '1' : '0';
@@ -1961,7 +1956,7 @@ function confirmarEditarPedido() {
         if (isNaN(val) || val < 0) { alert('"' + nombre + '": ingresa una cantidad válida (0 o mayor).'); inp.focus(); return; }
         if (!suelto && val !== Math.floor(val)) { alert('"' + nombre + '" no es granel: la cantidad debe ser un número entero.'); inp.focus(); return; }
         if (val === 0) {
-            if (inp.dataset.estado !== 'Pendiente') { alert('"' + nombre + '" ya fue aceptado: la cantidad mínima es 1. Si no lo vas a enviar, cancela el pedido.'); inp.focus(); return; }
+            if (inp.dataset.estado !== 'Pendiente' && !_mepDirecto) { alert('"' + nombre + '" ya fue aceptado: la cantidad mínima es 1. Si no lo vas a enviar, cancela el pedido.'); inp.focus(); return; }
             cambios++;
             continue;
         }
@@ -1973,8 +1968,8 @@ function confirmarEditarPedido() {
         }
     }
     const hayModificadas = document.querySelectorAll('#modalEditPedidoLista .mep-fila').length > inputs.length;
-    if (cambios === 0) { alert('No cambiaste ninguna cantidad. Si todo está bien, cierra esta ventana y usa "Aceptar pedido".'); return; }
-    if (quedan === 0 && !hayModificadas) { alert('No puedes retirar todos los productos del pedido. Si no vas a enviar nada, usa "Rechazar pedido".'); return; }
+    if (cambios === 0) { alert(_mepDirecto ? 'No cambiaste ninguna cantidad.' : 'No cambiaste ninguna cantidad. Si todo está bien, cierra esta ventana y usa "Aceptar pedido".'); return; }
+    if (quedan === 0 && !hayModificadas) { alert(_mepDirecto ? 'No puedes quitar todos los productos del pedido. Si no vas a enviar nada, usa "Cancelar pedido".' : 'No puedes retirar todos los productos del pedido. Si no vas a enviar nada, usa "Rechazar pedido".'); return; }
     const frm = document.getElementById('formEditarPedido');
     frm.querySelectorAll('input[data-cant-copia]').forEach(function (x) { x.remove(); });
     inputs.forEach(function (inp) {
@@ -1994,12 +1989,14 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-// [FIX-BORRADOR-TRANSF] Restaurar productos/sucursal origen en curso, mismo patrón que
+// [FIX-BORRADOR-TRANSF] Restaurar modo, productos y sucursal en curso, mismo patrón que
 // restaurarEstadoVenta() en nuevaVenta.php. Se lee "extra" ANTES de renderItems() por si
 // acaso esa función llegara a disparar algun guardado propio en el futuro.
 (function restaurarEstadoTransf() {
+    if (!document.getElementById('formTransf')) return;   // vista sin formulario (Admin en "todas las sucursales")
+    aplicarModoUI();
     let extra = null;
-    try { extra = JSON.parse(localStorage.getItem('transfExtra')); } catch (e) {}
+    try { extra = JSON.parse(localStorage.getItem(M().extra)); } catch (e) {}
 
     renderItems();
 
@@ -2082,11 +2079,12 @@ function generarTicketEnvioHTML(d) {
         <div class="t-linea"></div>
         <div class="t-centro t-bold">ENVÍO A SUCURSAL</div>
         <div class="t-linea"></div>
-        <div class="t-fila"><span>Pedido:</span><span>#${esc(d.pedido)}</span></div>
+        <div class="t-fila"><span>Folio:</span><span class="t-bold">${esc(d.folio || ('#' + d.pedido))}</span></div>
+        ${d.directo ? '<div class="t-centro t-bold">** ENVÍO DIRECTO **</div>' : ''}
         <div class="t-fila"><span>Fecha envío:</span><span>${esc(d.fecha_envio || '—')}</span></div>
         <div class="t-fila"><span>Origen:</span><span style="text-align:right;">${esc(o.nombre || '')}</span></div>
         <div class="t-fila"><span>Destino:</span><span style="text-align:right;">${esc(d.destino || '')}</span></div>
-        <div class="t-fila"><span>Solicitó:</span><span style="text-align:right;">${esc(d.solicitante || '—')}</span></div>
+        ${d.directo ? '' : `<div class="t-fila"><span>Solicitó:</span><span style="text-align:right;">${esc(d.solicitante || '—')}</span></div>`}
         <div class="t-fila"><span>Envió:</span><span style="text-align:right;">${esc(d.enviado_por || '—')}</span></div>
         <div class="t-linea"></div>
         <div class="t-fila t-bold"><span>Producto enviado</span><span>Cant.</span></div>
@@ -2112,20 +2110,13 @@ function generarTicketEnvioHTML(d) {
     html += `
         <div class="t-linea"></div>
         <div style="margin-top:6px;">¿Pedido completo?  [ ] Sí   [ ] No</div>
-        <div style="margin-top:8px;">Observaciones:</div>
-        <div style="margin-top:16px;border-top:1px solid #000;"></div>
-        <div style="margin-top:16px;border-top:1px solid #000;"></div>
-        <div style="margin-top:16px;border-top:1px solid #000;"></div>
-        <div style="margin-top:16px;border-top:1px solid #000;"></div>
-        <div style="margin-top:16px;border-top:1px solid #000;"></div>
-        <div style="margin-top:16px;border-top:1px solid #000;"></div>
         <div class="t-linea"></div>
         <div class="t-centro" style="font-size:10px;margin-top:4px;">Conserve este comprobante</div>`;
 
     el.innerHTML = html;
 }
 
-function abrirTicketEnvio(id) {
+function abrirTicketEnvio(id, imprimirSolo) {
     fetch('transferencias.php?ticket_envio=' + encodeURIComponent(id))
         .then(r => r.json())
         .then(d => {
@@ -2136,6 +2127,7 @@ function abrirTicketEnvio(id) {
             const m = document.getElementById('modalTicketEnvio');
             m.style.display = 'flex';
             m.setAttribute('aria-hidden', 'false');
+            if (imprimirSolo) setTimeout(imprimirTicketEnvio, 250);   // recien marcado enviado: impresion automatica
         })
         .catch(() => alert('No se pudo cargar el ticket de envío.'));
 }
@@ -2169,8 +2161,9 @@ function imprimirTicketEnvio() {
     const p = new URLSearchParams(window.location.search);
     const t = parseInt(p.get('abrir_ticket') || '0', 10);
     if (t > 0) {
-        abrirTicketEnvio(t);
+        abrirTicketEnvio(t, p.get('imprimir_ticket') === '1');
         p.delete('abrir_ticket');
+        p.delete('imprimir_ticket');
         try { history.replaceState(null, '', window.location.pathname + (p.toString() ? '?' + p.toString() : '')); } catch (e) {}
     }
 })();
@@ -2222,7 +2215,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <span style="font-size:14px;font-weight:700;color:#333;">Editar pedido</span>
             <button type="button" onclick="cerrarModalEditarPedido()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;line-height:1;">×</button>
         </div>
-        <div style="font-size:12px;color:#888;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:10px;">
+        <div id="mepAviso" style="font-size:12px;color:#888;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:10px;">
             <?= icono('triangle-alert') ?> Los productos con <strong>cantidad distinta</strong> pasarán a <strong>Modificada</strong> y la sucursal destino deberá aceptar el cambio; los demás quedarán aceptados. Pon <strong>0</strong> en un producto Pendiente para retirarlo del pedido.
         </div>
         <div id="modalEditPedidoLista" style="overflow-y:auto;flex:1;min-height:0;"></div>
@@ -2233,6 +2226,7 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
 </div>
 
+<?php $transfPagina = 'transferencias.php'; include '../includes/transferencias_modales.php'; ?>
 <script src="../includes/busqueda_productos.js"></script>
 <script src="../includes/dropdown_keynav.js"></script>
 <script>

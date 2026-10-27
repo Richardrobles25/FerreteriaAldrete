@@ -84,6 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: unidades.php?msg=muy_largo');
         exit();
     }
+    if ($nombre && textoConEmoji($nombre)) { header('Location: unidades.php?msg=emoji'); exit(); }
 
     if ($nombre) {
         // [AUTOFIX] ERROR-UNIT-01 (portado de admin/inventario_unidades.php): capturar
@@ -324,6 +325,8 @@ if (isset($_GET['editar'])) {
                     <div class="msg msg-error">No puedes eliminar esta unidad porque tiene productos asociados.</div>
                 <?php elseif ($_GET['msg'] === 'no_autorizado'): ?>
                     <div class="msg msg-error">No tienes permisos para esta acción. Tu rol no puede crear, editar ni eliminar unidades de medida.</div>
+                <?php elseif ($_GET['msg'] === 'emoji'): ?>
+                    <div class="msg msg-error">El nombre no puede incluir emojis ni símbolos de ese tipo. Quítalos e intenta de nuevo.</div>
                 <?php elseif ($_GET['msg'] === 'muy_largo'): ?>
                     <div class="msg msg-error">El nombre de la unidad no puede tener más de 30 caracteres.</div>
                 <?php elseif ($_GET['msg'] === 'duplicado'): ?>

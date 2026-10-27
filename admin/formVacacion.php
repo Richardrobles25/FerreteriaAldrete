@@ -64,6 +64,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $vacacion_id  = ($esEdicion && $editando) ? intval($editando['vacacion_id']) : 0;
     $estadosVal   = ['Solicitado','Aprobado','Rechazado'];
 
+    // [FIX-VACACION-NOTAS-SIN-TOPE] notas es TEXT sin tope en el servidor: un texto enorme llegaba al
+    // INSERT y fallaba (modo estricto) con el aviso generico de "no se pudo guardar".
+    if (mb_strlen($notas) > 1000)                         $errores[] = 'Las notas no pueden tener más de 1,000 caracteres.';
     if (!$empleado_id)                                    $errores[] = 'Selecciona un empleado.';
     // [FIX-FECHA-CALENDARIO-INVALIDA] (mismo patron ya corregido en formEmpleado.php y
     // admin/formGasto.php/formAsistencia.php) "!strtotime($fecha)" no rechaza fechas de
@@ -123,6 +126,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $saldoDisp = calcSaldoVacaciones($pdo, $empleado_id, $empRow['fecha_ingreso'], $diaAnterior, $vacacion_id ?: null);
                 if ($diasTomados > $saldoDisp) {
                     $errores[] = "Este empleado solo tiene $saldoDisp dias acumulados disponibles y no puede tomar $diasTomados.";
+                } else {
+                    // [FIX-VACACION-SALDO-POSTERIORES] El check de arriba solo mira el saldo justo
+                    // antes de ESTE periodo. Si el empleado ya tiene registrados periodos
+                    // posteriores, crear o alargar este antes los deja sin saldo (cada uno se
+                    // valido en su momento contra un saldo que ya no es cierto). Probado en vivo:
+                    // 11 dias aprobados + 5 solicitados despues = 16 sobre un tope de 12. Se
+                    // revalida cada periodo posterior con este periodo ya contado.
+                    $stmtPost = $pdo->prepare("
+                        SELECT vacacion_id, fecha_inicio, fecha_fin, dias_tomados FROM vacaciones
+                        WHERE empleado_id = ? AND estado != 'Rechazado' AND vacacion_id != ? AND fecha_inicio > ?
+                        ORDER BY fecha_inicio
+                    ");
+                    $stmtPost->execute([$empleado_id, $vacacion_id, $fecha_inicio]);
+                    foreach ($stmtPost->fetchAll(PDO::FETCH_ASSOC) as $posterior) {
+                        $diaAntesPost = (new DateTime($posterior['fecha_inicio']))->modify('-1 day')->format('Y-m-d');
+                        $saldoAntesPost = calcSaldoVacaciones(
+                            $pdo, $empleado_id, $empRow['fecha_ingreso'], $diaAntesPost, $vacacion_id ?: null,
+                            ['fecha_inicio' => $fecha_inicio, 'dias_tomados' => $diasTomados]
+                        );
+                        if ((int)$posterior['dias_tomados'] > $saldoAntesPost) {
+                            $errores[] = 'Con estas fechas, el periodo que este empleado ya tiene registrado del '
+                                . date('d/m/Y', strtotime($posterior['fecha_inicio'])) . ' al ' . date('d/m/Y', strtotime($posterior['fecha_fin']))
+                                . " se quedaria sin saldo suficiente (le quedarian $saldoAntesPost dias y ese periodo necesita " . (int)$posterior['dias_tomados'] . '). Ajusta uno de los dos periodos.';
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -170,6 +199,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     UPDATE vacaciones SET empleado_id=?, fecha_inicio=?, fecha_fin=?, dias_tomados=?, anio=?, estado=?, notas=?
                     WHERE vacacion_id=?
                 ")->execute([$empleado_id, $fecha_inicio, $fecha_fin, $diasTomados, $anio, $estado, $notas ?: null, $vacacion_id]);
+                // [FEATURE-VACACIONES-AUTOMATICAS] Unas vacaciones aprobadas se pagan solas en Semana laboral; si se mueven de fechas o
+                // de empleado, se recalculan las horas extra por dia (informativas) de las semanas que dejan y de las que tocan.
+                if ($estado === 'Aprobado') {
+                    recalcularExtrasPorVacacion($pdo, $empleado_id, $fecha_inicio, $fecha_fin);
+                    if ($editando) recalcularExtrasPorVacacion($pdo, (int)$editando['empleado_id'], $editando['fecha_inicio'], $editando['fecha_fin']);
+                }
                 header('Location: vacaciones.php?msg=actualizado');
             } else {
                 $pdo->prepare("
@@ -181,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($lockVacacion) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockVacacion) . ")");
             exit();
         } catch (PDOException $e) {
-            $errores[] = 'No se pudo guardar la vacación. Verifica que el empleado siga existiendo e intenta de nuevo.';
+            $errores[] = textoNoCompatibleBD($e) ? 'El texto contiene caracteres que el sistema no puede guardar (por ejemplo emojis). Quítalos e intenta de nuevo.' : 'No se pudo guardar la vacación. Verifica que el empleado siga existiendo e intenta de nuevo.';
         }
     }
     if ($lockVacacion && $lockVacAdquirido) $pdo->query("SELECT RELEASE_LOCK(" . $pdo->quote($lockVacacion) . ")");

@@ -166,6 +166,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (mb_strlen($direccion) > 255)       $errores[] = 'La dirección no puede tener más de 255 caracteres.';
     if (mb_strlen($correo) > 100)          $errores[] = 'El correo no puede tener más de 100 caracteres.';
     if (mb_strlen($notas) > 255)           $errores[] = 'Las notas no pueden tener más de 255 caracteres.';
+    // [FIX-EMOJI-CLIENTE] un emoji en el nombre, la direccion o las notas hacia fallar el guardado (modo estricto) con el aviso generico "No se pudo guardar".
+    if (textoConEmoji($nombre_completo) || textoConEmoji($direccion) || textoConEmoji($notas)) $errores[] = 'El nombre, la dirección y las notas no pueden llevar emojis. Quítalos e intenta de nuevo.';
     if ($telefono !== '' && (!ctype_digit($telefono) || strlen($telefono) !== 10)) $errores[] = 'El teléfono debe tener exactamente 10 dígitos numéricos.';
     // [AUTOFIX] V-01: Validar formato de email en backend
     if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
@@ -196,7 +198,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $lockTelefono     = null;
     $lockTelAdquirido = true;
     if ($telefono !== '') {
-        $lockTelefono     = 'cliente_telefono_' . $telefono;
+        // [FIX-LOCK-NOMBRE-LARGO] El nombre de un GET_LOCK admite maximo 64 caracteres: con un telefono largo (10,000
+        // caracteres capturados) el candado tronaba con un error fatal. Se usa el hash del valor.
+        $lockTelefono     = 'cliente_telefono_' . md5($telefono);
         $lockTelAdquirido = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockTelefono) . ", 5)")->fetchColumn();
         if (!$lockTelAdquirido) {
             $errores[] = 'Otro usuario está guardando un cliente con este mismo teléfono en este momento. Intenta de nuevo.';

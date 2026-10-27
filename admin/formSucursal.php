@@ -65,11 +65,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ticket_nota_credito   = trim(is_scalar($_POST['ticket_nota_credito'] ?? null) ? (string)$_POST['ticket_nota_credito'] : '');
     $porcentaje_mora       = floatval(is_scalar($_POST['porcentaje_mora'] ?? null) ? $_POST['porcentaje_mora'] : 0);
 
+    // [FIX-SUCURSAL-EMOJI] La conexion usa charset utf8 (3 bytes): un emoji en cualquier texto de la sucursal
+    // hacia fallar la consulta de nombre duplicado / el guardado con un error fatal ("Illegal mix of collations").
+    foreach ([$nombre, $rfc, $direccion, $telefono, $datos_ticket, $banco, $titular_cuenta, $numero_cuenta, $clabe_interbancaria, $alias_tarjeta,
+              $banco_fact, $titular_cuenta_fact, $numero_cuenta_fact, $clabe_interbancaria_fact, $alias_tarjeta_fact,
+              $ticket_pie, $ticket_pie_efectivo, $ticket_pie_credito, $ticket_pie_terminal, $ticket_nota_credito] as $textoSuc) {
+        if (textoConEmoji($textoSuc)) { $errores[] = 'Los textos de la sucursal no pueden incluir emojis ni símbolos de ese tipo. Quítalos e intenta de nuevo.'; break; }
+    }
     if (!$nombre) $errores[] = 'El nombre de la sucursal es obligatorio.';
     // [FIX-MEDIO-A-17] Antes no habia ningun chequeo de nombre duplicado ni UNIQUE en BD:
     // se podian crear dos sucursales con el mismo nombre, confundiendo reportes y selectores
     // que las listan solo por nombre.
-    elseif ($nombre) {
+    elseif ($nombre && !textoConEmoji($nombre)) {
         $stmtDupNombre = $pdo->prepare("SELECT COUNT(*) FROM sucursales WHERE nombre = ? AND sucursal_id != ?");
         $stmtDupNombre->execute([$nombre, $sucursal_id]);
         if ($stmtDupNombre->fetchColumn() > 0) $errores[] = 'Ya existe una sucursal con ese nombre.';
@@ -378,7 +385,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="form-group">
                         <label>% Comisión de terminal</label>
                         <?php
-                            $comVal = $_POST['comision_terminal_pct'] ?? $editando['comision_terminal_pct'] ?? '';
+                            $comVal = is_scalar($_POST['comision_terminal_pct'] ?? null) ? $_POST['comision_terminal_pct'] : ($editando['comision_terminal_pct'] ?? '');
                             $comVal = (floatval($comVal) == 0 && !isset($_POST['comision_terminal_pct'])) ? '' : $comVal;
                         ?>
                         <input type="number" name="comision_terminal_pct" step="0.01" min="0" max="100"
@@ -421,7 +428,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 maxlength="18"
                                 oninput="this.value=this.value.replace(/\D/g,'').slice(0,18)"
                                 id="inputClabe">
-                            <div class="hint" id="hintClabe"><?= strlen($_POST['clabe_interbancaria'] ?? $editando['clabe_interbancaria'] ?? '') ?>/18 dígitos</div>
+                            <div class="hint" id="hintClabe"><?= strlen((string)(is_scalar($_POST['clabe_interbancaria'] ?? null) ? $_POST['clabe_interbancaria'] : ($editando['clabe_interbancaria'] ?? ''))) ?>/18 dígitos</div>
                         </div>
                     </div>
 
@@ -473,7 +480,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 maxlength="18"
                                 oninput="this.value=this.value.replace(/\D/g,'').slice(0,18)"
                                 id="inputClabeFact">
-                            <div class="hint" id="hintClabeFact"><?= strlen($_POST['clabe_interbancaria_fact'] ?? $editando['clabe_interbancaria_fact'] ?? '') ?>/18 dígitos</div>
+                            <div class="hint" id="hintClabeFact"><?= strlen((string)(is_scalar($_POST['clabe_interbancaria_fact'] ?? null) ? $_POST['clabe_interbancaria_fact'] : ($editando['clabe_interbancaria_fact'] ?? ''))) ?>/18 dígitos</div>
                         </div>
                     </div>
 

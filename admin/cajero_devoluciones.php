@@ -12,7 +12,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if ($sucursalVista === 0) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();
 }
 
@@ -40,6 +40,27 @@ $cajaId = intval($_stmtCajaGuard->fetchColumn() ?: 0);
 
 $errores = [];
 $exito   = false;
+
+// [FEATURE-PRODUCTOS-DANADOS] Control de la tabla de productos dañados (mermas por regresar al proveedor):
+// "regresar" marca el producto como entregado al proveedor (con fecha y nota); "reabrir" lo deja otra vez pendiente.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['danado_accion'])) {
+    requerirCSRF($_POST['_token'] ?? '', 'cajero_devoluciones.php');
+    $danadoId     = intval(is_scalar($_POST['danado_id'] ?? null) ? $_POST['danado_id'] : 0);
+    $danadoAccion = is_scalar($_POST['danado_accion'] ?? null) ? (string)$_POST['danado_accion'] : '';
+    $danadoNota   = mb_substr(trim(is_scalar($_POST['danado_nota'] ?? null) ? (string)$_POST['danado_nota'] : ''), 0, 255);
+    if (textoConEmoji($danadoNota)) $danadoNota = '';
+    if ($danadoAccion === 'regresar') {
+        $pdo->prepare("UPDATE productos_danados SET estado = 'Regresado', regresado_en = NOW(), regresado_por = ?, nota_regreso = ?
+                       WHERE danado_id = ? AND sucursal_id = ? AND estado = 'Pendiente'")
+            ->execute([$_SESSION['usuario_id'], $danadoNota !== '' ? $danadoNota : null, $danadoId, $sucursalVista]);
+    } elseif ($danadoAccion === 'reabrir') {
+        $pdo->prepare("UPDATE productos_danados SET estado = 'Pendiente', regresado_en = NULL, regresado_por = NULL, nota_regreso = NULL
+                       WHERE danado_id = ? AND sucursal_id = ? AND estado = 'Regresado'")
+            ->execute([$danadoId, $sucursalVista]);
+    }
+    header('Location: cajero_devoluciones.php?danados=1');
+    exit();
+}
 
 function formatearMotivoDevolucion(string $motivo): string
 {
@@ -248,7 +269,7 @@ if (isset($_GET['cancelar_dev'])) {
     // [FIX-CAJA-REDIRECT-AJAX] Este handler SI necesita una caja abierta (registra el
     // ingreso de efectivo al cancelar) y responde por redirect, no JSON.
     if (!$cajaId) {
-        header('Location: cajero_abrirCaja.php?msg=sinCaja');
+        recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
         exit();
     }
     // [AUTOFIX] SEC-01: Verificar CSRF token antes de accion destructiva por GET
@@ -278,8 +299,43 @@ if (isset($_GET['cancelar_dev'])) {
     $stmtM->execute([$devolucion_id]);
     $movimientos = $stmtM->fetchAll(PDO::FETCH_ASSOC);
 
+    // [FEATURE-PRODUCTOS-DANADOS] Si parte de esta devolucion eran piezas dañadas que YA se entregaron al proveedor, la
+    // devolucion no se puede cancelar (esas piezas ya no estan aqui para reponerlas al inventario).
+    $stmtDanReg = $pdo->prepare("SELECT COUNT(*) FROM productos_danados WHERE devolucion_id = ? AND estado = 'Regresado'");
+    $stmtDanReg->execute([$devolucion_id]);
+    if (intval($stmtDanReg->fetchColumn()) > 0) { header('Location: cajero_devoluciones.php?msg=danado_regresado'); exit(); }
+    $stmtDanPend = $pdo->prepare("SELECT * FROM productos_danados WHERE devolucion_id = ? AND estado = 'Pendiente'");
+    $stmtDanPend->execute([$devolucion_id]);
+    $danadosDeLaDev = $stmtDanPend->fetchAll(PDO::FETCH_ASSOC);
+
     $pdo->beginTransaction();
     try {
+        // [FIX-RACE-CANCELAR-DEVOLUCION] Las revisiones de arriba (ya cancelada / piezas ya regresadas) se hicieron SIN candado: un doble clic
+        // en "Cancelar" (o dos cajas a la vez) revertia el stock y el total dos veces, y un "Regresado al proveedor" confirmado justo en medio
+        // se pisaba como "Cancelado" metiendo de vuelta al inventario una pieza que ya se habia entregado. Se vuelve a leer todo bajo candado.
+        $stmtLockDev = $pdo->prepare("SELECT cancelada_en FROM devoluciones WHERE devolucion_id = ? FOR UPDATE");
+        $stmtLockDev->execute([$devolucion_id]);
+        if ($stmtLockDev->fetchColumn() !== null) { $pdo->rollBack(); header('Location: cajero_devoluciones.php?msg=ya_cancelada'); exit(); }
+        $stmtLockDan = $pdo->prepare("SELECT * FROM productos_danados WHERE devolucion_id = ? AND estado IN ('Pendiente', 'Regresado') FOR UPDATE");
+        $stmtLockDan->execute([$devolucion_id]);
+        $danadosDeLaDev = [];
+        foreach ($stmtLockDan->fetchAll(PDO::FETCH_ASSOC) as $ddLock) {
+            if ($ddLock['estado'] === 'Regresado') { $pdo->rollBack(); header('Location: cajero_devoluciones.php?msg=danado_regresado'); exit(); }
+            $danadosDeLaDev[] = $ddLock;
+        }
+        // Las piezas dañadas (merma) de esta devolucion vuelven primero al stock, para que la reversa de la entrada
+        // completa de abajo deje el inventario exactamente como estaba antes de la devolucion.
+        foreach ($danadosDeLaDev as $dd) {
+            $stmtSD = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
+            $stmtSD->execute([$dd['producto_id'], $sucursalVista]);
+            $stockAntD = floatval($stmtSD->fetchColumn());
+            $stockNuevoD = $stockAntD + floatval($dd['cantidad']);
+            $pdo->prepare("INSERT INTO stock_sucursal (producto_id, sucursal_id, stock_actual, stock_minimo, stock_maximo, activo) VALUES (?, ?, ?, 0, 0, 1) ON DUPLICATE KEY UPDATE stock_actual = VALUES(stock_actual)")
+                ->execute([$dd['producto_id'], $sucursalVista, $stockNuevoD]);
+            $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,?,'Entrada',?,?,?,?)")
+                ->execute([$dd['producto_id'], $_SESSION['usuario_id'], $sucursalVista, $dd['cantidad'], $stockAntD, $stockNuevoD, 'Reversa de merma por cancelacion de devolucion #' . $devolucion_id]);
+            $pdo->prepare("UPDATE productos_danados SET estado = 'Cancelado' WHERE danado_id = ?")->execute([$dd['danado_id']]);
+        }
         foreach ($movimientos as $m) {
             $stmtS = $pdo->prepare("SELECT stock_actual FROM stock_sucursal WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE");
             $stmtS->execute([$m['producto_id'], $sucursalVista]);
@@ -406,7 +462,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // [FIX-CAJA-REDIRECT-AJAX] Este handler SI necesita una caja abierta (registra el
     // retiro de efectivo del reembolso) y responde por redirect, no JSON.
     if (!$cajaId) {
-        header('Location: cajero_abrirCaja.php?msg=sinCaja');
+        recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
         exit();
     }
     // [FIX-A1] Verificar CSRF antes de procesar la devolución
@@ -414,11 +470,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $venta_id      = intval(is_scalar($_POST['venta_id'] ?? null) ? $_POST['venta_id'] : 0);
     $productosDevRaw = is_scalar($_POST['productos_devolver'] ?? null) ? $_POST['productos_devolver'] : '[]';
     $productos_dev = json_decode($productosDevRaw ?? '[]', true);
+    // [FIX-DEVOLUCION-VACIA] La lista debe ser un arreglo de lineas (objetos). Un texto, un numero o elementos que no son
+    // objetos ("[1,2,3]", "[null]") no son una devolucion valida: antes pasaban el "no vacio" y se guardaba una devolucion
+    // de $0.00 (con su retiro de caja en cero) que ademas dejaba la venta en "Modificado".
+    $productos_dev = is_array($productos_dev) ? array_values(array_filter($productos_dev, 'is_array')) : [];
     $motivo        = trim(is_scalar($_POST['motivo'] ?? null) ? (string)$_POST['motivo'] : '');
 
     if (!$venta_id)              $errores[] = 'Selecciona una venta.';
     if (empty($productos_dev))   $errores[] = 'Selecciona al menos un producto a devolver.';
     if (!$motivo)                $errores[] = 'El motivo es obligatorio.';
+    // [FIX-MOTIVO-LARGO-DEVOLUCION] El motivo se guarda con el prefijo "Devolucion venta #N folio:F: " en movimientos_inventario.motivo (varchar 255):
+    // sin tope, un motivo largo hacia fallar la devolucion completa en el servidor (modo estricto) sin explicar por que.
+    if (mb_strlen($motivo) > 200) $errores[] = 'El motivo no puede tener más de 200 caracteres.';
+    // [FIX-EMOJI-MOTIVO] La conexion usa utf8 (3 bytes): un emoji hace fallar el INSERT en el servidor (modo estricto).
+    if (textoConEmoji($motivo))  $errores[] = 'El texto contiene caracteres que el sistema no puede guardar (por ejemplo emojis). Quítalos e intenta de nuevo.';
 
     if (empty($errores)) {
         // [FIX-RACE-DEVOLUCION] Candado por venta_id: "cuanto ya se devolvio" (mas abajo) se
@@ -555,6 +620,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
 
+            // [FEATURE-PRODUCTOS-DANADOS] Piezas dañadas de ESTA linea (solo productos sueltos, no combos): no regresan
+            // al inventario vendible, salen como merma y quedan en la tabla de productos dañados por regresar al
+            // proveedor. El reembolso al cliente no cambia: se devuelve igual.
+            $cantidadDanadaCruda = ($paqueteId === null) ? ($prod['cantidad_danada'] ?? 0) : 0;
+            if ($cantidadDanadaCruda === '' || $cantidadDanadaCruda === null) $cantidadDanadaCruda = 0;
+            // Solo un numero real: "2abc", true/false, arreglos o texto se rechazan (floatval los habria leido como 2, 1 o 0 en silencio).
+            if (!(is_int($cantidadDanadaCruda) || is_float($cantidadDanadaCruda) || (is_string($cantidadDanadaCruda) && is_numeric($cantidadDanadaCruda)))) {
+                $errores[] = 'Las piezas dañadas no son válidas.';
+                continue;
+            }
+            $cantidadDanada = floatval($cantidadDanadaCruda);
+            if (!is_finite($cantidadDanada) || $cantidadDanada < 0 || $cantidadDanada > $cantidad + 0.0001) {
+                $errores[] = 'Las piezas dañadas no pueden ser más que las piezas devueltas.';
+                continue;
+            }
+            if ($cantidadDanada > 0 && ($tiposVentaProds[$productoId] ?? null) !== 'Suelto' && floor($cantidadDanada) != $cantidadDanada) {
+                $errores[] = 'Las piezas dañadas de un producto que no se vende a granel deben ser un número entero.';
+                continue;
+            }
+
             if ($paqueteId === null && ($tiposVentaProds[$productoId] ?? null) !== 'Suelto' && floor($cantidad) != $cantidad) {
                 $errores[] = 'La cantidad a devolver de "' . ($prod['nombre_producto'] ?? 'un producto') . '" debe ser un número entero.';
                 continue;
@@ -581,12 +666,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // siendo la clave precisa "pid:Lvid" — null en el fallback legacy "pid:".
                     'venta_productos_id' => ($paqueteId === null && $mapKey === $productoId . ':L' . $ventaProductoId) ? $ventaProductoId : null,
                     'cantidad'      => 0,
+                    'cantidad_danada' => 0,
                     'precio_unitario' => $precioUnitario,
                 ];
             }
 
+            $productosAgrupados[$mapKey]['cantidad_danada'] += $cantidadDanada;
             $productosAgrupados[$mapKey]['cantidad']       += $cantidad;
             $productosAgrupados[$mapKey]['precio_unitario'] = $precioUnitario;
+        }
+        // [FIX-DEVOLUCION-VACIA] Si ninguna linea sirvio (objetos vacios, cantidades en 0, ids en 0) tampoco hay devolucion.
+        if (empty($errores) && empty($productosAgrupados)) {
+            $errores[] = 'Selecciona al menos un producto a devolver.';
         }
 
         // [AUTOFIX] Validar cantidad total por producto_id (sumando sueltos + paquete).
@@ -668,7 +759,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $productos_dev = array_values($productosAgrupados);
         $folioExtra = !empty($ventaInfo['folio']) ? ' folio:' . $ventaInfo['folio'] : '';
-        $motivo = 'Devolucion venta #' . $venta_id . $folioExtra . ': ' . $motivo;
+        $motivo = mb_substr('Devolucion venta #' . $venta_id . $folioExtra . ': ' . $motivo, 0, 255);
 
         if (empty($errores)) {
             // [AUTOFIX] Bug B: calcular subtotal bruto, descuento proporcional y comisión proporcional.
@@ -846,6 +937,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ")->execute([$producto_id, $sucursalVista, $stockNuevo]);
                     $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo,devolucion_id,paquete_id,venta_productos_id) VALUES (?,?,?,'Entrada',?,?,?,?,?,?,?)")
                         ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidad, $stockAnterior, $stockNuevo, $motivo, $devolucion_id, $paqId, $vpIdMov]);
+
+                    // [FEATURE-PRODUCTOS-DANADOS] Piezas dañadas: la devolucion al cliente se registra completa (arriba, para
+                    // que el conteo de "cuanto se devolvio" no cambie), pero esas piezas NO quedan en el inventario
+                    // vendible: salen enseguida como merma y se anotan en productos_danados para regresarlas al proveedor.
+                    $cantidadDanadaLinea = min($cantidad, floatval($prod['cantidad_danada'] ?? 0));
+                    if ($cantidadDanadaLinea > 0.0001) {
+                        $stockTrasMerma = max(0.0, $stockNuevo - $cantidadDanadaLinea);
+                        $pdo->prepare("UPDATE stock_sucursal SET stock_actual = ? WHERE producto_id = ? AND sucursal_id = ?")
+                            ->execute([$stockTrasMerma, $producto_id, $sucursalVista]);
+                        $motivoMerma = mb_substr('Merma por devolucion dañada (venta #' . $venta_id . $folioExtra . ')', 0, 255);
+                        $pdo->prepare("INSERT INTO movimientos_inventario (producto_id,usuario_id,sucursal_id,tipo,cantidad,stock_anterior,stock_nuevo,motivo) VALUES (?,?,?,'Salida',?,?,?,?)")
+                            ->execute([$producto_id, $_SESSION['usuario_id'], $sucursalVista, $cantidadDanadaLinea, $stockNuevo, $stockTrasMerma, $motivoMerma]);
+                        $movMermaId = intval($pdo->lastInsertId());
+                        $pdo->prepare("INSERT INTO productos_danados (producto_id, sucursal_id, usuario_id, cantidad, origen, devolucion_id, venta_id, movimiento_id, motivo) VALUES (?,?,?,?,'Devolucion',?,?,?,?)")
+                            ->execute([$producto_id, $sucursalVista, $_SESSION['usuario_id'], $cantidadDanadaLinea, $devolucion_id, $venta_id, $movMermaId, $motivoMerma]);
+                    }
                 }
 
                 // [AUTOFIX] Bug B: actualizar con bases correctas por campo
@@ -985,6 +1092,34 @@ $stmtHN = $pdo->prepare("
 $stmtHN->execute([$sucursalVista]);
 $historialNuevo = $stmtHN->fetchAll(PDO::FETCH_ASSOC);
 
+// [FEATURE-PRODUCTOS-DANADOS] Productos dañados / mermas de ESTA sucursal (pendientes primero), con el proveedor
+// (o proveedores) al que se pueden regresar. Origen: una devolucion de cliente con piezas dañadas, o una salida
+// marcada como merma.
+$stmtDanados = $pdo->prepare("
+    SELECT pd.*, p.nombre_producto, p.codigo, p.tipo_venta, u.nombre_completo AS registro_por, v.folio AS venta_folio,
+           s.nombre AS sucursal_nombre, ur.nombre_completo AS regresado_por_nombre,
+           (SELECT GROUP_CONCAT(DISTINCT pr.nombre ORDER BY pr.nombre SEPARATOR ', ')
+              FROM producto_proveedor pp JOIN proveedores pr ON pr.proveedor_id = pp.proveedor_id
+             WHERE pp.producto_id = pd.producto_id) AS proveedores
+    FROM productos_danados pd
+    JOIN productos p ON p.producto_id = pd.producto_id
+    JOIN usuarios u ON u.usuario_id = pd.usuario_id
+    LEFT JOIN usuarios ur ON ur.usuario_id = pd.regresado_por
+    LEFT JOIN ventas v ON v.venta_id = pd.venta_id
+    LEFT JOIN sucursales s ON s.sucursal_id = pd.sucursal_id
+    WHERE pd.sucursal_id = ? AND pd.estado IN ('Pendiente', 'Regresado')
+    ORDER BY (pd.estado = 'Pendiente') DESC, pd.created_at DESC
+    LIMIT 500
+");
+$stmtDanados->execute([$sucursalVista]);
+$danadosLista = $stmtDanados->fetchAll(PDO::FETCH_ASSOC);
+// Conteos REALES por consulta (la lista de arriba se corta a 500 filas: con mas registros contar sobre ella daba numeros falsos).
+$stmtDanCnt = $pdo->prepare("SELECT COALESCE(SUM(estado = 'Pendiente'), 0) AS p, COALESCE(SUM(estado = 'Regresado'), 0) AS r FROM productos_danados WHERE sucursal_id = ? AND estado IN ('Pendiente', 'Regresado')");
+$stmtDanCnt->execute([$sucursalVista]);
+$cntDan = $stmtDanCnt->fetch(PDO::FETCH_ASSOC);
+$danadosPendientes  = (int)$cntDan['p'];
+$danadosRegresados  = (int)$cntDan['r'];
+
 // Historial viejo: movimientos sin devolucion_id (antes de la nueva tabla)
 $stmtHV = $pdo->prepare("
     SELECT m.*, p.nombre_producto, p.codigo
@@ -1002,7 +1137,7 @@ $historialViejo = $stmtHV->fetchAll(PDO::FETCH_ASSOC);
 // [FIX-CAJA-REDIRECT-AJAX] Redirect por falta de caja, aplicado unicamente aqui — justo antes
 // de renderizar la pagina completa — para no romper el contrato JSON de "buscar_venta".
 if (!$cajaId) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();
 }
 ?>
@@ -1060,6 +1195,28 @@ if (!$cajaId) {
     .prod-dev-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 0.5px solid #f5f5f5; font-size: 13px; }
     .prod-dev-row:last-child { border-bottom: none; }
     .prod-dev-row input[type=number] { width: 80px; padding: 5px 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px; text-align: center; }
+
+    /* [FEATURE-PRODUCTOS-DANADOS] */
+    .btn-danados { background: #c0392b; color: white; border: none; padding: 8px 14px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; }
+    .btn-danados:hover { background: #a93226; }
+    .badge-danados { background: white; color: #c0392b; border-radius: 99px; padding: 1px 8px; font-size: 11px; font-weight: 800; margin-left: 4px; }
+    .danados-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 600; align-items: center; justify-content: center; }
+    .danados-modal { background: white; border-radius: 10px; width: 96%; max-width: 1100px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
+    .danados-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 18px 22px; border-bottom: 1px solid #eee; }
+    .danados-cerrar { background: none; border: none; font-size: 26px; line-height: 1; cursor: pointer; color: #888; }
+    .danados-filtros { display: flex; gap: 8px; padding: 12px 22px; border-bottom: 1px solid #f3f3f3; flex-wrap: wrap; }
+    .dfil { background: #f0f0f0; border: none; padding: 7px 14px; border-radius: 99px; font-size: 12px; font-weight: 600; cursor: pointer; color: #555; }
+    .dfil.activo { background: #14ace7; color: white; }
+    .danados-tabla { overflow: auto; }
+    .danados-tabla table { width: 100%; border-collapse: collapse; min-width: 860px; }
+    .danados-tabla th { text-align: left; padding: 9px 12px; font-size: 11px; color: #888; text-transform: uppercase; border-bottom: 1px solid #eee; background: #fafafa; position: sticky; top: 0; }
+    .danados-tabla td { padding: 9px 12px; font-size: 13px; border-bottom: 0.5px solid #f3f3f3; vertical-align: top; }
+    .est-pend { background: #fff3e0; color: #e67e22; border-radius: 99px; padding: 2px 10px; font-size: 11px; font-weight: 700; }
+    .est-reg { background: #e8f5e9; color: #2e7d32; border-radius: 99px; padding: 2px 10px; font-size: 11px; font-weight: 700; }
+    .btn-regresar { background: #2e7d32; color: white; border: none; padding: 6px 10px; border-radius: 5px; font-size: 11px; font-weight: 700; cursor: pointer; }
+    .btn-reabrir { background: #f0f0f0; color: #555; border: none; padding: 6px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; }
+    .danado-ctl { margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 11px; color: #c0392b; }
+    .danado-ctl input[type=text] { width: 64px; padding: 3px 6px; border: 1px solid #f0b4ad; border-radius: 4px; font-size: 12px; text-align: center; }
     .btn-devolver { width: 100%; background: #c0392b; color: white; border: none; padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; }
     .btn-devolver:hover { background: #a93226; }
     .resumen-dev { background: #fff8f5; border: 1.5px solid #f0c0b0; border-radius: 8px; padding: 14px 16px; margin-bottom: 13px; display: none; }
@@ -1122,6 +1279,7 @@ if (!$cajaId) {
                 'fuera_plazo'   => ['err', 'No se puede cancelar: han pasado más de 24 horas desde la devolución.'],
                 'ya_cancelada'  => ['err', 'Esta devolución ya fue cancelada anteriormente.'],
                 'error_cancelar'=> ['err', 'Error al cancelar la devolución. Intenta de nuevo.'],
+                'danado_regresado' => ['err', 'No se puede cancelar: piezas dañadas de esta devolución ya se regresaron al proveedor.'],
             ];
             $msgKeyDev = is_scalar($_GET['msg'] ?? null) ? $_GET['msg'] : '';
             if (isset($msgMap[$msgKeyDev])): [$tipo,$texto] = $msgMap[$msgKeyDev]; ?>
@@ -1178,7 +1336,7 @@ if (!$cajaId) {
 
                     <div class="form-group" id="motivoGroup" style="display:none;">
                         <label>Motivo de devolución *</label>
-                        <input type="text" name="motivo" placeholder="Ej. Producto defectuoso, talla incorrecta...">
+                        <input type="text" name="motivo" maxlength="200" placeholder="Ej. Producto defectuoso, talla incorrecta...">
                     </div>
 
                     <button type="submit" class="btn-devolver" id="btnDevolver" style="display:none;" onclick="return prepararDevolucion()">
@@ -1191,8 +1349,11 @@ if (!$cajaId) {
         <!-- Historial -->
         <div>
             <div class="card" style="padding:0;">
-                <div style="padding:16px 20px;border-bottom:0.5px solid #eee;">
+                <div style="padding:16px 20px;border-bottom:0.5px solid #eee;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
                     <h3 style="margin:0;">Devoluciones recientes</h3>
+                    <button type="button" class="btn-danados" onclick="abrirDanados()" title="Productos dañados o merma por regresar al proveedor">
+                        Productos dañados<?php if ($danadosPendientes > 0): ?> <span class="badge-danados"><?= $danadosPendientes ?></span><?php endif; ?>
+                    </button>
                 </div>
 
                 <?php if (count($historialNuevo) > 0): ?>
@@ -1258,6 +1419,69 @@ if (!$cajaId) {
                 </table>
                 <?php endif; ?>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- [FEATURE-PRODUCTOS-DANADOS] Tabla de productos dañados / mermas por regresar al proveedor -->
+<div class="danados-overlay" id="modalDanados" style="display:none;">
+    <div class="danados-modal">
+        <div class="danados-head">
+            <div>
+                <h3 style="margin:0;">Productos dañados / merma</h3>
+                <div style="font-size:12px;color:#888;margin-top:3px;">Lo que se debe regresar al proveedor: piezas dañadas de devoluciones de clientes y salidas marcadas como merma.</div>
+            </div>
+            <button type="button" class="danados-cerrar" onclick="cerrarDanados()" title="Cerrar">&times;</button>
+        </div>
+        <div class="danados-filtros">
+            <button type="button" class="dfil activo" data-f="Pendiente" onclick="filtrarDanados('Pendiente')">Por regresar (<span id="cntPend"><?= $danadosPendientes ?></span>)</button>
+            <button type="button" class="dfil" data-f="Regresado" onclick="filtrarDanados('Regresado')">Ya regresados (<span id="cntReg"><?= $danadosRegresados ?></span>)</button>
+            <button type="button" class="dfil" data-f="Todos" onclick="filtrarDanados('Todos')">Todos</button>
+        </div>
+        <?php if (count($danadosLista) < $danadosPendientes + $danadosRegresados): ?>
+            <div style="padding:8px 22px;font-size:12px;color:#b26a00;background:#fff8ee;">Mostrando los <?= count($danadosLista) ?> más recientes de <?= $danadosPendientes + $danadosRegresados ?> (los pendientes primero).</div>
+        <?php endif; ?>
+        <div class="danados-tabla">
+        <?php if (count($danadosLista) > 0): ?>
+            <table>
+                <thead><tr><th>Fecha</th><th>Producto</th><th>Cant.</th><th>Origen</th><th>Registró</th><th>Motivo</th><th>Proveedor(es)</th><th>Estado</th><th></th></tr></thead>
+                <tbody>
+                <?php foreach ($danadosLista as $d): $dec = ($d['tipo_venta'] === 'Suelto') ? 2 : 0; ?>
+                    <tr data-estado="<?= htmlspecialchars($d['estado']) ?>" <?= $d['estado'] === 'Regresado' ? 'style="display:none;"' : '' ?>>
+                        <td style="white-space:nowrap;font-size:12px;"><?= date('d/m/Y H:i', strtotime($d['created_at'])) ?></td>
+                        <td><strong><?= htmlspecialchars($d['nombre_producto']) ?></strong><div style="font-size:11px;color:#aaa;"><?= htmlspecialchars($d['codigo']) ?></div></td>
+                        <td style="font-weight:700;color:#c0392b;"><?= number_format($d['cantidad'], $dec) ?></td>
+                        <td style="font-size:12px;white-space:nowrap;">
+                            <?php if ($d['origen'] === 'Devolucion'): ?>Devolución<?= !empty($d['venta_folio']) ? '<div style="font-size:11px;color:#888;">Folio ' . htmlspecialchars($d['venta_folio']) . '</div>' : '' ?><?php else: ?>Salida (merma)<?php endif; ?>
+                        </td>
+                        <td style="font-size:12px;"><?= htmlspecialchars($d['registro_por']) ?></td>
+                        <td style="font-size:12px;color:#666;max-width:200px;"><?= htmlspecialchars($d['motivo'] ?? '—') ?></td>
+                        <td style="font-size:12px;"><?= htmlspecialchars($d['proveedores'] ?? 'Sin proveedor ligado') ?></td>
+                        <td>
+                            <?php if ($d['estado'] === 'Pendiente'): ?>
+                                <span class="est-pend">Por regresar</span>
+                            <?php else: ?>
+                                <span class="est-reg">Regresado</span>
+                                <div style="font-size:11px;color:#888;"><?= $d['regresado_en'] ? date('d/m/Y', strtotime($d['regresado_en'])) : '' ?><?= !empty($d['nota_regreso']) ? ' · ' . htmlspecialchars($d['nota_regreso']) : '' ?></div>
+                            <?php endif; ?>
+                        </td>
+                        <td style="white-space:nowrap;">
+                            <form method="POST" style="display:inline;" class="form-danado" data-accion="<?= $d['estado'] === 'Pendiente' ? 'regresar' : 'reabrir' ?>">
+                                <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                                <input type="hidden" name="danado_id" value="<?= intval($d['danado_id']) ?>">
+                                <input type="hidden" name="danado_accion" value="<?= $d['estado'] === 'Pendiente' ? 'regresar' : 'reabrir' ?>">
+                                <input type="hidden" name="danado_nota" value="">
+                                <button type="submit" class="<?= $d['estado'] === 'Pendiente' ? 'btn-regresar' : 'btn-reabrir' ?>"><?= $d['estado'] === 'Pendiente' ? 'Regresado al proveedor' : 'Reabrir' ?></button>
+                            </form>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <div id="danadosVacio" style="display:none;padding:30px;text-align:center;color:#aaa;font-size:13px;"></div>
+        <?php else: ?>
+            <div style="padding:30px;text-align:center;color:#aaa;font-size:13px;">Todavía no hay productos dañados registrados.</div>
+        <?php endif; ?>
         </div>
     </div>
 </div>
@@ -1376,6 +1600,10 @@ function buscarVenta() {
                         <span style="flex:1;">
                             <span style="font-size:13px;">${esc(p.nombre_producto)}</span>
                             ${precioHtml}
+                            <div class="danado-ctl">
+                                <label style="cursor:pointer;"><input type="checkbox" class="chk-danado" onchange="toggleDanado(this)"> Producto dañado (merma, regresar al proveedor)</label>
+                                <span class="danado-qty" style="display:none;">piezas dañadas: <input type="text" inputmode="decimal" class="inp-danada" value="" autocomplete="off"></span>
+                            </div>
                         </span>
                         <span style="color:#aaa;font-size:11px;padding-top:2px;white-space:nowrap;">Restante: ${esDecimal ? restante.toFixed(2).replace(/\.?0+$/, '') : restante.toFixed(0)}</span>
                         <input type="number" data-producto-id="${p.producto_id}" data-venta-productos-id="${p.venta_productos_id}" data-precio="${p.precio_final}" data-precio-orig="${p.precio_unitario}" data-restante="${restante}"
@@ -1554,6 +1782,39 @@ function cancelarDevolucion(id) {
     window.location.href = `cajero_devoluciones.php?cancelar_dev=${id}&nota=${encodeURIComponent(nota)}&_token=${encodeURIComponent(CSRF_TOKEN)}`;
 }
 
+
+// [FEATURE-PRODUCTOS-DANADOS] Tabla de productos dañados (modal)
+function abrirDanados() { const m = document.getElementById('modalDanados'); m.style.display = 'flex'; filtrarDanados(document.querySelector('.dfil.activo')?.dataset.f || 'Pendiente'); }
+function cerrarDanados() { document.getElementById('modalDanados').style.display = 'none'; }
+function filtrarDanados(f) {
+    document.querySelectorAll('.dfil[data-f]').forEach(b => b.classList.toggle('activo', b.dataset.f === f));
+    let visibles = 0;
+    document.querySelectorAll('#modalDanados tbody tr').forEach(tr => { const ok = (f === 'Todos') || tr.dataset.estado === f; tr.style.display = ok ? '' : 'none'; if (ok) visibles++; });
+    const vacio = document.getElementById('danadosVacio');
+    if (vacio) { vacio.style.display = visibles ? 'none' : 'block'; vacio.textContent = f === 'Pendiente' ? 'No hay productos pendientes por regresar al proveedor.' : (f === 'Regresado' ? 'Todavía no se ha regresado ningún producto al proveedor.' : ''); }
+}
+document.getElementById('modalDanados')?.addEventListener('click', function (e) { if (e.target === this) cerrarDanados(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && document.getElementById('modalDanados')?.style.display === 'flex') cerrarDanados(); });
+document.querySelectorAll('.form-danado').forEach(f => f.addEventListener('submit', function (e) {
+    if (this.dataset.accion === 'regresar') {
+        const nota = prompt('¿Se regresó al proveedor? Puedes anotar con quién o una referencia (opcional):', '');
+        if (nota === null) { e.preventDefault(); return; }
+        this.querySelector('input[name=danado_nota]').value = nota;
+    } else if (!confirm('¿Volver a marcar este producto como pendiente por regresar?')) { e.preventDefault(); }
+}));
+if (new URLSearchParams(location.search).get('danados') === '1') { abrirDanados(); }
+
+// [FEATURE-PRODUCTOS-DANADOS] Al marcar "dañado" aparece cuantas piezas (por defecto, las que se devuelven).
+function toggleDanado(chk) {
+    const fila = chk.closest('.prod-dev-row');
+    const caja = fila.querySelector('.danado-qty');
+    const inpCant = fila.querySelector('input[type=number]');
+    const inpDan  = fila.querySelector('.inp-danada');
+    caja.style.display = chk.checked ? 'inline' : 'none';
+    if (!chk.checked) inpDan.value = '';   // al desmarcar se borra lo capturado: si lo vuelven a marcar se propone de nuevo
+    if (chk.checked && (!inpDan.value || parseFloat(inpDan.value) <= 0)) inpDan.value = (parseFloat(inpCant.value) > 0 ? inpCant.value : '1');
+}
+
 function prepararDevolucion() {
     const inputs = document.querySelectorAll('#listaProdsDev input[type=number]');
     const paqMap = (ventaActual && ventaActual._paqMap) ? ventaActual._paqMap : {};
@@ -1599,7 +1860,15 @@ function prepararDevolucion() {
             // [AUTOFIX] paquete_id = null para productos sueltos (clave compuesta en backend).
             // [FIX-DEVOLUCION-LINEA-DUPLICADA] venta_productos_id identifica esta línea suelta
             // de forma precisa cuando el mismo producto aparece en más de una línea de la venta.
-            prods.push({ producto_id: inp.dataset.productoId, venta_productos_id: inp.dataset.ventaProductosId, cantidad: qty, precio_unitario: inp.dataset.precio, paquete_id: null });
+            // [FEATURE-PRODUCTOS-DANADOS] piezas dañadas de esta linea (0 si no se marco el casillero)
+            let danada = 0;
+            const filaDev = inp.closest('.prod-dev-row');
+            const chkDan  = filaDev ? filaDev.querySelector('.chk-danado') : null;
+            if (chkDan && chkDan.checked) {
+                danada = parseFloat((filaDev.querySelector('.inp-danada').value || '').replace(',', '.')) || 0;
+                if (danada <= 0 || danada > qty + 0.0001) { errorMsg = 'Indica cuántas piezas están dañadas (de 1 hasta ' + qty + ') o desmarca "Producto dañado".'; return; }
+            }
+            prods.push({ producto_id: inp.dataset.productoId, venta_productos_id: inp.dataset.ventaProductosId, cantidad: qty, cantidad_danada: danada, precio_unitario: inp.dataset.precio, paquete_id: null });
         }
     });
 

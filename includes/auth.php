@@ -59,6 +59,24 @@ function verificarCSRF($token): bool {
         && hash_equals($_SESSION['csrf_token'], $token);
 }
 
+// [FIX-EMOJI-4-BYTES] La conexion a MySQL usa charset utf8 (3 bytes por caracter): un emoji (4 bytes) en un texto
+// libre hace fallar el INSERT/UPDATE (modo estricto del servidor) con un error fatal. Los formularios que no lo
+// capturaban usan esta funcion para avisar con un mensaje claro antes de tocar la BD.
+// [FIX-ERROR-BD-CRUDO] Mensaje seguro para mostrar al usuario cuando algo falla dentro de una transaccion: las excepciones de negocio
+// (lanzadas a mano con un texto pensado para el cajero) se muestran tal cual, pero un error de base de datos NO: traia nombres de
+// tablas/columnas y no explicaba nada. Se traducen los dos casos que el usuario puede corregir y el resto queda como mensaje generico.
+function mensajeSeguroDeError(Throwable $e, string $generico): string {
+    if (!($e instanceof PDOException)) return $e->getMessage();
+    $m = $e->getMessage();
+    if (stripos($m, 'Incorrect string value') !== false) return 'El texto contiene caracteres que el sistema no puede guardar (por ejemplo emojis). Quítalos e intenta de nuevo.';
+    if (stripos($m, 'Data too long') !== false) return 'Uno de los textos capturados es demasiado largo. Acórtalo e intenta de nuevo.';
+    return $generico;
+}
+
+function textoConEmoji($texto): bool {
+    return is_string($texto) && preg_match('/[\x{10000}-\x{10FFFF}]/u', $texto) === 1;
+}
+
 // [AUTOFIX] SEC-01: Verificar CSRF y redirigir con error si falla
 function requerirCSRF($token, string $redirectUrl): void {
     if (!verificarCSRF($token)) {
@@ -66,3 +84,6 @@ function requerirCSRF($token, string $redirectUrl): void {
         exit();
     }
 }
+
+// [FEATURE-VOLVER-TRAS-CAJA] regresar al modulo despues de abrir la caja
+require_once __DIR__ . '/volver_tras_caja.php';

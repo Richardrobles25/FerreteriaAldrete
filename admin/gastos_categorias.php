@@ -38,8 +38,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar'])) {
     if (empty($errores)) {
         try {
             if ($id) {
-                $pdo->prepare("UPDATE categorias_gastos SET nombre = ? WHERE categoria_gasto_id = ?")
-                    ->execute([$nombre, $id]);
+                $stmtUpdCat = $pdo->prepare("UPDATE categorias_gastos SET nombre = ? WHERE categoria_gasto_id = ?");
+                $stmtUpdCat->execute([$nombre, $id]);
+                // [FIX-CATEGORIA-EDITAR-FANTASMA] Si la categoria ya no existe el UPDATE afecta 0 filas y se
+                // mostraba "editado" sin haber cambiado nada (rowCount 0 tambien es "sin cambios": se confirma).
+                if ($stmtUpdCat->rowCount() === 0) {
+                    $stmtExisteCat = $pdo->prepare("SELECT 1 FROM categorias_gastos WHERE categoria_gasto_id = ?");
+                    $stmtExisteCat->execute([$id]);
+                    if (!$stmtExisteCat->fetchColumn()) throw new RuntimeException('categoria_inexistente');
+                }
                 header('Location: gastos_categorias.php?msg=editado');
             } else {
                 $pdo->prepare("INSERT INTO categorias_gastos (nombre, activo) VALUES (?, 1)")
@@ -50,9 +57,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar'])) {
         } catch (\PDOException $e) {
             if ($e->getCode() === '23000') {
                 $errores[] = 'Ya existe una categoría con ese nombre.';
+            } elseif (stripos($e->getMessage(), 'Incorrect string value') !== false) {
+                $errores[] = 'El texto contiene caracteres que el sistema no puede guardar (por ejemplo emojis). Quítalos e intenta de nuevo.';
             } else {
                 $errores[] = 'No se pudo guardar la categoría. Intenta de nuevo.';
             }
+        } catch (\RuntimeException $e) {
+            $errores[] = 'Esta categoría ya no existe (probablemente se eliminó desde otra sesión). No se guardaron los cambios.';
         }
     }
     if (!empty($errores)) {
@@ -69,7 +80,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_id'])) {
     // real) en vez de fallar -- intval() sobre un array no vacio se coacciona a 1, sin
     // importar que valores traiga el array. Restaurada manualmente tras la prueba.
     $id = intval(is_scalar($_POST['toggle_id'] ?? null) ? $_POST['toggle_id'] : 0);
-    $pdo->prepare("UPDATE categorias_gastos SET activo = NOT activo WHERE categoria_gasto_id = ?")->execute([$id]);
+    // [FIX-CATEGORIA-TOGGLE-EXPLICITO] "activo = NOT activo" alternaba el estado que tuviera la fila al
+    // procesar: con dos pestanas (o un doble envio) un "Desactivar" ya aplicado volvia a activarla.
+    // Ahora el formulario manda el estado deseado (0/1) y se fija (mismo arreglo que empleados.php).
+    $nuevoActivo = (is_scalar($_POST['nuevo_activo'] ?? null) && in_array((string)$_POST['nuevo_activo'], ['0', '1'], true)) ? (int)$_POST['nuevo_activo'] : null;
+    if ($nuevoActivo !== null) {
+        $pdo->prepare("UPDATE categorias_gastos SET activo = ? WHERE categoria_gasto_id = ?")->execute([$nuevoActivo, $id]);
+    }
     header('Location: gastos_categorias.php?msg=actualizado');
     exit();
 }
@@ -218,6 +235,7 @@ $categorias = $pdo->query("
                                     <a class="btn-accion btn-editar" href="gastos_categorias.php?editar=<?= $cat['categoria_gasto_id'] ?>">Editar</a>
                                     <form method="POST" style="display:inline;" onsubmit="return confirm('¿<?= $cat['activo'] ? 'Desactivar' : 'Activar' ?> la categoría &quot;<?= htmlspecialchars(addslashes($cat['nombre']), ENT_QUOTES) ?>&quot;?')">
                                         <input type="hidden" name="toggle_id" value="<?= $cat['categoria_gasto_id'] ?>">
+                                        <input type="hidden" name="nuevo_activo" value="<?= $cat['activo'] ? 0 : 1 ?>">
                                         <input type="hidden" name="_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                                         <button type="submit" class="<?= $cat['activo'] ? 'btn-toggle-on' : 'btn-toggle-off' ?>"><?= $cat['activo'] ? 'Desactivar' : 'Activar' ?></button>
                                     </form>

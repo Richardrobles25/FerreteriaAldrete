@@ -76,6 +76,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // clientes.php en toda la app): solo se validaba longitud, nunca formato.
     if ($correo !== '' && !filter_var($correo, FILTER_VALIDATE_EMAIL)) $errores[] = 'El correo electrónico no tiene un formato válido.';
     if (mb_strlen($direccion) > 255) $errores[] = 'La dirección no puede tener más de 255 caracteres.';
+    // [FIX-EMOJI-PROVEEDOR] un emoji en nombre/direccion hacia fallar el INSERT (modo estricto) y solo se avisaba "No se pudo guardar".
+    if (textoConEmoji($nombre) || textoConEmoji($direccion)) $errores[] = 'El nombre y la dirección no pueden llevar emojis. Quítalos e intenta de nuevo.';
 
     // [AUTOFIX] BUG-02: Verificar nombre duplicado antes de insertar/actualizar
     // [FIX-PROVEEDOR-NOMBRE-RACE 2026-09-20] proveedores no tiene UNIQUE en nombre -- el
@@ -87,7 +89,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $lockNombreProv     = null;
     $lockNombreProvOk   = true;
     if ($nombre !== '') {
-        $lockNombreProv   = 'proveedor_nombre_' . mb_strtolower($nombre);
+        // [FIX-LOCK-NOMBRE-LARGO] El nombre de un GET_LOCK admite maximo 64 caracteres: un nombre largo tronaba con
+        // un error fatal. Se usa el hash del valor (mismo valor = mismo candado).
+        $lockNombreProv   = 'proveedor_nombre_' . md5(mb_strtolower($nombre));
         $lockNombreProvOk = (bool) $pdo->query("SELECT GET_LOCK(" . $pdo->quote($lockNombreProv) . ", 5)")->fetchColumn();
         if (!$lockNombreProvOk) {
             $errores[] = 'Otro usuario está guardando un proveedor con este mismo nombre en este momento. Intenta de nuevo.';

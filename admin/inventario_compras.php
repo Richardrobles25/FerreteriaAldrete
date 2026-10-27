@@ -790,7 +790,9 @@ function seleccionarProdCompra(id) {
 // [FEATURE-BUSQUEDA-CODIGO] Captura rapida con Enter en el buscador: "4*codigo" agrega 4 piezas de ese producto
 // a la compra (con el precio de compra que ya tiene); un codigo exacto solo elige el producto. Solo entre los
 // productos ligados al proveedor elegido. Si hay un resultado resaltado con las flechas, Enter lo elige.
-document.getElementById('buscarProdCompra').addEventListener('keydown', function(e) {
+// [FIX-COMPRAS-VISTA-GLOBAL-JS] En la vista "Todas las sucursales" no se dibuja el formulario de compra: sin el ?. este
+// enganche tronaba con un error de JavaScript al cargar la pagina.
+document.getElementById('buscarProdCompra')?.addEventListener('keydown', function(e) {
     if (e.key !== 'Enter') return;
     if (BusquedaProductos.hayResaltado(document.getElementById('dropProdCompra'))) return;
     const val = this.value.trim();

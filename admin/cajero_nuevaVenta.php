@@ -19,7 +19,7 @@ require_once __DIR__ . '/_admin_sucursal_filtro.php';
 session_write_close();
 
 if ($sucursalVista === 0) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();
 }
 
@@ -66,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['movimiento_caja'])) {
     // redirect aqui por falta de caja es consistente con su propio contrato — a diferencia
     // de los endpoints AJAX de abajo, aqui SI corresponde cortar temprano.
     if (!$caja) {
-        header('Location: cajero_abrirCaja.php?msg=sinCaja');
+        recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
         exit();
     }
     // [AUTOFIX] BUG-04: Verificar CSRF token en handler de movimiento de caja
@@ -628,6 +628,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
         }
         $errorVenta = 'El folio de la terminal no puede tener más de 100 caracteres.';
     }
+    // [FIX-EMOJI-FOLIO-VENTA] La conexion usa utf8 (3 bytes): un emoji en el folio/referencia hacia fallar el INSERT en el servidor
+    // (modo estricto) y el cajero veia el error crudo de la base de datos. Se avisa antes, con un texto claro.
+    if (!$errorVenta && (textoConEmoji($folio_terminal) || textoConEmoji($referencia_transferencia))) {
+        if (!empty($_POST['_ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => 'El folio o la referencia no pueden llevar emojis. Quítalos e intenta de nuevo.']);
+            exit();
+        }
+        $errorVenta = 'El folio o la referencia no pueden llevar emojis. Quítalos e intenta de nuevo.';
+    }
 
     // [AUTOFIX] V-05: Validar que items sea un array valido antes de procesar
     if (!$errorVenta && (!is_array($items) || empty($items))) {
@@ -809,7 +819,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             $descuentoAjustePorIdx = [];
             $sumaDescuentoAjustes  = 0.0;
             foreach ($items as $idxAj => $itAj) {
-                $notaAjChk = trim($itAj['nota_ajuste'] ?? '');
+                $notaAjChk = trim(is_scalar($itAj['nota_ajuste'] ?? null) ? (string)$itAj['nota_ajuste'] : '');   // [FIX-NOTA-ARREGLO] un arreglo en nota_ajuste tronaba trim() con un error fatal
                 $esPaqAj   = !empty($itAj['paquete_id']) && intval($itAj['paquete_id']) > 0;
                 if ($notaAjChk === '' || $esPaqAj) continue;
                 $precioOrigAj  = floatval($itAj['precio_orig'] ?? $itAj['precio'] ?? 0);
@@ -965,7 +975,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                 // resto exacto calculado arriba en vez de cantidad*precio (ver comentario donde
                 // se calcula $subtotal_exacto) — evita perder centavos contra precio_paquete.
                 $subtotalItem = isset($item['subtotal_exacto']) ? $item['subtotal_exacto'] : $item['cantidad'] * $precioFinal;
-                $notaAjuste   = trim($item['nota_ajuste'] ?? '');
+                $notaAjuste   = trim(is_scalar($item['nota_ajuste'] ?? null) ? (string)$item['nota_ajuste'] : '');
                 $paqId        = (!empty($item['paquete_id']) && intval($item['paquete_id']) > 0) ? intval($item['paquete_id']) : null;
 
                 // [FIX-MEDIO-D1-07] Antes no se revalidaba que el producto siguiera activo al
@@ -1042,6 +1052,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
                             throw new Exception(ventaMsgPrecioCero((string)($filaPrecios['nombre_producto'] ?? 'Producto')));
                         }
                     }
+
+                    // [FIX-PRECIO-SIN-NOTA] El piso de arriba solo garantiza precio >= costo; el servidor no revisaba que un precio
+                    // MENOR al de lista viniera con su nota de ajuste (la pantalla si la exige, pero un envio manipulado la omitia y la
+                    // venta quedaba a menor precio sin nota ni descuento registrado). Sin nota, el precio debe ser uno vigente del
+                    // producto: venta, mayoreo o promocion activa.
+                    if ($notaAjuste === '') {
+                        $preciosListaChk = ventaPreciosDeLista($pdo, $item['producto_id'], $_SESSION['sucursal_id']);
+                        if ($preciosListaChk && !ventaPrecioEsDeLista($preciosListaChk, $precioFinal)) {
+                            throw new Exception(ventaMsgPrecioSinNota((string)($filaPrecios['nombre_producto'] ?? 'Producto'), $precioFinal, $preciosListaChk));
+                        }
+                    }
                 }
 
                 $descuentoItemVal = $descuentoAjustePorIdx[$idxVP] ?? 0.0;
@@ -1095,10 +1116,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
             error_log('[Ferreteria/nuevaVenta] Error venta: ' . $e->getMessage());
             if (!empty($_POST['_ajax'])) {
                 header('Content-Type: application/json');
-                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+                echo json_encode(['ok' => false, 'error' => mensajeSeguroDeError($e, 'No se pudo registrar la venta por un problema interno. Intenta de nuevo; si continúa, avisa al administrador.')]);
                 exit();
             }
-            $errorVenta = $e->getMessage();
+            $errorVenta = mensajeSeguroDeError($e, 'No se pudo registrar la venta por un problema interno. Intenta de nuevo; si continúa, avisa al administrador.');
         }
         } // fin if lockAdquirido
     }
@@ -1110,7 +1131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_venta'])) {
 // exit()). Cubre la carga normal de la pagina (sin AJAX) y cualquier POST que no haya
 // hecho su propio exit() todavia.
 if (!$caja) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();
 }
 ?>
@@ -1261,7 +1282,7 @@ if (!$caja) {
     .btn-confirm-mov.retiro  { background: #c0392b; }
     .btn-confirm-mov.retiro:hover  { background: #a93226; }
     .msg-mov-ok { background: #e8f5e9; color: #2e7d32; padding: 9px 14px; border-radius: 6px; font-size: 12px; border-left: 3px solid #2e7d32; margin-bottom: 10px; }
-    .msg-mov-ok.retiro { background: #fdecea; color: #c0392b; border-left-color: #c0392b; }
+    /* El aviso de retiro registrado va en verde como el de ingreso: es un exito, el rojo parecia un error. */
     .msg-mov-err { background: #fdecea; color: #c0392b; padding: 9px 14px; border-radius: 6px; font-size: 12px; border-left: 3px solid #c0392b; margin-bottom: 10px; }
     .msg-exito { background: #e8f5e9; color: #2e7d32; padding: 12px 16px; border-radius: 6px; font-size: 13px; border-left: 3px solid #2e7d32; grid-column: span 2; display: flex; justify-content: space-between; align-items: center; }
     .btn-print-ticket { background: #2e7d32; color: white; border: none; padding: 5px 11px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600; margin-left: 10px; }

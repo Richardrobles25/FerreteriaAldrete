@@ -14,7 +14,7 @@ require_once '../includes/topbar_info.php';
 require_once __DIR__ . '/_admin_sucursal_filtro.php';
 
 if ($sucursalVista === 0) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();
 }
 
@@ -117,7 +117,7 @@ $stmtCajaCheck = $pdo->prepare("SELECT caja_id FROM cajas WHERE usuario_id = ? A
 $stmtCajaCheck->execute([$_SESSION['usuario_id'], $sucursalVista]);
 $cajaAbiertaId = $stmtCajaCheck->fetchColumn() ?: null;
 if (!$cajaAbiertaId) {
-    header('Location: cajero_abrirCaja.php?msg=sinCaja');
+    recordarModuloSinCaja(); header('Location: cajero_abrirCaja.php?msg=sinCaja');
     exit();
 }
 
@@ -434,42 +434,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
     exit();
 }
 
-// [REWRITE-ABONOS] AJAX: cancelar la ultima mora cobrada a un credito (exclusivo Administrador).
-// Solo descuenta el monto de la mora mas reciente, nunca el historial completo, y exige un
-// motivo obligatorio que queda guardado en mora_cancelaciones para auditoria. No cambia el
-// estado "Vencido" del credito (solo pasa a Liquidado en el caso extremo de que la mora fuera
-// justo lo unico que faltaba).
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancelar_mora') {
+// [MORA-POR-MORA] Moras de un credito con su marca de cancelada. Una mora esta cancelada si hay una fila
+// en mora_cancelaciones con su mora_id. Las cancelaciones anteriores a esta funcion (mora_id NULL)
+// perdonaron siempre la mora mas reciente de ese momento: se empatan con la mora mas reciente de
+// mismo monto que aun no este marcada, para que nunca se pueda perdonar la misma mora dos veces.
+function moraEstadoCredito(PDO $pdo, int $creditoId, bool $bloquear = false): array {
+    $st = $pdo->prepare("SELECT mora_id, monto, saldo_base, porcentaje, created_at FROM movimientos_mora WHERE credito_id = ? ORDER BY mora_id ASC" . ($bloquear ? " FOR UPDATE" : ""));
+    $st->execute([$creditoId]);
+    $moras = $st->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($moras as &$m) $m['cancelada'] = false;
+    unset($m);
+    $sc = $pdo->prepare("SELECT mora_id, monto FROM mora_cancelaciones WHERE credito_id = ? ORDER BY cancelacion_id ASC");
+    $sc->execute([$creditoId]);
+    $canc = $sc->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($canc as $c) {
+        if ($c['mora_id'] === null) continue;
+        foreach ($moras as &$m) { if ((int)$m['mora_id'] === (int)$c['mora_id']) { $m['cancelada'] = true; break; } }
+        unset($m);
+    }
+    foreach ($canc as $c) {
+        if ($c['mora_id'] !== null) continue;
+        for ($k = count($moras) - 1; $k >= 0; $k--) {
+            if (!$moras[$k]['cancelada'] && abs(floatval($moras[$k]['monto']) - floatval($c['monto'])) < 0.005) { $moras[$k]['cancelada'] = true; break; }
+        }
+    }
+    return $moras;
+}
+
+// [MORA-POR-MORA] AJAX: cancelar las moras que el Administrador elija de un credito (una, varias o todas).
+// Descuenta del saldo solo el monto de las moras elegidas (nunca mas que el saldo que queda), guarda una
+// fila por mora en mora_cancelaciones con el motivo (obligatorio) y quien la cancelo. No cambia el estado
+// "Vencido" del credito (solo pasa a Liquidado si el saldo llega a cero).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancelar_moras') {
     header('Content-Type: application/json');
     requerirCSRF($_POST['_token'] ?? '', 'abonos.php');
     try {
-        $cred_id_mora = intval($_POST['credito_id'] ?? 0);
-        $motivoCancel = trim($_POST['motivo_cancelacion'] ?? '');
+        $cred_id_mora = is_scalar($_POST['credito_id'] ?? null) ? intval($_POST['credito_id']) : 0;
+        $motivoCancel = is_scalar($_POST['motivo_cancelacion'] ?? null) ? trim((string)$_POST['motivo_cancelacion']) : '';
+        $idsPedidos   = $_POST['mora_ids'] ?? [];
         if (!$cred_id_mora) throw new Exception('Crédito no válido.');
         if ($motivoCancel === '') throw new Exception('El motivo es obligatorio para cancelar la mora.');
+        if (mb_strlen($motivoCancel) > 200) throw new Exception('El motivo no puede pasar de 200 caracteres.');
+        if (textoConEmoji($motivoCancel)) throw new Exception('El motivo no puede llevar emojis.');
+        if (!is_array($idsPedidos) || !$idsPedidos) throw new Exception('Selecciona al menos una mora.');
+        $ids = [];
+        foreach ($idsPedidos as $idp) {
+            if (!is_scalar($idp) || !ctype_digit((string)$idp) || intval($idp) <= 0) throw new Exception('Selección de moras no válida.');
+            $ids[intval($idp)] = true;
+        }
+        $ids = array_keys($ids);
+        sort($ids);
+        if (count($ids) > 500) throw new Exception('Selección de moras no válida.');
 
         $pdo->beginTransaction();
         $stmtLockMora = $pdo->prepare("SELECT saldo_pendiente, mora_acumulada, estado FROM creditos WHERE credito_id = ? FOR UPDATE");
         $stmtLockMora->execute([$cred_id_mora]);
         $credLockMora = $stmtLockMora->fetch(PDO::FETCH_ASSOC);
         if (!$credLockMora) throw new Exception('Crédito no encontrado.');
+        if (!in_array($credLockMora['estado'], ['Activo', 'Vencido'], true)) throw new Exception('Este crédito ya está liquidado.');
 
-        $moraActual = round(floatval($credLockMora['mora_acumulada']), 2);
-        if ($moraActual <= 0) throw new Exception('Este crédito no tiene mora activa que cancelar.');
+        $moras = moraEstadoCredito($pdo, $cred_id_mora, true);
+        $porId = [];
+        foreach ($moras as $m) $porId[(int)$m['mora_id']] = $m;
+        foreach ($ids as $id) {
+            if (!isset($porId[$id])) throw new Exception('Una de las moras elegidas no pertenece a este crédito.');
+            if ($porId[$id]['cancelada']) throw new Exception('Una de las moras elegidas ya estaba cancelada. Actualiza la ventana e intenta de nuevo.');
+        }
 
-        $nuevoSaldoMora  = max(0, round(floatval($credLockMora['saldo_pendiente']) - $moraActual, 2));
-        $nuevoEstadoMora = $nuevoSaldoMora <= 0.001 ? 'Liquidado' : $credLockMora['estado'];
+        $saldo      = round(floatval($credLockMora['saldo_pendiente']), 2);
+        $restante   = $saldo;
+        $descontado = 0.0;
+        $insMC = $pdo->prepare("INSERT INTO mora_cancelaciones (credito_id, mora_id, usuario_id, monto, motivo) VALUES (?,?,?,?,?)");
+        foreach ($ids as $id) {
+            $ded = min(round(floatval($porId[$id]['monto']), 2), $restante);
+            if ($ded <= 0) continue;
+            $insMC->execute([$cred_id_mora, $id, $_SESSION['usuario_id'], $ded, $motivoCancel]);
+            $restante   = round($restante - $ded, 2);
+            $descontado = round($descontado + $ded, 2);
+        }
+        if ($descontado <= 0) throw new Exception('El crédito ya no tiene saldo del cual descontar la mora.');
 
-        $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, mora_acumulada = 0, estado = ? WHERE credito_id = ?")
-            ->execute([$nuevoSaldoMora, $nuevoEstadoMora, $cred_id_mora]);
-        $pdo->prepare("INSERT INTO mora_cancelaciones (credito_id, usuario_id, monto, motivo) VALUES (?,?,?,?)")
-            ->execute([$cred_id_mora, $_SESSION['usuario_id'], $moraActual, $motivoCancel]);
+        $ultimaMoraId   = (int)end($moras)['mora_id'];
+        $moraAcumNueva  = in_array($ultimaMoraId, $ids, true) ? 0 : floatval($credLockMora['mora_acumulada']);
+        $nuevoEstadoMora = $restante <= 0.001 ? 'Liquidado' : $credLockMora['estado'];
+        $pdo->prepare("UPDATE creditos SET saldo_pendiente = ?, mora_acumulada = ?, estado = ? WHERE credito_id = ?")
+            ->execute([$restante, $moraAcumNueva, $nuevoEstadoMora, $cred_id_mora]);
 
         $pdo->commit();
-        echo json_encode(['ok' => true]);
+        echo json_encode(['ok' => true, 'descontado' => $descontado]);
     } catch (\PDOException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        error_log('[Ferreteria/abonos] Error PDO cancelar mora: ' . $e->getMessage());
+        error_log('[Ferreteria/abonos] Error PDO cancelar moras: ' . $e->getMessage());
         echo json_encode(['ok' => false, 'error' => 'No se pudo cancelar la mora. Intenta de nuevo.']);
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -533,9 +588,7 @@ if (isset($_GET['get_creditos_cliente'])) {
                 }
             }
             unset($cr['prods_raw']);
-            $stmtMH = $pdo->prepare("SELECT monto, saldo_base, porcentaje, created_at FROM movimientos_mora WHERE credito_id = ? ORDER BY created_at ASC");
-            $stmtMH->execute([$cr['credito_id']]);
-            $cr['historial_mora'] = $stmtMH->fetchAll(PDO::FETCH_ASSOC);
+            $cr['historial_mora'] = moraEstadoCredito($pdo, (int)$cr['credito_id']);
 
             // [REWRITE-ABONOS] Historial de moras canceladas por un administrador (auditoria).
             $stmtMC = $pdo->prepare("
@@ -1189,17 +1242,24 @@ function abrirDetalles(clienteId, nombre) {
                 const mora = parseFloat(cr.mora_acumulada || 0);
                 let moraHistHtml = '';
                 if (cr.historial_mora && cr.historial_mora.length > 0) {
+                    const cid = intval(cr.credito_id);
+                    const hayActivas = cr.historial_mora.some(m => !m.cancelada);
                     moraHistHtml = `<div style="padding:8px 14px;background:#fff8f0;border-top:0.5px solid #fde8cc;">
                         <div style="font-size:11px;font-weight:700;color:#e67e22;margin-bottom:5px;">Historial de mora</div>
                         <table style="width:100%;border-collapse:collapse;font-size:11px;color:#666;">
-                            <tr><th style="text-align:left;padding:2px 6px 2px 0;font-weight:600;">Fecha</th><th style="text-align:right;padding:2px 0;font-weight:600;">Saldo base</th><th style="text-align:right;padding:2px 0 2px 6px;font-weight:600;">%</th><th style="text-align:right;padding:2px 0;font-weight:600;color:#e67e22;">Mora</th></tr>
-                            ${cr.historial_mora.map(m => `<tr>
+                            <tr>${hayActivas ? `<th style="width:22px;text-align:left;"><input type="checkbox" title="Seleccionar todas" onchange="moraSelTodas(${cid}, this.checked)"></th>` : ''}<th style="text-align:left;padding:2px 6px 2px 0;font-weight:600;">Fecha</th><th style="text-align:right;padding:2px 0;font-weight:600;">Saldo base</th><th style="text-align:right;padding:2px 0 2px 6px;font-weight:600;">%</th><th style="text-align:right;padding:2px 0;font-weight:600;color:#e67e22;">Mora</th></tr>
+                            ${cr.historial_mora.map(m => `<tr${m.cancelada ? ' style="opacity:.55;"' : ''}>
+                                ${hayActivas ? `<td>${m.cancelada ? '' : `<input type="checkbox" class="chk-mora-${cid}" value="${intval(m.mora_id)}" data-monto="${parseFloat(m.monto).toFixed(2)}" onchange="moraSelCambio(${cid})">`}</td>` : ''}
                                 <td style="padding:2px 6px 2px 0;">${esc(m.created_at ? m.created_at.substring(0,10) : '')}</td>
                                 <td style="text-align:right;">$${parseFloat(m.saldo_base).toFixed(2)}</td>
                                 <td style="text-align:right;padding:0 6px;">${parseFloat(m.porcentaje).toFixed(1)}%</td>
-                                <td style="text-align:right;color:#e67e22;font-weight:600;">+$${parseFloat(m.monto).toFixed(2)}</td>
+                                <td style="text-align:right;color:#e67e22;font-weight:600;${m.cancelada ? 'text-decoration:line-through;' : ''}">+$${parseFloat(m.monto).toFixed(2)}${m.cancelada ? ' <span style="font-weight:600;color:#2e7d32;text-decoration:none;display:inline-block;">cancelada</span>' : ''}</td>
                             </tr>`).join('')}
                         </table>
+                        ${hayActivas ? `<div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+                            <button type="button" class="btn-cancelar-mora" id="btnCancMora${cid}" disabled onclick="cancelarMoras(${cid})">Cancelar las seleccionadas</button>
+                            <span id="moraSelInfo${cid}" style="font-size:11px;color:#888;">Marca las moras que quieras cancelar.</span>
+                        </div>` : ''}
                     </div>`;
                 }
                 // [REWRITE-ABONOS] Historial de moras canceladas por un administrador.
@@ -1223,7 +1283,6 @@ function abrirDetalles(clienteId, nombre) {
                     <span style="font-size:12px;color:#888;">Monto original: $${parseFloat(cr.monto_total).toFixed(2)}</span>
                     ${abonado > 0 ? `<span style="font-size:12px;color:#2e7d32;font-weight:600;">${ICONS.checkBig} Abonado: $${abonado.toFixed(2)}</span>` : ''}
                     ${mora > 0 ? `<span style="font-size:12px;color:#e67e22;font-weight:600;">${ICONS.warning} Mora actual: +$${mora.toFixed(2)}</span>` : ''}
-                    ${mora > 0 ? `<button type="button" class="btn-cancelar-mora" onclick="cancelarMora(${intval(cr.credito_id)}, ${mora})">Cancelar mora</button>` : ''}
                     ${saldo <= 0 ? '<span style="font-size:12px;color:#2e7d32;font-weight:600;">Liquidado</span>' : ''}
                 </div>
                 ${moraHistHtml}
@@ -1240,19 +1299,38 @@ function abrirDetalles(clienteId, nombre) {
         });
 }
 
-// [REWRITE-ABONOS] Cancelar la última mora cobrada a un crédito — exige motivo obligatorio y
-// refresca el modal con los datos actualizados sin recargar toda la página.
-function cancelarMora(creditoId, montoMora) {
-    const motivo = prompt('Motivo para cancelar la mora de +$' + montoMora.toFixed(2) + ' (obligatorio):');
+// [MORA-POR-MORA] El administrador marca cuales moras de un credito cancelar (una, varias o todas),
+// escribe el motivo (obligatorio) y la ventana se refresca sin recargar toda la pagina.
+function moraSelCambio(cid) {
+    const marcadas = Array.from(document.querySelectorAll('.chk-mora-' + cid + ':checked'));
+    const total = marcadas.reduce((t, c) => t + parseFloat(c.dataset.monto), 0);
+    const btn = document.getElementById('btnCancMora' + cid);
+    const info = document.getElementById('moraSelInfo' + cid);
+    if (btn) btn.disabled = marcadas.length === 0;
+    if (info) info.textContent = marcadas.length === 0 ? 'Marca las moras que quieras cancelar.'
+        : marcadas.length + (marcadas.length === 1 ? ' mora seleccionada' : ' moras seleccionadas') + ': -$' + total.toFixed(2);
+}
+
+function moraSelTodas(cid, marcar) {
+    document.querySelectorAll('.chk-mora-' + cid).forEach(c => { c.checked = marcar; });
+    moraSelCambio(cid);
+}
+
+function cancelarMoras(creditoId) {
+    const marcadas = Array.from(document.querySelectorAll('.chk-mora-' + creditoId + ':checked'));
+    if (marcadas.length === 0) return;
+    const total = marcadas.reduce((t, c) => t + parseFloat(c.dataset.monto), 0);
+    const motivo = prompt('Motivo para cancelar ' + marcadas.length + (marcadas.length === 1 ? ' mora' : ' moras') + ' (-$' + total.toFixed(2) + ') (obligatorio):');
     if (motivo === null) return;
     if (motivo.trim() === '') { alert('El motivo es obligatorio para cancelar la mora.'); return; }
 
     const tok = document.querySelector('#formAbono input[name="_token"]').value;
     const body = new URLSearchParams();
     body.set('_token', tok);
-    body.set('action', 'cancelar_mora');
+    body.set('action', 'cancelar_moras');
     body.set('credito_id', creditoId);
     body.set('motivo_cancelacion', motivo.trim());
+    marcadas.forEach(c => body.append('mora_ids[]', c.value));
 
     fetch('abonos.php', { method: 'POST', body })
         .then(r => r.json())

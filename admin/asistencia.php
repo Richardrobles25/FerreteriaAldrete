@@ -29,9 +29,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
     $stmtRow->execute([$idElim]);
     $rowElim = $stmtRow->fetch(PDO::FETCH_ASSOC);
     if ($rowElim) {
-        $dtElim = new DateTime($rowElim['fecha']);
-        $dtElim->modify('-' . ((int)$dtElim->format('N') - 1) . ' days');
-        $semanaElim = $dtElim->format('Y-m-d');
+        // [FIX-DOMINGO-SEMANA-PAGADA] El domingo pertenece a la semana que empieza al dia
+        // siguiente (ver formAsistencia.php), no a la que acaba de terminar.
+        require_once __DIR__ . '/../includes/rh_helpers.php';
+        $semanaElim = lunesDeLaSemana($rowElim['fecha']);
         $stmtPagadoElim = $pdo->prepare("SELECT COUNT(*) FROM pagos_nomina WHERE empleado_id = ? AND semana_inicio = ?");
         $stmtPagadoElim->execute([$rowElim['empleado_id'], $semanaElim]);
         if ($stmtPagadoElim->fetchColumn() > 0) {
@@ -63,8 +64,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_id'])) {
 // servidor expuesta, disparable con solo abrir un enlace (sin POST ni CSRF).
 $empleadoFiltro = intval(is_scalar($_GET['empleado'] ?? null) ? $_GET['empleado'] : 0);
 $tipoFiltro     = trim(is_scalar($_GET['tipo'] ?? null) ? (string)$_GET['tipo'] : '');
-$fechaInicio    = is_scalar($_GET['fecha_inicio'] ?? null) ? $_GET['fecha_inicio'] : date('Y-m-d', strtotime('monday this week'));
-$fechaFin       = is_scalar($_GET['fecha_fin']    ?? null) ? $_GET['fecha_fin']    : date('Y-m-d', strtotime('saturday this week'));
+// [FIX-ASISTENCIA-FILTRO-FECHAS] Las fechas del filtro llegaban crudas a la consulta: un valor
+// imposible ("2026-02-30") hace fallar la consulta en el servidor (modo estricto) con un 500, y
+// con "Desde" posterior a "Hasta" la lista salia vacia sin explicacion. Se aceptan solo fechas de
+// calendario reales (Y-m-d); si no, se usa la semana en curso, y si vienen al reves se intercambian.
+$fechaValidaGET = function ($v) {
+    return is_string($v) && preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $v, $m) && checkdate((int)$m[2], (int)$m[3], (int)$m[1]);
+};
+$inicioSemana = date('Y-m-d', strtotime('monday this week'));
+$finSemana    = date('Y-m-d', strtotime('saturday this week'));
+$fechaInicio  = $fechaValidaGET($_GET['fecha_inicio'] ?? null) ? $_GET['fecha_inicio'] : $inicioSemana;
+$fechaFin     = $fechaValidaGET($_GET['fecha_fin']    ?? null) ? $_GET['fecha_fin']    : $finSemana;
+if ($fechaInicio > $fechaFin) { [$fechaInicio, $fechaFin] = [$fechaFin, $fechaInicio]; }
+
+// El tipo solo puede ser uno de los conocidos (cualquier otro valor se ignora en vez de filtrar a "nada").
+if (!in_array($tipoFiltro, ['Asistencia normal','Tardanza','Falta','Salida temprana','Tiempo fuera','Horas extra'], true)) $tipoFiltro = '';
 
 $where  = "WHERE a.fecha BETWEEN ? AND ?";
 $params = [$fechaInicio, $fechaFin];
@@ -72,12 +86,32 @@ $params = [$fechaInicio, $fechaFin];
 if ($empleadoFiltro) { $where .= " AND a.empleado_id = ?"; $params[] = $empleadoFiltro; }
 if ($tipoFiltro)     { $where .= " AND a.tipo = ?";         $params[] = $tipoFiltro; }
 
+// [FIX-ASISTENCIA-PAGINACION] La lista traia TODOS los registros del rango en una sola consulta (y
+// luego un "IN (?,?,...)" con un marcador por registro para los tiempos fuera, que revienta pasando
+// de 65,535 registros). Con varios empleados y un rango de meses o años la pagina se volvia lenta o
+// fallaba. Ahora los totales salen de una consulta agregada (sobre TODO el rango filtrado) y la
+// tabla se pagina de 100 en 100.
+$porPagina = 100;
+$stmtTot = $pdo->prepare("SELECT COUNT(*) AS n, COALESCE(SUM(a.horas_trabajadas),0) AS ht, COALESCE(SUM(a.horas_extra),0) AS hx,
+                                 COALESCE(SUM(a.tipo = 'Falta'),0) AS faltas
+                          FROM asistencia a $where");
+$stmtTot->execute($params);
+$tot = $stmtTot->fetch(PDO::FETCH_ASSOC);
+$totalRegistros  = (int)$tot['n'];
+$totalHorasTrab  = (float)$tot['ht'];
+$totalHorasExtra = (float)$tot['hx'];
+$totalFaltas     = (int)$tot['faltas'];
+$totalPaginas    = max(1, (int)ceil($totalRegistros / $porPagina));
+$pagina          = min($totalPaginas, max(1, intval(is_scalar($_GET['pagina'] ?? null) ? $_GET['pagina'] : 1)));
+$offset          = ($pagina - 1) * $porPagina;
+
 $stmt = $pdo->prepare("
     SELECT a.*, e.nombre AS nombre_empleado
     FROM asistencia a
     JOIN empleados e ON a.empleado_id = e.empleado_id
     $where
-    ORDER BY a.fecha DESC, e.nombre ASC
+    ORDER BY a.fecha DESC, e.nombre ASC, a.asistencia_id DESC
+    LIMIT $porPagina OFFSET $offset
 ");
 $stmt->execute($params);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -94,17 +128,25 @@ if ($ids) {
     }
 }
 
-// Stats
-$totalRegistros  = count($registros);
-$totalHorasNT    = array_sum(array_column($registros, 'horas_no_trabajadas'));
-$totalHorasExtra = array_sum(array_column($registros, 'horas_extra'));
-
-$empleados   = $pdo->query("SELECT empleado_id, nombre FROM empleados WHERE activo=1 ORDER BY nombre")->fetchAll(PDO::FETCH_ASSOC);
+// [FIX-ASISTENCIA-FILTRO-EMPLEADO-INACTIVO] El desplegable solo traia empleados activos: los
+// registros de quien ya no trabaja aqui no se podian filtrar. Se incluyen todos, marcando los inactivos.
+$empleados   = $pdo->query("SELECT empleado_id, CONCAT(nombre, IF(activo = 1, '', ' (inactivo)')) AS nombre FROM empleados ORDER BY activo DESC, nombre")->fetchAll(PDO::FETCH_ASSOC);
 $tipos       = ['Asistencia normal','Falta','Tiempo fuera','Horas extra'];
+// Los tipos retirados (Tardanza / Salida temprana) siguen existiendo en registros viejos: se ofrecen
+// en el filtro solo si el filtro activo es uno de ellos.
+if ($tipoFiltro && !in_array($tipoFiltro, $tipos, true)) $tipos[] = $tipoFiltro;
 
 $filtrosActivos = $empleadoFiltro || $tipoFiltro
-    || ($fechaInicio !== date('Y-m-d', strtotime('monday this week')))
-    || ($fechaFin    !== date('Y-m-d', strtotime('saturday this week')));
+    || ($fechaInicio !== $inicioSemana)
+    || ($fechaFin    !== $finSemana);
+
+// Enlaces del paginador: conservan los filtros activos.
+$qsPaginador = function (int $pg) {
+    $q = $_GET; unset($q['pagina'], $q['msg']);
+    $q = array_filter($q, 'is_scalar');
+    $q['pagina'] = $pg;
+    return 'asistencia.php?' . http_build_query($q);
+};
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -255,13 +297,17 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
                 <p>Registros</p>
                 <h3><?= $totalRegistros ?></h3>
             </div>
+            <div class="stat">
+                <p>Hrs trabajadas</p>
+                <h3><?= number_format($totalHorasTrab, 2) ?></h3>
+            </div>
             <div class="stat rojo">
-                <p>Hrs no trabajadas</p>
-                <h3><?= number_format($totalHorasNT, 1) ?></h3>
+                <p>Faltas</p>
+                <h3><?= $totalFaltas ?></h3>
             </div>
             <div class="stat verde">
                 <p>Hrs extra</p>
-                <h3><?= number_format($totalHorasExtra, 1) ?></h3>
+                <h3><?= number_format($totalHorasExtra, 2) ?></h3>
             </div>
         </div>
 
@@ -275,7 +321,7 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
                         <th>Tipo</th>
                         <th>Entrada / Salida</th>
                         <th>Tiempo fuera</th>
-                        <th>Hrs no trab.</th>
+                        <th>Hrs trab.</th>
                         <th>Hrs extra</th>
                         <th>Razon / Notas</th>
                         <th>Acciones</th>
@@ -307,8 +353,8 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
                             <span style="color:#bbb;">—</span>
                         <?php endif; ?>
                     </td>
-                    <td style="font-weight:600;color:<?= floatval($reg['horas_no_trabajadas']) > 0 ? '#c0392b' : '#aaa' ?>;">
-                        <?= floatval($reg['horas_no_trabajadas']) > 0 ? number_format($reg['horas_no_trabajadas'], 2) . ' h' : '—' ?>
+                    <td style="font-weight:600;color:<?= $reg['tipo'] === 'Falta' ? '#c0392b' : '#222' ?>;">
+                        <?= number_format($reg['horas_trabajadas'], 2) ?> h
                     </td>
                     <td style="font-weight:600;color:<?= floatval($reg['horas_extra']) > 0 ? '#27ae60' : '#aaa' ?>;">
                         <?= floatval($reg['horas_extra']) > 0 ? '+' . number_format($reg['horas_extra'], 2) . ' h' : '—' ?>
@@ -331,6 +377,14 @@ $filtrosActivos = $empleadoFiltro || $tipoFiltro
                 <div class="sin-resultados">No hay registros para el periodo seleccionado.</div>
             <?php endif; ?>
         </div>
+
+        <?php if ($totalPaginas > 1): ?>
+        <div class="paginador" style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:14px;font-size:13px;color:#666;">
+            <?php if ($pagina > 1): ?><a class="btn-limpiar" href="<?= htmlspecialchars($qsPaginador($pagina - 1)) ?>">&larr; Anterior</a><?php endif; ?>
+            <span>Página <?= $pagina ?> de <?= $totalPaginas ?> &middot; registros <?= $offset + 1 ?>–<?= min($offset + $porPagina, $totalRegistros) ?> de <?= $totalRegistros ?></span>
+            <?php if ($pagina < $totalPaginas): ?><a class="btn-limpiar" href="<?= htmlspecialchars($qsPaginador($pagina + 1)) ?>">Siguiente &rarr;</a><?php endif; ?>
+        </div>
+        <?php endif; ?>
     </div>
 </div>
 

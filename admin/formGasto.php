@@ -119,6 +119,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // (categorias.php, proveedores.php, clientes.php, formEmpleado.php, etc.). Probado en
     // vivo: 550 caracteres enviados, 500 guardados, sin ningun error.
     elseif (mb_strlen($descripcion) > 500)           $errores[] = 'La descripcion no puede tener mas de 500 caracteres.';
+    // [FIX-GASTO-NOTAS-SIN-TOPE] notas es TEXT sin tope en el servidor: un texto enorme llegaba al INSERT y
+    // fallaba (modo estricto) con el aviso generico.
+    if (mb_strlen($notas) > 2000)                    $errores[] = 'Las notas no pueden tener más de 2,000 caracteres.';
     if ($monto <= 0)                                 $errores[] = 'El monto debe ser mayor a $0.';
     // [FIX-PRECIO-MAX-GASTO] monto es DECIMAL(10,2); sin tope, un valor absurdo caía en el
     // catch generico de abajo con un mensaje que no explica la causa real.
@@ -176,7 +179,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit();
             }
         } catch (PDOException $e) {
-            $errores[] = 'No se pudo guardar el gasto. Verifica que la sucursal y la categoría sigan siendo válidas e intenta de nuevo.';
+            $errores[] = (stripos($e->getMessage(), 'Incorrect string value') !== false)
+                ? 'El texto contiene caracteres que el sistema no puede guardar (por ejemplo emojis). Quítalos e intenta de nuevo.'
+                : 'No se pudo guardar el gasto. Verifica que la sucursal y la categoría sigan siendo válidas e intenta de nuevo.';
         }
     }
 }
